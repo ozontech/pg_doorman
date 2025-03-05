@@ -1,0 +1,18 @@
+[Unit]
+Description=PgDoorman connection pooling for PostgreSQL (https://github.com/ozontech/pg_doorman)
+
+[Service]
+Type=forking
+Nice=-15
+User=postgres
+Group=postgres
+LimitNOFILE=10000
+ExecReload=/bin/kill -SIGINT $MAINPID
+ExecStop=/bin/kill -SIGTERM $MAINPID
+SyslogIdentifier=pg_doorman
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml --daemon
+Restart=always
+PIDFile=/tmp/pg_doorman.pid
+
+[Install]
+WantedBy=multi-user.target

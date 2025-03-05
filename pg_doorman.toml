@@ -1,13 +1,14 @@
 [include]
 # You can include files to merge the configuration.
-files = ["./hba.toml"]
+# files = ["./hba.toml"]
 
 [general]
 host = "0.0.0.0"
+# listen port.
 port = 6432
 
 # Connection timeout to server in ms.
-connect_timeout = 1000
+connect_timeout = 2000
 # Analog of query_wait_timeout in https://www.pgbouncer.org/config.html (in ms).
 query_wait_timeout = 5000
 # Server idle timeout (5 min).
@@ -82,7 +83,7 @@ admin_username = "pgbouncer"
 admin_password = "admin"
 
 # Enabling caching of prepared statements.
-prepared_statements = false
+prepared_statements = true
 prepared_statements_cache_size = 8192
 
 # Pid file for daemon mode.
@@ -99,18 +100,18 @@ hba = []
 # override_startup_packet_server_version = ""
 
 [pools]
-# database example-shard-1
-[pools.example-shard-1]
+# database exampledb
+[pools.exampledb]
 server_host = "/var/run/postgresql" # or "127.0.0.1"
 server_port = 5432
 # can override server database
-# server_database = "example-shard-2"
+# server_database = "exampledb-2"
 # pool_mode = "session"
 pool_mode = "transaction"
 # To report information about any SET command in the log.
 log_client_parameter_status_changes = false
 
-[pools.example-shard-1.users.0]
+[pools.exampledb.users.0]
 username = "test_md5"
 # select usename, passwd from pg_shadow
 password = "md5dd9a0f26a4302744db881776a09bbfad"
