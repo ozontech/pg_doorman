@@ -1,6 +1,6 @@
 [include]
 # You can include files to merge the configuration.
-# files = ["./hba.toml"]
+# files = ["/etc/pg_doorman/hba.toml"]
 
 [general]
 host = "0.0.0.0"
@@ -84,12 +84,14 @@ admin_password = "admin"
 
 # Enabling caching of prepared statements.
 prepared_statements = true
-prepared_statements_cache_size = 8192
+prepared_statements_cache_size = 512
 
-# Pid file for daemon mode.
-#daemon_pid_file = ""
-# When specified, pg_doorman starts sending messages to syslog (using /dev/log or /var/run/syslog).
-#syslog_prog_name = ""
+# Pid file for daemon mode
+# comment it, if you want to run pg_doorman foreground.
+daemon_pid_file = "/tmp/pg_doorman.pid"
+# When specified, pg_doorman starts sending messages to syslog (using /dev/log or /var/run/syslog),
+# comment it if you want to log to stdout.
+syslog_prog_name = "pg_doorman"
 
 # Can define the networks from which are allowed to connect to pg_doorman.
 # For example, it can be the address mask 10.0.0.0/8. By default, access is allowed from any address.
