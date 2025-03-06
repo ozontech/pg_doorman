@@ -191,7 +191,7 @@ jobs:
           path: tests
       - name: Tree.
         run: tree tests
-      - name: Setup Python caches
+      - name: Setup nodejs caches
         uses: actions/cache@v4
         with:
           path: |
@@ -199,6 +199,53 @@ jobs:
           key: "${{ runner.os }}-nodejs"
           restore-keys: |
             ${{ runner.os }}-nodejs
+      - name: Run fixtures.
+        run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
+      - name: Run tests.
+        run: |
+          chmod +x ./tests/pg_doorman && 
+          ./tests/pg_doorman --version &&
+          (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
+          sudo apt-get update &&  sudo apt-get install nodejs npm -y &&
+          cd ./tests/nodejs &&
+          npm install pg &&
+          nodejs ./run.js
+
+  dotnet-test:
+    name: DotNet (npgsql).
+    needs: build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: "trust"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Download tests
+        uses: actions/download-artifact@v4
+        with:
+          name: tests
+          path: tests
+      - name: Tree.
+        run: tree tests
+      - name: NuGet Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Build.targets') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Setup .NET Core SDK
+        uses: actions/setup-dotnet@v4.3.0
+      - name: Build
+        run: dotnet build -c Release
       - name: Run fixtures.
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
       - name: Run tests.
