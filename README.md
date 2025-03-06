@@ -13,6 +13,11 @@ With this approach, there are problems with reusing prepared_statements and send
 However, the most serious problem we have encountered is that the operating system tends to distribute new clients evenly,
 but each client can disconnect at any time, resulting in an imbalance after prolonged use.
 
+### Why not Odyssey?
+
+We had difficulties using NPGSQL and SCRAM, as well as with the support of prepared_statements.
+However, the main serious problem was related to data consistency, and for a long time unable to solve it.
+
 ### Status
 
 PgDoorman has been stable and in production for a while, serving tens of thousands of servers and processing millions of queries per second with ease.
