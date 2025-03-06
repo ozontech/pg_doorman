@@ -1,6 +1,6 @@
-## PgDoorman: A PostgreSQL Pooler for High-Performance Databases
+## PgDoorman: PostgreSQL Pooler
 
-PgDoorman: a PostgreSQL pooler that aims to provide high-performance database access for your applications. 
+PgDoorman: PostgreSQL pooler that aims to provide high-performance database access for your applications. 
 PgDoorman offers features that make it a great alternative to PgBouncer/Odyssey, with additional benefits for database operations.
 
 ### Status
@@ -39,3 +39,7 @@ With docker compose:
 2. Run `cargo build --release` to get better benchmarks.
 3. Adjust the configuration in `pg_doorman.toml` to match your setup (this step is optional, given next).
 4. Execute `cargo run --release`. You're now ready to go!
+
+### Benchmarks
+
+[benchmarks here](/BENCHMARKS.md)
