@@ -1,7 +1,22 @@
 ## PgDoorman: PostgreSQL Pooler
 
-PgDoorman: PostgreSQL pooler that aims to provide high-performance database access for your applications. 
-PgDoorman offers features that make it a great alternative to PgBouncer/Odyssey, with additional benefits for database operations.
+PgDoorman offers features that make it a great alternative to PgBouncer/Odyssey/PgCat.
+We decided to significantly simplify PgCat and create a multithreaded PgBouncer.
+Because we need simple tool that perform their tasks efficiently, as required by the unix philosophy.
+We have abandoned load balancing and sharding, but this does not mean that they are not needed - we believe that it is more efficient to implement them at the application level.
+Over the two years of use, we have made significant improvements of driver support for various programming languages, including Go (pgx), .NET (npgsql), as well as a variety of asynchronous drivers for Python and Node.js .
+
+### Why not multi-PgBouncer?
+
+Why do we think that using multiple instances of pgbouncer is not an appropriate solution?
+With this approach, there are problems with reusing prepared_statements and sending cancellation requests.
+However, the most serious problem we have encountered is that the operating system tends to distribute new clients evenly,
+but each client can disconnect at any time, resulting in an imbalance after prolonged use.
+
+### Why not Odyssey?
+
+We had difficulties using NPGSQL and SCRAM, as well as with the support of prepared_statements.
+However, the main serious problem was related to data consistency, and for a long time unable to solve it.
 
 ### Status
 
@@ -43,3 +58,7 @@ With docker compose:
 ### Benchmarks
 
 [benchmarks here](/BENCHMARKS.md)
+
+### Gracefully binary upgrade
+
+[binary upgrade](/BINARY_UPGRADE.md)
