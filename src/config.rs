@@ -487,7 +487,9 @@ impl General {
     }
 
     pub fn default_include() -> Include {
-        Include{files: Self::default_include_files()}
+        Include {
+            files: Self::default_include_files(),
+        }
     }
 }
 

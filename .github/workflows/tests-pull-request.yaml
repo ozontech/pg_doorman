@@ -1,4 +1,4 @@
-name: Rust tests.
+name: Tests.
 
 on:
   pull_request:
@@ -242,18 +242,19 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Build.targets') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
-      - name: Setup .NET Core SDK
-        uses: actions/setup-dotnet@v4.3.0
-      - name: Build
-        run: dotnet build -c Release
       - name: Run fixtures.
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
+      - name: Setup .NET Core SDK
+        uses: actions/setup-dotnet@v4.3.0
       - name: Run tests.
         run: |
           chmod +x ./tests/pg_doorman && 
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
-          sudo apt-get update &&  sudo apt-get install nodejs npm -y &&
-          cd ./tests/nodejs &&
-          npm install pg &&
-          nodejs ./run.js
+          mkdir -p ./tests/dotnet/hello_world && cd ./tests/dotnet/hello_world &&
+          dotnet new sln --name HelloWorld &&
+          dotnet new console --output . &&
+          dotnet add package Npgsql &&
+          cp -av ../data/PBDE_PBDE_S.cs ./Program.cs && dotnet run Program.cs &&
+          cp -av ../data/prepared.cs ./Program.cs && dotnet run Program.cs &&
+          echo "done"

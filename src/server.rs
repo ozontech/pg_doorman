@@ -1303,8 +1303,13 @@ impl Server {
 
                         // An error message will be present.
                         _ => {
-                            let mut error = vec![0u8; len as usize];
-
+                            if (len as usize) < 2 * mem::size_of::<u32>() {
+                                return Err(Error::ServerStartupError(
+                                    "while create new connection to postgresql received error, but it's too small".to_string(),
+                                    server_identifier,
+                                    ));
+                            }
+                            let mut error = vec![0u8; len as usize - 2 * mem::size_of::<u32>()];
                             match stream.read_exact(&mut error).await {
                                 Ok(_) => (),
                                 Err(err) => {
@@ -1315,13 +1320,22 @@ impl Server {
                                 }
                             };
 
-                            let fields = match PgErrorMsg::parse(&error) {
-                                Ok(f) => f,
+                            return match PgErrorMsg::parse(&error) {
+                                Ok(f) => {
+                                    error!(
+                                        "Get server error - {} {}: {}",
+                                        f.severity, f.code, f.message
+                                    );
+                                    Err(Error::ServerStartupError(f.message, server_identifier))
+                                }
                                 Err(err) => {
-                                    return Err(err);
+                                    error!("Get unparsed server error: {:?}", error);
+                                    Err(Error::ServerStartupError(
+                                         format!("while create new connection to postgresql received error, but can't read it: {:?}", err),
+                                         server_identifier,
+                                     ))
                                 }
                             };
-                            error!("server error: {}: {}", fields.severity, fields.message);
                         }
                     };
 

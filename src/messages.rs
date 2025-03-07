@@ -1699,11 +1699,6 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
                 "Message len more than server message size".to_string(),
             ));
         }
-        if cursor + len > in_msg_len {
-            return Err(Error::ServerMessageParserError(
-                "Message len more than server message size".to_string(),
-            ));
-        }
         cursor += len;
     }
     if count_stmt_close == 0 && count_parse_complete == 0 {
@@ -1712,27 +1707,26 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
     }
 
     cursor = 0;
-    let mut prev_was_parse_complete = false;
+    let mut prev_msg: char = ' ';
     loop {
         if cursor == in_msg_len {
             return Ok(result);
         }
         match in_msg[cursor] as char {
             '1' => {
-                prev_was_parse_complete = true;
-                if count_parse_complete == 0 {
+                if count_parse_complete == 0 || prev_msg == '1' {
                     // ParseComplete: ignore.
                     cursor += 5;
                     continue;
                 }
+                count_parse_complete -= 1;
             }
             '2' | 't' => {
-                if !prev_was_parse_complete {
+                if (prev_msg != '1') && (prev_msg != '2') && count_parse_complete > 0 {
                     // BindComplete, just add before ParseComplete.
                     result.put(parse_complete());
                     count_parse_complete -= 1;
                 }
-                prev_was_parse_complete = false;
             }
             '3' => {
                 if count_stmt_close == 1 {
@@ -1745,10 +1739,9 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
                     result.put(close_complete())
                 }
             }
-            _ => {
-                prev_was_parse_complete = false;
-            }
+            _ => {}
         };
+        prev_msg = in_msg[cursor] as char;
         cursor += 1; // code
         let len_ref = match <[u8; 4]>::try_from(&in_msg[cursor..cursor + 4]) {
             Ok(len_ref) => len_ref,
@@ -1769,11 +1762,12 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
 #[cfg(test)]
 mod tests {
     use crate::messages::{
-        check_query_response, deallocate_response, flush, parse_complete, ready_for_query,
-        set_messages_right_place, PgErrorMsg,
+        check_query_response, command_complete, deallocate_response, flush, parse_complete,
+        ready_for_query, set_messages_right_place, PgErrorMsg,
     };
-    use bytes::BufMut;
+    use bytes::{BufMut, BytesMut};
     use log::{error, info};
+    use std::mem;
 
     fn field(kind: char, content: &str) -> Vec<u8> {
         format!("{kind}{content}\0").as_bytes().to_vec()
@@ -1814,6 +1808,62 @@ mod tests {
                 .expect("parsing")
                 .len()
         );
+    }
+
+    pub fn bind_complete() -> BytesMut {
+        let mut bytes = BytesMut::with_capacity(mem::size_of::<u8>() + mem::size_of::<i32>());
+
+        bytes.put_u8(b'2');
+        bytes.put_i32(4);
+        bytes
+    }
+
+    pub fn row_description() -> BytesMut {
+        let mut bytes = BytesMut::with_capacity(mem::size_of::<u8>() + mem::size_of::<i32>());
+
+        bytes.put_u8(b't');
+        bytes.put_i32(4);
+        bytes
+    }
+
+    fn show_headers(msg: BytesMut) -> String {
+        let in_msg_len = msg.len();
+        let mut cursor = 0;
+        let mut result = Vec::new();
+        loop {
+            if cursor == in_msg_len {
+                break;
+            }
+            result.push(msg[cursor]);
+            cursor += 1;
+            let len_ref = match <[u8; 4]>::try_from(&msg[cursor..cursor + 4]) {
+                Ok(len_ref) => len_ref,
+                _ => {
+                    panic!("size")
+                }
+            };
+            let mut len = i32::from_be_bytes(len_ref) as usize;
+            len -= 4;
+            cursor += 4;
+            cursor += len;
+        }
+        String::from_utf8_lossy(&result).to_string()
+    }
+
+    #[test]
+    fn make_parse_complete_test_double() {
+        let mut in_msg = parse_complete(); // 1
+        in_msg.put(parse_complete()); // 1
+        in_msg.put(bind_complete()); // 2
+        in_msg.put(row_description()); // t
+        in_msg.put(command_complete("1")); // C
+        in_msg.put(bind_complete()); // 2
+        in_msg.put(row_description()); // t
+        in_msg.put(command_complete("2")); // C
+        in_msg.put(ready_for_query(false)); // Z
+        let out_msg = set_messages_right_place(in_msg.to_vec()).expect("parse");
+        println!("112tC2tCZ");
+        assert_eq!(show_headers(out_msg), "12tC12tCZ".to_string());
     }
 
     #[test]
