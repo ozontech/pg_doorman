@@ -1,7 +1,10 @@
 ## Disclaimer:
 
-Benchmarks **always** lie you :) WE would recommend that you bench application with pooler yourself and verify the results. The current benchmarks provided here are intended to give you an idea of the approximate figures.
-In addition to being fast, the Pooler should also be predictable and error-free. While benchmarks may not provide a real-world experience, they can reveal some potential problems.
+Benchmarks always lie to you :) We would recommend that you benchmark the application yourself and verify the results.
+The current benchmarks provided here are intended to give you an idea of approximate figures.
+
+In addition to being fast, pooler should also be predictable and error-free.
+While benchmarks may not provide real-world experience, they can reveal potential problems.
 
 ## Smoke perf test
 

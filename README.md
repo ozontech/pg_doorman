@@ -1,26 +1,25 @@
 ## PgDoorman: PostgreSQL Pooler
 
-PgDoorman offers features that make it a great alternative to PgBouncer/Odyssey/PgCat.
-We decided to significantly simplify PgCat and create a multithreaded PgBouncer.
-Because we need simple tool that perform their tasks efficiently, as required by the unix philosophy.
-We have abandoned load balancing and sharding, but this does not mean that they are not needed - we believe that it is more efficient to implement them at the application level.
-Over the two years of use, we have made significant improvements of driver support for various programming languages, including Go (pgx), .NET (npgsql), as well as a variety of asynchronous drivers for Python and Node.js .
+PgDoorman is a good alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat). We aimed to create a more efficient, multithreaded version of PgBouncer
+and focusing on perform pooler tasks efficiently and fast, in line with the Unix philosophy.
+While we’ve removed load balancing and sharding, we believe it’s more efficient to handle these at the application level.
+Over two years of use, we've improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
 
 ### Why not multi-PgBouncer?
 
-Why do we think that using multiple instances of pgbouncer is not an appropriate solution?
-With this approach, there are problems with reusing prepared_statements and sending cancellation requests.
-However, the most serious problem we have encountered is that the operating system tends to distribute new clients evenly,
-but each client can disconnect at any time, resulting in an imbalance after prolonged use.
+Why do we think that using [multiple instances of PgBouncer](https://www.pgbouncer.org/config.html#so_reuseport) is not a suitable solution?
+This approach has problems with reusing prepared statements and strange control over cancellation of queries.
+Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
+but each client can disconnect at any time, leading to an imbalance after prolonged use.
 
 ### Why not Odyssey?
 
-We had difficulties using NPGSQL and SCRAM, as well as with the support of prepared_statements.
-However, the main serious problem was related to data consistency, and for a long time unable to solve it.
+We had difficulties using NPGSQL and SCRAM, as well as with prepared_statements support.
+However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.
 
 ### Status
 
-PgDoorman has been stable and in production for a while, serving tens of thousands of servers and processing millions of queries per second with ease.
+PgDoorman has been a stable and reliable product for a while now, serving tens of thousands of servers and handling millions of queries per second.
 
 ### Differences from PgCat
 
@@ -28,13 +27,17 @@ While PgDoorman was initially based on the PgCat project, it has since evolved i
 Some of the key differences include:
 
 - Performance improvements compared to PgCat/PgBouncer/Odyssey.
-- Support for extended protocol and popular programming language drivers.
-- Enhanced monitoring metrics for better visibility into database activity.
-- Careful resource management to avoid memory issues.
-- SCRAM client authentication support.
-- Gracefully binary upgrade.
-- Custom JWT inter-service authentication support.
-- Micro-optimizations aimed at improving communication with database and management.
+- Support for extended protocol with popular programming language drivers.
+- Enhanced monitoring metrics to improve visibility into database activity..
+- Careful resource management to avoid memory issues (`max_memory_usage`, `message_size_to_be_stream`).
+- SCRAM client/server authentication support.
+- [Gracefully binary upgrade](/BINARY_UPGRADE.md).
+- Supporting JWT for service2database authentication.
+- Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).
+
+### Config
+
+[See Configuration](/pg_doorman.toml).
 
 ### How to try
 
@@ -57,8 +60,4 @@ With docker compose:
 
 ### Benchmarks
 
-[benchmarks here](/BENCHMARKS.md)
-
-### Gracefully binary upgrade
-
-[binary upgrade](/BINARY_UPGRADE.md)
+[View benchmark results for detailed performance comparisons](/BENCHMARKS.md)
