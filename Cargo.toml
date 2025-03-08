@@ -47,8 +47,9 @@ native-tls = { version = "0.2.12" }
 tokio-native-tls = { version = "0.3.1" }
 serde-toml-merge = { version = "0.3.8"}
 jwt = { version = "0.16.0", features = ["openssl"] }
-openssl = { version = "0.10.68"}
+openssl = { version = "0.10.71"}
 iota = { version = "0.2.3" }
+ring = { version = "0.17.13" }
 
 
 [replace]
