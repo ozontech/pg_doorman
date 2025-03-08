@@ -1,20 +1,21 @@
 ## PgDoorman: PostgreSQL Pooler
 
-PgDoorman is a good alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat). We aimed to create a more efficient, multithreaded version of PgBouncer
-and focusing on perform pooler tasks efficiently and fast, in line with the Unix philosophy.
+PgDoorman is a good alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat).
+We aimed to create a more efficient, multithreaded version of PgBouncer
+and with focus on performing pooler tasks efficiently and fast, in line with the Unix philosophy.
 While we’ve removed load balancing and sharding, we believe it’s more efficient to handle these at the application level.
 Over two years of use, we've improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
 
 ### Why not multi-PgBouncer?
 
 Why do we think that using [multiple instances of PgBouncer](https://www.pgbouncer.org/config.html#so_reuseport) is not a suitable solution?
-This approach has problems with reusing prepared statements and strange control over cancellation of queries.
+This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
 Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
 but each client can disconnect at any time, leading to an imbalance after prolonged use.
 
 ### Why not Odyssey?
 
-We had difficulties using NPGSQL and SCRAM, as well as with prepared_statements support.
+We had difficulties using NPGSQL and SCRAM, as well as with `prepared_statements` support.
 However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.
 
 ### Status
@@ -32,7 +33,7 @@ Some of the key differences include:
 - Careful resource management to avoid memory issues (`max_memory_usage`, `message_size_to_be_stream`).
 - SCRAM client/server authentication support.
 - [Gracefully binary upgrade](/BINARY_UPGRADE.md).
-- Supporting JWT for service2database authentication.
+- Supporting JWT for service-to-database authentication.
 - Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).
 
 ### Config
@@ -41,7 +42,7 @@ Some of the key differences include:
 
 ### How to try
 
-With docker image:
+With Docker image:
 
 1. docker build -t pg_doorman -f Dockerfile .
 2. docker run -p 6432:6432 -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml --rm -t -i pg_doorman
