@@ -1,3 +1,5 @@
+![pg_doorman](/static/logo_color_bg.png)
+
 ## PgDoorman: PostgreSQL Pooler
 
 PgDoorman is a good alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat).

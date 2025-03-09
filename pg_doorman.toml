@@ -147,7 +147,7 @@ log_client_parameter_status_changes = false
 username = "test_md5"
 
 # Password can be specified in MD5, SCRAM-SHA-256, or JWT format.
-# Obtain the MD5 password using: select usename, passwd from pg_shadow.
+# Obtain the password using: select usename, passwd from pg_shadow.
 password = "md5dd9a0f26a4302744db881776a09bbfad"
 # password = "SCRAM-SHA-256$4096:E+QNCSW3r58yM+Twj1P5Uw==$LQrKlTYWIYbYrd9WiDo9T0USF5+icN4RsySaYKuMWME=:4pfSZnjRqKjoOShT2UUjSSHJ5sIt1vzpWLTFRo1iBKM="
 # password = "jwt-pkey-fpath:/etc/pg_doorman/jwt/public-1.pem"

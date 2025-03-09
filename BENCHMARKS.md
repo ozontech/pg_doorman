@@ -3,7 +3,7 @@
 Benchmarks always lie to you :) We recommend that you benchmark the application yourself and verify the results.
 The current benchmarks provided here are intended to give you an idea of approximate figures.
 
-In addition to being fast, a pooler should also be predictable and error-free. 
+In addition to being fast, a pooler should also be predictable and error-free.
 While benchmarks may not provide real-world experience, they can reveal potential problems.
 
 ## Smoke perf test
