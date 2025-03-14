@@ -56,7 +56,7 @@ func checkStaledConnections(t *testing.T) {
 func Test_RaceStop(t *testing.T) {
 	t.Log("start RaceStop")
 	printStaledConnections(t)
-	conn, errConn := net.Dial("tcp", "localhost:6433")
+	conn, errConn := net.Dial("tcp", poolerAddr)
 	if errConn != nil {
 		t.Fatal(errConn)
 	}
@@ -76,7 +76,7 @@ func Test_RaceStop(t *testing.T) {
 	for {
 		concurrency <- struct{}{}
 		go func() {
-			conn, errConn := net.Dial("tcp", "localhost:6433")
+			conn, errConn := net.Dial("tcp", poolerAddr)
 			if errConn != nil {
 				t.Error(errConn)
 				return
@@ -108,7 +108,7 @@ func Test_RaceStop(t *testing.T) {
 func Test_RaceExtendedProtocol(t *testing.T) {
 	t.Log("start RaceExtendedProtocol")
 	printStaledConnections(t)
-	conn, errConn := net.Dial("tcp", "localhost:6433")
+	conn, errConn := net.Dial("tcp", poolerAddr)
 	if errConn != nil {
 		t.Fatal(errConn)
 	}
@@ -157,7 +157,7 @@ func Test_ExtendedProtocol(t *testing.T) {
 		byeBye(t, conn)
 		return messages
 	}
-	doorman := getMessages(t, "localhost:6433", f)
+	doorman := getMessages(t, poolerAddr, f)
 	pg := getMessages(t, "localhost:5432", f)
 	if len(pg) != len(doorman) {
 		t.Fatalf("got %d messages from pg, expected %d messages from doorman", len(pg), len(doorman))

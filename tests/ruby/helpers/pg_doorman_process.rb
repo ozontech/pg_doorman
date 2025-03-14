@@ -26,7 +26,6 @@ class PgDoormanProcess
     @log_level = log_level
     @log_filename = "/tmp/pg_doorman_log_#{SecureRandom.urlsafe_base64}.log"
     @config_filename = "/tmp/pg_doorman_cfg_#{SecureRandom.urlsafe_base64}.toml"
-    @hba_filename = "./tests/my_hba.toml"
 
     command_path = if ENV['CARGO_TARGET_DIR'] then
                      "#{ENV['CARGO_TARGET_DIR']}/debug/pg_doorman"
@@ -36,13 +35,15 @@ class PgDoormanProcess
 
     @command = "#{command_path} #{@config_filename} --log-level #{@log_level}"
 
-    FileUtils.mkdir_p(File.dirname(@hba_filename))
     FileUtils.cp("../../tests/tests.toml", @config_filename)
-    FileUtils.cp("../../tests/my_hba.toml", @hba_filename)
     cfg = current_config
     cfg["general"]["port"] = @port.to_i
+    cfg["general"]["tls_private_key"] = nil
+    cfg["general"]["tls_certificate"] = nil
+    cfg["include"]["files"] = nil
 
     update_config(cfg)
+    #print(raw_config_file)
   end
 
   def logs

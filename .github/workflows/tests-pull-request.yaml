@@ -1,4 +1,4 @@
-name: Tests.
+name: Main tests.
 
 on:
   pull_request:
@@ -109,13 +109,15 @@ jobs:
             ${{ runner.os }}-ruby
       - name: Run fixtures.
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
+      - name: Prepare packages.
+        run: |
+          sudo apt-get update &&  sudo apt-get install ruby-bundler ruby-dev -y &&
+          bundle config path ruby
       - name: Run tests.
         run: |
           chmod +x ./tests/pg_doorman && 
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml > /tmp/pg_doorman.log &) &&
-          sudo apt-get update &&  sudo apt-get install ruby-bundler ruby-dev -y &&
-          bundle config path ruby &&
           cd ./tests/ruby && 
           bundle install &&
           bundle exec ruby test.rb &&
