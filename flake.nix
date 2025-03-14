@@ -12,6 +12,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     crane.url = "github:ipetkov/crane";
+    git-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
   outputs =
     inputs:
@@ -22,8 +26,14 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+      imports = [ inputs.git-hooks.flakeModule ];
       perSystem =
-        { system, pkgs, ... }:
+        {
+          system,
+          pkgs,
+          config,
+          ...
+        }:
         let
           rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rust;
@@ -46,7 +56,19 @@
             inherit pg_doorman;
             default = pg_doorman;
           };
-          devShells.default = pkgs.mkShell { inputsFrom = [ pg_doorman ]; };
+          devShells.default = pkgs.mkShell {
+            shellHook = config.pre-commit.installationScript;
+            inputsFrom = [ pg_doorman ];
+          };
+          pre-commit.settings.hooks = {
+            nixfmt-rfc-style.enable = true;
+            nil.enable = true;
+            statix.enable = true;
+            flake-checker.enable = true;
+            deadnix.enable = true;
+            cargo-check.enable = true;
+            rustfmt.enable = true;
+          };
         };
     };
 }
