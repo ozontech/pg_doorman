@@ -102,11 +102,9 @@ jobs:
       - name: Setup Ruby caches
         uses: actions/cache@v4
         with:
-          path: |
-            ruby
-          key: "${{ runner.os }}-ruby"
-          restore-keys: |
-            ${{ runner.os }}-ruby
+          path: ruby
+          key: ${{ runner.os }}-ruby
+          restore-keys: ${{ runner.os }}-ruby
       - name: Run fixtures.
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
       - uses: awalsh128/cache-apt-pkgs-action@latest
