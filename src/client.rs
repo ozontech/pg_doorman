@@ -500,9 +500,15 @@ pub async fn startup_tls(
             .await
         }
 
+        Ok((ClientConnectionType::CancelQuery, bytes)) => {
+            CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let (read, write) = split(stream);
+            Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
+        }
+
         // Bad Postgres client.
-        Ok((ClientConnectionType::Tls, _)) | Ok((ClientConnectionType::CancelQuery, _)) => {
-            Err(Error::ProtocolSyncError("Bad postgres client (tls)".into()))
+        Ok((ClientConnectionType::Tls, _)) => {
+           Err(Error::ProtocolSyncError("Bad postgres client (tls)".into()))
         }
 
         Err(err) => Err(err),

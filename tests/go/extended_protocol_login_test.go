@@ -41,7 +41,7 @@ func login(t *testing.T, conn net.Conn, username, database, password string) (pr
 	case 'R':
 		t.Logf("get R response\n")
 	default:
-		t.Fatal(fmt.Sprintf("expected R response, but got %v\n", response[0]))
+		t.Fatal(fmt.Sprintf("expected R response, but got %v\n", string(response[0])))
 	}
 	response = make([]byte, 4)
 	if count, err := conn.Read(response); err != nil {
@@ -96,11 +96,8 @@ func login(t *testing.T, conn net.Conn, username, database, password string) (pr
 	} else if count != len(response) {
 		t.Fatal(fmt.Sprintf("expected %d bytes read, but read: %d\n", len(response), count))
 	}
-	breakLoop := false
 	for {
-		if breakLoop {
-			break
-		}
+		t.Log("waiting for message")
 		response = make([]byte, 5)
 		if count, err := conn.Read(response); err != nil {
 			t.Fatal(err)
@@ -124,7 +121,7 @@ func login(t *testing.T, conn net.Conn, username, database, password string) (pr
 			}
 			processID = int(bytesToI32(response[0:4]))
 			secretKey = int(bytesToI32(response[4:8]))
-			t.Logf("successfully get secret id, process id")
+			t.Logf("successfully get secret id: %d, process id %d", secretKey, processID)
 		case 'Z':
 			t.Logf("reading Z")
 			response = make([]byte, 1)
@@ -137,8 +134,7 @@ func login(t *testing.T, conn net.Conn, username, database, password string) (pr
 				t.Fatal("expected I after Z")
 			}
 			t.Logf("login done")
-			breakLoop = true
-			break
+			return
 		default:
 			t.Logf("unexpected response: %v\n", string(response[0]))
 		}
