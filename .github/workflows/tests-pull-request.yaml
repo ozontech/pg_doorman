@@ -109,12 +109,15 @@ jobs:
             ${{ runner.os }}-ruby
       - name: Run fixtures.
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ruby-bundler ruby-dev
+          version: 1.0
       - name: Run tests.
         run: |
           chmod +x ./tests/pg_doorman && 
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml > /tmp/pg_doorman.log &) &&
-          sudo apt-get update &&  sudo apt-get install ruby-bundler ruby-dev -y &&
           bundle config path ruby &&
           cd ./tests/ruby && 
           bundle install &&
@@ -201,12 +204,15 @@ jobs:
             ${{ runner.os }}-nodejs
       - name: Run fixtures.
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: nodejs npm
+          version: 1.0
       - name: Run tests.
         run: |
           chmod +x ./tests/pg_doorman && 
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
-          sudo apt-get update &&  sudo apt-get install nodejs npm -y &&
           cd ./tests/nodejs &&
           npm install pg &&
           nodejs ./run.js
