@@ -8,7 +8,7 @@
 
 - This update addresses issues related to the inability to send pqCancel messages over the TLS protocol. 
 To clarify, drivers should send pqCancel messages exclusively via TLS if the primary connection was established using TLS.
-Npgsql strictly adheres to this rule, however, PGX currently does not follow this flow, potentially leading to inconsistencies in secure connection handling (aka hostssl).
+[Npgsql](https://github.com/npgsql/npgsql) strictly adheres to this rule, however, [PGX](https://github.com/jackc/pgx) currently does not follow this flow, potentially leading to inconsistencies in secure connection handling (aka hostssl).
 Both of these behaviors are currently supported and functional.
 
 
