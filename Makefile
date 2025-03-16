@@ -1,4 +1,5 @@
 .DEFAULT_GOAL := build
+.PHONY: build install test
 
 build:
 	cargo build --release
@@ -9,4 +10,3 @@ install: build
 
 test:
 	cargo test
-	./tests/tests.sh

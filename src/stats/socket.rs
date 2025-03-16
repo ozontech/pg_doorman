@@ -12,11 +12,14 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::path::Path;
 use std::{fs, mem, ptr, slice};
 
-#[derive(Debug)]
-pub enum SocketInfoErr {
-    Io(std::io::Error),
-    Nix(nix::errno::Errno),
-    Convert(std::num::TryFromIntError),
+#[derive(Debug, thiserror::Error)]
+pub enum SocketInfoError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Nix(#[from] nix::errno::Errno),
+    #[error(transparent)]
+    Convert(#[from] std::num::TryFromIntError),
 }
 
 const FD_DIR: &str = "fd";
@@ -166,16 +169,6 @@ impl Display for SocketAddr {
     }
 }
 
-impl Display for SocketInfoErr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SocketInfoErr::Io(io_error) => write!(f, "{}", io_error),
-            SocketInfoErr::Nix(n_error) => write!(f, "{}", n_error),
-            SocketInfoErr::Convert(int_error) => write!(f, "{}", int_error),
-        }
-    }
-}
-
 impl Display for TcpStateCount {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut str_buf: Vec<String> = Vec::new();
@@ -278,24 +271,7 @@ impl Display for SocketStateCount {
     }
 }
 
-impl From<nix::errno::Errno> for SocketInfoErr {
-    fn from(err: nix::errno::Errno) -> Self {
-        SocketInfoErr::Nix(err)
-    }
-}
-impl From<std::io::Error> for SocketInfoErr {
-    fn from(err: std::io::Error) -> Self {
-        SocketInfoErr::Io(err)
-    }
-}
-
-impl From<std::num::TryFromIntError> for SocketInfoErr {
-    fn from(err: std::num::TryFromIntError) -> Self {
-        SocketInfoErr::Convert(err)
-    }
-}
-
-pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoErr> {
+pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoError> {
     let mut result: SocketStateCount = SocketStateCount {
         ..Default::default()
     };

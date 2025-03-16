@@ -332,8 +332,8 @@ impl<T> Daemonize<T> {
     }
 
     fn execute_child(self) -> Result<T, ErrorKind> {
+        set_current_dir(&self.directory).map_err(|_| ErrorKind::ChangeDirectory(errno()))?;
         unsafe {
-            set_current_dir(&self.directory).map_err(|_| ErrorKind::ChangeDirectory(errno()))?;
             set_sid()?;
             libc::umask(self.umask.inner);
 
