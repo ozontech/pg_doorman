@@ -1,3 +1,16 @@
+# 1.7.9 (Mar 16th, 2025)
+
+### Added
+
+- vendor.tar.gz for offline build, [related thread](https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com).
+
+### Fixed
+
+- This update addresses issues related to the inability to send pqCancel messages over the TLS protocol. 
+To clarify, drivers should send pqCancel messages exclusively via TLS if the primary connection was established using TLS.
+Npgsql strictly adheres to this rule, however, PGX currently does not follow this flow, potentially leading to inconsistencies in secure connection handling (aka hostssl).
+
+
 # 1.7.8 (Mar 8th, 2025)
 
 ### Fixed

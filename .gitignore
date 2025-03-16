@@ -4,3 +4,5 @@
 .direnv
 .pre-commit-config.yaml
 result
+/vendor.tar.gz
+/vendor
