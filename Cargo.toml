@@ -26,20 +26,18 @@ fallible-iterator = "0.3.0"
 postgres-protocol = "0.6.7"
 md-5 = "0.10"
 socket2 = { version = "0.5.7", features = ["all"] }
-async-trait = "0.1"
 chrono = "0.4"
 rand = "0.8"
 base64 = "0.22.1"
 hmac = "0.12"
 sha2 = "0.10"
 stringprep = "0.1"
-webpki-roots = "0.23"
 futures = "0.3"
 nix = { version = "0.29.0", features = ["process", "signal"] }
 sha-1 = "0.10"
-lru = "0.12.2"
-deadpool = { version = "0.10.0", features = ["rt_tokio_1", "managed"] }
-deadpool-runtime = { version = "0.1.3", features = ["tokio_1"] }
+lru = "0.13.0"
+deadpool = { version = "=0.10.0", features = ["rt_tokio_1", "managed"] }
+deadpool-runtime = { version = "=0.1.3", features = ["tokio_1"] }
 parking_lot = {version = "0.12.1", features = ["hardware-lock-elision"]}
 libc = "0.2.153"
 num_cpus = "1.16.0"
