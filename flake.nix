@@ -36,15 +36,24 @@
         }:
         let
           rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-          craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rust;
-          pg_doorman = craneLib.buildPackage {
-            src = ./.;
-            nativeBuildInputs = [ pkgs.pkg-config ];
-            buildInputs = with pkgs; [
-              openssl
-              rust-jemalloc-sys
-            ];
-          };
+          rust-nightly = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default);
+          pg_doorman =
+            rust:
+            ((inputs.crane.mkLib pkgs).overrideToolchain rust).buildPackage {
+              src = ./.;
+              nativeBuildInputs = [ pkgs.pkg-config ];
+              buildInputs = with pkgs; [
+                openssl
+                rust-jemalloc-sys
+              ];
+            };
+          mkShell =
+            rust: extra-packages:
+            pkgs.mkShell {
+              shellHook = config.pre-commit.installationScript;
+              inputsFrom = [ (pg_doorman rust) ];
+              packages = [ pkgs.cargo-msrv ] ++ extra-packages;
+            };
         in
         {
           _module.args.pkgs = import inputs.nixpkgs {
@@ -53,13 +62,12 @@
           };
           formatter = pkgs.nixfmt-rfc-style;
           packages = {
-            inherit pg_doorman;
-            default = pg_doorman;
+            inherit pg_doorman rust;
+            default = pg_doorman rust;
           };
-          devShells.default = pkgs.mkShell {
-            shellHook = config.pre-commit.installationScript;
-            inputsFrom = [ pg_doorman ];
-            packages = [ pkgs.cargo-msrv ];
+          devShells = {
+            default = mkShell rust [ ];
+            nightly = mkShell rust-nightly [ pkgs.cargo-udeps ];
           };
           pre-commit.settings.hooks = {
             nixfmt-rfc-style.enable = true;

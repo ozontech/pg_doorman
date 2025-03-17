@@ -19,11 +19,8 @@ arc-swap = "1.7.1"
 toml = "0.8.19"
 tokio = { version = "1.41.1", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal"] }
 exitcode = "1.1.2"
-phf = { version = "0.11.2", features = ["macros"] }
 pin-project = "1"
 bytes = "1.9.0"
-fallible-iterator = "0.3.0"
-postgres-protocol = "0.6.7"
 md-5 = "0.10"
 socket2 = { version = "0.5.7", features = ["all"] }
 chrono = "0.4"
@@ -32,7 +29,6 @@ base64 = "0.22.1"
 hmac = "0.12"
 sha2 = "0.10"
 stringprep = "0.1"
-futures = "0.3"
 nix = { version = "0.29.0", features = ["process", "signal"] }
 sha-1 = "0.10"
 lru = "0.13.0"
