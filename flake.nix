@@ -59,6 +59,7 @@
           devShells.default = pkgs.mkShell {
             shellHook = config.pre-commit.installationScript;
             inputsFrom = [ pg_doorman ];
+            packages = [ pkgs.cargo-msrv ];
           };
           pre-commit.settings.hooks = {
             nixfmt-rfc-style.enable = true;
