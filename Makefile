@@ -1,5 +1,10 @@
 .DEFAULT_GOAL := build
 
+vendor.tar.gz:
+	cargo vendor ./vendor
+	tar czf vendor.tar.gz ./vendor
+	@rm -rf vendor
+
 build:
 	cargo build --release
 

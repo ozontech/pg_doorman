@@ -19,7 +19,7 @@ services:
     tty: true
     stdin_open: true
   pg_doorman:
-    image: vadv/pg_doorman:1.7.8
+    image: vadv/pg_doorman:latest
     ports:
       - "6432:6432"
     command: /usr/bin/pg_doorman -l info /etc/pg_doorman/pg_doorman.toml

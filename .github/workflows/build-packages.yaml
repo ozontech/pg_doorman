@@ -13,7 +13,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Create vendor.tar.gz
-        run: cargo vendor ./vendor && tar czf vendor.tar.gz ./vendor && sha256sum vendor.tar.gz > vendor-sha256sum.txt
+        run: make vendor.tar.gz && sha256sum vendor.tar.gz > vendor-sha256sum.txt
       - name: Release vendor.tar.gz
         if: startsWith(github.ref, 'refs/tags/')
         run: gh release upload ${{ github.ref_name }} ./vendor.tar.gz
