@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod auth;
 pub mod client;
 pub mod cmd_args;
 pub mod config;
@@ -33,8 +34,5 @@ pub fn format_duration(duration: &chrono::Duration) -> String {
 
     let days = duration.num_days().to_string();
 
-    format!(
-        "{}d {}:{}:{}.{}",
-        days, hours, minutes, seconds, milliseconds
-    )
+    format!("{days}d {hours}:{minutes}:{seconds}.{milliseconds}")
 }

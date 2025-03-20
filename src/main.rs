@@ -46,8 +46,6 @@ use tokio::signal::windows as win_signal;
 use tokio::sync::broadcast;
 use tokio::{runtime::Builder, sync::mpsc};
 
-extern crate exitcode;
-
 use pg_doorman::config::{get_config, reload_config, VERSION};
 use pg_doorman::core_affinity;
 use pg_doorman::daemon;

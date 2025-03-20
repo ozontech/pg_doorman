@@ -5,6 +5,7 @@ use log::{error, info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::marker::Unpin;
 use std::mem;
 use std::num::NonZeroUsize;
 use std::os::fd::AsRawFd;
@@ -13,9 +14,10 @@ use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufStream};
 use tokio::net::{TcpStream, UnixStream};
 
+use crate::auth::AuthMethod;
 use crate::config::{get_config, Address, User};
 use crate::constants::*;
-use crate::errors::{Error, ServerIdentifier};
+use crate::errors::{Error, ProtocolSyncError, ServerAuthError, ServerError, ServerIdentifier};
 use crate::messages::BytesMutReader;
 use crate::messages::*;
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
@@ -312,7 +314,7 @@ pub struct Server {
     /// Is the server in copy-in or copy-out modes
     in_copy_mode: bool,
 
-    flush_wait_code: char,
+    flush_wait_code: u8,
 
     /// Is the server broken? We'll remote it from the pool if so.
     bad: bool,
@@ -404,13 +406,13 @@ impl Server {
         mut client_server_parameters: Option<&mut ServerParameters>,
     ) -> Result<BytesMut, Error>
     where
-        C: tokio::io::AsyncWrite + std::marker::Unpin,
+        C: AsyncWrite + Unpin,
     {
         loop {
             self.stats.wait_reading();
             let (code_u8, message_len) = read_message_header(&mut self.stream).await?;
             // if message server is too big.
-            if message_len > self.max_message_size && code_u8 as char == 'D' {
+            if message_len > self.max_message_size && code_u8 == b'D' {
                 // send current buffer + header.
                 self.buffer.put_u8(code_u8);
                 self.buffer.put_i32(message_len);
@@ -467,27 +469,25 @@ impl Server {
             // Buffer the message we'll forward to the client later.
             self.buffer.put(&message[..]);
 
-            let code = message.get_u8() as char;
+            let code = message.get_u8();
             let _len = message.get_i32();
 
             match code {
                 // ReadyForQuery
-                'Z' => {
-                    let transaction_state = message.get_u8() as char;
-
-                    match transaction_state {
+                b'Z' => {
+                    match message.get_u8() {
                         // In transaction.
-                        'T' => {
+                        b'T' => {
                             self.in_transaction = true;
                         }
 
                         // Idle, transaction over.
-                        'I' => {
+                        b'I' => {
                             self.in_transaction = false;
                         }
 
                         // Some error occurred, the transaction was rolled back.
-                        'E' => {
+                        b'E' => {
                             if let Ok(msg) = PgErrorMsg::parse(&message) {
                                 error!(
                                     "Server error (in tx) {} (severity: {} code: {} message: {})",
@@ -498,13 +498,13 @@ impl Server {
                         }
 
                         // Something totally unexpected, this is not a Postgres server we know.
-                        _ => {
-                            let err = Error::ProtocolSyncError(format!(
-                                "Server {}: unknown transaction state: {}",
-                                self, transaction_state
-                            ));
+                        transaction_state => {
+                            let err = ProtocolSyncError::UnknownTransactionState {
+                                server: self.to_string(),
+                                transaction_state,
+                            };
                             self.mark_bad(err.to_string().as_str(), true);
-                            return Err(err);
+                            return Err(err.into());
                         }
                     };
 
@@ -514,7 +514,7 @@ impl Server {
                 }
 
                 // ErrorResponse
-                'E' => {
+                b'E' => {
                     if let Ok(msg) = PgErrorMsg::parse(&message) {
                         error!(
                             "Server {}: {} ({}) - {}",
@@ -537,7 +537,7 @@ impl Server {
                 }
 
                 // CommandComplete
-                'C' => {
+                b'C' => {
                     if self.in_copy_mode {
                         self.in_copy_mode = false;
                     }
@@ -545,13 +545,13 @@ impl Server {
                     if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
                         self.cleanup_state.needs_cleanup_set = true;
                     }
-                    if self.flush_wait_code == 'C' {
+                    if self.flush_wait_code == b'C' {
                         self.data_available = false;
                         break;
                     }
                 }
 
-                'S' => {
+                b'S' => {
                     let key = message.read_string().unwrap();
                     let value = message.read_string().unwrap();
 
@@ -569,7 +569,7 @@ impl Server {
                 }
 
                 // DataRow
-                'D' => {
+                b'D' => {
                     // More data is available after this message, this is not the end of the reply.
                     self.data_available = true;
 
@@ -580,20 +580,20 @@ impl Server {
                 }
 
                 // CopyInResponse: copy is starting from client to server.
-                'G' => {
+                b'G' => {
                     self.in_copy_mode = true;
                     break;
                 }
 
                 // CopyOutResponse: copy is starting from the server to the client.
-                'H' => {
+                b'H' => {
                     self.in_copy_mode = true;
                     self.data_available = true;
                     break;
                 }
 
                 // CopyData
-                'd' => {
+                b'd' => {
                     // Don't flush yet, buffer until we reach limit
                     if self.buffer.len() >= 8196 {
                         break;
@@ -602,11 +602,11 @@ impl Server {
 
                 // CopyDone
                 // Buffer until ReadyForQuery shows up, so don't exit the loop yet.
-                'c' => (),
+                b'c' => (),
 
                 // NoData
                 // https://www.postgresql.org/docs/current/protocol-flow.html
-                'n' => {
+                b'n' => {
                     if self.is_async() {
                         self.data_available = false;
                         self.set_flush_wait_code(code);
@@ -693,7 +693,7 @@ impl Server {
 
     #[inline(always)]
     pub fn is_async(&self) -> bool {
-        self.flush_wait_code != ' '
+        self.flush_wait_code != b' '
     }
     pub async fn send_and_flush(&mut self, messages: &BytesMut) -> Result<(), Error> {
         self.stats.data_sent(messages.len());
@@ -710,7 +710,7 @@ impl Server {
                 self.stats.wait_idle();
                 error!("Terminating server {} because of: {:?}", self, err);
                 self.mark_bad("flush to server error", true);
-                Err(err)
+                Err(err.into())
             }
         }
     }
@@ -796,7 +796,7 @@ impl Server {
     /// Switch to async mode, flushing messages as soon
     /// as we receive them without buffering or waiting for "ReadyForQuery".
     #[inline(always)]
-    pub fn set_flush_wait_code(&mut self, wait: char) {
+    pub fn set_flush_wait_code(&mut self, wait: u8) {
         self.flush_wait_code = wait
     }
 
@@ -872,7 +872,7 @@ impl Server {
         // If it's not there, something went bad, I'm guessing bad syntax or permissions error
         // on the server.
         if !self.has_prepared_statement(&parse.name) {
-            Err(Error::PreparedStatementError)
+            Err(Error::NoPreparedStatement)
         } else {
             Ok(())
         }
@@ -955,7 +955,7 @@ impl Server {
         bytes.put_i32(process_id);
         bytes.put_i32(secret_key);
 
-        write_all_flush(&mut stream, &bytes).await
+        Ok(write_all_flush(&mut stream, &bytes).await?)
     }
 
     // Marks a connection as needing cleanup at checkin
@@ -1014,7 +1014,7 @@ impl Server {
 
         loop {
             let code = match stream.read_u8().await {
-                Ok(code) => code as char,
+                Ok(code) => code,
                 Err(err) => {
                     return Err(Error::ServerStartupError(
                         format!(
@@ -1041,7 +1041,7 @@ impl Server {
 
             match code {
                 // Authentication
-                'R' => {
+                b'R' => {
                     // Determine which kind of authentication is required, if any.
                     let auth_code = match stream.read_i32().await {
                         Ok(auth_code) => auth_code,
@@ -1058,10 +1058,11 @@ impl Server {
                         SASL => {
                             match scram_client_auth {
                                 None => {
-                                    return Err(Error::ServerAuthError(
-                                        "server wants sasl auth, but it is not configured".into(),
-                                        server_identifier,
-                                    ));
+                                    return Err(ServerAuthError::UnsupportedMethod {
+                                        id: server_identifier,
+                                        method: AuthMethod::Sasl,
+                                    }
+                                    .into());
                                 }
                                 Some(_) => {
                                     let sasl_len = (len - 8) as usize;
@@ -1105,7 +1106,10 @@ impl Server {
                                         write_all_flush(&mut stream, &res).await?;
                                     } else {
                                         error!("Unsupported SCRAM version: {}", sasl_type);
-                                        return Err(Error::ServerError);
+                                        return Err(ServerError::UnsupportedScramVersion(
+                                            sasl_type.to_string(),
+                                        )
+                                        .into());
                                     }
                                 }
                             }
@@ -1159,134 +1163,103 @@ impl Server {
                         }
                         /* SASL end */
                         AUTHENTICATION_CLEAR_PASSWORD => {
-                            if user.server_username.is_none() || user.server_password.is_none() {
+                            let (Some(server_username), Some(server_password)) =
+                                (&user.server_username, &user.server_password)
+                            else {
                                 error!(
                                     "authentication on server {}@{} with clear auth is not configured",
                                     server_identifier.username, server_identifier.database,
                                 );
-                                return Err(Error::ServerAuthError(
-                                    "server wants clear password authentication, but auth for this server is not configured".into(),
-                                    server_identifier,
-                                ));
-                            }
-                            let server_password =
-                                <Option<String> as Clone>::clone(&user.server_password)
-                                    .unwrap()
-                                    .clone();
-                            let server_username =
-                                <Option<String> as Clone>::clone(&user.server_username)
-                                    .unwrap()
-                                    .clone();
-                            if server_password.starts_with(JWT_PRIV_KEY_PASSWORD_PREFIX) {
-                                // generate password
-                                let claims = new_claims(server_username, Duration::from_secs(120));
-                                let token = match sign_with_jwt_priv_key(
-                                    claims,
-                                    server_password
-                                        .strip_prefix(JWT_PRIV_KEY_PASSWORD_PREFIX)
-                                        .unwrap()
-                                        .to_string(),
-                                )
-                                .await
-                                {
-                                    Ok(token) => token,
-                                    Err(err) => {
-                                        return Err(Error::ServerAuthError(
-                                            err.to_string(),
-                                            server_identifier,
-                                        ))
-                                    }
-                                };
-                                let mut password_response = BytesMut::new();
-                                password_response.put_u8(b'p');
-                                password_response.put_i32(token.len() as i32 + 4 + 1);
-                                password_response.put_slice(token.as_bytes());
-                                password_response.put_u8(b'\0');
-                                match stream.try_write(&password_response) {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        return Err(Error::ServerAuthError(
-                                            format!(
-                                                "jwt authentication on the server failed: {:?}",
-                                                err
-                                            ),
-                                            server_identifier,
-                                        ));
-                                    }
+                                return Err(ServerAuthError::UnsupportedMethod {
+                                    id: server_identifier,
+                                    method: AuthMethod::ClearPassword,
                                 }
-                            } else {
-                                return Err(Error::ServerAuthError(
-                                    "plain password is not supported".into(),
-                                    server_identifier,
-                                ));
-                            }
+                                .into());
+                            };
+
+                            let Some(jwt_priv_key) =
+                                server_password.strip_prefix(JWT_PRIV_KEY_PASSWORD_PREFIX)
+                            else {
+                                return Err(ServerAuthError::UnsupportedMethod {
+                                    id: server_identifier,
+                                    method: AuthMethod::ClearPassword,
+                                }
+                                .into());
+                            };
+
+                            // generate password
+                            let claims =
+                                new_claims(server_username.clone(), Duration::from_secs(120));
+                            let token = sign_with_jwt_priv_key(claims, jwt_priv_key)
+                                .await
+                                .map_err(ServerAuthError::JwtPrivKey)?;
+
+                            let mut password_response = BytesMut::new();
+                            password_response.put_u8(b'p');
+                            password_response.put_i32(token.len() as i32 + 4 + 1);
+                            password_response.put_slice(token.as_bytes());
+                            password_response.put_u8(b'\0');
+                            stream.try_write(&password_response).map_err(|e| {
+                                ServerAuthError::Io {
+                                    method: AuthMethod::Jwt,
+                                    error: e,
+                                }
+                            })?;
                         }
                         MD5_ENCRYPTED_PASSWORD => {
-                            if user.server_username.is_none() || user.server_password.is_none() {
+                            let (Some(server_username), Some(server_password)) =
+                                (&user.server_username, &user.server_password)
+                            else {
                                 error!(
                                     "authentication for server {}@{} with md5 auth is not configured",
                                     server_identifier.username, server_identifier.database,
                                 );
-                                return Err(Error::ServerAuthError(
-                                    "server wants md5 authentication, but auth for this server is not configured".into(),
-                                    server_identifier,
-                                ));
-                            } else {
-                                let server_username =
-                                    <Option<String> as Clone>::clone(&user.server_username)
-                                        .unwrap()
-                                        .clone();
-                                let server_password =
-                                    <Option<String> as Clone>::clone(&user.server_password)
-                                        .unwrap()
-                                        .clone();
-                                let mut salt = BytesMut::with_capacity(4);
-                                match stream.read_buf(&mut salt).await {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        return Err(Error::ServerAuthError(
-                                            format!("md5 authentication on the server: {:?}", err),
-                                            server_identifier,
-                                        ));
-                                    }
+                                return Err(ServerAuthError::UnsupportedMethod {
+                                    id: server_identifier,
+                                    method: AuthMethod::Md5,
                                 }
-                                let password_hash = md5_hash_password(
-                                    server_username.as_str(),
-                                    server_password.as_str(),
-                                    salt.as_mut(),
-                                );
-                                let mut password_response = BytesMut::new();
-                                password_response.put_u8(b'p');
-                                password_response.put_i32(password_hash.len() as i32 + 4);
-                                password_response.put_slice(&password_hash);
-                                match stream.try_write(&password_response) {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        return Err(Error::ServerAuthError(
-                                            format!(
-                                                "md5 authentication on the server failed: {:?}",
-                                                err
-                                            ),
-                                            server_identifier,
-                                        ));
-                                    }
+                                .into());
+                            };
+
+                            let mut salt = BytesMut::with_capacity(4);
+                            stream
+                                .read_buf(&mut salt)
+                                .await
+                                .map_err(|e| ServerAuthError::Io {
+                                    method: AuthMethod::Md5,
+                                    error: e,
+                                })?;
+                            let password_hash = md5_hash_password(
+                                server_username.as_str(),
+                                server_password.as_str(),
+                                salt.as_mut(),
+                            );
+                            let mut password_response = BytesMut::new();
+                            password_response.put_u8(b'p');
+                            password_response.put_i32(password_hash.len() as i32 + 4);
+                            password_response.put_slice(&password_hash);
+                            stream.try_write(&password_response).map_err(|e| {
+                                ServerAuthError::Io {
+                                    method: AuthMethod::Md5,
+                                    error: e,
                                 }
-                            }
+                            })?;
                         }
-                        _ => {
+                        code => {
                             error!("this type of authentication on the server {}@{} is not supported, auth code: {}",
                                 server_identifier.username,
                                 server_identifier.database,
                                 auth_code);
-                            return Err(Error::ServerAuthError(
-                                "authentication on the server is not supported".into(),
-                                server_identifier,
-                            ));
+                            return Err(ServerAuthError::InvalidAuthCode {
+                                id: server_identifier,
+                                code,
+                            }
+                            .into());
                         }
                     }
                 }
                 // ErrorResponse
-                'E' => {
+                b'E' => {
                     let error_code = match stream.read_u8().await {
                         Ok(error_code) => error_code,
                         Err(_) => {
@@ -1299,7 +1272,7 @@ impl Server {
 
                     match error_code {
                         // No error message is present in the message.
-                        MESSAGE_TERMINATOR => (),
+                        MESSAGE_TERMINATOR => return Err(ServerError::EmptyErrorMessage.into()),
 
                         // An error message will be present.
                         _ => {
@@ -1338,12 +1311,10 @@ impl Server {
                             };
                         }
                     };
-
-                    return Err(Error::ServerError);
                 }
 
                 // Notice
-                'N' => {
+                b'N' => {
                     let mut bytes = BytesMut::with_capacity(len as usize - 4);
                     bytes.resize(len as usize - mem::size_of::<i32>(), b'0');
                     match stream.read_exact(&mut bytes[..]).await {
@@ -1364,7 +1335,7 @@ impl Server {
                 }
 
                 // ParameterStatus
-                'S' => {
+                b'S' => {
                     let mut bytes = BytesMut::with_capacity(len as usize - 4);
                     bytes.resize(len as usize - mem::size_of::<i32>(), b'0');
 
@@ -1388,7 +1359,7 @@ impl Server {
                 }
 
                 // BackendKeyData
-                'K' => {
+                b'K' => {
                     // The frontend must save these values if it wishes to be able to issue CancelRequest messages later.
                     // See: <https://www.postgresql.org/docs/12/protocol-message-formats.html>.
                     process_id = match stream.read_i32().await {
@@ -1413,7 +1384,7 @@ impl Server {
                 }
 
                 // ReadyForQuery
-                'Z' => {
+                b'Z' => {
                     let mut idle = vec![0u8; len as usize - 4];
 
                     match stream.read_exact(&mut idle).await {
@@ -1437,7 +1408,7 @@ impl Server {
                         in_copy_mode: false,
                         data_available: false,
                         bad: false,
-                        flush_wait_code: ' ',
+                        flush_wait_code: b' ',
                         cleanup_state: CleanupState::new(),
                         client_server_map,
                         connected_at: chrono::offset::Utc::now().naive_utc(),
@@ -1462,15 +1433,12 @@ impl Server {
 
                 // We have an unexpected message from the server during this exchange.
                 // Means we implemented the protocol wrong or we're not talking to a Postgres server.
-                _ => {
+                code => {
                     error!(
                         "An unprocessed message code from server backend while startup: {}",
                         code
                     );
-                    return Err(Error::ProtocolSyncError(format!(
-                        "An unprocessed message code from server backend while startup: {}",
-                        code
-                    )));
+                    return Err(ProtocolSyncError::UnprocessedCode(code).into());
                 }
             };
         }
@@ -1558,7 +1526,7 @@ async fn create_tcp_stream_inner(
         ssl_request(&mut stream).await?;
 
         let response = match stream.read_u8().await {
-            Ok(response) => response as char,
+            Ok(response) => response,
             Err(err) => {
                 return Err(Error::SocketError(format!(
                     "Server socket error: {:?}",
@@ -1569,17 +1537,17 @@ async fn create_tcp_stream_inner(
 
         match response {
             // Server supports TLS
-            'S' => {
+            b'S' => {
                 error!("Connection to server via tls is not supported");
                 return Err(Error::SocketError("Server TLS is unsupported".to_string()));
             }
 
             // Server does not support TLS
-            'N' => StreamInner::TCPPlain { stream },
+            b'N' => StreamInner::TCPPlain { stream },
 
             // Something else?
             m => {
-                return Err(Error::SocketError(format!("Unknown message: {}", { m })));
+                return Err(Error::SocketError(format!("Unknown message: {:#x}", m)));
             }
         }
     } else {

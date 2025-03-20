@@ -1,4 +1,4 @@
-use crate::errors::Error;
+use crate::errors::{Error, JwtPrivKeyError, JwtPubKeyError, JwtValidateError};
 use jwt::{Header, PKeyWithDigest, RegisteredClaims, SignWithKey, Token, VerifyWithKey};
 use once_cell::sync::Lazy;
 use openssl::hash::MessageDigest;
@@ -38,63 +38,46 @@ pub fn new_claims(username: String, duration: Duration) -> PreferredUsernameClai
 }
 
 impl PreferredUsernameClaims {
-    fn validate(&self) -> Result<(), Error> {
+    fn validate(&self) -> Result<(), JwtValidateError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
         if let Some(val) = self.default_claims.not_before {
             if now < val {
-                return Err(Error::JWTValidate("not before".to_string()));
+                return Err(JwtValidateError::NotBefore);
             }
         }
-        if let Some(val) = self.default_claims.expiration {
-            if now > val {
-                return Err(Error::JWTValidate("expiration".to_string()));
-            }
-        } else {
-            return Err(Error::JWTValidate("empty expiration".to_string()));
+
+        let Some(expiration) = self.default_claims.expiration else {
+            return Err(JwtValidateError::NoExpiration);
+        };
+        if now > expiration {
+            return Err(JwtValidateError::Expiration);
         }
+
         Ok(())
     }
 }
 
 pub async fn sign_with_jwt_priv_key(
     claims: PreferredUsernameClaims,
-    key_filename: String,
-) -> Result<String, Error> {
-    let priv_key_data = match fs::read_to_string(key_filename.clone()) {
-        Ok(data) => data,
-        Err(err) => return Err(Error::JWTPrivKey(err.to_string())),
-    };
-    let priv_key_rsa = match Rsa::private_key_from_pem(priv_key_data.as_bytes()) {
-        Ok(rsa) => rsa,
-        Err(err) => return Err(Error::JWTPrivKey(err.to_string())),
-    };
-    let priv_key = match PKey::from_rsa(priv_key_rsa) {
-        Ok(data) => data,
-        Err(err) => return Err(Error::JWTPrivKey(err.to_string())),
-    };
+    key_filename: &str,
+) -> Result<String, JwtPrivKeyError> {
+    let priv_key_data = fs::read_to_string(key_filename)?;
+    let priv_key_rsa = Rsa::private_key_from_pem(priv_key_data.as_bytes())?;
+    let priv_key = PKey::from_rsa(priv_key_rsa)?;
     let rs256_priv_key = PKeyWithDigest {
         digest: MessageDigest::sha256(),
         key: priv_key,
     };
-    let data = match claims.sign_with_key(&rs256_priv_key) {
-        Ok(data) => data,
-        Err(err) => return Err(Error::JWTPrivKey(err.to_string())),
-    };
-    Ok(data)
+
+    Ok(claims.sign_with_key(&rs256_priv_key)?)
 }
 
-pub async fn load_jwt_pub_key(key_filename: String) -> Result<(), Error> {
-    let pub_key_data = match fs::read_to_string(key_filename.clone()) {
-        Ok(data) => data,
-        Err(err) => return Err(Error::JWTPubKey(err.to_string())),
-    };
-    let pub_key = match PKey::public_key_from_pem(pub_key_data.as_ref()) {
-        Ok(key) => key,
-        Err(err) => return Err(Error::JWTPubKey(err.to_string())),
-    };
+pub async fn load_jwt_pub_key(key_filename: String) -> Result<(), JwtPubKeyError> {
+    let pub_key_data = fs::read_to_string(key_filename.clone())?;
+    let pub_key = PKey::public_key_from_pem(pub_key_data.as_ref())?;
     let rs256_public_key = PKeyWithDigest {
         digest: MessageDigest::sha256(),
         key: pub_key,
@@ -109,15 +92,13 @@ pub async fn get_user_name_from_jwt(
     input_token: String,
 ) -> Result<String, Error> {
     let read_guard = KEYS.read().await;
-    let pub_key = match read_guard.get(&key_filename) {
-        Some(key) => key,
-        None => return Err(Error::JWTPubKey("key is not loaded".to_string())),
-    };
+    let pub_key = read_guard
+        .get(&key_filename)
+        .ok_or(JwtPubKeyError::KeyNotLoaded)?;
+
     let token: Token<Header, PreferredUsernameClaims, _> =
-        match VerifyWithKey::verify_with_key(input_token.as_str(), pub_key) {
-            Ok(token) => token,
-            Err(err) => return Err(Error::JWTValidate(err.to_string())),
-        };
+        VerifyWithKey::verify_with_key(input_token.as_str(), pub_key)
+            .map_err(JwtValidateError::from)?;
     let (_, claim) = token.into();
     claim.validate()?;
     Ok(claim.username)
@@ -174,9 +155,7 @@ mod tests {
             .unwrap()
             .as_secs();
         claims.default_claims.expiration = Some(now + 2);
-        let token = match sign_with_jwt_priv_key(claims, "./tests/data/jwt/private.pem".to_string())
-            .await
-        {
+        let token = match sign_with_jwt_priv_key(claims, "./tests/data/jwt/private.pem").await {
             Ok(token) => token,
             Err(err) => panic!("{:?}", err),
         };

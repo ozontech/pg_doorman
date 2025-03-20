@@ -11,7 +11,7 @@ pub struct Args {
     #[arg(short, long, default_value_t = tracing::Level::INFO, env)]
     pub log_level: Level,
 
-    #[clap(short='F', long, value_enum, default_value_t=LogFormat::Text, env)]
+    #[clap(short = 'F', long, value_enum, default_value_t = LogFormat::Text, env)]
     pub log_format: LogFormat,
 
     #[arg(
@@ -36,4 +36,15 @@ pub enum LogFormat {
     Text,
     Structured,
     Debug,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cmd_parses() {
+        use clap::CommandFactory;
+        Args::command().debug_assert();
+    }
 }
