@@ -1,3 +1,13 @@
+# 1.8.0 (Mar 20th, 2025)
+
+### Fixed
+
+- Dependency fixes #15.
+
+### Added
+
+- release vendor-licenses.txt, [related thread](https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com).
+
 # 1.7.9 (Mar 16th, 2025)
 
 ### Added

@@ -6,3 +6,5 @@
 result
 /vendor.tar.gz
 /vendor
+/vendor-licenses.json
+/vendor-licenses.txt

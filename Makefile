@@ -5,6 +5,11 @@ vendor.tar.gz:
 	tar czf vendor.tar.gz ./vendor
 	@rm -rf vendor
 
+vendor-licenses.txt:
+	cargo install cargo-license
+	cargo license --json > ./vendor-licenses.json
+	python ./pkg/make_vendor_license.py ./vendor-licenses.json ./vendor-licenses.txt
+
 build:
 	cargo build --release
 

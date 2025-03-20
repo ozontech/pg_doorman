@@ -13,15 +13,16 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Create vendor.tar.gz
-        run: make vendor.tar.gz && sha256sum vendor.tar.gz > vendor-sha256sum.txt
+        run: |
+          make vendor.tar.gz && 
+          make vendor-licenses.txt &&
+          sha256sum vendor.tar.gz > vendor-sha256sum.txt
       - name: Release vendor.tar.gz
         if: startsWith(github.ref, 'refs/tags/')
-        run: gh release upload ${{ github.ref_name }} ./vendor.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ github.TOKEN }}
-      - name: Release vendor-sha256sum.txt
-        if: startsWith(github.ref, 'refs/tags/')
-        run: gh release upload ${{ github.ref_name }} ./vendor-sha256sum.txt
+        run: |
+          gh release upload ${{ github.ref_name }} ./vendor.tar.gz &&
+          gh release upload ${{ github.ref_name }} ./vendor-sha256sum.txt &&
+          gh release upload ${{ github.ref_name }} ./vendor-licenses.txt
         env:
           GITHUB_TOKEN: ${{ github.TOKEN }}
 
