@@ -6,7 +6,7 @@ vendor.tar.gz:
 	@rm -rf vendor
 
 vendor-licenses.txt:
-	cargo install cargo-license
+	cd /tmp && cargo install cargo-license
 	cargo license --json > ./vendor-licenses.json
 	python ./pkg/make_vendor_license.py ./vendor-licenses.json ./vendor-licenses.txt
 

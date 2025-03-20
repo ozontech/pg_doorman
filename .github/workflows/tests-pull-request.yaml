@@ -6,6 +6,16 @@ on:
 
 jobs:
 
+  licenses:
+    name: Check licenses
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Check licenses
+        run: |
+          make vendor-licenses.txt
+
   build:
     name: Rust tests and debug build.
     runs-on: ubuntu-latest
