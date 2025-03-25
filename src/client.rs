@@ -1,16 +1,20 @@
-use crate::errors::{ClientIdentifier, Error};
+use crate::errors::{
+    ClientBadStartupError, ClientError, ClientGeneralError, ClientIdentifier, Error,
+    HbaForbiddenError, ProtocolSyncError, TlsError,
+};
 /// Handle clients by pretending to be a PostgreSQL server.
 use bytes::{Buf, BufMut, BytesMut};
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::CStr;
+use std::marker::Unpin;
 use std::ops::DerefMut;
 use std::str;
 use std::sync::atomic::Ordering;
 use std::sync::{atomic::AtomicUsize, Arc};
 use std::time::Instant;
-use tokio::io::{split, AsyncReadExt, BufReader, ReadHalf, WriteHalf};
+use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, BufReader, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::mpsc::Sender;
@@ -310,9 +314,9 @@ pub async fn client_entrypoint(
 
                     // Client probably disconnected rejecting our plain text connection.
                     Ok((ClientConnectionType::Tls, _))
-                    | Ok((ClientConnectionType::CancelQuery, _)) => Err(Error::ProtocolSyncError(
-                        "Bad postgres client (plain)".into(),
-                    )),
+                    | Ok((ClientConnectionType::CancelQuery, _)) => {
+                        Err(ProtocolSyncError::BadClient { tls: false }.into())
+                    }
 
                     Err(err) => Err(err),
                 }
@@ -399,25 +403,21 @@ pub async fn client_entrypoint(
 /// Handle the first message the client sends.
 async fn get_startup<S>(stream: &mut S) -> Result<(ClientConnectionType, BytesMut), Error>
 where
-    S: tokio::io::AsyncRead + std::marker::Unpin + tokio::io::AsyncWrite,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     // Get startup message length.
-    let len = match stream.read_i32().await {
-        Ok(len) => len,
-        Err(_) => return Err(Error::ClientBadStartup),
-    };
+    let len = stream.read_i32().await.map_err(ClientBadStartupError::Io)?;
 
     // Get the rest of the message.
     let mut startup = vec![0u8; len as usize - 4];
-    match stream.read_exact(&mut startup).await {
-        Ok(_) => (),
-        Err(_) => return Err(Error::ClientBadStartup),
-    };
+    stream
+        .read_exact(&mut startup)
+        .await
+        .map_err(ClientBadStartupError::Io)?;
 
     let mut bytes = BytesMut::from(&startup[..]);
-    let code = bytes.get_i32();
 
-    match code {
+    match bytes.get_i32() {
         // Client is requesting SSL (TLS).
         SSL_REQUEST_CODE => Ok((ClientConnectionType::Tls, bytes)),
 
@@ -437,10 +437,7 @@ where
 
         // Something else, probably something is wrong, and it's not our fault,
         // e.g. badly implemented Postgres client.
-        _ => Err(Error::ProtocolSyncError(format!(
-            "Unexpected startup code: {}",
-            code
-        ))),
+        code => Err(ProtocolSyncError::UnexpectedStartupCode(code).into()),
     }
 }
 
@@ -469,56 +466,48 @@ pub async fn startup_tls(
         }
     };
 
-    let mut stream = match tls_acceptor.accept(stream).await {
-        Ok(stream) => stream,
-
-        // TLS negotiation failed.
-        Err(err) => {
-            error!("TLS negotiation failed: {:?}", err);
-            return Err(Error::TlsError);
-        }
-    };
+    let mut stream = tls_acceptor.accept(stream).await.map_err(TlsError::from)?;
 
     // TLS negotiation successful.
     // Continue with regular startup using encrypted connection.
-    match get_startup::<tokio_native_tls::TlsStream<TcpStream>>(&mut stream).await {
-        // Got good startup message, proceeding like normal except we
-        // are encrypted now.
-        Ok((ClientConnectionType::Startup, bytes)) => {
-            let (read, write) = split(stream);
+    Ok(
+        match get_startup::<tokio_native_tls::TlsStream<TcpStream>>(&mut stream).await? {
+            // Got good startup message, proceeding like normal except we
+            // are encrypted now.
+            (ClientConnectionType::Startup, bytes) => {
+                let (read, write) = split(stream);
 
-            Client::startup(
-                read,
-                write,
-                addr,
-                bytes,
-                client_server_map,
-                shutdown,
-                admin_only,
-                true,
-            )
-            .await
-        }
+                Client::startup(
+                    read,
+                    write,
+                    addr,
+                    bytes,
+                    client_server_map,
+                    shutdown,
+                    admin_only,
+                    true,
+                )
+                .await?
+            }
 
-        Ok((ClientConnectionType::CancelQuery, bytes)) => {
-            CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let (read, write) = split(stream);
-            Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
-        }
+            (ClientConnectionType::CancelQuery, bytes) => {
+                CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let (read, write) = split(stream);
+                Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await?
+            }
 
-        // Bad Postgres client.
-        Ok((ClientConnectionType::Tls, _)) => {
-           Err(Error::ProtocolSyncError("Bad postgres client (tls)".into()))
-        }
-
-        Err(err) => Err(err),
-    }
+            // Bad Postgres client.
+            (ClientConnectionType::Tls, _) => {
+                return Err(ProtocolSyncError::BadClient { tls: true }.into())
+            }
+        },
+    )
 }
 
 impl<S, T> Client<S, T>
 where
-    S: tokio::io::AsyncRead + std::marker::Unpin,
-    T: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncRead + Unpin,
+    T: AsyncWrite + Unpin,
 {
     pub fn is_admin(&self) -> bool {
         self.admin
@@ -540,14 +529,7 @@ where
         let parameters = parse_startup(bytes.clone())?;
 
         // This parameter is mandatory by the protocol.
-        let username = match parameters.get("user") {
-            Some(user) => user,
-            None => {
-                return Err(Error::ClientError(
-                    "Missing user parameter on client startup".into(),
-                ))
-            }
-        };
+        let username = parameters.get("user").ok_or(ClientError::NoUserParam)?;
 
         let pool_name = parameters.get("database").unwrap_or(username);
 
@@ -583,11 +565,11 @@ where
         if !addr_in_hba(addr.ip()) {
             error_response_terminal(&mut write, "hba forbidden for this ip address", "28000")
                 .await?;
-            return Err(Error::HbaForbiddenError(format!(
-                "hba forbidden client: {} from address: {:?}",
-                client_identifier,
-                addr.ip()
-            )));
+            return Err(HbaForbiddenError {
+                client: client_identifier,
+                address: addr,
+            }
+            .into());
         }
 
         // Generate random backend ID and secret key
@@ -611,12 +593,14 @@ where
             );
 
             if password_hash != password_response {
-                let error = Error::ClientGeneralError("Invalid password".into(), client_identifier);
+                let error = ClientGeneralError::InvalidPassword {
+                    id: client_identifier,
+                };
 
-                warn!("{}", error);
+                warn!("{error}");
                 wrong_password(&mut write, username).await?;
 
-                return Err(error);
+                return Err(error.into());
             }
 
             (false, generate_server_parameters_for_admin())
@@ -637,10 +621,11 @@ where
                     )
                     .await?;
 
-                    return Err(Error::ClientGeneralError(
-                        "Invalid pool name".into(),
-                        client_identifier,
-                    ));
+                    return Err(ClientGeneralError::InvalidPoolName {
+                        id: client_identifier,
+                        pool_name: pool_name.clone(),
+                    }
+                    .into());
                 }
             };
             let pool_password = pool.settings.user.password.clone();
@@ -910,7 +895,7 @@ where
                 Ok(message) => message,
                 Err(err) => return self.process_error(err).await,
             };
-            if message[0] as char == 'X' {
+            if message[0] == b'X' {
                 self.stats.disconnect();
                 return Ok(());
             }
@@ -1027,7 +1012,7 @@ where
                             current_pool.address.stats.error();
                             self.stats.checkout_error();
 
-                            if message[0] as char == 'S' {
+                            if message[0] == b'S' {
                                 self.reset_buffered_state();
                             }
 
@@ -1076,7 +1061,7 @@ where
                 if current_pool.settings.sync_server_parameters {
                     server.sync_parameters(&self.server_parameters).await?;
                 }
-                server.set_flush_wait_code(' ');
+                server.set_flush_wait_code(b' ');
 
                 let mut initial_message = Some(message);
 
@@ -1112,11 +1097,11 @@ where
 
                     // Safe to unwrap because we know this message has a certain length and has the code
                     // This reads the first byte without advancing the internal pointer and mutating the bytes
-                    let code = *message.first().unwrap() as char;
+                    let code = *message.first().unwrap();
 
                     match code {
                         // Query
-                        'Q' => {
+                        b'Q' => {
                             self.send_and_receive_loop(Some(&message), server).await?;
                             self.stats.query();
                             server.stats.query(
@@ -1141,7 +1126,7 @@ where
                         }
 
                         // Terminate
-                        'X' => {
+                        b'X' => {
                             // принудительно закрываем чтобы не допустить длинную транзакцию
                             server.checkin_cleanup().await?;
                             self.stats.disconnect();
@@ -1151,31 +1136,31 @@ where
 
                         // Parse
                         // The query with placeholders is here, e.g. `SELECT * FROM users WHERE email = $1 AND active = $2`.
-                        'P' => {
+                        b'P' => {
                             self.buffer_parse(message, current_pool)?;
                         }
 
                         // Bind
-                        'B' => {
+                        b'B' => {
                             self.buffer_bind(message).await?;
                         }
 
                         // Describe
                         // Command a client can issue to describe a previously prepared named statement.
-                        'D' => {
+                        b'D' => {
                             self.buffer_describe(message).await?;
                         }
 
                         // Execute
                         // Execute a prepared statement prepared in `P` and bound in `B`.
-                        'E' => {
+                        b'E' => {
                             self.extended_protocol_data_buffer
                                 .push_back(ExtendedProtocolData::create_new_execute(message));
                         }
 
                         // Close
                         // Close the prepared statement.
-                        'C' => {
+                        b'C' => {
                             let close: Close = (&message).try_into()?;
 
                             self.extended_protocol_data_buffer
@@ -1184,7 +1169,7 @@ where
 
                         // Sync
                         // Frontend (client) is asking for the query result now.
-                        'S' | 'H' => {
+                        b'S' | b'H' => {
                             // Prepared statements can arrive like this
                             // 1. Without named describe
                             //      Client: Parse, with name, query and params
@@ -1208,13 +1193,13 @@ where
                             //              RowDescription
                             //              ReadyForQuery
                             // Iterate over our extended protocol data that we've buffered
-                            let mut async_wait_code = ' ';
+                            let mut async_wait_code = b' ';
                             while let Some(protocol_data) =
                                 self.extended_protocol_data_buffer.pop_front()
                             {
                                 match protocol_data {
                                     ExtendedProtocolData::Parse { data, metadata } => {
-                                        async_wait_code = '1';
+                                        async_wait_code = b'1';
                                         debug!("Have parse in extended buffer");
                                         let (parse, hash) = match metadata {
                                             Some(metadata) => metadata,
@@ -1259,7 +1244,7 @@ where
                                         }
                                     }
                                     ExtendedProtocolData::Bind { data, metadata } => {
-                                        async_wait_code = '2';
+                                        async_wait_code = b'2';
                                         // This is using a prepared statement
                                         if let Some(client_given_name) = metadata {
                                             self.ensure_prepared_statement_is_on_server(
@@ -1273,7 +1258,7 @@ where
                                         self.buffer.put(&data[..]);
                                     }
                                     ExtendedProtocolData::Describe { data, metadata } => {
-                                        async_wait_code = 'T';
+                                        async_wait_code = b'T';
                                         // This is using a prepared statement
                                         if let Some(client_given_name) = metadata {
                                             self.ensure_prepared_statement_is_on_server(
@@ -1287,7 +1272,7 @@ where
                                         self.buffer.put(&data[..]);
                                     }
                                     ExtendedProtocolData::Execute { data } => {
-                                        async_wait_code = 'C';
+                                        async_wait_code = b'C';
                                         self.buffer.put(&data[..])
                                     }
                                     ExtendedProtocolData::Close { data, close } => {
@@ -1311,11 +1296,11 @@ where
                             // Add the sync message
                             self.buffer.put(&message[..]);
 
-                            if code == 'H' {
+                            if code == b'H' {
                                 server.set_flush_wait_code(async_wait_code);
                                 debug!("Client requested flush, going async");
                             } else {
-                                server.set_flush_wait_code(' ')
+                                server.set_flush_wait_code(b' ')
                             }
 
                             self.send_and_receive_loop(None, server).await?;
@@ -1340,7 +1325,7 @@ where
                                         self.client_last_messages_in_tx
                                             .put(&self.response_message_queue_buffer[..]);
                                         self.client_last_messages_in_tx = set_messages_right_place(
-                                            self.client_last_messages_in_tx.to_vec(),
+                                            &self.client_last_messages_in_tx,
                                         )?;
                                         self.response_message_queue_buffer.clear();
                                     }
@@ -1364,7 +1349,7 @@ where
                                             .as_str(),
                                         false,
                                     );
-                                    return Err(err);
+                                    return Err(err.into());
                                 }
 
                                 self.response_message_queue_buffer.clear();
@@ -1372,7 +1357,7 @@ where
                         }
 
                         // CopyData
-                        'd' => {
+                        b'd' => {
                             self.buffer.put(&message[..]);
 
                             // Want to limit buffer size
@@ -1385,7 +1370,7 @@ where
 
                         // CopyDone or CopyFail
                         // Copy is done, successfully or not.
-                        'c' | 'f' => {
+                        b'c' | b'f' => {
                             // We may already have some copy data in the buffer, add this message to buffer
                             self.buffer.put(&message[..]);
 
@@ -1411,7 +1396,7 @@ where
                                         .as_str(),
                                         false,
                                     );
-                                    return Err(err);
+                                    return Err(err.into());
                                 }
                             };
 
@@ -1479,36 +1464,27 @@ where
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
-        match self.prepared_statements.get(&client_name) {
-            Some((parse, hash)) => {
-                debug!("Prepared statement `{}` found in cache", client_name);
-                // In this case we want to send the parse message to the server
-                // since pgcat is initiating the prepared statement on this specific server
-                match self
-                    .register_parse_to_server_cache(true, hash, parse, pool, server)
-                    .await
-                {
-                    Ok(_) => (),
-                    Err(err) => match err {
-                        Error::PreparedStatementError => {
-                            debug!("Removed {} from client cache", client_name);
-                            self.prepared_statements.remove(&client_name);
-                        }
+        let Some((parse, hash)) = self.prepared_statements.get(&client_name) else {
+            return Err(ClientError::PreparedStatementNotFound(client_name).into());
+        };
 
-                        _ => {
-                            return Err(err);
-                        }
-                    },
+        debug!("Prepared statement {client_name:?} found in cache");
+        // In this case we want to send the parse message to the server
+        // since pgcat is initiating the prepared statement on this specific server
+        if let Err(e) = self
+            .register_parse_to_server_cache(true, hash, parse, pool, server)
+            .await
+        {
+            match e {
+                Error::NoPreparedStatement => {
+                    debug!("Removed {client_name:?} from client cache");
+                    self.prepared_statements.remove(&client_name);
+                }
+                e => {
+                    return Err(e);
                 }
             }
-
-            None => {
-                return Err(Error::ClientError(format!(
-                    "prepared statement `{}` not found",
-                    client_name
-                )))
-            }
-        };
+        }
 
         Ok(())
     }
@@ -1554,14 +1530,8 @@ where
         let hash = parse.get_hash();
 
         // Add the statement to the cache or check if we already have it
-        let new_parse = match pool.register_parse_to_cache(hash, &parse) {
-            Some(parse) => parse,
-            None => {
-                return Err(Error::ClientError(format!(
-                    "Could not store Prepared statement `{}`",
-                    client_given_name
-                )))
-            }
+        let Some(new_parse) = pool.register_parse_to_cache(hash, &parse) else {
+            return Err(ClientError::PreparesStatementStore(client_given_name).into());
         };
 
         debug!(
@@ -1575,7 +1545,7 @@ where
         self.extended_protocol_data_buffer
             .push_back(ExtendedProtocolData::create_new_parse(
                 new_parse.as_ref().try_into()?,
-                Some((new_parse.clone(), hash)),
+                Some((new_parse, hash)),
             ));
 
         Ok(())
@@ -1584,7 +1554,7 @@ where
     /// Rewrite the Bind (F) message to use the prepared statement name
     /// saved in the client cache.
     async fn buffer_bind(&mut self, message: BytesMut) -> Result<(), Error> {
-        // Avoid parsing if prepared statements not enabled
+        // Avoid parsing if prepared statements are not enabled
         if !self.prepared_statements_enabled {
             debug!("Anonymous bind message");
             self.extended_protocol_data_buffer
@@ -1594,43 +1564,32 @@ where
 
         let client_given_name = Bind::get_name(&message)?;
 
-        match self.prepared_statements.get(&client_given_name) {
-            Some((rewritten_parse, _)) => {
-                let message = Bind::rename(message, &rewritten_parse.name)?;
+        let Some((rewritten_parse, _)) = self.prepared_statements.get(&client_given_name) else {
+            debug!("Got bind for unknown prepared statement {client_given_name:?}");
 
-                debug!(
-                    "Rewrote bind `{}` to `{}`",
-                    client_given_name, rewritten_parse.name
-                );
+            error_response(
+                &mut self.write,
+                &format!("prepared statement {client_given_name:?} does not exist"),
+                "58000",
+            )
+            .await?;
 
-                self.extended_protocol_data_buffer.push_back(
-                    ExtendedProtocolData::create_new_bind(message, Some(client_given_name)),
-                );
+            return Err(ClientError::PreparedStatementNotFound(client_given_name).into());
+        };
+        let message = Bind::rename(message, &rewritten_parse.name)?;
 
-                Ok(())
-            }
-            None => {
-                debug!(
-                    "Got bind for unknown prepared statement {:?}",
-                    client_given_name
-                );
+        debug!(
+            "Rewrote bind {client_given_name:?} to {:?}",
+            rewritten_parse.name
+        );
 
-                error_response(
-                    &mut self.write,
-                    &format!(
-                        "prepared statement \"{}\" does not exist",
-                        client_given_name
-                    ),
-                    "58000",
-                )
-                .await?;
+        self.extended_protocol_data_buffer
+            .push_back(ExtendedProtocolData::create_new_bind(
+                message,
+                Some(client_given_name),
+            ));
 
-                Err(Error::ClientError(format!(
-                    "Prepared statement `{}` doesn't exist",
-                    client_given_name
-                )))
-            }
-        }
+        Ok(())
     }
 
     /// Rewrite the Describe (F) message to use the prepared statement name
@@ -1655,45 +1614,33 @@ where
         }
 
         let client_given_name = describe.statement_name.clone();
+        let Some((rewritten_parse, _)) = self.prepared_statements.get(&client_given_name) else {
+            debug!("Got describe for unknown prepared statement {describe:?}");
 
-        match self.prepared_statements.get(&client_given_name) {
-            Some((rewritten_parse, _)) => {
-                let describe = describe.rename(&rewritten_parse.name);
+            error_response(
+                &mut self.write,
+                &format!("prepared statement {client_given_name:?} does not exist"),
+                "58000",
+            )
+            .await?;
 
-                debug!(
-                    "Rewrote describe `{}` to `{}`",
-                    client_given_name, describe.statement_name
-                );
+            return Err(ClientError::PreparedStatementNotFound(client_given_name).into());
+        };
 
-                self.extended_protocol_data_buffer.push_back(
-                    ExtendedProtocolData::create_new_describe(
-                        describe.try_into()?,
-                        Some(client_given_name),
-                    ),
-                );
+        let describe = describe.rename(&rewritten_parse.name);
 
-                Ok(())
-            }
+        debug!(
+            "Rewrote describe {client_given_name:?} to {:?}",
+            describe.statement_name
+        );
 
-            None => {
-                debug!("Got describe for unknown prepared statement {:?}", describe);
+        self.extended_protocol_data_buffer
+            .push_back(ExtendedProtocolData::create_new_describe(
+                describe.try_into()?,
+                Some(client_given_name),
+            ));
 
-                error_response(
-                    &mut self.write,
-                    &format!(
-                        "prepared statement \"{}\" does not exist",
-                        client_given_name
-                    ),
-                    "58000",
-                )
-                .await?;
-
-                Err(Error::ClientError(format!(
-                    "Prepared statement `{}` doesn't exist",
-                    client_given_name
-                )))
-            }
-        }
+        Ok(())
     }
 
     fn reset_buffered_state(&mut self) {
@@ -1724,13 +1671,13 @@ where
                 )
                 .await?;
 
-                Err(Error::ClientError(format!(
-                    "Invalid pool name {{ username: {}, pool_name: {}, application_name: {}, virtual pool id: {} }}",
-                    self.pool_name,
-                    self.username,
-                    self.server_parameters.get_application_name(),
-                    virtual_pool_id
-                )))
+                Err(ClientError::InvalidPoolName {
+                    username: self.username.clone(),
+                    pool_name: self.pool_name.clone(),
+                    application_name: self.server_parameters.get_application_name().clone(),
+                    virtual_pool_id,
+                }
+                .into())
             }
         }
     }
@@ -1779,20 +1726,20 @@ where
 
             if !self.response_message_queue_buffer.is_empty() {
                 response.put(&self.response_message_queue_buffer[..]);
-                response = set_messages_right_place(response.to_vec())?;
+                response = set_messages_right_place(&response)?;
                 self.response_message_queue_buffer.clear();
             }
 
             self.stats.active_write();
             match write_all_flush(&mut self.write, &response).await {
                 Ok(_) => self.stats.active_idle(),
-                Err(err_write) => {
+                Err(err) => {
                     server.wait_available().await;
                     server.mark_bad(
-                        format!("flush to client {} {:?}", self.addr, err_write).as_str(),
+                        format!("flush to client {} {:?}", self.addr, err).as_str(),
                         true,
                     );
-                    return Err(err_write);
+                    return Err(err.into());
                 }
             };
 
@@ -1814,7 +1761,7 @@ where
                 .await?;
                 Err(err)
             }
-            Error::CurrentMemoryUsage => {
+            Error::MemoryLimitReached => {
                 error_response(
                     &mut self.write,
                     format!("could not read message, temporary out of memory - {}", err).as_str(),

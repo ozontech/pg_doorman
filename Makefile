@@ -1,4 +1,5 @@
 .DEFAULT_GOAL := build
+.PHONY: build install test
 
 vendor.tar.gz:
 	cargo vendor ./vendor
@@ -19,4 +20,3 @@ install: build
 
 test:
 	cargo test
-	./tests/tests.sh

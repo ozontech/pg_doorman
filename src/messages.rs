@@ -4,12 +4,15 @@ use bytes::{Buf, BufMut, BytesMut};
 use log::error;
 use md5::{Digest, Md5};
 use socket2::{SockRef, TcpKeepalive};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpStream, UnixStream};
 
 use crate::client::PREPARED_STATEMENT_COUNTER;
 use crate::config::get_config;
-use crate::errors::Error;
+use crate::errors::{
+    ClientBadStartupError, Error, ParseBytesError, ProtocolSyncError, ServerMessageParseError,
+    SocketError,
+};
 
 use crate::constants::{AUTHENTICATION_CLEAR_PASSWORD, MESSAGE_TERMINATOR, SCRAM_SHA_256};
 use crate::errors::Error::ProxyTimeout;
@@ -20,6 +23,7 @@ use std::ffi::CString;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, Cursor};
+use std::marker::Unpin;
 use std::mem;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -62,7 +66,7 @@ impl From<&DataType> for i32 {
 /// Tell the client that authentication handshake completed successfully.
 pub async fn auth_ok<S>(stream: &mut S) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut auth_ok = BytesMut::with_capacity(9);
 
@@ -76,7 +80,7 @@ where
 /// Generate md5 password challenge.
 pub async fn md5_challenge<S>(stream: &mut S) -> Result<[u8; 4], Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     // let mut rng = rand::thread_rng();
     let salt: [u8; 4] = [
@@ -98,7 +102,7 @@ where
 
 pub async fn plain_password_challenge<S>(stream: &mut S) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut res = BytesMut::new();
     res.put_u8(b'R');
@@ -112,7 +116,7 @@ where
 /// Generate scram password challenge.
 pub async fn scram_start_challenge<S>(stream: &mut S) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut res = BytesMut::new();
     res.put_u8(b'R');
@@ -127,7 +131,7 @@ where
 
 pub async fn scram_server_response<S>(stream: &mut S, code: i32, data: &str) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut res = BytesMut::new();
     res.put_u8(b'R');
@@ -139,7 +143,7 @@ where
 
 pub async fn read_password<S>(stream: &mut S) -> Result<Vec<u8>, Error>
 where
-    S: tokio::io::AsyncRead + std::marker::Unpin,
+    S: AsyncRead + Unpin,
 {
     let code = match stream.read_u8().await {
         Ok(p) => p,
@@ -149,11 +153,12 @@ where
             ))
         }
     };
-    if code as char != 'p' {
-        return Err(Error::ProtocolSyncError(format!(
-            "Expected p, got {}",
-            code as char
-        )));
+    if code != b'p' {
+        return Err(ProtocolSyncError::InvalidCode {
+            expected: b'p',
+            actual: code,
+        }
+        .into());
     };
     let len = match stream.read_i32().await {
         Ok(len) => len,
@@ -175,7 +180,7 @@ pub async fn backend_key_data<S>(
     secret_key: i32,
 ) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut key_data = BytesMut::from(&b"K"[..]);
     key_data.put_i32(12);
@@ -199,7 +204,7 @@ pub fn simple_query(query: &str) -> BytesMut {
 /// Tell the client we're ready for another query.
 pub async fn send_ready_for_query<S>(stream: &mut S) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     write_all(stream, ready_for_query(false)).await
 }
@@ -208,7 +213,7 @@ where
 /// This tells the server which user we are and what database we want.
 pub async fn startup<S>(stream: &mut S, user: String, database: &str) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut bytes = BytesMut::with_capacity(25);
 
@@ -261,15 +266,15 @@ pub async fn ssl_request(stream: &mut TcpStream) -> Result<(), Error> {
 }
 
 /// Parse the params the server sends as a key/value format.
-pub fn parse_params(mut bytes: BytesMut) -> Result<HashMap<String, String>, Error> {
-    let mut result = HashMap::new();
+pub fn parse_params(mut bytes: BytesMut) -> Result<HashMap<String, String>, ClientBadStartupError> {
+    // TODO: don't create temporary buffer and aggregate directly into map.
     let mut buf = Vec::new();
     let mut tmp = String::new();
 
     while bytes.has_remaining() {
         let mut c = bytes.get_u8();
 
-        // Null-terminated C-strings.
+        // Nul-terminated C-strings.
         while c != 0 {
             tmp.push(c as char);
             c = bytes.get_u8();
@@ -281,32 +286,29 @@ pub fn parse_params(mut bytes: BytesMut) -> Result<HashMap<String, String>, Erro
         }
     }
 
-    // Expect pairs of name and value
-    // and at least one pair to be present.
-    if buf.len() % 2 != 0 || buf.len() < 2 {
-        return Err(Error::ClientBadStartup);
+    if buf.is_empty() {
+        return Err(ClientBadStartupError::NoParams);
     }
 
-    let mut i = 0;
-    while i < buf.len() {
-        let name = buf[i].clone();
-        let value = buf[i + 1].clone();
-        let _ = result.insert(name, value);
-        i += 2;
+    let chunks = buf.chunks_exact(2);
+    if !chunks.remainder().is_empty() {
+        return Err(ClientBadStartupError::UnevenParams);
     }
 
-    Ok(result)
+    Ok(chunks
+        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .collect())
 }
 
 /// Parse StartupMessage parameters.
 /// e.g. user, database, application_name, etc.
-pub fn parse_startup(bytes: BytesMut) -> Result<HashMap<String, String>, Error> {
+pub fn parse_startup(bytes: BytesMut) -> Result<HashMap<String, String>, ClientBadStartupError> {
     let result = parse_params(bytes)?;
 
     // Minimum required parameters
     // I want to have the user at the very minimum, according to the protocol spec.
     if !result.contains_key("user") {
-        return Err(Error::ClientBadStartup);
+        return Err(ClientBadStartupError::UserUnspecified);
     }
 
     Ok(result)
@@ -350,7 +352,7 @@ pub async fn md5_password<S>(
     salt: &[u8],
 ) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let password = md5_hash_password(user, password, salt);
 
@@ -365,7 +367,7 @@ where
 
 pub async fn md5_password_with_hash<S>(stream: &mut S, hash: &str, salt: &[u8]) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let password = md5_hash_second_pass(hash, salt);
     let mut message = BytesMut::with_capacity(password.len() as usize + 5);
@@ -381,7 +383,7 @@ where
 /// This tells the client we're ready for the next query.
 pub async fn custom_protocol_response_ok<S>(stream: &mut S, message: &str) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut res = BytesMut::with_capacity(25);
 
@@ -399,7 +401,7 @@ where
 
 pub async fn error_response<S>(stream: &mut S, message: &str, code: &str) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     error_response_terminal(stream, message, code).await?;
     send_ready_for_query(stream).await
@@ -411,7 +413,7 @@ pub async fn error_response_terminal<S>(
     code: &str,
 ) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut error = BytesMut::new();
 
@@ -441,12 +443,12 @@ where
     res.put_i32(error.len() as i32 + 4);
     res.put(error);
 
-    write_all_flush(stream, &res).await
+    Ok(write_all_flush(stream, &res).await?)
 }
 
 pub async fn wrong_password<S>(stream: &mut S, user: &str) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     let mut error = BytesMut::new();
 
@@ -464,7 +466,7 @@ where
 
     // The short error message.
     error.put_u8(b'M');
-    error.put_slice(format!("password authentication failed for user \"{}\"\0", user).as_bytes());
+    error.put_slice(format!("password authentication failed for user {user:?}\0").as_bytes());
 
     // No more fields follow.
     error.put_u8(0);
@@ -489,7 +491,7 @@ pub fn row_description(columns: &Vec<(&str, DataType)>) -> BytesMut {
 
     for (name, data_type) in columns {
         // Column name
-        row_desc.put_slice(format!("{}\0", name).as_bytes());
+        row_desc.put_slice(format!("{name}\0").as_bytes());
 
         // Doesn't belong to any table
         row_desc.put_i32(0);
@@ -559,7 +561,7 @@ pub fn data_row_nullable(row: &Vec<Option<String>>) -> BytesMut {
             data_row.put_i32(column.len() as i32);
             data_row.put_slice(column);
         } else {
-            data_row.put_i32(-1_i32);
+            data_row.put_i32(-1);
         }
     }
 
@@ -572,7 +574,7 @@ pub fn data_row_nullable(row: &Vec<Option<String>>) -> BytesMut {
 
 /// Create a CommandComplete message.
 pub fn command_complete(command: &str) -> BytesMut {
-    let cmd = BytesMut::from(format!("{}\0", command).as_bytes());
+    let cmd = BytesMut::from(format!("{command}\0").as_bytes());
     let mut res = BytesMut::new();
     res.put_u8(b'C');
     res.put_i32(cmd.len() as i32 + 4);
@@ -586,8 +588,8 @@ pub fn notify(message: &str, details: String) -> BytesMut {
 
     notify_cmd.put_slice("SNOTICE\0".as_bytes());
     notify_cmd.put_slice("C00000\0".as_bytes());
-    notify_cmd.put_slice(format!("M{}\0", message).as_bytes());
-    notify_cmd.put_slice(format!("D{}\0", details).as_bytes());
+    notify_cmd.put_slice(format!("M{message}\0").as_bytes());
+    notify_cmd.put_slice(format!("D{details}\0").as_bytes());
 
     // this extra byte says that is the end of the package
     notify_cmd.put_u8(0);
@@ -652,11 +654,7 @@ pub fn ready_for_query(in_transaction: bool) -> BytesMut {
 
     bytes.put_u8(b'Z');
     bytes.put_i32(5);
-    if in_transaction {
-        bytes.put_u8(b'T');
-    } else {
-        bytes.put_u8(b'I');
-    }
+    bytes.put_u8(if in_transaction { b'T' } else { b'I' });
 
     bytes
 }
@@ -664,7 +662,7 @@ pub fn ready_for_query(in_transaction: bool) -> BytesMut {
 /// Write all data in the buffer to the TcpStream.
 pub async fn write_all<S>(stream: &mut S, buf: BytesMut) -> Result<(), Error>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
     match stream.write_all(&buf).await {
         Ok(_) => Ok(()),
@@ -676,42 +674,26 @@ where
 }
 
 /// Write all the data in the buffer to the TcpStream, write owned half (see mpsc).
-pub async fn write_all_half<S>(stream: &mut S, buf: &BytesMut) -> Result<(), Error>
+pub async fn write_all_half<S>(stream: &mut S, buf: &BytesMut) -> Result<(), SocketError>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
-    match stream.write_all(buf).await {
-        Ok(_) => Ok(()),
-        Err(err) => Err(Error::SocketError(format!(
-            "Error writing to socket: {:?}",
-            err
-        ))),
-    }
+    stream.write_all(buf).await.map_err(SocketError::Write)
 }
 
-pub async fn write_all_flush<S>(stream: &mut S, buf: &[u8]) -> Result<(), Error>
+pub async fn write_all_flush<S>(stream: &mut S, buf: &[u8]) -> Result<(), SocketError>
 where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
+    S: AsyncWrite + Unpin,
 {
-    match stream.write_all(buf).await {
-        Ok(_) => match stream.flush().await {
-            Ok(_) => Ok(()),
-            Err(err) => Err(Error::SocketError(format!(
-                "Error flushing socket: {:?}",
-                err
-            ))),
-        },
-        Err(err) => Err(Error::SocketError(format!(
-            "Error writing to socket: {:?}",
-            err
-        ))),
-    }
+    stream.write_all(buf).await.map_err(SocketError::Write)?;
+    stream.flush().await.map_err(SocketError::Flush)?;
+    Ok(())
 }
 
 /// Read header.
 pub async fn read_message_header<S>(stream: &mut S) -> Result<(u8, i32), Error>
 where
-    S: tokio::io::AsyncRead + std::marker::Unpin,
+    S: AsyncRead + Unpin,
 {
     let code = match stream.read_u8().await {
         Ok(code) => code,
@@ -737,7 +719,7 @@ where
 /// Read a message data from the socket.
 pub async fn read_message_data<S>(stream: &mut S, code: u8, len: i32) -> Result<BytesMut, Error>
 where
-    S: tokio::io::AsyncRead + std::marker::Unpin,
+    S: AsyncRead + Unpin,
 {
     let mut bytes = BytesMut::with_capacity(len as usize + 1);
 
@@ -775,7 +757,7 @@ where
 /// Read a complete message from the socket.
 pub async fn read_message<S>(stream: &mut S, max_memory_usage: u64) -> Result<BytesMut, Error>
 where
-    S: tokio::io::AsyncRead + std::marker::Unpin,
+    S: AsyncRead + Unpin,
 {
     let (code, len) = read_message_header(stream).await?;
     if len > MAX_MESSAGE_SIZE {
@@ -790,8 +772,7 @@ where
     };
     let current_memory = CURRENT_MEMORY.load(Ordering::Relaxed);
     if current_memory > max_memory_usage as i64 {
-        error!("reached memory limit while processing code '{}' message len '{}' current memory usage: '{}' maximum memory usage: '{}'",
-            code as char, len, current_memory, max_memory_usage);
+        error!("reached memory limit while processing code '{code:#x}' message len '{len}' current memory usage: '{current_memory}' maximum memory usage: '{max_memory_usage}'");
         proxy_copy_data_with_timeout(
             Duration::from_millis(get_config().general.proxy_copy_data_timeout),
             stream,
@@ -799,7 +780,7 @@ where
             len as usize - mem::size_of::<i32>(),
         )
         .await?;
-        return Err(Error::CurrentMemoryUsage);
+        return Err(Error::MemoryLimitReached);
     }
     CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
     let bytes = read_message_data(stream, code, len).await?;
@@ -814,22 +795,18 @@ pub async fn proxy_copy_data_with_timeout<R, W>(
     len: usize,
 ) -> Result<usize, Error>
 where
-    R: tokio::io::AsyncRead + std::marker::Unpin,
-    W: tokio::io::AsyncWrite + std::marker::Unpin,
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
-    match timeout(duration, proxy_copy_data(read, write, len)).await {
-        Ok(res) => match res {
-            Ok(len) => Ok(len),
-            Err(err) => Err(err),
-        },
-        Err(_) => Err(ProxyTimeout),
-    }
+    timeout(duration, proxy_copy_data(read, write, len))
+        .await
+        .map_err(|_| ProxyTimeout)?
 }
 
 pub async fn proxy_copy_data<R, W>(read: &mut R, write: &mut W, len: usize) -> Result<usize, Error>
 where
-    R: tokio::io::AsyncRead + std::marker::Unpin,
-    W: tokio::io::AsyncWrite + std::marker::Unpin,
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
     const MAX_BUFFER_CHUNK: usize = 4096; // гарантия того что вызовы read из
                                           // буфферизированного stream 8kb будет быстрым.
@@ -910,23 +887,14 @@ pub fn configure_unix_socket(stream: &UnixStream) {
     let sock_ref = SockRef::from(stream);
     let conf = get_config();
 
-    match sock_ref.set_linger(Some(Duration::from_secs(conf.general.tcp_so_linger))) {
-        Ok(_) => {}
-        Err(err) => error!("Could not configure unix_so_linger for socket: {}", err),
+    if let Err(e) = sock_ref.set_linger(Some(Duration::from_secs(conf.general.tcp_so_linger))) {
+        error!("Could not configure unix_so_linger for socket: {e}")
     }
-    match sock_ref.set_send_buffer_size(conf.general.unix_socket_buffer_size) {
-        Ok(_) => {}
-        Err(err) => error!(
-            "Could not configure set_send_buffer_size for socket: {}",
-            err
-        ),
+    if let Err(e) = sock_ref.set_send_buffer_size(conf.general.unix_socket_buffer_size) {
+        error!("Could not configure set_send_buffer_size for socket: {e}",)
     }
-    match sock_ref.set_recv_buffer_size(conf.general.unix_socket_buffer_size) {
-        Ok(_) => {}
-        Err(err) => error!(
-            "Could not configure set_recv_buffer_size for socket: {}",
-            err
-        ),
+    if let Err(e) = sock_ref.set_recv_buffer_size(conf.general.unix_socket_buffer_size) {
+        error!("Could not configure set_recv_buffer_size for socket: {e}",)
     }
 }
 
@@ -934,61 +902,51 @@ pub fn configure_tcp_socket(stream: &TcpStream) {
     let sock_ref = SockRef::from(stream);
     let conf = get_config();
 
-    match sock_ref.set_linger(Some(Duration::from_secs(conf.general.tcp_so_linger))) {
-        Ok(_) => {}
-        Err(err) => error!("Could not configure tcp_so_linger for socket: {}", err),
+    if let Err(e) = sock_ref.set_linger(Some(Duration::from_secs(conf.general.tcp_so_linger))) {
+        error!("Could not configure tcp_so_linger for socket: {e}");
+    };
+
+    if let Err(e) = sock_ref.set_nodelay(conf.general.tcp_no_delay) {
+        error!("Could not configure no delay for socket: {}", e)
     }
 
-    match sock_ref.set_nodelay(conf.general.tcp_no_delay) {
-        Ok(_) => {}
-        Err(err) => error!("Could not configure no delay for socket: {}", err),
-    }
-
-    match sock_ref.set_keepalive(true) {
-        Ok(_) => {
-            match sock_ref.set_tcp_keepalive(
-                &TcpKeepalive::new()
-                    .with_interval(Duration::from_secs(conf.general.tcp_keepalives_interval))
-                    .with_retries(conf.general.tcp_keepalives_count)
-                    .with_time(Duration::from_secs(conf.general.tcp_keepalives_idle)),
-            ) {
-                Ok(_) => (),
-                Err(err) => error!("Could not configure tcp_keepalive for socket: {}", err),
-            }
-        }
-        Err(err) => error!("Could not configure socket: {}", err),
+    if let Err(err) = sock_ref.set_keepalive(true) {
+        error!("Could not configure socket: {err}")
+    } else if let Err(err) = sock_ref.set_tcp_keepalive(
+        &TcpKeepalive::new()
+            .with_interval(Duration::from_secs(conf.general.tcp_keepalives_interval))
+            .with_retries(conf.general.tcp_keepalives_count)
+            .with_time(Duration::from_secs(conf.general.tcp_keepalives_idle)),
+    ) {
+        error!("Could not configure tcp_keepalive for socket: {err}")
     }
 }
 
 pub trait BytesMutReader {
-    fn read_string(&mut self) -> Result<String, Error>;
+    fn read_string(&mut self) -> Result<String, ParseBytesError>;
 }
 
 impl BytesMutReader for Cursor<&BytesMut> {
     /// Should only be used when reading strings from the message protocol.
     /// Can be used to read multiple strings from the same message which are separated by the null byte
-    fn read_string(&mut self) -> Result<String, Error> {
+    fn read_string(&mut self) -> Result<String, ParseBytesError> {
         let mut buf = vec![];
-        match self.read_until(b'\0', &mut buf) {
-            Ok(_) => Ok(String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string()),
-            Err(err) => Err(Error::ParseBytesError(err.to_string())),
-        }
+        self.read_until(b'\0', &mut buf)?;
+        Ok(String::from_utf8_lossy(&buf[..buf.len() - 1]).to_string())
     }
 }
 
 impl BytesMutReader for BytesMut {
     /// Should only be used when reading strings from the message protocol.
     /// Can be used to read multiple strings from the same message which are separated by the null byte
-    fn read_string(&mut self) -> Result<String, Error> {
-        let null_index = self.iter().position(|&byte| byte == b'\0');
+    fn read_string(&mut self) -> Result<String, ParseBytesError> {
+        let index = self
+            .iter()
+            .position(|&byte| byte == b'\0')
+            .ok_or(ParseBytesError::NoNul)?;
 
-        match null_index {
-            Some(index) => {
-                let string_bytes = self.split_to(index + 1);
-                Ok(String::from_utf8_lossy(&string_bytes[..string_bytes.len() - 1]).to_string())
-            }
-            None => Err(Error::ParseBytesError("Could not read string".to_string())),
-        }
+        let string_bytes = self.split_to(index + 1);
+        Ok(String::from_utf8_lossy(&string_bytes[..string_bytes.len() - 1]).to_string())
     }
 }
 
@@ -1127,7 +1085,7 @@ impl Parse {
     }
 
     /// Gets the name of the prepared statement from the buffer
-    pub fn get_name(buf: &BytesMut) -> Result<String, Error> {
+    pub fn get_name(buf: &BytesMut) -> Result<String, ParseBytesError> {
         let mut cursor = Cursor::new(buf);
         // Skip the code and length
         cursor.advance(mem::size_of::<u8>() + mem::size_of::<i32>());
@@ -1286,7 +1244,7 @@ impl TryFrom<Bind> for BytesMut {
 
 impl Bind {
     /// Gets the name of the prepared statement from the buffer
-    pub fn get_name(buf: &BytesMut) -> Result<String, Error> {
+    pub fn get_name(buf: &BytesMut) -> Result<String, ParseBytesError> {
         let mut cursor = Cursor::new(buf);
         // Skip the code and length
         cursor.advance(mem::size_of::<u8>() + mem::size_of::<i32>());
@@ -1581,12 +1539,7 @@ impl PgErrorMsg {
 
             let msg_content = match String::from_utf8_lossy(&msg_part[1..]).parse() {
                 Ok(c) => c,
-                Err(err) => {
-                    return Err(Error::ServerMessageParserError(format!(
-                        "could not parse server message field. err {:?}",
-                        err
-                    )))
-                }
+                Err(infallible) => match infallible {},
             };
 
             match &msg_part[0] {
@@ -1648,7 +1601,9 @@ impl PgErrorMsg {
     }
 }
 
-pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
+// TODO: this can be rewritten using parser such as `peg`
+//  for ease of maintenance and potentially better performance
+pub fn set_messages_right_place(in_msg: &[u8]) -> Result<BytesMut, ServerMessageParseError> {
     let in_msg_len = in_msg.len();
     let mut cursor = 0;
     let mut count_parse_complete = 0;
@@ -1658,101 +1613,93 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
     // count parse message.
     loop {
         if cursor > in_msg_len {
-            return Err(Error::ServerMessageParserError(
-                "Cursor is more than total message size".to_string(),
-            ));
+            return Err(ServerMessageParseError::CursorOverflow {
+                cursor,
+                message: in_msg_len,
+            });
         }
         if cursor == in_msg_len {
             break;
         }
 
-        match in_msg[cursor] as char {
-            '1' => count_parse_complete += 1,
-            '3' => count_stmt_close += 1,
+        match in_msg[cursor] {
+            b'1' => count_parse_complete += 1,
+            b'3' => count_stmt_close += 1,
             _ => (),
         }
 
         cursor += 1;
         if cursor + 4 > in_msg_len {
-            return Err(Error::ServerMessageParserError(
-                "Can't read i32 from server message".to_string(),
-            ));
+            return Err(ServerMessageParseError::InvalidI32);
         }
-        let len_ref = match <[u8; 4]>::try_from(&in_msg[cursor..cursor + 4]) {
+        let len_bytes = match <[u8; 4]>::try_from(&in_msg[cursor..cursor + 4]) {
             Ok(len_ref) => len_ref,
-            _ => {
-                return Err(Error::ServerMessageParserError(
-                    "Can't convert i32 from server message".to_string(),
-                ))
-            }
+            Err(_) => return Err(ServerMessageParseError::InvalidI32),
         };
-        let mut len = i32::from_be_bytes(len_ref) as usize;
-        if len < 4 {
-            return Err(Error::ServerMessageParserError(
-                "Message len less than 4".to_string(),
-            ));
-        }
-        len -= 4;
+        let len = i32::from_be_bytes(len_bytes) as usize;
+        let len = len
+            .checked_sub(4)
+            .ok_or(ServerMessageParseError::LenSmallerThan4(len))?;
         cursor += 4;
         if cursor + len > in_msg_len {
-            return Err(Error::ServerMessageParserError(
-                "Message len more than server message size".to_string(),
-            ));
+            return Err(ServerMessageParseError::LenOverlow {
+                received: in_msg_len,
+                cursor,
+                message: len,
+            });
         }
         cursor += len;
     }
     if count_stmt_close == 0 && count_parse_complete == 0 {
-        result.put(&in_msg[..]);
+        result.put(in_msg);
         return Ok(result);
     }
 
     cursor = 0;
-    let mut prev_msg: char = ' ';
+    let mut prev_msg = b' ';
     loop {
         if cursor == in_msg_len {
             return Ok(result);
         }
-        match in_msg[cursor] as char {
-            '1' => {
-                if count_parse_complete == 0 || prev_msg == '1' {
+        match in_msg[cursor] {
+            b'1' => {
+                if count_parse_complete == 0 || prev_msg == b'1' {
                     // ParseComplete: ignore.
                     cursor += 5;
                     continue;
                 }
                 count_parse_complete -= 1;
             }
-            '2' | 't' => {
-                if (prev_msg != '1') && (prev_msg != '2') && count_parse_complete > 0 {
+            b'2' | b't' => {
+                if prev_msg != b'1' && prev_msg != b'2' && count_parse_complete > 0 {
                     // BindComplete, just add before ParseComplete.
                     result.put(parse_complete());
                     count_parse_complete -= 1;
                 }
             }
-            '3' => {
+            b'3' => {
                 if count_stmt_close == 1 {
                     cursor += 5;
                     continue;
                 }
             }
-            'Z' => {
+            b'Z' => {
                 if count_stmt_close == 1 {
                     result.put(close_complete())
                 }
             }
             _ => {}
         };
-        prev_msg = in_msg[cursor] as char;
+        prev_msg = in_msg[cursor];
         cursor += 1; // code
         let len_ref = match <[u8; 4]>::try_from(&in_msg[cursor..cursor + 4]) {
             Ok(len_ref) => len_ref,
-            _ => {
-                return Err(Error::ServerMessageParserError(
-                    "Can't convert i32 from server message".to_string(),
-                ))
-            }
+            _ => return Err(ServerMessageParseError::InvalidI32),
         };
-        let mut len = i32::from_be_bytes(len_ref) as usize;
-        len -= 4;
+        let len = i32::from_be_bytes(len_ref) as usize;
+        let len = len
+            .checked_sub(4)
+            .ok_or(ServerMessageParseError::LenSmallerThan4(len))?;
         cursor += 4;
         result.put(&in_msg[cursor - 5..cursor + len]);
         cursor += len;
@@ -1790,23 +1737,17 @@ mod tests {
         let mut in_msg = parse_complete();
         assert_eq!(
             parse_complete().len(),
-            set_messages_right_place(in_msg.to_vec())
-                .expect("parsing")
-                .len()
+            set_messages_right_place(&in_msg).expect("parsing").len()
         );
         in_msg.put(flush());
         assert_eq!(
             parse_complete().len() + flush().len(),
-            set_messages_right_place(in_msg.to_vec())
-                .expect("parsing")
-                .len()
+            set_messages_right_place(&in_msg).expect("parsing").len()
         );
         in_msg.put(ready_for_query(true));
         assert_eq!(
             parse_complete().len() + flush().len() + ready_for_query(true).len(),
-            set_messages_right_place(in_msg.to_vec())
-                .expect("parsing")
-                .len()
+            set_messages_right_place(&in_msg).expect("parsing").len()
         );
     }
 
@@ -1861,7 +1802,7 @@ mod tests {
         in_msg.put(row_description()); // t
         in_msg.put(command_complete("2")); // C
         in_msg.put(ready_for_query(false)); // Z
-        let out_msg = set_messages_right_place(in_msg.to_vec()).expect("parse");
+        let out_msg = set_messages_right_place(&in_msg).expect("parse");
         println!("112tC2tCZ");
         assert_eq!(show_headers(out_msg), "12tC12tCZ".to_string());
     }

@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write;
 
 use crate::constants::*;
-use crate::errors::Error;
+use crate::errors::{Error, ProtocolSyncError, ServerError};
 
 /// Normalize a password string. Postgres
 /// passwords don't have to be UTF-8.
@@ -79,12 +79,12 @@ impl ScramSha256 {
         let server_message = Message::parse(message)?;
 
         if !server_message.nonce.starts_with(&self.nonce) {
-            return Err(Error::ProtocolSyncError("SCRAM".to_string()));
+            return Err(ProtocolSyncError::Scram.into());
         }
 
         let salt = match general_purpose::STANDARD.decode(&server_message.salt) {
             Ok(salt) => salt,
-            Err(_) => return Err(Error::ProtocolSyncError("SCRAM".to_string())),
+            Err(_) => return Err(ProtocolSyncError::Scram.into()),
         };
 
         let salted_password = Self::hi(
@@ -96,10 +96,8 @@ impl ScramSha256 {
         // Save for verification of final server message.
         self.salted_password = salted_password;
 
-        let mut hmac = match Hmac::<Sha256>::new_from_slice(&salted_password) {
-            Ok(hmac) => hmac,
-            Err(_) => return Err(Error::ServerError),
-        };
+        let mut hmac =
+            Hmac::<Sha256>::new_from_slice(&salted_password).map_err(ServerError::from)?;
 
         hmac.update(b"Client Key");
 
@@ -117,14 +115,12 @@ impl ScramSha256 {
         self.message.clear();
 
         // Start writing the client reply.
-        match write!(
+        write!(
             &mut self.message,
             "c={},r={}",
             cbind_input, server_message.nonce
-        ) {
-            Ok(_) => (),
-            Err(_) => return Err(Error::ServerError),
-        };
+        )
+        .map_err(|_| ServerError::Internal)?;
 
         let auth_message = format!(
             "n=,r={},{},{}",
@@ -133,10 +129,7 @@ impl ScramSha256 {
             String::from_utf8_lossy(&self.message[..])
         );
 
-        let mut hmac = match Hmac::<Sha256>::new_from_slice(&stored_key) {
-            Ok(hmac) => hmac,
-            Err(_) => return Err(Error::ServerError),
-        };
+        let mut hmac = Hmac::<Sha256>::new_from_slice(&stored_key).map_err(ServerError::from)?;
         hmac.update(auth_message.as_bytes());
 
         // Save the auth message for server final message verification.
@@ -150,14 +143,12 @@ impl ScramSha256 {
             *proof ^= signature;
         }
 
-        match write!(
+        write!(
             &mut self.message,
             ",p={}",
             general_purpose::STANDARD.encode(&*client_proof)
-        ) {
-            Ok(_) => (),
-            Err(_) => return Err(Error::ServerError),
-        };
+        )
+        .map_err(|_| ServerError::Internal)?;
 
         Ok(self.message.clone())
     }
@@ -166,28 +157,20 @@ impl ScramSha256 {
     pub fn finish(&mut self, message: &BytesMut) -> Result<(), Error> {
         let final_message = FinalMessage::parse(message)?;
 
-        let verifier = match general_purpose::STANDARD.decode(final_message.value) {
-            Ok(verifier) => verifier,
-            Err(_) => return Err(Error::ProtocolSyncError("SCRAM".to_string())),
-        };
+        let verifier = general_purpose::STANDARD
+            .decode(final_message.value)
+            .map_err(|_| ProtocolSyncError::Scram)?;
 
-        let mut hmac = match Hmac::<Sha256>::new_from_slice(&self.salted_password) {
-            Ok(hmac) => hmac,
-            Err(_) => return Err(Error::ServerError),
-        };
+        let mut hmac =
+            Hmac::<Sha256>::new_from_slice(&self.salted_password).map_err(ServerError::from)?;
         hmac.update(b"Server Key");
         let server_key = hmac.finalize().into_bytes();
 
-        let mut hmac = match Hmac::<Sha256>::new_from_slice(&server_key) {
-            Ok(hmac) => hmac,
-            Err(_) => return Err(Error::ServerError),
-        };
+        let mut hmac = Hmac::<Sha256>::new_from_slice(&server_key).map_err(ServerError::from)?;
         hmac.update(self.auth_message.as_bytes());
 
-        match hmac.verify_slice(&verifier) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(Error::ServerError),
-        }
+        hmac.verify_slice(&verifier).map_err(ServerError::from)?;
+        Ok(())
     }
 
     /// Hash the password with the salt i-times.
@@ -224,20 +207,18 @@ struct Message {
 impl Message {
     /// Parse the server SASL challenge.
     fn parse(message: &BytesMut) -> Result<Message, Error> {
-        let parts = String::from_utf8_lossy(&message[..])
-            .split(',')
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>();
+        let message = String::from_utf8_lossy(&message[..]);
+        let parts = message.split(',').collect::<Vec<_>>();
 
-        if parts.len() != 3 {
-            return Err(Error::ProtocolSyncError("SCRAM".to_string()));
-        }
+        let [nonce, salt, iterations] = parts[..] else {
+            return Err(ProtocolSyncError::Scram.into());
+        };
 
-        let nonce = str::replace(&parts[0], "r=", "");
-        let salt = str::replace(&parts[1], "s=", "");
-        let iterations = match str::replace(&parts[2], "i=", "").parse::<u32>() {
+        let nonce = str::replace(nonce, "r=", "");
+        let salt = str::replace(salt, "s=", "");
+        let iterations = match str::replace(iterations, "i=", "").parse::<u32>() {
             Ok(iterations) => iterations,
-            Err(_) => return Err(Error::ProtocolSyncError("SCRAM".to_string())),
+            Err(_) => return Err(ProtocolSyncError::Scram.into()),
         };
 
         Ok(Message {
@@ -257,7 +238,7 @@ impl FinalMessage {
     /// Parse the server final validation message.
     pub fn parse(message: &BytesMut) -> Result<FinalMessage, Error> {
         if !message.starts_with(b"v=") || message.len() < 4 {
-            return Err(Error::ProtocolSyncError("SCRAM".to_string()));
+            return Err(ProtocolSyncError::Scram.into());
         }
 
         Ok(FinalMessage {
