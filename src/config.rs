@@ -922,6 +922,11 @@ impl Config {
             ));
         }
 
+        // Validate prepared_statements
+        if self.general.prepared_statements && !(self.general.prepared_statements_cache_size > 0) {
+            return Err(Error::BadConfig("The value of prepared_statements_cache should be greater than 0 if prepared_statements are enabled".to_string()));
+        }
+
         // Validate TLS!
         if let Some(tls_certificate) = self.general.tls_certificate.clone() {
             if let Some(tls_private_key) = self.general.tls_private_key.clone() {

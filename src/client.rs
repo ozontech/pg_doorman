@@ -508,7 +508,7 @@ pub async fn startup_tls(
 
         // Bad Postgres client.
         Ok((ClientConnectionType::Tls, _)) => {
-           Err(Error::ProtocolSyncError("Bad postgres client (tls)".into()))
+            Err(Error::ProtocolSyncError("Bad postgres client (tls)".into()))
         }
 
         Err(err) => Err(err),
