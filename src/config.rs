@@ -531,7 +531,7 @@ impl Default for General {
             server_lifetime: Self::default_server_lifetime(),
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: false,
-            prepared_statements_cache_size: 500,
+            prepared_statements_cache_size: 0,
             hba: vec![],
             daemon_pid_file: Self::default_daemon_pid_file(),
             syslog_prog_name: None,
