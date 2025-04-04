@@ -55,6 +55,15 @@ username = "example_user_jwt"
 password = "jwt-pkey-fpath:./tests/data/jwt/public.pem"
 pool_size = 20
 
+[pools.example_db.users.3]
+server_username = "example_user_1"
+server_password = "test"
+username = "example_user_3"
+password = "md516a14f84bef6775f07d2a7da7fe95f1f"
+min_pool_size = 1
+pool_size = 1
+pool_mode = "session"
+
 # Client can connect to database example_db_alias,
 # but in reality database on the server will be example_db.
 [pools.example_db_alias]

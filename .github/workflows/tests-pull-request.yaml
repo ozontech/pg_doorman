@@ -78,10 +78,10 @@ jobs:
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
       - name: Run tests.
         run: |
-          chmod +x ./tests/pg_doorman && 
+          chmod +x ./tests/pg_doorman &&
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml > /tmp/pg_doorman.log &) &&
-          cd ./tests/go && 
+          cd ./tests/go &&
           source ./env &&
           go test -v .
 
@@ -123,11 +123,11 @@ jobs:
           version: 1.0
       - name: Run tests.
         run: |
-          chmod +x ./tests/pg_doorman && 
+          chmod +x ./tests/pg_doorman &&
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml > /tmp/pg_doorman.log &) &&
           bundle config path ruby &&
-          cd ./tests/ruby && 
+          cd ./tests/ruby &&
           bundle install &&
           bundle exec ruby test.rb &&
           bundle exec rspec *_spec.rb
@@ -168,7 +168,7 @@ jobs:
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
       - name: Run tests.
         run: |
-          chmod +x ./tests/pg_doorman && 
+          chmod +x ./tests/pg_doorman &&
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
           cd ./tests/python &&
@@ -177,6 +177,7 @@ jobs:
           pip install -r requirements.txt &&
           echo "Run async" && python ./test_async.py &&
           echo "Run psycopg2" && python ./test_psycopg2.py
+          echo "Run session cursors" && python ./test_session_cursors.py
 
   nodejs-test:
     name: NodeJS (pg).
@@ -218,7 +219,7 @@ jobs:
           version: 1.0
       - name: Run tests.
         run: |
-          chmod +x ./tests/pg_doorman && 
+          chmod +x ./tests/pg_doorman &&
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
           cd ./tests/nodejs &&
@@ -262,7 +263,7 @@ jobs:
         uses: actions/setup-dotnet@v4.3.0
       - name: Run tests.
         run: |
-          chmod +x ./tests/pg_doorman && 
+          chmod +x ./tests/pg_doorman &&
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
           mkdir -p ./tests/dotnet/hello_world && cd ./tests/dotnet/hello_world &&
