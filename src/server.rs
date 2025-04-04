@@ -28,6 +28,7 @@ use crate::scram_client::ScramSha256;
 use pin_project::pin_project;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
+const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
 
 #[pin_project(project = SteamInnerProj)]
 #[derive(Debug)]
@@ -124,6 +125,9 @@ struct CleanupState {
 
     /// If server connection requires DEALLOCATE ALL before checkin because of prepare statement
     needs_cleanup_prepare: bool,
+
+    /// If server connection requires CLOSE ALL before checkin because of declare statement
+    needs_cleanup_declare: bool,
 }
 
 impl CleanupState {
@@ -131,21 +135,24 @@ impl CleanupState {
         CleanupState {
             needs_cleanup_set: false,
             needs_cleanup_prepare: false,
+            needs_cleanup_declare: false,
         }
     }
 
     fn needs_cleanup(&self) -> bool {
-        self.needs_cleanup_set || self.needs_cleanup_prepare
+        self.needs_cleanup_set || self.needs_cleanup_prepare || self.needs_cleanup_declare
     }
 
     fn set_true(&mut self) {
         self.needs_cleanup_set = true;
         self.needs_cleanup_prepare = true;
+        self.needs_cleanup_declare = true;
     }
 
     fn reset(&mut self) {
         self.needs_cleanup_set = false;
         self.needs_cleanup_prepare = false;
+        self.needs_cleanup_declare = false;
     }
 }
 
@@ -545,6 +552,9 @@ impl Server {
                     if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
                         self.cleanup_state.needs_cleanup_set = true;
                     }
+                    if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DECLARE) {
+                        self.cleanup_state.needs_cleanup_declare = true;
+                    }
                     if self.flush_wait_code == 'C' {
                         self.data_available = false;
                         break;
@@ -770,6 +780,10 @@ impl Server {
 
             if self.cleanup_state.needs_cleanup_prepare {
                 reset_string.push_str("DEALLOCATE ALL;");
+            };
+
+            if self.cleanup_state.needs_cleanup_declare {
+                reset_string.push_str("CLOSE ALL;");
             };
 
             self.small_simple_query(&reset_string).await?;
