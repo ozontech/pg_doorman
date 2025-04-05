@@ -529,8 +529,6 @@ pub fn get_pool(db: &str, user: &str, virtual_pool_id: u16) -> Option<Connection
         .cloned()
 }
 
-/// Get ServerParameters for connection pool.
-
 /// Get a pointer to all configured pools.
 pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {
     (*(*POOLS.load())).clone()

@@ -3,7 +3,7 @@ files = ["./tests/my_hba.toml"]
 
 [general]
 host = "0.0.0.0"
-port = 16433
+port = 6433
 
 virtual_pool_count = 1
 worker_threads = 2
