@@ -139,16 +139,19 @@ impl CleanupState {
         }
     }
 
+    #[inline(always)]
     fn needs_cleanup(&self) -> bool {
         self.needs_cleanup_set || self.needs_cleanup_prepare || self.needs_cleanup_declare
     }
 
+    #[inline(always)]
     fn set_true(&mut self) {
         self.needs_cleanup_set = true;
         self.needs_cleanup_prepare = true;
         self.needs_cleanup_declare = true;
     }
 
+    #[inline(always)]
     fn reset(&mut self) {
         self.needs_cleanup_set = false;
         self.needs_cleanup_prepare = false;
@@ -199,7 +202,7 @@ impl ServerParameters {
         let server_version = get_config()
             .general
             .override_startup_packet_server_version
-            .unwrap_or_else(|| "9.6.0".to_string());
+            .unwrap_or_else(|| "10.0".to_string());
         server_parameters.set_param("server_version".to_string(), server_version, true);
         server_parameters.set_param("server_encoding".to_string(), "UTF-8".to_string(), true);
         server_parameters.set_param(
@@ -207,6 +210,8 @@ impl ServerParameters {
             "on".to_string(),
             false,
         );
+        // (64 bit = on) as of PostgreSQL 10, this is always on.
+        server_parameters.set_param("integer_datetimes".to_string(), "on".to_string(), false);
         server_parameters.set_param(
             "application_name".to_string(),
             "pg_doorman".to_string(),
@@ -239,6 +244,7 @@ impl ServerParameters {
     }
 
     // Gets the diff of the parameters
+    #[inline(always)]
     fn compare_params(&self, incoming_parameters: &ServerParameters) -> HashMap<String, String> {
         let mut diff = HashMap::new();
 
@@ -400,6 +406,10 @@ impl Server {
     #[inline(always)]
     pub fn get_process_id(&self) -> i32 {
         self.process_id
+    }
+
+    pub fn clone_server_parameters(&self) -> ServerParameters {
+        self.server_parameters.clone()
     }
 
     /// Receive data from the server in response to a client request.

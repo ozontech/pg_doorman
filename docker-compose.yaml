@@ -1,0 +1,39 @@
+# This docker-compose file only for develop and testing.
+# You can see example in ./example directory.
+
+services:
+
+  postgres:
+    image: postgres:17
+    network_mode: "host"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - ./tests/fixture.sql:/docker-entrypoint-initdb.d/fixture.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+
+  pg_doorman:
+    image: pg_doorman
+    network_mode: "host"
+    ports:
+      - "6433:6433"
+    build:
+      dockerfile: tests/pg_doorman.Dockerfile
+    working_dir: /
+    command: /usr/bin/pg_doorman -l info /tests/tests.toml
+    volumes:
+      - ./tests:/tests
+    restart: unless-stopped
+    tty: true
+    stdin_open: true

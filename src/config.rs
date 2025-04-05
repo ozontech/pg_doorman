@@ -1094,7 +1094,7 @@ mod test {
         parse(file.as_os_str().to_str().unwrap()).await.unwrap();
 
         assert_eq!(get_config().general.idle_timeout, 300000000);
-        assert_eq!(get_config().pools.len(), 3);
+        assert_eq!(get_config().pools.len(), 4);
         assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
         assert_eq!(get_config().pools["example_db"].users.len(), 4);
         assert_eq!(
@@ -1116,7 +1116,7 @@ mod test {
             Some(PoolMode::Transaction)
         );
         assert!(addr_in_hba(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-        assert!(!addr_in_hba(IpAddr::V4(Ipv4Addr::new(172, 0, 0, 1))));
+        assert!(!addr_in_hba(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
         assert!(addr_in_hba(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
     }
 

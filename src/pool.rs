@@ -196,6 +196,9 @@ pub struct ConnectionPool {
 
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
+
+    server_parameters_get: Arc<tokio::sync::Mutex<u32>>,
+    pub server_parameters: Option<ServerParameters>,
 }
 
 impl ConnectionPool {
@@ -316,6 +319,8 @@ impl ConnectionPool {
                                 config.general.prepared_statements_cache_size,
                             )))),
                         },
+                        server_parameters: None,
+                        server_parameters_get: Arc::new(tokio::sync::Mutex::new(0)),
                     };
 
                     // There is one pool per database/user pair.
@@ -390,6 +395,17 @@ impl ConnectionPool {
             let mut cache = prepared_statement_cache.lock();
             cache.promote(hash);
         }
+    }
+
+    pub async fn promote_new_server_parameters(&mut self) -> Result<ServerParameters, Error> {
+        let guard = self.server_parameters_get.lock().await;
+        let conn = match self.database.get().await {
+            Ok(conn) => conn,
+            Err(err) => return Err(Error::ServerStartupReadParameters(err.to_string())),
+        };
+        self.server_parameters = Some(conn.clone_server_parameters());
+        drop(guard);
+        Ok(conn.clone_server_parameters())
     }
 }
 
@@ -512,6 +528,8 @@ pub fn get_pool(db: &str, user: &str, virtual_pool_id: u16) -> Option<Connection
         .get(&PoolIdentifierVirtual::new(db, user, virtual_pool_id))
         .cloned()
 }
+
+/// Get ServerParameters for connection pool.
 
 /// Get a pointer to all configured pools.
 pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {

@@ -768,7 +768,28 @@ where
         server_parameters.set_from_hashmap(&parameters, false);
 
         auth_ok(&mut write).await?;
-        write_all(&mut write, (&server_parameters).into()).await?;
+        // proxy server parameters.
+        {
+            let mut pool = get_pool(pool_name, username, 0).unwrap();
+            match pool.server_parameters {
+                Some(params) => write_all(&mut write, (&params).into()).await?,
+                None => match pool.promote_new_server_parameters().await {
+                    Ok(params) => write_all(&mut write, (&params).into()).await?,
+                    Err(err) => {
+                        error!("Can't proxy server parameters for database: {:?}", err);
+                        error_response(
+                            &mut write,
+                            &format!(
+                                "Can't proxy server parameters for database: {}, user: {}",
+                                pool_name, username
+                            ),
+                            "3D000",
+                        ).await?;
+                        return Err(err);
+                    }
+                },
+            }
+        }
         backend_key_data(&mut write, process_id, secret_key).await?;
         send_ready_for_query(&mut write).await?;
 
