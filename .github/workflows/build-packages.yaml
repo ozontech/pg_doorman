@@ -45,7 +45,7 @@ jobs:
           wget -q https://static.rust-lang.org/dist/rust-1.84.1-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz &&
           cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
       - name: Build binaries in release mode
-        run: cargo build --release
+        run: JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" cargo build --release
       - name: Prepare output dir
         run: mkdir -p ./build_package/usr/bin && install ./target/release/pg_doorman ./build_package/usr/bin && mkdir -p ./out/
       - name: Check versions
@@ -88,7 +88,7 @@ jobs:
           wget -q https://static.rust-lang.org/dist/rust-1.84.1-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz &&
           cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
       - name: Build binaries in release mode
-        run: cargo build --release
+        run: JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" cargo build --release
       - name: Prepare output dir
         run: mkdir -p ./build_package/usr/bin && install ./target/release/pg_doorman ./build_package/usr/bin && mkdir -p ./out/
       - name: Check versions

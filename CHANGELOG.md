@@ -1,3 +1,11 @@
+# 1.8.1 (Apr 06th, 2025)
+
+### Fixed
+
+- fix config value of prepared_statements #21.
+- close declared cursors #23.
+- proxy server parameters #25.
+
 # 1.8.0 (Mar 20th, 2025)
 
 ### Fixed
