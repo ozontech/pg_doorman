@@ -19,7 +19,8 @@ install: build
 
 test:
 	cargo test
-	./tests/tests.sh
 
 clippy:
 	cargo clippy -- --deny "warnings"
+
+include docker-compose-tests.mk
