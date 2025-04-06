@@ -265,11 +265,7 @@ jobs:
         run: |
           chmod +x ./tests/pg_doorman &&
           ./tests/pg_doorman --version &&
-          (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
-          mkdir -p ./tests/dotnet/hello_world && cd ./tests/dotnet/hello_world &&
-          dotnet new sln --name HelloWorld &&
-          dotnet new console --output . &&
-          dotnet add package Npgsql &&
-          cp -av ../data/PBDE_PBDE_S.cs ./Program.cs && dotnet run Program.cs &&
-          cp -av ../data/prepared.cs ./Program.cs && dotnet run Program.cs &&
+          (./tests/pg_doorman -l debug ./tests/tests.toml &) && mkdir -p ./tests/dotnet/prj && cd ./tests/dotnet/prj &&
+          mkdir -p ./pbde && cd ./pbde && dotnet new sln --name PBDE && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/PBDE_PBDE_S.cs ./Program.cs && dotnet run Program.cs &&
+          cd .. && mkdir -p ./prepared && cd ./prepared && dotnet new sln --name PREPARED && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/prepared.cs ./Program.cs && dotnet run Program.cs &&
           echo "done"

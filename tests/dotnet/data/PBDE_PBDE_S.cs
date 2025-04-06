@@ -16,3 +16,5 @@ await using (NpgsqlCommand cmd = new NpgsqlCommand("select 1 as test; select 2 a
     var response = await cmd.ExecuteNonQueryAsync();
 }
 ;
+
+Console.WriteLine("PBDE_PBDE_S complete");

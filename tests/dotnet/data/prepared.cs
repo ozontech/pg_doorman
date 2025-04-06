@@ -21,3 +21,5 @@ for (int i = 0; i < 10; i++)
         var _ = cmd.ExecuteNonQuery();
     }
 }
+
+Console.WriteLine("prepared complete");
