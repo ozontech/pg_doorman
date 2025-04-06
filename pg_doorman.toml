@@ -71,8 +71,8 @@ max_connections = 8192
 # By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.
 server_round_robin = false
 
-# If enabled, we strive to restore the parameters that were set by the client in transaction mode in other server backends.
-# By default, this is disabled (false) due to performance degradation.
+# If enabled, we strive to restore the parameters that were set by the client (and application_name)
+# in transaction mode in other server backends. By default, this is disabled (false) due to performance.
 sync_server_parameters = false
 
 # The number of Tokio worker processes that serve clients, which affects the performance of pg_doorman.

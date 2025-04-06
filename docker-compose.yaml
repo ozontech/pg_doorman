@@ -24,7 +24,6 @@ services:
     stdin_open: true
 
   pg_doorman:
-    image: pg_doorman
     network_mode: "host"
     ports:
       - "6433:6433"
@@ -37,3 +36,28 @@ services:
     restart: unless-stopped
     tty: true
     stdin_open: true
+
+  go_test:
+    build:
+      dockerfile: tests/go_cache.Dockerfile
+    working_dir: /
+    network_mode: "host"
+    profiles:
+      - tests
+      - tests-go
+    volumes:
+      - ./tests/go:/tests
+    command: /bin/bash -ec 'cd /tests && source ./env && go test -v .'
+    restart: no
+
+  python_test:
+    build:
+      dockerfile: tests/python_cache.Dockerfile
+    network_mode: "host"
+    profiles:
+      - tests
+      - tests-python
+    volumes:
+      - ./tests/python:/tests
+    command: /bin/bash -ec 'cd /tests && python ./test_async.py && python ./test_psycopg2.py && python ./test_session_cursors.py'
+    restart: no
