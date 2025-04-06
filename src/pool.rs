@@ -399,6 +399,7 @@ impl ConnectionPool {
 
     pub async fn promote_new_server_parameters(&mut self) -> Result<ServerParameters, Error> {
         let guard = self.server_parameters_get.lock().await;
+        if let Some(val) = self.server_parameters.clone() { return Ok(val) }
         let conn = match self.database.get().await {
             Ok(conn) => conn,
             Err(err) => return Err(Error::ServerStartupReadParameters(err.to_string())),
