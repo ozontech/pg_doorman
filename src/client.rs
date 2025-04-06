@@ -781,7 +781,7 @@ where
         };
 
         // Update the parameters to merge what the application sent and what's originally on the server
-        server_parameters.set_from_hashmap(&parameters, false);
+        server_parameters.set_from_hashmap(parameters.clone(), false);
         auth_ok(&mut write).await?;
         write_all(&mut write, (&server_parameters).into()).await?;
         backend_key_data(&mut write, process_id, secret_key).await?;

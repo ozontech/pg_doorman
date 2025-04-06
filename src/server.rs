@@ -240,14 +240,7 @@ impl ServerParameters {
         }
     }
 
-    pub fn set_from_hashmap(&mut self, parameters: &HashMap<String, String>, startup: bool) {
-        // iterate through each and call set_param
-        for (key, value) in parameters {
-            self.set_param(key.to_string(), value.to_string(), startup);
-        }
-    }
-
-    pub fn set_from_hashmap_ref(&mut self, parameters: HashMap<String, String>, startup: bool) {
+    pub fn set_from_hashmap(&mut self, parameters: HashMap<String, String>, startup: bool) {
         for (key, value) in parameters {
             self.set_param(key.to_string(), value.to_string(), startup);
         }
