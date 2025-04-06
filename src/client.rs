@@ -15,7 +15,7 @@ use tokio::net::TcpStream;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::mpsc::Sender;
 
-use crate::admin::{generate_server_parameters_for_admin, handle_admin};
+use crate::admin::handle_admin;
 use crate::config::{addr_in_hba, get_config, PoolMode};
 use crate::constants::*;
 use crate::jwt_auth::get_user_name_from_jwt;
@@ -619,7 +619,7 @@ where
                 return Err(error);
             }
 
-            (false, generate_server_parameters_for_admin())
+            (false, ServerParameters::admin())
         }
         // Authenticate normal user.
         else {

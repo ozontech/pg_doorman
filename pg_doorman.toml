@@ -124,10 +124,6 @@ syslog_prog_name = "pg_doorman"
 # For example, it can be the address mask 10.0.0.0/8. By default, access is allowed from any address.
 hba = []
 
-# By default, we identify ourselves as PostgreSQL version 9.6. However, using this option, you can change this value to 14.
-# This is necessary for some popular frameworks such as Django.
-# override_startup_packet_server_version = ""
-
 [pools]
 # Database: exampledb
 [pools.exampledb]

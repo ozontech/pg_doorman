@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufStream};
 use tokio::net::{TcpStream, UnixStream};
 
-use crate::config::{get_config, Address, User};
+use crate::config::{get_config, Address, User, VERSION};
 use crate::constants::*;
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::BytesMutReader;
@@ -207,11 +207,7 @@ impl ServerParameters {
         server_parameters.set_param("client_encoding".to_string(), "UTF8".to_string(), false);
         server_parameters.set_param("DateStyle".to_string(), "ISO, MDY".to_string(), false);
         server_parameters.set_param("TimeZone".to_string(), "Etc/UTC".to_string(), false);
-        let server_version = get_config()
-            .general
-            .override_startup_packet_server_version
-            .unwrap_or_else(|| "10.0".to_string());
-        server_parameters.set_param("server_version".to_string(), server_version, true);
+        server_parameters.set_param("server_version".to_string(), VERSION.to_string(), true);
         server_parameters.set_param("server_encoding".to_string(), "UTF-8".to_string(), true);
         server_parameters.set_param(
             "standard_conforming_strings".to_string(),

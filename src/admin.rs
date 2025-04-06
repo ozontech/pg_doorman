@@ -1,4 +1,3 @@
-use crate::server::ServerParameters;
 use crate::stats::pool::PoolStats;
 use bytes::{Buf, BufMut, BytesMut};
 use log::{debug, error, info};
@@ -22,18 +21,6 @@ use crate::stats::{
     get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
-
-pub fn generate_server_parameters_for_admin() -> ServerParameters {
-    let mut server_parameters = ServerParameters::admin();
-
-    server_parameters.set_param("application_name".to_string(), "".to_string(), true);
-    server_parameters.set_param("client_encoding".to_string(), "UTF8".to_string(), true);
-    server_parameters.set_param("server_encoding".to_string(), "UTF8".to_string(), true);
-    server_parameters.set_param("server_version".to_string(), VERSION.to_string(), true);
-    server_parameters.set_param("DateStyle".to_string(), "ISO, MDY".to_string(), true);
-
-    server_parameters
-}
 
 /// Handle admin client.
 pub async fn handle_admin<T>(

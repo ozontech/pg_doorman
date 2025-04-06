@@ -5,8 +5,6 @@ port = 6432
 admin_username = "pgbouncer"
 admin_password = "admin"
 
-override_startup_packet_server_version = "14.0.0"
-
 tls_private_key = "/etc/pg_doorman/server.key"
 tls_certificate = "/etc/pg_doorman/server.crt"
 

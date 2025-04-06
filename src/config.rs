@@ -321,9 +321,6 @@ pub struct General {
 
     #[serde(default = "General::default_hba")]
     pub hba: Vec<IpNet>,
-
-    // override server_version in startup packet.
-    pub override_startup_packet_server_version: Option<String>,
 }
 
 impl General {
@@ -538,7 +535,6 @@ impl Default for General {
             hba: vec![],
             daemon_pid_file: Self::default_daemon_pid_file(),
             syslog_prog_name: None,
-            override_startup_packet_server_version: None,
             pooler_check_query: Self::default_pooler_check_query(),
             pooler_check_query_request_bytes: None,
             pooler_check_query_response_bytes: None,
