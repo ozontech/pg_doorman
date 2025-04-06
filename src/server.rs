@@ -192,6 +192,14 @@ impl Default for ServerParameters {
 
 impl ServerParameters {
     pub fn new() -> Self {
+        ServerParameters {
+            parameters: HashMap::new(),
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.parameters.is_empty()
+    }
+    pub fn admin() -> Self {
         let mut server_parameters = ServerParameters {
             parameters: HashMap::new(),
         };
@@ -238,6 +246,12 @@ impl ServerParameters {
 
     pub fn set_from_hashmap(&mut self, parameters: &HashMap<String, String>, startup: bool) {
         // iterate through each and call set_param
+        for (key, value) in parameters {
+            self.set_param(key.to_string(), value.to_string(), startup);
+        }
+    }
+
+    pub fn set_from_hashmap_ref(&mut self, parameters: HashMap<String, String>, startup: bool) {
         for (key, value) in parameters {
             self.set_param(key.to_string(), value.to_string(), startup);
         }
@@ -408,8 +422,9 @@ impl Server {
         self.process_id
     }
 
-    pub fn clone_server_parameters(&self) -> ServerParameters {
-        self.server_parameters.clone()
+    #[inline(always)]
+    pub fn server_parameters_as_hashmap(&self) -> HashMap<String, String> {
+        self.server_parameters.parameters.clone()
     }
 
     /// Receive data from the server in response to a client request.

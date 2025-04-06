@@ -24,7 +24,7 @@ use crate::stats::{
 };
 
 pub fn generate_server_parameters_for_admin() -> ServerParameters {
-    let mut server_parameters = ServerParameters::new();
+    let mut server_parameters = ServerParameters::admin();
 
     server_parameters.set_param("application_name".to_string(), "".to_string(), true);
     server_parameters.set_param("client_encoding".to_string(), "UTF8".to_string(), true);

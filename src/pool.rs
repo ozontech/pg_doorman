@@ -3,7 +3,7 @@ use deadpool::{managed, Runtime};
 use log::{error, info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::num::NonZeroUsize;
@@ -31,11 +31,11 @@ pub type PoolMap = HashMap<PoolIdentifierVirtual, ConnectionPool>;
 /// This is atomic and safe and read-optimized.
 /// The pool is recreated dynamically when the config is reloaded.
 pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::default()));
-
 pub static CANCELED_PIDS: Lazy<Arc<Mutex<Vec<ProcessId>>>> =
     Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
 
 pub type PreparedStatementCacheType = Arc<Mutex<PreparedStatementCache>>;
+pub type ServerParametersType = Arc<tokio::sync::Mutex<ServerParameters>>;
 
 // TODO: Add stats the this cache
 // TODO: Add application name to the cache value to help identify which application is using the cache
@@ -182,9 +182,8 @@ pub struct ConnectionPool {
     pub address: Address,
 
     /// The server information has to be passed to the
-    /// clients on startup. We pre-connect to all shards and replicas
-    /// on pool creation and save the startup parameters here.
-    original_server_parameters: Arc<RwLock<ServerParameters>>,
+    /// clients on startup.
+    original_server_parameters: ServerParametersType,
 
     /// Pool configuration.
     pub settings: PoolSettings,
@@ -196,9 +195,6 @@ pub struct ConnectionPool {
 
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
-
-    server_parameters_get: Arc<tokio::sync::Mutex<u32>>,
-    pub server_parameters: Option<ServerParameters>,
 }
 
 impl ConnectionPool {
@@ -304,7 +300,9 @@ impl ConnectionPool {
                         database: pool,
                         address,
                         config_hash: new_pool_hash_value,
-                        original_server_parameters: Arc::new(RwLock::new(ServerParameters::new())),
+                        original_server_parameters: Arc::new(tokio::sync::Mutex::new(
+                            ServerParameters::new(),
+                        )),
                         settings: PoolSettings {
                             pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
                             user: user.clone(),
@@ -319,8 +317,6 @@ impl ConnectionPool {
                                 config.general.prepared_statements_cache_size,
                             )))),
                         },
-                        server_parameters: None,
-                        server_parameters_get: Arc::new(tokio::sync::Mutex::new(0)),
                     };
 
                     // There is one pool per database/user pair.
@@ -367,11 +363,6 @@ impl ConnectionPool {
         &self.address
     }
 
-    #[inline(always)]
-    pub fn server_parameters(&self) -> ServerParameters {
-        self.original_server_parameters.read().clone()
-    }
-
     /// Register a parse statement to the pool's cache and return the rewritten parse
     ///
     /// Do not pass an anonymous parse statement to this function
@@ -397,16 +388,19 @@ impl ConnectionPool {
         }
     }
 
-    pub async fn promote_new_server_parameters(&mut self) -> Result<ServerParameters, Error> {
-        let guard = self.server_parameters_get.lock().await;
-        if let Some(val) = self.server_parameters.clone() { return Ok(val) }
-        let conn = match self.database.get().await {
-            Ok(conn) => conn,
-            Err(err) => return Err(Error::ServerStartupReadParameters(err.to_string())),
-        };
-        self.server_parameters = Some(conn.clone_server_parameters());
-        drop(guard);
-        Ok(conn.clone_server_parameters())
+    pub async fn get_server_parameters(&mut self) -> Result<ServerParameters, Error> {
+        let mut guard = self.original_server_parameters.lock().await;
+        if !guard.is_empty() {
+            return Ok(guard.clone());
+        }
+        {
+            let conn = match self.database.get().await {
+                Ok(conn) => conn,
+                Err(err) => return Err(Error::ServerStartupReadParameters(err.to_string())),
+            };
+            guard.set_from_hashmap_ref(conn.server_parameters_as_hashmap(), true);
+        }
+        Ok(guard.clone())
     }
 }
 

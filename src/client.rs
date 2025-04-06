@@ -624,7 +624,7 @@ where
         // Authenticate normal user.
         else {
             let virtual_pool_id = 0;
-            let pool = match get_pool(pool_name, username, virtual_pool_id) {
+            let mut pool = match get_pool(pool_name, username, virtual_pool_id) {
                 Some(pool) => pool,
                 None => {
                     error_response(
@@ -761,35 +761,29 @@ where
             let transaction_mode = pool.settings.pool_mode == PoolMode::Transaction;
             prepared_statements_enabled =
                 transaction_mode && pool.prepared_statement_cache.is_some();
-            (transaction_mode, pool.server_parameters())
+            let server_parameters = match pool.get_server_parameters().await {
+                Ok(params) => params,
+                Err(err) => {
+                    error!("Can't proxy server parameters for database: {:?}", err);
+                    error_response(
+                        &mut write,
+                        &format!(
+                            "Can't proxy server parameters for database: {}, user: {}",
+                            pool_name, username
+                        ),
+                        "3D000",
+                    )
+                    .await?;
+                    return Err(err);
+                }
+            };
+            (transaction_mode, server_parameters)
         };
 
         // Update the parameters to merge what the application sent and what's originally on the server
         server_parameters.set_from_hashmap(&parameters, false);
-
         auth_ok(&mut write).await?;
-        // proxy server parameters.
-        {
-            let mut pool = get_pool(pool_name, username, 0).unwrap();
-            match pool.server_parameters {
-                Some(params) => write_all(&mut write, (&params).into()).await?,
-                None => match pool.promote_new_server_parameters().await {
-                    Ok(params) => write_all(&mut write, (&params).into()).await?,
-                    Err(err) => {
-                        error!("Can't proxy server parameters for database: {:?}", err);
-                        error_response(
-                            &mut write,
-                            &format!(
-                                "Can't proxy server parameters for database: {}, user: {}",
-                                pool_name, username
-                            ),
-                            "3D000",
-                        ).await?;
-                        return Err(err);
-                    }
-                },
-            }
-        }
+        write_all(&mut write, (&server_parameters).into()).await?;
         backend_key_data(&mut write, process_id, secret_key).await?;
         send_ready_for_query(&mut write).await?;
 
