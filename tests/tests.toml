@@ -29,6 +29,8 @@ max_message_size = 1048576
 admin_username = "doorman_admin"
 admin_password = "doorman_admin_password"
 
+# sync_server_parameters = true
+
 [pools]
 
 [pools.example_db]

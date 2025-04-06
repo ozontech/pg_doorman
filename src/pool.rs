@@ -393,6 +393,7 @@ impl ConnectionPool {
         if !guard.is_empty() {
             return Ok(guard.clone());
         }
+        info!("Fetching new server parameters from server: {}", self.address);
         {
             let conn = match self.database.get().await {
                 Ok(conn) => conn,

@@ -4,7 +4,6 @@ use log::{debug, error, info};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::collections::HashMap;
-/// Admin database.
 use std::sync::atomic::Ordering;
 use tokio::time::Instant;
 
