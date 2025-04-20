@@ -251,7 +251,7 @@ impl ConnectionPool {
                     };
 
                     let prepared_statements_cache_size = match config.general.prepared_statements {
-                        true => config.general.prepared_statements_cache_size,
+                        true => pool_config.prepared_statements_cache_size.unwrap_or(config.general.prepared_statements_cache_size),
                         false => 0,
                     };
 

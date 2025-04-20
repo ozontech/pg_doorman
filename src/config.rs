@@ -576,6 +576,8 @@ pub struct Pool {
     // The real name of the database on the server. If it is not specified, the pool name is used.
     pub server_database: Option<String>,
 
+    pub prepared_statements_cache_size: Option<usize>,
+
     pub users: BTreeMap<String, User>,
     // Note, don't put simple fields below these configs. There's a compatibility issue with TOML that makes it
     // incompatible to have simple fields in TOML after complex objects. See
@@ -628,6 +630,7 @@ impl Default for Pool {
             cleanup_server_connections: true,
             log_client_parameter_status_changes: false,
             application_name: None,
+            prepared_statements_cache_size: None,
         }
     }
 }
