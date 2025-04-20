@@ -130,6 +130,10 @@ hba = []
 server_host = "/var/run/postgresql"  # or "127.0.0.1"
 server_port = 5432
 
+# Parameter application_name, is sent to the server when opening a connection with postgresql.
+# It may be useful with the sync_server_parameters = false.
+# application_name = "pg_doorman"
+
 # You can override the server database.
 # server_database = "exampledb-2"
 
@@ -154,6 +158,3 @@ pool_size = 40
 # Server username and password if the PostgreSQL server requires authentication.
 # server_username = "test_md5_server_user"
 # server_password = "password"
-
-# Override application_name sended to server.
-# application_name = "pg_doorman"
