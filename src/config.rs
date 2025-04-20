@@ -565,8 +565,7 @@ pub struct Pool {
     #[serde(default)] // False
     pub log_client_parameter_status_changes: bool,
 
-    #[serde(default = "Pool::default_prepared_statements_cache_size")]
-    pub prepared_statements_cache_size: usize,
+    pub application_name: Option<String>,
 
     #[serde(default = "Pool::default_server_host")]
     pub server_host: String,
@@ -606,10 +605,6 @@ impl Pool {
         true
     }
 
-    pub fn default_prepared_statements_cache_size() -> usize {
-        1024
-    }
-
     pub async fn validate(&mut self) -> Result<(), Error> {
         for user in self.users.values() {
             user.validate().await?;
@@ -621,7 +616,6 @@ impl Pool {
 
 impl Default for Pool {
     fn default() -> Pool {
-        let config = get_config();
         Pool {
             pool_mode: Self::default_pool_mode(),
             users: BTreeMap::default(),
@@ -633,7 +627,7 @@ impl Default for Pool {
             server_lifetime: None,
             cleanup_server_connections: true,
             log_client_parameter_status_changes: false,
-            prepared_statements_cache_size: config.general.prepared_statements_cache_size,
+            application_name: None,
         }
     }
 }

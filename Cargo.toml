@@ -5,6 +5,10 @@ edition = "2021"
 rust-version = "1.86.0"
 license = "MIT"
 
+[profile.release]
+codegen-units = 1
+lto = true
+
 [dependencies]
 tikv-jemallocator = { version = "0.6.0", features = ["background_threads_runtime_support"] }
 
@@ -45,10 +49,6 @@ serde-toml-merge = { version = "0.3.8"}
 jwt = { version = "0.16.0", features = ["openssl"] }
 openssl = { version = "0.10.72"}
 iota = { version = "0.2.3" }
-
-[profile.release]
-codegen-units = 1
-lto = true
 
 [replace]
 'deadpool:0.10.0' = { path = 'patches/deadpool' }

@@ -39,6 +39,7 @@ server_port = 5432
 pool_mode = "transaction"
 log_client_parameter_status_changes = true
 idle_timeout = 40000
+application_name = "doorman_example_user_1"
 
 [pools.example_db.users.0]
 username = "example_user_1"

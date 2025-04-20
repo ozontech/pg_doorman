@@ -42,7 +42,7 @@ jobs:
       - name: Install packages
         run: |
           apt-get update && apt-get install git cmake wget build-essential pkg-config libssl-dev clang g++ -y --option=Dpkg::Options::=--force-confdef &&
-          wget -q https://static.rust-lang.org/dist/rust-1.84.1-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz &&
+          wget -q https://static.rust-lang.org/dist/rust-1.86.0-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz &&
           cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
       - name: Build binaries in release mode
         run: JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" cargo build --release
@@ -85,7 +85,7 @@ jobs:
       - name: Install packages
         run: |
           yum install -y @"Development Tools" openssl-devel wget &&
-          wget -q https://static.rust-lang.org/dist/rust-1.84.1-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz &&
+          wget -q https://static.rust-lang.org/dist/rust-1.86.0-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz &&
           cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
       - name: Build binaries in release mode
         run: JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" cargo build --release

@@ -251,9 +251,12 @@ impl ConnectionPool {
                     };
 
                     let prepared_statements_cache_size = match config.general.prepared_statements {
-                        true => pool_config.prepared_statements_cache_size,
+                        true => config.general.prepared_statements_cache_size,
                         false => 0,
                     };
+
+                    info!("application_name: {:?}", pool_config.application_name.clone());
+                    let application_name = pool_config.application_name.clone().unwrap_or_else(|| "pg_doorman".to_string());
 
                     let manager = ServerPool::new(
                         address.clone(),
@@ -263,6 +266,7 @@ impl ConnectionPool {
                         pool_config.cleanup_server_connections,
                         pool_config.log_client_parameter_status_changes,
                         prepared_statements_cache_size,
+                        application_name,
                     );
 
                     let queue_strategy = match config.general.server_round_robin {
@@ -423,6 +427,8 @@ pub struct ServerPool {
     /// Should we clean up dirty connections before putting them into the pool?
     cleanup_connections: bool,
 
+    application_name: String,
+
     /// Log client parameter status changes
     log_client_parameter_status_changes: bool,
 
@@ -443,6 +449,7 @@ impl ServerPool {
         cleanup_connections: bool,
         log_client_parameter_status_changes: bool,
         prepared_statement_cache_size: usize,
+        application_name: String,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -453,6 +460,7 @@ impl ServerPool {
             log_client_parameter_status_changes,
             prepared_statement_cache_size,
             open_new_server: Arc::new(tokio::sync::Mutex::new(0)),
+            application_name,
         }
     }
 }
@@ -486,6 +494,7 @@ impl managed::Manager for ServerPool {
             self.cleanup_connections,
             self.log_client_parameter_status_changes,
             self.prepared_statement_cache_size,
+            self.application_name.clone(),
         )
         .await
         {

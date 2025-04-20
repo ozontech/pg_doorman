@@ -431,7 +431,7 @@ impl Server {
             self.stats.wait_reading();
             let (code_u8, message_len) = read_message_header(&mut self.stream).await?;
             // if message server is too big.
-            if message_len > self.max_message_size && code_u8 as char == 'D' {
+            if self.max_message_size > 0 && message_len > self.max_message_size && code_u8 as char == 'D' {
                 // send current buffer + header.
                 self.buffer.put_u8(code_u8);
                 self.buffer.put_i32(message_len);
@@ -1003,6 +1003,7 @@ impl Server {
         cleanup_connections: bool,
         log_client_parameter_status_changes: bool,
         prepared_statement_cache_size: usize,
+        application_name: String,
     ) -> Result<Server, Error> {
         let config = get_config();
 
@@ -1023,7 +1024,7 @@ impl Server {
             .server_username
             .unwrap_or(user.clone().username);
         // StartupMessage
-        startup(&mut stream, username.clone(), database).await?;
+        startup(&mut stream, username.clone(), database, application_name.clone()).await?;
 
         let mut process_id: i32 = 0;
         let mut secret_key: i32 = 0;
@@ -1470,7 +1471,7 @@ impl Server {
                         client_server_map,
                         connected_at: chrono::offset::Utc::now().naive_utc(),
                         stats,
-                        application_name: "pg_doorman".to_string(),
+                        application_name: application_name.clone(),
                         last_activity: SystemTime::now(),
                         cleanup_connections,
                         log_client_parameter_status_changes,

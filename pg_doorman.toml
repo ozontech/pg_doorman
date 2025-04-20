@@ -154,3 +154,6 @@ pool_size = 40
 # Server username and password if the PostgreSQL server requires authentication.
 # server_username = "test_md5_server_user"
 # server_password = "password"
+
+# Override application_name sended to server.
+# application_name = "pg_doorman"
