@@ -2,7 +2,7 @@
 name = "pg_doorman"
 version = "1.8.1"
 edition = "2021"
-rust-version = "1.75.0"
+rust-version = "1.86.0"
 license = "MIT"
 
 [dependencies]
@@ -10,37 +10,36 @@ tikv-jemallocator = { version = "0.6.0", features = ["background_threads_runtime
 
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["json", "env-filter", "std"]}
-log = "0.4.20"
-clap = { version = "4.5.21", features = ["derive", "env"] }
+log = "0.4.27"
+clap = { version = "4.5.37", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_derive = "1"
-ipnet = { version = "2.10.1", features = ["serde"] }
-once_cell = "1.20.2"
+ipnet = { version = "2.11.0", features = ["serde"] }
+once_cell = "1.21.3"
 arc-swap = "1.7.1"
-toml = "0.8.19"
-tokio = { version = "1.41.1", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal"] }
+toml = "0.8.20"
+tokio = { version = "1.41.2", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal", "time"] }
 exitcode = "1.1.2"
 pin-project = "1"
 bytes = "1.9.0"
 md-5 = "0.10"
-socket2 = { version = "0.5.7", features = ["all"] }
+socket2 = { version = "0.5.9", features = ["all"] }
 chrono = "0.4"
-rand = "0.8"
+rand = "0.9.1"
 base64 = "0.22.1"
 hmac = "0.12"
 sha2 = "0.10"
 stringprep = "0.1"
 nix = { version = "0.29.0", features = ["process", "signal"] }
 sha-1 = "0.10"
-lru = "0.13.0"
+lru = "0.14.0"
 deadpool = { version = "=0.10.0", features = ["rt_tokio_1", "managed"] }
 deadpool-runtime = { version = "=0.1.3", features = ["tokio_1"] }
 parking_lot = {version = "0.12.1", features = ["hardware-lock-elision"]}
 libc = "0.2.153"
 num_cpus = "1.16.0"
 syslog = "7.0.0"
-# Currently bound by MSRV
-native-tls = { version = ">=0.2.12, <0.2.14" }
+native-tls = { version = "0.2.14" }
 tokio-native-tls = { version = "0.3.1" }
 serde-toml-merge = { version = "0.3.8"}
 jwt = { version = "0.16.0", features = ["openssl"] }

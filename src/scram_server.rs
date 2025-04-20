@@ -261,8 +261,8 @@ pub fn prepare_server_first_response(
     server_salt: &str,
     server_iteration: i32,
 ) -> ServerFirstMessage {
-    let mut rng = rand::thread_rng();
-    let key = rng.gen::<[u8; 18]>(); //  bytes 18 -> base64 24 (( 4*(18/3) ))
+    let mut rng = rand::rng();
+    let key = rng.random::<[u8; 18]>(); //  bytes 18 -> base64 24 (( 4*(18/3) ))
     let nonce = client_nonce.to_owned() + &*general_purpose::STANDARD.encode(key);
 
     let server_first_bare = format!("r={},s={},i={}", nonce, server_salt, server_iteration,);
@@ -415,7 +415,7 @@ pub fn prepare_server_final_message(
 
     // check equal two hmac vectors:
     //      ServerSignature and ClientProof
-    if client_proof.len() == 0 || client_proof.len() != server_secret_stored_key.len() {
+    if client_proof.is_empty() || client_proof.len() != server_secret_stored_key.len() {
         return Err(Error::ScramClientError("e=mismatch-key-length".to_string()));
     }
     let mut is_not_equal: u8 = 0;

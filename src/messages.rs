@@ -818,10 +818,8 @@ where
     W: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     match timeout(duration, proxy_copy_data(read, write, len)).await {
-        Ok(res) => match res {
-            Ok(len) => Ok(len),
-            Err(err) => Err(err),
-        },
+        Ok(Ok(len)) => Ok(len),
+        Ok(Err(err)) => Err(err),
         Err(_) => Err(ProxyTimeout),
     }
 }

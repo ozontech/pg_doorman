@@ -815,12 +815,11 @@ impl Config {
                     .values()
                     .map(|user_cfg| user_cfg.pool_size)
                     .sum::<u32>()
-                    .to_string()
             );
             info!(
                 "[pool: {}] Default pool mode: {}",
                 pool_name,
-                pool_config.pool_mode.to_string()
+                pool_config.pool_mode
             );
             let connect_timeout = pool_config
                 .connect_timeout
