@@ -60,7 +60,7 @@ pub fn print_all_stats() {
                     info!("Connection states: {}", info)
                 }
                 Err(err) => {
-                    error!("Connection states: {}", err.to_string())
+                    error!("Connection states: {}", err)
                 }
             };
         }
