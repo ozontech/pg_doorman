@@ -255,7 +255,6 @@ impl ConnectionPool {
                         false => 0,
                     };
 
-                    info!("application_name: {:?}", pool_config.application_name.clone());
                     let application_name = pool_config.application_name.clone().unwrap_or_else(|| "pg_doorman".to_string());
 
                     let manager = ServerPool::new(
