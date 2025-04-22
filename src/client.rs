@@ -1031,8 +1031,14 @@ where
                                     continue; // try to find another server.
                                 }
                             }
-                            conn.checkin_cleanup().await?;
-                            break conn;
+                            // checkin_cleanup before give server to client.
+                            match conn.checkin_cleanup().await {
+                                Ok(()) => break conn,
+                                Err(err) => {
+                                    warn!("Server {} cleanup error: {:?}", conn.address_to_string(), err);
+                                    continue
+                                }
+                            };
                         }
                         Err(err) => {
                             // Client is attempting to get results from the server,

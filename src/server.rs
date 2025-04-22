@@ -751,6 +751,11 @@ impl Server {
         self.in_copy_mode
     }
 
+    #[inline(always)]
+    pub fn address_to_string(&self) -> String {
+        self.address.to_string()
+    }
+
     /// Perform any necessary cleanup before putting the server
     /// connection back in the pool
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
