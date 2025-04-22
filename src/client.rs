@@ -1031,6 +1031,7 @@ where
                                     continue; // try to find another server.
                                 }
                             }
+                            conn.checkin_cleanup().await?;
                             break conn;
                         }
                         Err(err) => {
@@ -1068,8 +1069,6 @@ where
                     };
                 };
                 let server = conn.deref_mut();
-                // это отложенная очистка перед доступом к новому серверу.
-                server.checkin_cleanup().await?;
                 server.stats.active(self.stats.application_name());
                 server.stats.checkout_time(
                     connecting_at.elapsed().as_micros() as u64,
