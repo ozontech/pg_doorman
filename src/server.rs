@@ -757,14 +757,17 @@ impl Server {
         if self.in_copy_mode() {
             warn!("Server {} returned while still in copy-mode", self);
             self.mark_bad("returned in copy-mode", true);
+            return Ok(())
         }
         if self.is_data_available() {
             warn!("Server {} returned while still has data available", self);
             self.mark_bad("returned with data available", true);
+            return Ok(())
         }
         if !self.buffer.is_empty() {
             warn!("Server {} returned while buffer is not empty", self);
             self.mark_bad("returned with not-empty buffer", true);
+            return Ok(())
         }
         // Client disconnected with an open transaction on the server connection.
         // Pgbouncer behavior is to close the server connection but that can cause

@@ -1861,7 +1861,6 @@ mod tests {
         in_msg.put(command_complete("2")); // C
         in_msg.put(ready_for_query(false)); // Z
         let out_msg = set_messages_right_place(in_msg.to_vec()).expect("parse");
-        println!("112tC2tCZ");
         assert_eq!(show_headers(out_msg), "12tC12tCZ".to_string());
     }
 
