@@ -1,3 +1,15 @@
+# 1.8.2 (Apr 24th, 2025)
+
+### Added
+
+- `application_name` parameter in pool #30.
+- link-time optimization #29.
+
+### Fixed
+
+- fix config value of prepared_statements #21.
+
+
 # 1.8.1 (Apr 06th, 2025)
 
 ### Fixed

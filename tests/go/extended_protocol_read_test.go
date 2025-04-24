@@ -32,22 +32,27 @@ func readServerMessages(t *testing.T, conn net.Conn) []*message {
 	var messages []*message
 	for {
 		response := make([]byte, 5)
-		if count, err := conn.Read(response); err != nil {
-			t.Fatal(err)
-		} else if count != len(response) {
-			t.Fatalf("expected %d bytes read, got %d bytes", len(response), count)
-		}
+		readAll(t, conn, response)
 		code, length := response[0], bytesToI32(response[1:5])
-		t.Logf("read code: %s and length: %d", string(code), length)
 		bb := make([]byte, length-4)
-		if count, err := conn.Read(bb); err != nil {
-			t.Fatal(err)
-		} else if count != len(bb) {
-			t.Fatalf("expected %d bytes read, got %d bytes", len(bb), count)
-		}
+		readAll(t, conn, bb)
 		messages = append(messages, &message{code: rune(code), length: length, bytes: bb})
 		if code == 'Z' {
 			return messages
 		}
+	}
+}
+
+func readAll(t *testing.T, conn net.Conn, buf []byte) {
+	from := 0
+	for {
+		count, err := conn.Read(buf[from:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count == len(buf) {
+			return
+		}
+		from += count
 	}
 }

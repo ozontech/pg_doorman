@@ -1393,6 +1393,11 @@ where
 
                         // CopyData
                         'd' => {
+                            if !server.in_copy_mode() {
+                                self.stats.disconnect();
+                                server.mark_bad("client expects COPY mode, but server are not in", true);
+                                return Err(Error::ProtocolSyncError("server not in copy mode".to_string()))
+                            }
                             self.buffer.put(&message[..]);
 
                             // Want to limit buffer size
@@ -1406,6 +1411,11 @@ where
                         // CopyDone or CopyFail
                         // Copy is done, successfully or not.
                         'c' | 'f' => {
+                            if !server.in_copy_mode() {
+                                self.stats.disconnect();
+                                server.mark_bad("client expects COPY mode, but server are not in", true);
+                                return Err(Error::ProtocolSyncError("server not in copy mode".to_string()))
+                            }
                             // We may already have some copy data in the buffer, add this message to buffer
                             self.buffer.put(&message[..]);
 
