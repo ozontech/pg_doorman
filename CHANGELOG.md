@@ -7,7 +7,7 @@
 
 ### Fixed
 
-- fix config value of prepared_statements #21.
+- If the client does not properly handle errors in copy mode, there may be a risk of connection leakage.
 
 
 # 1.8.1 (Apr 06th, 2025)
