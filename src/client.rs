@@ -1035,8 +1035,12 @@ where
                             match conn.checkin_cleanup().await {
                                 Ok(()) => break conn,
                                 Err(err) => {
-                                    warn!("Server {} cleanup error: {:?}", conn.address_to_string(), err);
-                                    continue
+                                    warn!(
+                                        "Server {} cleanup error: {:?}",
+                                        conn.address_to_string(),
+                                        err
+                                    );
+                                    continue;
                                 }
                             };
                         }
@@ -1395,8 +1399,13 @@ where
                         'd' => {
                             if !server.in_copy_mode() {
                                 self.stats.disconnect();
-                                server.mark_bad("client expects COPY mode, but server are not in", true);
-                                return Err(Error::ProtocolSyncError("server not in copy mode".to_string()))
+                                server.mark_bad(
+                                    "client expects COPY mode, but server are not in",
+                                    true,
+                                );
+                                return Err(Error::ProtocolSyncError(
+                                    "server not in copy mode".to_string(),
+                                ));
                             }
                             self.buffer.put(&message[..]);
 
@@ -1413,8 +1422,13 @@ where
                         'c' | 'f' => {
                             if !server.in_copy_mode() {
                                 self.stats.disconnect();
-                                server.mark_bad("client expects COPY mode, but server are not in", true);
-                                return Err(Error::ProtocolSyncError("server not in copy mode".to_string()))
+                                server.mark_bad(
+                                    "client expects COPY mode, but server are not in",
+                                    true,
+                                );
+                                return Err(Error::ProtocolSyncError(
+                                    "server not in copy mode".to_string(),
+                                ));
                             }
                             // We may already have some copy data in the buffer, add this message to buffer
                             self.buffer.put(&message[..]);

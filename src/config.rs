@@ -815,8 +815,7 @@ impl Config {
             );
             info!(
                 "[pool: {}] Default pool mode: {}",
-                pool_name,
-                pool_config.pool_mode
+                pool_name, pool_config.pool_mode
             );
             let connect_timeout = pool_config
                 .connect_timeout

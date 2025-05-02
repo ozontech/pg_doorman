@@ -105,10 +105,7 @@ impl<C> IdleConn<C> {
     }
 
     pub(crate) fn split_raw(self) -> (C, ConnSplit<C>) {
-        (
-            self.inner,
-            ConnSplit::new(self.state),
-        )
+        (self.inner, ConnSplit::new(self.state))
     }
 }
 

@@ -2,15 +2,18 @@
 
 use super::error::Error;
 
-pub use async_trait::async_trait;
 use super::config::Builder;
 use super::config::{Config, InternalConfig, ShareConfig};
+use super::spawn::spawn;
+use super::time::interval;
+use crate::mobc::conn::{ActiveConn, ConnState, IdleConn};
+use crate::mobc::time;
+pub use async_trait::async_trait;
 use futures_channel::mpsc::{self, Receiver, Sender};
 use futures_util::lock::{Mutex, MutexGuard};
 use futures_util::select;
 use futures_util::FutureExt;
 use futures_util::StreamExt;
-use super::spawn::spawn;
 use std::fmt;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
@@ -19,10 +22,7 @@ use std::sync::{
     Arc, Weak,
 };
 use std::time::{Duration, Instant};
-use super::time::interval;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use crate::mobc::conn::{ActiveConn, ConnState, IdleConn};
-use crate::mobc::time;
 
 const CONNECTION_REQUEST_QUEUE_SIZE: usize = 10000;
 

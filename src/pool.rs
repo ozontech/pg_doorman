@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use async_trait::async_trait;
 use log::{info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
@@ -10,7 +11,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time;
 use std::time::Duration;
-use async_trait::async_trait;
 
 use crate::config::{get_config, Address, General, PoolMode, User};
 use crate::errors::Error;
@@ -248,11 +248,16 @@ impl ConnectionPool {
                     };
 
                     let prepared_statements_cache_size = match config.general.prepared_statements {
-                        true => pool_config.prepared_statements_cache_size.unwrap_or(config.general.prepared_statements_cache_size),
+                        true => pool_config
+                            .prepared_statements_cache_size
+                            .unwrap_or(config.general.prepared_statements_cache_size),
                         false => 0,
                     };
 
-                    let application_name = pool_config.application_name.clone().unwrap_or_else(|| "pg_doorman".to_string());
+                    let application_name = pool_config
+                        .application_name
+                        .clone()
+                        .unwrap_or_else(|| "pg_doorman".to_string());
 
                     let manager = ServerPool::new(
                         address.clone(),
@@ -270,15 +275,23 @@ impl ConnectionPool {
                         pool_name, user.username, virtual_pool_id
                     );
 
-                    let builder_config = mobc::lib::Pool::builder().
-                        max_idle(0).
-                        max_open((user.pool_size / config.general.virtual_pool_count as u32) as u64).
-                        max_lifetime(Some(time::Duration::from_millis(config.general.idle_timeout))).
-                        max_idle_lifetime(Some(time::Duration::from_millis(config.general.server_lifetime))).
-                        get_timeout(Some(time::Duration::from_millis(config.general.query_wait_timeout))).
-                        health_check_interval(Some(time::Duration::from_secs(3)));
+                    let builder_config = mobc::lib::Pool::builder()
+                        .max_idle(0)
+                        .max_open(
+                            (user.pool_size / config.general.virtual_pool_count as u32) as u64,
+                        )
+                        .max_lifetime(Some(time::Duration::from_millis(
+                            config.general.idle_timeout,
+                        )))
+                        .max_idle_lifetime(Some(time::Duration::from_millis(
+                            config.general.server_lifetime,
+                        )))
+                        .get_timeout(Some(time::Duration::from_millis(
+                            config.general.query_wait_timeout,
+                        )))
+                        .health_check_interval(Some(time::Duration::from_secs(3)));
 
-                    let pool =  builder_config.build(manager);
+                    let pool = builder_config.build(manager);
 
                     let pool = ConnectionPool {
                         database: pool,
@@ -356,7 +369,10 @@ impl ConnectionPool {
         if !guard.is_empty() {
             return Ok(guard.clone());
         }
-        info!("Fetching new server parameters from server: {}", self.address);
+        info!(
+            "Fetching new server parameters from server: {}",
+            self.address
+        );
         {
             let conn = match self.database.get().await {
                 Ok(conn) => conn,
@@ -475,10 +491,7 @@ impl mobc::lib::Manager for ServerPool {
         }
     }
 
-    async fn check(
-        &self,
-        conn: Self::Connection,
-    ) -> Result<Self::Connection, Self::Error> {
+    async fn check(&self, conn: Self::Connection) -> Result<Self::Connection, Self::Error> {
         if conn.is_bad() {
             return Err(Error::BadConnection);
         }
@@ -497,4 +510,3 @@ pub fn get_pool(db: &str, user: &str, virtual_pool_id: u16) -> Option<Connection
 pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {
     (*(*POOLS.load())).clone()
 }
-

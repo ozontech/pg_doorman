@@ -9,6 +9,7 @@ pub mod errors;
 mod jwt_auth;
 pub mod logger;
 pub mod messages;
+pub mod mobc;
 pub mod pool;
 pub mod rate_limit;
 mod scram_client;
@@ -16,7 +17,6 @@ pub mod scram_server;
 pub mod server;
 pub mod stats;
 pub mod tls;
-pub mod mobc;
 
 /// Format chrono::Duration to be more human-friendly.
 ///

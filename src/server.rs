@@ -431,7 +431,10 @@ impl Server {
             self.stats.wait_reading();
             let (code_u8, message_len) = read_message_header(&mut self.stream).await?;
             // if message server is too big.
-            if self.max_message_size > 0 && message_len > self.max_message_size && code_u8 as char == 'D' {
+            if self.max_message_size > 0
+                && message_len > self.max_message_size
+                && code_u8 as char == 'D'
+            {
                 // send current buffer + header.
                 self.buffer.put_u8(code_u8);
                 self.buffer.put_i32(message_len);
@@ -762,17 +765,26 @@ impl Server {
         if self.in_copy_mode() {
             warn!("Server {} returned while still in copy-mode", self);
             self.mark_bad("returned in copy-mode", true);
-            return Err(Error::ProtocolSyncError(format!("server {} returned in copy-mode", self.address)))
+            return Err(Error::ProtocolSyncError(format!(
+                "server {} returned in copy-mode",
+                self.address
+            )));
         }
         if self.is_data_available() {
             warn!("Server {} returned while still has data available", self);
             self.mark_bad("returned with data available", true);
-            return Err(Error::ProtocolSyncError(format!("server {} returned with data available", self.address)))
+            return Err(Error::ProtocolSyncError(format!(
+                "server {} returned with data available",
+                self.address
+            )));
         }
         if !self.buffer.is_empty() {
             warn!("Server {} returned while buffer is not empty", self);
             self.mark_bad("returned with not-empty buffer", true);
-            return Err(Error::ProtocolSyncError(format!("server {} with not-empty buffer", self.address)))
+            return Err(Error::ProtocolSyncError(format!(
+                "server {} with not-empty buffer",
+                self.address
+            )));
         }
         // Client disconnected with an open transaction on the server connection.
         // Pgbouncer behavior is to close the server connection but that can cause
@@ -1032,7 +1044,13 @@ impl Server {
             .server_username
             .unwrap_or(user.clone().username);
         // StartupMessage
-        startup(&mut stream, username.clone(), database, application_name.clone()).await?;
+        startup(
+            &mut stream,
+            username.clone(),
+            database,
+            application_name.clone(),
+        )
+        .await?;
 
         let mut process_id: i32 = 0;
         let mut secret_key: i32 = 0;
