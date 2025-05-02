@@ -324,7 +324,7 @@ where
         let pool_config = pool.settings.clone();
         let database_name = &pool.address().database;
         let address = pool.address();
-        let pool_state = pool.pool_state();
+        let pool_state = pool.pool_state().await;
 
         res.put(data_row(&vec![
             address.name(),                                          // name
@@ -337,7 +337,7 @@ where
             "0".to_string(),                                         // reserve_pool
             pool_config.pool_mode.to_string(),                       // pool_mode
             pool_config.user.pool_size.to_string(),                  // max_connections
-            pool_state.size.to_string(),                             // current_connections
+            pool_state.connections.to_string(),                      // current_connections
         ]));
     }
     res.put(command_complete("SHOW"));

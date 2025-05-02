@@ -25,6 +25,9 @@ default_tcp_so_linger = 0
 # non-buffer streaming messages smaller than 1mb
 max_message_size = 1048576
 
+server_lifetime = 500000
+idle_timeout = 3000
+
 # admin user.
 admin_username = "doorman_admin"
 admin_password = "doorman_admin_password"

@@ -16,6 +16,7 @@ pub mod scram_server;
 pub mod server;
 pub mod stats;
 pub mod tls;
+pub mod mobc;
 
 /// Format chrono::Duration to be more human-friendly.
 ///

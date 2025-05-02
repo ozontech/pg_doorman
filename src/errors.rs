@@ -12,6 +12,7 @@ pub enum Error {
     ServerError,
     ServerMessageParserError(String),
     ServerStartupError(String, ServerIdentifier),
+    BadConnection,
     ServerAuthError(String, ServerIdentifier),
     ServerStartupReadParameters(String),
     BadConfig(String),

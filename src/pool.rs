@@ -1,19 +1,21 @@
 use arc_swap::ArcSwap;
-use deadpool::{managed, Runtime};
-use log::{error, info, warn};
+use log::{info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::time;
 use std::time::Duration;
+use async_trait::async_trait;
 
 use crate::config::{get_config, Address, General, PoolMode, User};
 use crate::errors::Error;
 use crate::messages::Parse;
+use crate::mobc;
 
 use crate::server::{Server, ServerParameters};
 use crate::stats::{AddressStats, ServerStats};
@@ -154,9 +156,6 @@ pub struct PoolSettings {
 
     /// Синхронизируем серверные параметры установленные клиентом через SET. (False).
     pub sync_server_parameters: bool,
-
-    idle_timeout_ms: u64,
-    life_time_ms: u64,
 }
 
 impl Default for PoolSettings {
@@ -165,8 +164,6 @@ impl Default for PoolSettings {
             pool_mode: PoolMode::Transaction,
             user: User::default(),
             db: String::default(),
-            idle_timeout_ms: General::default_idle_timeout(),
-            life_time_ms: General::default_server_lifetime(),
             sync_server_parameters: General::default_sync_server_parameters(),
         }
     }
@@ -176,7 +173,7 @@ impl Default for PoolSettings {
 #[derive(Clone, Debug)]
 pub struct ConnectionPool {
     /// The pool.
-    pub database: managed::Pool<ServerPool>,
+    pub database: mobc::lib::Pool<ServerPool>,
 
     /// The address (host, port)
     pub address: Address,
@@ -268,36 +265,20 @@ impl ConnectionPool {
                         application_name,
                     );
 
-                    let queue_strategy = match config.general.server_round_robin {
-                        true => managed::QueueMode::Fifo,
-                        false => managed::QueueMode::Lifo,
-                    };
-
                     info!(
                         "[pool: {}][user: {}][vpid: {}]",
                         pool_name, user.username, virtual_pool_id
                     );
 
-                    let mut builder_config = managed::Pool::builder(manager);
-                    builder_config = builder_config.config(managed::PoolConfig {
-                        max_size: (user.pool_size / config.general.virtual_pool_count as u32)
-                            as usize,
-                        timeouts: managed::Timeouts {
-                            wait: Some(Duration::from_millis(config.general.query_wait_timeout)),
-                            create: Some(Duration::from_millis(config.general.connect_timeout)),
-                            recycle: None,
-                        },
-                        queue_mode: queue_strategy,
-                    });
-                    builder_config = builder_config.runtime(Runtime::Tokio1);
+                    let builder_config = mobc::lib::Pool::builder().
+                        max_idle(0).
+                        max_open((user.pool_size / config.general.virtual_pool_count as u32) as u64).
+                        max_lifetime(Some(time::Duration::from_millis(config.general.idle_timeout))).
+                        max_idle_lifetime(Some(time::Duration::from_millis(config.general.server_lifetime))).
+                        get_timeout(Some(time::Duration::from_millis(config.general.query_wait_timeout))).
+                        health_check_interval(Some(time::Duration::from_secs(3)));
 
-                    let pool = match builder_config.build() {
-                        Ok(p) => p,
-                        Err(err) => {
-                            error!("error build pool: {:?}", err);
-                            return Err(Error::BadConfig(format!("error build pool: {:?}", err)));
-                        }
-                    };
+                    let pool =  builder_config.build(manager);
 
                     let pool = ConnectionPool {
                         database: pool,
@@ -310,8 +291,6 @@ impl ConnectionPool {
                             pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
                             user: user.clone(),
                             db: pool_name.clone(),
-                            idle_timeout_ms: config.general.idle_timeout,
-                            life_time_ms: config.general.server_lifetime,
                             sync_server_parameters: config.general.sync_server_parameters,
                         },
                         prepared_statement_cache: match config.general.prepared_statements {
@@ -337,27 +316,8 @@ impl ConnectionPool {
 
     /// Get pool state for a particular shard server as reported by pooler.
     #[inline(always)]
-    pub fn pool_state(&self) -> managed::Status {
-        self.database.status()
-    }
-
-    pub fn retain_pool_connections(&self, count: Arc<AtomicUsize>, max: usize) {
-        self.database.retain(|_, metrics| {
-            if count.load(Ordering::Relaxed) >= max {
-                return true;
-            }
-            if let Some(v) = metrics.recycled {
-                if (v.elapsed().as_millis() as u64) > self.settings.idle_timeout_ms {
-                    count.fetch_add(1, Ordering::Relaxed);
-                    return false;
-                }
-            }
-            if (metrics.age().as_millis() as u64) > self.settings.life_time_ms {
-                count.fetch_add(1, Ordering::Relaxed);
-                return false;
-            }
-            true
-        })
+    pub async fn pool_state(&self) -> mobc::lib::State {
+        self.database.state().await
     }
 
     /// Get the address information for a server.
@@ -464,12 +424,13 @@ impl ServerPool {
     }
 }
 
-impl managed::Manager for ServerPool {
-    type Type = Server;
+#[async_trait]
+impl mobc::lib::Manager for ServerPool {
+    type Connection = Server;
     type Error = Error;
 
     /// Attempts to create a new connection.
-    async fn create(&self) -> Result<Self::Type, Self::Error> {
+    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         let mut guard = self.open_new_server.lock().await;
         *guard += 1;
         info!(
@@ -514,15 +475,14 @@ impl managed::Manager for ServerPool {
         }
     }
 
-    async fn recycle(
+    async fn check(
         &self,
-        conn: &mut Server,
-        _: &managed::Metrics,
-    ) -> managed::RecycleResult<Error> {
+        conn: Self::Connection,
+    ) -> Result<Self::Connection, Self::Error> {
         if conn.is_bad() {
-            return Err(managed::RecycleError::StaticMessage("Bad connection"));
+            return Err(Error::BadConnection);
         }
-        Ok(())
+        Ok(conn)
     }
 }
 
@@ -538,14 +498,3 @@ pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {
     (*(*POOLS.load())).clone()
 }
 
-pub async fn retain_connections() {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-    let count = Arc::new(AtomicUsize::new(0));
-    loop {
-        interval.tick().await;
-        for (_, pool) in get_all_pools() {
-            pool.retain_pool_connections(count.clone(), 1);
-        }
-        count.store(0, Ordering::Relaxed);
-    }
-}
