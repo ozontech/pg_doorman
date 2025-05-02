@@ -49,8 +49,3 @@ serde-toml-merge = { version = "0.3.8"}
 jwt = { version = "0.16.0", features = ["openssl"] }
 openssl = { version = "0.10.72"}
 iota = { version = "0.2.3" }
-
-
-[replace]
-'deadpool:0.10.0' = { path = 'patches/deadpool' }
-'deadpool-runtime:0.1.3' = { path = 'patches/deadpool/runtime' }
