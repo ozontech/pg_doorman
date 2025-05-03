@@ -209,7 +209,19 @@ impl<M: Manager> Pool<M> {
             && self.0.state.num_open.load(Ordering::Relaxed) > 0
             && internals.cleaner_ch.is_none()
         {
-            log::debug!("run connection cleaner");
+            let shared1 = Arc::downgrade(&self.0);
+            let clean_rate = self.0.config.clean_rate;
+            let (cleaner_ch_sender, cleaner_ch) = mpsc::channel(1);
+            internals.cleaner_ch = Some(cleaner_ch_sender);
+            self.0.manager.spawn_task(async move {
+                connection_cleaner(shared1, cleaner_ch, clean_rate).await;
+            });
+        }
+    }
+
+    pub async fn clean_connections(&self) {
+        let mut internals = self.0.internals.lock().await;
+        if self.0.state.num_open.load(Ordering::Relaxed) > 0 && internals.cleaner_ch.is_none() {
             let shared1 = Arc::downgrade(&self.0);
             let clean_rate = self.0.config.clean_rate;
             let (cleaner_ch_sender, cleaner_ch) = mpsc::channel(1);
@@ -459,12 +471,9 @@ async fn clean_connection<M: Manager>(shared: &Weak<SharedPool<M>>) -> bool {
     let shared = match shared.upgrade() {
         Some(shared) => shared,
         None => {
-            log::debug!("Failed to clean connections");
             return false;
         }
     };
-
-    log::debug!("Clean connections");
 
     let mut internals = shared.internals.lock().await;
     if shared.state.num_open.load(Ordering::Relaxed) == 0 || internals.config.max_lifetime.is_none()
@@ -477,10 +486,6 @@ async fn clean_connection<M: Manager>(shared: &Weak<SharedPool<M>>) -> bool {
     let mut closing = vec![];
 
     let mut i = 0;
-    log::debug!(
-        "clean connections, idle conns {}",
-        internals.free_conns.len()
-    );
 
     loop {
         if i >= internals.free_conns.len() {

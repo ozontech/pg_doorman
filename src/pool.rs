@@ -510,3 +510,13 @@ pub fn get_pool(db: &str, user: &str, virtual_pool_id: u16) -> Option<Connection
 pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {
     (*(*POOLS.load())).clone()
 }
+
+pub async fn clean_connections() {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+    loop {
+        interval.tick().await;
+        for (_, pool) in get_all_pools() {
+            pool.database.clean_connections().await;
+        }
+    }
+}

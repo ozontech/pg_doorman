@@ -53,7 +53,7 @@ use pg_doorman::core_affinity;
 use pg_doorman::daemon;
 use pg_doorman::format_duration;
 use pg_doorman::messages::configure_tcp_socket;
-use pg_doorman::pool::{ClientServerMap, ConnectionPool};
+use pg_doorman::pool::{clean_connections, ClientServerMap, ConnectionPool};
 use pg_doorman::rate_limit::RateLimiter;
 use pg_doorman::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use pg_doorman::tls::load_identity;
@@ -192,6 +192,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::task::spawn(async move {
             let mut stats_collector = Collector::default();
             stats_collector.collect().await;
+        });
+
+        tokio::task::spawn(async move {
+            clean_connections().await;
         });
 
         #[cfg(windows)]
