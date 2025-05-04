@@ -90,20 +90,6 @@ impl<C> IdleConn<C> {
             .unwrap_or(false)
     }
 
-    pub(crate) fn needs_health_check(&self, timeout: Option<Duration>) -> bool {
-        timeout
-            .and_then(|check_interval| {
-                Instant::now()
-                    .checked_duration_since(self.state.last_checked_at)
-                    .map(|dur_since| dur_since >= check_interval)
-            })
-            .unwrap_or(true)
-    }
-
-    pub(crate) fn mark_checked(&mut self) {
-        self.state.last_checked_at = Instant::now()
-    }
-
     pub(crate) fn split_raw(self) -> (C, ConnSplit<C>) {
         (self.inner, ConnSplit::new(self.state))
     }
@@ -112,7 +98,6 @@ impl<C> IdleConn<C> {
 pub(crate) struct ConnState {
     pub(crate) created_at: Instant,
     pub(crate) last_used_at: Instant,
-    pub(crate) last_checked_at: Instant,
     pub(crate) brand_new: bool,
     total_connections_open: Arc<AtomicU64>,
     total_connections_closed: Arc<AtomicU64>,
@@ -126,7 +111,6 @@ impl ConnState {
         Self {
             created_at: Instant::now(),
             last_used_at: Instant::now(),
-            last_checked_at: Instant::now(),
             brand_new: true,
             total_connections_open,
             total_connections_closed,

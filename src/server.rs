@@ -365,6 +365,9 @@ pub struct Server {
 
     /// Max message size
     max_message_size: i32,
+
+    /// Last checked at
+    pub last_checked_at: SystemTime,
 }
 
 impl std::fmt::Display for Server {
@@ -1509,6 +1512,7 @@ impl Server {
                         },
                         registering_prepared_statement: VecDeque::new(),
                         max_message_size: config.general.message_size_to_be_stream as i32,
+                        last_checked_at: SystemTime::now(),
                     };
                     server.stats.update_process_id(process_id);
 

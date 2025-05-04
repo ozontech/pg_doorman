@@ -10,7 +10,7 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::config::{get_config, Address, General, PoolMode, User};
 use crate::errors::Error;
@@ -288,8 +288,7 @@ impl ConnectionPool {
                         )))
                         .get_timeout(Some(time::Duration::from_millis(
                             config.general.query_wait_timeout,
-                        )))
-                        .health_check_interval(Some(time::Duration::from_secs(3)));
+                        )));
 
                     let pool = builder_config.build(manager);
 
@@ -491,9 +490,15 @@ impl mobc::lib::Manager for ServerPool {
         }
     }
 
-    async fn check(&self, conn: Self::Connection) -> Result<Self::Connection, Self::Error> {
+    async fn check(&self, mut conn: Self::Connection) -> Result<Self::Connection, Self::Error> {
         if conn.is_bad() {
             return Err(Error::BadConnection);
+        }
+        if let Ok(t) = conn.last_checked_at.elapsed() {
+            if t.as_secs() > 1 {
+                conn.small_simple_query(";").await?;
+                conn.last_checked_at = SystemTime::now();
+            }
         }
         Ok(conn)
     }

@@ -329,17 +329,10 @@ impl<M: Manager> Pool<M> {
             return None;
         }
 
-        let needs_health_check = self.0.config.health_check
-            && conn.needs_health_check(self.0.config.health_check_interval);
-
-        if needs_health_check {
-            let (raw, split) = conn.split_raw();
-            let checked_raw = self.0.manager.check(raw).await.ok()?;
-            let mut checked = split.restore(checked_raw);
-            checked.mark_checked();
-            return Some(checked);
-        }
-        Some(conn)
+        let (raw, split) = conn.split_raw();
+        let checked_raw = self.0.manager.check(raw).await.ok()?;
+        let checked = split.restore(checked_raw);
+        Some(checked)
     }
 
     async fn get_or_create_conn(&self) -> Result<ActiveConn<M::Connection>, Error<M::Error>> {
