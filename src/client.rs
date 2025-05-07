@@ -475,7 +475,7 @@ pub async fn startup_tls(
         // TLS negotiation failed.
         Err(err) => {
             error!("TLS negotiation failed: {:?}", err);
-            return Err(Error::TlsError);
+            return Err(Error::TLSError);
         }
     };
 
@@ -577,13 +577,13 @@ where
                 "58006",
             )
             .await?;
-            return Err(Error::ShuttingDown);
+            return Err(Error::ShuttingDown("pooler is shut down now".to_string()));
         }
 
         if !addr_in_hba(addr.ip()) {
             error_response_terminal(&mut write, "hba forbidden for this ip address", "28000")
                 .await?;
-            return Err(Error::HbaForbiddenError(format!(
+            return Err(Error::HBAForbiddenError(format!(
                 "hba forbidden client: {} from address: {:?}",
                 client_identifier,
                 addr.ip()
@@ -1446,7 +1446,6 @@ where
                             match write_all_flush(&mut self.write, &response).await {
                                 Ok(_) => self.stats.active_idle(),
                                 Err(err) => {
-                                    server.wait_available().await;
                                     server.mark_bad(
                                         format!(
                                             "flush to client {} response after copy done: {:?}",
@@ -1455,6 +1454,7 @@ where
                                         .as_str(),
                                         false,
                                     );
+                                    server.wait_available().await;
                                     return Err(err);
                                 }
                             };
@@ -1802,11 +1802,11 @@ where
             {
                 Ok(msg) => msg,
                 Err(err) => {
-                    server.wait_available().await;
                     server.mark_bad(
                         format!("loop with client {}: {:?}", self.addr, err).as_str(),
                         true,
                     );
+                    server.wait_available().await;
                     return Err(err);
                 }
             };
@@ -1831,11 +1831,11 @@ where
             match write_all_flush(&mut self.write, &response).await {
                 Ok(_) => self.stats.active_idle(),
                 Err(err_write) => {
-                    server.wait_available().await;
                     server.mark_bad(
                         format!("flush to client {} {:?}", self.addr, err_write).as_str(),
                         true,
                     );
+                    server.wait_available().await;
                     return Err(err_write);
                 }
             };

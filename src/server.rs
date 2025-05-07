@@ -4,43 +4,42 @@ use bytes::{Buf, BufMut, BytesMut};
 use log::{error, info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
+use pin_project_lite::pin_project;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
 use std::num::NonZeroUsize;
-use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufStream};
 use tokio::net::{TcpStream, UnixStream};
 
 use crate::config::{get_config, Address, User, VERSION};
 use crate::constants::*;
+use crate::errors::Error::MaxMessageSize;
 use crate::errors::{Error, ServerIdentifier};
+use crate::jwt_auth::{new_claims, sign_with_jwt_priv_key};
 use crate::messages::BytesMutReader;
 use crate::messages::*;
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
-use crate::stats::ServerStats;
-use std::string::ToString;
-
-use crate::errors::Error::MaxMessageSize;
-use crate::jwt_auth::{new_claims, sign_with_jwt_priv_key};
 use crate::scram_client::ScramSha256;
-use pin_project::pin_project;
+use crate::stats::ServerStats;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
 
-#[pin_project(project = SteamInnerProj)]
-#[derive(Debug)]
-pub enum StreamInner {
-    TCPPlain {
-        #[pin]
-        stream: TcpStream,
-    },
-    UnixSocket {
-        #[pin]
-        stream: UnixStream,
-    },
+pin_project! {
+    #[project = SteamInnerProj]
+    #[derive(Debug)]
+    pub enum StreamInner {
+        TCPPlain {
+            #[pin]
+            stream: TcpStream,
+        },
+        UnixSocket {
+            #[pin]
+            stream: UnixStream,
+        },
+    }
 }
 
 impl AsyncWrite for StreamInner {
@@ -94,20 +93,20 @@ impl AsyncRead for StreamInner {
 }
 
 impl StreamInner {
-    pub fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
         match self {
-            StreamInner::TCPPlain { stream } => {
-                let fd = stream.as_raw_fd();
-                unsafe {
-                    libc::shutdown(fd, libc::SHUT_RDWR);
-                }
-            }
-            StreamInner::UnixSocket { stream } => {
-                let fd = stream.as_raw_fd();
-                unsafe {
-                    libc::shutdown(fd, libc::SHUT_RDWR);
-                };
-            }
+            StreamInner::TCPPlain { stream } => match stream.shutdown().await {
+                Ok(()) => Ok(()),
+                Err(err) => Err(Error::ShuttingDown(
+                    format!("tcp shutdown error: {}", err).to_string(),
+                )),
+            },
+            StreamInner::UnixSocket { stream } => match stream.shutdown().await {
+                Ok(()) => Ok(()),
+                Err(err) => Err(Error::ShuttingDown(
+                    format!("unix shutdown error: {}", err).to_string(),
+                )),
+            },
         }
     }
     pub fn try_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -330,7 +329,7 @@ pub struct Server {
 
     flush_wait_code: char,
 
-    /// Is the server broken? We'll remote it from the pool if so.
+    /// Is the server broken? We'll remove it from the pool if so.
     bad: bool,
 
     /// If server connection requires reset statements before checkin
@@ -680,7 +679,6 @@ impl Server {
                 "Server {} marked bad, reason: {}, shutdown socket",
                 self, reason
             );
-            self.stream.get_mut().shutdown();
         } else {
             error!("Server {} marked bad, reason: {}", self, reason);
         }
@@ -702,6 +700,13 @@ impl Server {
             return;
         }
         warn!("Reading available data from server: {}", self);
+        if self.bad {
+            match self.stream.get_mut().shutdown().await {
+                Ok(()) => (),
+                Err(err) => error!("Server {} shutdown problem: {}", self.address, err),
+            }
+            return;
+        }
         loop {
             if !self.is_data_available() {
                 self.stats.wait_idle();
@@ -992,7 +997,7 @@ impl Server {
         let mut stream = if host.starts_with('/') {
             create_unix_stream_inner(host, port).await?
         } else {
-            create_tcp_stream_inner(host, port, false, false).await?
+            create_tcp_stream_inner(host, port).await?
         };
 
         warn!(
@@ -1033,13 +1038,7 @@ impl Server {
         let mut stream = if address.host.starts_with('/') {
             create_unix_stream_inner(&address.host, address.port).await?
         } else {
-            create_tcp_stream_inner(
-                &address.host,
-                address.port,
-                config.general.server_tls,
-                config.general.verify_server_certificate,
-            )
-            .await?
+            create_tcp_stream_inner(&address.host, address.port).await?
         };
 
         let username = user
@@ -1261,7 +1260,15 @@ impl Server {
                                 password_response.put_slice(token.as_bytes());
                                 password_response.put_u8(b'\0');
                                 match stream.try_write(&password_response) {
-                                    Ok(_) => (),
+                                    Ok(size) => {
+                                        if size != password_response.len() {
+                                            return Err(Error::ServerAuthError(
+                                            format!(
+                                                "jwt authentication on the server failed: write only {} of {}", size, len),
+                                            server_identifier,
+                                        ));
+                                        }
+                                    }
                                     Err(err) => {
                                         return Err(Error::ServerAuthError(
                                             format!(
@@ -1318,7 +1325,14 @@ impl Server {
                                 password_response.put_i32(password_hash.len() as i32 + 4);
                                 password_response.put_slice(&password_hash);
                                 match stream.try_write(&password_response) {
-                                    Ok(_) => (),
+                                    Ok(size) => if size != password_response.len(){
+                                        return Err(Error::ServerAuthError(
+                                            format!(
+                                                "md5 authentication on the server failed: write only {} bytes", size
+                                            ),
+                                            server_identifier,
+                                        ));
+                                    },
                                     Err(err) => {
                                         return Err(Error::ServerAuthError(
                                             format!(
@@ -1547,15 +1561,18 @@ impl Drop for Server {
             let mut guard = CANCELED_PIDS.lock();
             guard.retain(|&pid| pid != self.process_id);
         }
-        let mut bytes = BytesMut::with_capacity(5);
-        bytes.put_u8(b'X');
-        bytes.put_i32(4);
 
-        match self.stream.get_mut().try_write(&bytes) {
-            Ok(5) => (),
-            Err(err) => warn!("Dirty server {} shutdown: {}", self, err),
-            _ => warn!("Dirty server {} shutdown", self),
-        };
+        if !self.bad {
+            let mut bytes = BytesMut::with_capacity(5);
+            bytes.put_u8(b'X');
+            bytes.put_i32(4);
+
+            match self.stream.get_mut().try_write(&bytes) {
+                Ok(5) => (),
+                Err(err) => warn!("Dirty server {} shutdown: {}", self, err),
+                _ => warn!("Dirty server {} shutdown", self),
+            };
+        }
 
         let now = chrono::offset::Utc::now().naive_utc();
         let duration = now - self.connected_at;
@@ -1592,13 +1609,8 @@ async fn create_unix_stream_inner(host: &str, port: u16) -> Result<StreamInner, 
     Ok(StreamInner::UnixSocket { stream })
 }
 
-async fn create_tcp_stream_inner(
-    host: &str,
-    port: u16,
-    tls: bool,
-    _verify_server_certificate: bool,
-) -> Result<StreamInner, Error> {
-    let mut stream = match TcpStream::connect(&format!("{}:{}", host, port)).await {
+async fn create_tcp_stream_inner(host: &str, port: u16) -> Result<StreamInner, Error> {
+    let stream = match TcpStream::connect(&format!("{}:{}", host, port)).await {
         Ok(stream) => stream,
         Err(err) => {
             error!("Could not connect to server: {}", err);
@@ -1608,41 +1620,6 @@ async fn create_tcp_stream_inner(
             )));
         }
     };
-
-    // TCP timeouts.
     configure_tcp_socket(&stream);
-
-    let stream = if tls {
-        // Request a TLS connection
-        ssl_request(&mut stream).await?;
-
-        let response = match stream.read_u8().await {
-            Ok(response) => response as char,
-            Err(err) => {
-                return Err(Error::SocketError(format!(
-                    "Server socket error: {:?}",
-                    err
-                )));
-            }
-        };
-
-        match response {
-            // Server supports TLS
-            'S' => {
-                error!("Connection to server via tls is not supported");
-                return Err(Error::SocketError("Server TLS is unsupported".to_string()));
-            }
-
-            // Server does not support TLS
-            'N' => StreamInner::TCPPlain { stream },
-
-            // Something else?
-            m => {
-                return Err(Error::SocketError(format!("Unknown message: {}", { m })));
-            }
-        }
-    } else {
-        StreamInner::TCPPlain { stream }
-    };
-    Ok(stream)
+    Ok(StreamInner::TCPPlain { stream })
 }
