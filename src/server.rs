@@ -453,7 +453,7 @@ impl Server {
                 {
                     Ok(_) => (),
                     Err(err) => {
-                        self.mark_bad(err.to_string().as_str(), true);
+                        self.mark_bad(err.to_string().as_str());
                         return Err(err);
                     }
                 }
@@ -473,7 +473,7 @@ impl Server {
                     "Terminating server {} because of: {:?}",
                     self.address, MaxMessageSize
                 );
-                self.mark_bad("by MAX_MESSAGE_SIZE", true);
+                self.mark_bad("by MAX_MESSAGE_SIZE");
                 return Err(MaxMessageSize);
             }
 
@@ -485,7 +485,7 @@ impl Server {
                 }
                 Err(err) => {
                     error!("Terminating server {} because of: {:?}", self, err);
-                    self.mark_bad(err.to_string().as_str(), true);
+                    self.mark_bad(err.to_string().as_str());
                     return Err(err);
                 }
             };
@@ -529,7 +529,7 @@ impl Server {
                                 "Server {}: unknown transaction state: {}",
                                 self, transaction_state
                             ));
-                            self.mark_bad(err.to_string().as_str(), true);
+                            self.mark_bad(err.to_string().as_str());
                             return Err(err);
                         }
                     };
@@ -558,7 +558,7 @@ impl Server {
                         self.data_available = false;
                         self.set_flush_wait_code(code);
                         self.cleanup_state.needs_cleanup();
-                        self.mark_bad("error in async", false)
+                        self.mark_bad("error in async")
                     }
                 }
 
@@ -673,15 +673,8 @@ impl Server {
     }
 
     /// Indicate that this server connection cannot be re-used and must be discarded.
-    pub fn mark_bad(&mut self, reason: &str, shutdown: bool) {
-        if shutdown {
-            error!(
-                "Server {} marked bad, reason: {}, shutdown socket",
-                self, reason
-            );
-        } else {
-            error!("Server {} marked bad, reason: {}", self, reason);
-        }
+    pub fn mark_bad(&mut self, reason: &str) {
+        error!("Server {} marked bad, reason: {}", self, reason);
         self.bad = true;
     }
 
@@ -694,19 +687,21 @@ impl Server {
         false
     }
 
+    // We should avoid using racing and should not use it on a connection whose status is unknown.
+    pub async fn shutdown(&mut self) {
+        warn!("Server {} shutdown socket", self.address);
+        match self.stream.get_mut().shutdown().await {
+            Ok(()) => (),
+            Err(err) => error!("Server {} shutdown problem: {}", self.address, err),
+        }
+    }
+
     pub async fn wait_available(&mut self) {
         if !self.is_data_available() {
             self.stats.wait_idle();
             return;
         }
         warn!("Reading available data from server: {}", self);
-        if self.bad {
-            match self.stream.get_mut().shutdown().await {
-                Ok(()) => (),
-                Err(err) => error!("Server {} shutdown problem: {}", self.address, err),
-            }
-            return;
-        }
         loop {
             if !self.is_data_available() {
                 self.stats.wait_idle();
@@ -744,7 +739,7 @@ impl Server {
             Err(err) => {
                 self.stats.wait_idle();
                 error!("Terminating server {} because of: {:?}", self, err);
-                self.mark_bad("flush to server error", true);
+                self.mark_bad("flush to server error");
                 Err(err)
             }
         }
@@ -772,7 +767,7 @@ impl Server {
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
         if self.in_copy_mode() {
             warn!("Server {} returned while still in copy-mode", self);
-            self.mark_bad("returned in copy-mode", true);
+            self.mark_bad("returned in copy-mode");
             return Err(Error::ProtocolSyncError(format!(
                 "server {} returned in copy-mode",
                 self.address
@@ -780,7 +775,7 @@ impl Server {
         }
         if self.is_data_available() {
             warn!("Server {} returned while still has data available", self);
-            self.mark_bad("returned with data available", true);
+            self.mark_bad("returned with data available");
             return Err(Error::ProtocolSyncError(format!(
                 "server {} returned with data available",
                 self.address
@@ -788,7 +783,7 @@ impl Server {
         }
         if !self.buffer.is_empty() {
             warn!("Server {} returned while buffer is not empty", self);
-            self.mark_bad("returned with not-empty buffer", true);
+            self.mark_bad("returned with not-empty buffer");
             return Err(Error::ProtocolSyncError(format!(
                 "server {} with not-empty buffer",
                 self.address

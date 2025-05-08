@@ -1027,7 +1027,7 @@ where
                                 let mut guard = CANCELED_PIDS.lock();
                                 if guard.contains(&conn.get_process_id()) {
                                     guard.retain(|&id| id != conn.get_process_id());
-                                    conn.mark_bad("because was canceled", true);
+                                    conn.mark_bad("because was canceled");
                                     continue; // try to find another server.
                                 }
                             }
@@ -1386,7 +1386,6 @@ where
                                     server.mark_bad(
                                         format!("write to client {}: {:?}", self.addr, err)
                                             .as_str(),
-                                        false,
                                     );
                                     return Err(err);
                                 }
@@ -1401,7 +1400,6 @@ where
                                 self.stats.disconnect();
                                 server.mark_bad(
                                     "client expects COPY mode, but server are not in",
-                                    true,
                                 );
                                 return Err(Error::ProtocolSyncError(
                                     "server not in copy mode".to_string(),
@@ -1423,8 +1421,7 @@ where
                             if !server.in_copy_mode() {
                                 self.stats.disconnect();
                                 server.mark_bad(
-                                    "client expects COPY mode, but server are not in",
-                                    true,
+                                    "client expects COPY mode (CopyDone/CopyFail), but server are not in",
                                 );
                                 return Err(Error::ProtocolSyncError(
                                     "server not in copy mode".to_string(),
@@ -1446,15 +1443,14 @@ where
                             match write_all_flush(&mut self.write, &response).await {
                                 Ok(_) => self.stats.active_idle(),
                                 Err(err) => {
+                                    server.wait_available().await;
                                     server.mark_bad(
                                         format!(
                                             "flush to client {} response after copy done: {:?}",
                                             self.addr, err
                                         )
                                         .as_str(),
-                                        false,
                                     );
-                                    server.wait_available().await;
                                     return Err(err);
                                 }
                             };
@@ -1802,11 +1798,10 @@ where
             {
                 Ok(msg) => msg,
                 Err(err) => {
+                    server.wait_available().await;
                     server.mark_bad(
                         format!("loop with client {}: {:?}", self.addr, err).as_str(),
-                        true,
                     );
-                    server.wait_available().await;
                     return Err(err);
                 }
             };
@@ -1831,11 +1826,10 @@ where
             match write_all_flush(&mut self.write, &response).await {
                 Ok(_) => self.stats.active_idle(),
                 Err(err_write) => {
+                    server.wait_available().await;
                     server.mark_bad(
                         format!("flush to client {} {:?}", self.addr, err_write).as_str(),
-                        true,
                     );
-                    server.wait_available().await;
                     return Err(err_write);
                 }
             };
