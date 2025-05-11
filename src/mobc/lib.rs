@@ -5,9 +5,8 @@ use super::error::Error;
 use super::config::Builder;
 use super::config::{Config, InternalConfig, ShareConfig};
 use super::spawn::spawn;
-use super::time::interval;
-use crate::mobc::conn::{ActiveConn, ConnState, IdleConn};
-use crate::mobc::time;
+use super::conn::{ActiveConn, ConnState, IdleConn};
+
 pub use async_trait::async_trait;
 use futures_channel::mpsc::{self, Receiver, Sender};
 use futures_util::lock::{Mutex, MutexGuard};
@@ -22,6 +21,7 @@ use std::sync::{
     Arc, Weak,
 };
 use std::time::{Duration, Instant};
+use log::error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const CONNECTION_REQUEST_QUEUE_SIZE: usize = 10000;
@@ -280,7 +280,16 @@ impl<M: Manager> Pool<M> {
     /// The given timeout will be used instead of the configured connection
     /// timeout.
     pub async fn get_timeout(&self, duration: Duration) -> Result<Connection<M>, Error<M::Error>> {
-        time::timeout(duration, self.inner_get_with_retries()).await
+        match tokio::time::timeout(duration, self.inner_get_with_retries()).await {
+            Ok(result) => match result {
+                Ok(conn) => Ok(conn),
+                Err(err) => Err(err),
+            },
+            Err(err) => {
+                error!("Get connection: {}", err);
+                Err(Error::Timeout)
+            }
+        }
     }
 
     async fn inner_get_with_retries(&self) -> Result<Connection<M>, Error<M::Error>> {
@@ -418,10 +427,8 @@ fn conn_still_valid<M: Manager>(
     conn: &mut ActiveConn<M::Connection>,
 ) -> bool {
     if !shared.manager.validate(conn.as_raw_mut()) {
-        log::debug!("bad conn when check in");
         return false;
     }
-
     true
 }
 
@@ -443,7 +450,7 @@ async fn connection_cleaner<M: Manager>(
     mut cleaner_ch: Receiver<()>,
     clean_rate: Duration,
 ) {
-    let mut interval = interval(clean_rate);
+    let mut interval = tokio::time::interval(clean_rate);
     interval.tick().await;
     loop {
         select! {

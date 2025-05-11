@@ -3,4 +3,3 @@ mod conn;
 pub mod error;
 pub mod lib;
 mod spawn;
-mod time;

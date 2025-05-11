@@ -90,6 +90,7 @@ impl<C> IdleConn<C> {
             .unwrap_or(false)
     }
 
+    #[inline(always)]
     pub(crate) fn split_raw(self) -> (C, ConnSplit<C>) {
         (self.inner, ConnSplit::new(self.state))
     }
@@ -139,6 +140,7 @@ impl<C> ConnSplit<C> {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn restore(self, raw: C) -> IdleConn<C> {
         IdleConn {
             inner: raw,
