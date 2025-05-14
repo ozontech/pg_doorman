@@ -134,6 +134,7 @@ func Test_RaceExtendedProtocol(t *testing.T) {
 	}
 	time.Sleep(2 * time.Second)
 	byeBye(t, conn)
+	assert.Nil(t, conn.Close())
 	checkStaledConnections(t)
 }
 

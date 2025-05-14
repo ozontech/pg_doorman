@@ -4,43 +4,42 @@ use bytes::{Buf, BufMut, BytesMut};
 use log::{error, info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
+use pin_project_lite::pin_project;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
 use std::num::NonZeroUsize;
-use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufStream};
 use tokio::net::{TcpStream, UnixStream};
 
 use crate::config::{get_config, Address, User, VERSION};
 use crate::constants::*;
+use crate::errors::Error::MaxMessageSize;
 use crate::errors::{Error, ServerIdentifier};
+use crate::jwt_auth::{new_claims, sign_with_jwt_priv_key};
 use crate::messages::BytesMutReader;
 use crate::messages::*;
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
-use crate::stats::ServerStats;
-use std::string::ToString;
-
-use crate::errors::Error::MaxMessageSize;
-use crate::jwt_auth::{new_claims, sign_with_jwt_priv_key};
 use crate::scram_client::ScramSha256;
-use pin_project::pin_project;
+use crate::stats::ServerStats;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
 
-#[pin_project(project = SteamInnerProj)]
-#[derive(Debug)]
-pub enum StreamInner {
-    TCPPlain {
-        #[pin]
-        stream: TcpStream,
-    },
-    UnixSocket {
-        #[pin]
-        stream: UnixStream,
-    },
+pin_project! {
+    #[project = SteamInnerProj]
+    #[derive(Debug)]
+    pub enum StreamInner {
+        TCPPlain {
+            #[pin]
+            stream: TcpStream,
+        },
+        UnixSocket {
+            #[pin]
+            stream: UnixStream,
+        },
+    }
 }
 
 impl AsyncWrite for StreamInner {
@@ -94,20 +93,20 @@ impl AsyncRead for StreamInner {
 }
 
 impl StreamInner {
-    pub fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
         match self {
-            StreamInner::TCPPlain { stream } => {
-                let fd = stream.as_raw_fd();
-                unsafe {
-                    libc::shutdown(fd, libc::SHUT_RDWR);
-                }
-            }
-            StreamInner::UnixSocket { stream } => {
-                let fd = stream.as_raw_fd();
-                unsafe {
-                    libc::shutdown(fd, libc::SHUT_RDWR);
-                };
-            }
+            StreamInner::TCPPlain { stream } => match stream.shutdown().await {
+                Ok(()) => Ok(()),
+                Err(err) => Err(Error::ShuttingDown(
+                    format!("tcp shutdown error: {}", err).to_string(),
+                )),
+            },
+            StreamInner::UnixSocket { stream } => match stream.shutdown().await {
+                Ok(()) => Ok(()),
+                Err(err) => Err(Error::ShuttingDown(
+                    format!("unix shutdown error: {}", err).to_string(),
+                )),
+            },
         }
     }
     pub fn try_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -330,7 +329,7 @@ pub struct Server {
 
     flush_wait_code: char,
 
-    /// Is the server broken? We'll remote it from the pool if so.
+    /// Is the server broken? We'll remove it from the pool if so.
     bad: bool,
 
     /// If server connection requires reset statements before checkin
@@ -365,6 +364,9 @@ pub struct Server {
 
     /// Max message size
     max_message_size: i32,
+
+    /// Last checked at
+    pub last_checked_at: SystemTime,
 }
 
 impl std::fmt::Display for Server {
@@ -431,7 +433,10 @@ impl Server {
             self.stats.wait_reading();
             let (code_u8, message_len) = read_message_header(&mut self.stream).await?;
             // if message server is too big.
-            if self.max_message_size > 0 && message_len > self.max_message_size && code_u8 as char == 'D' {
+            if self.max_message_size > 0
+                && message_len > self.max_message_size
+                && code_u8 as char == 'D'
+            {
                 // send current buffer + header.
                 self.buffer.put_u8(code_u8);
                 self.buffer.put_i32(message_len);
@@ -448,7 +453,7 @@ impl Server {
                 {
                     Ok(_) => (),
                     Err(err) => {
-                        self.mark_bad(err.to_string().as_str(), true);
+                        self.mark_bad(err.to_string().as_str());
                         return Err(err);
                     }
                 }
@@ -468,7 +473,7 @@ impl Server {
                     "Terminating server {} because of: {:?}",
                     self.address, MaxMessageSize
                 );
-                self.mark_bad("by MAX_MESSAGE_SIZE", true);
+                self.mark_bad("by MAX_MESSAGE_SIZE");
                 return Err(MaxMessageSize);
             }
 
@@ -480,7 +485,7 @@ impl Server {
                 }
                 Err(err) => {
                     error!("Terminating server {} because of: {:?}", self, err);
-                    self.mark_bad(err.to_string().as_str(), true);
+                    self.mark_bad(err.to_string().as_str());
                     return Err(err);
                 }
             };
@@ -524,7 +529,7 @@ impl Server {
                                 "Server {}: unknown transaction state: {}",
                                 self, transaction_state
                             ));
-                            self.mark_bad(err.to_string().as_str(), true);
+                            self.mark_bad(err.to_string().as_str());
                             return Err(err);
                         }
                     };
@@ -553,7 +558,7 @@ impl Server {
                         self.data_available = false;
                         self.set_flush_wait_code(code);
                         self.cleanup_state.needs_cleanup();
-                        self.mark_bad("error in async", false)
+                        self.mark_bad("error in async")
                     }
                 }
 
@@ -668,16 +673,8 @@ impl Server {
     }
 
     /// Indicate that this server connection cannot be re-used and must be discarded.
-    pub fn mark_bad(&mut self, reason: &str, shutdown: bool) {
-        if shutdown {
-            error!(
-                "Server {} marked bad, reason: {}, shutdown socket",
-                self, reason
-            );
-            self.stream.get_mut().shutdown();
-        } else {
-            error!("Server {} marked bad, reason: {}", self, reason);
-        }
+    pub fn mark_bad(&mut self, reason: &str) {
+        error!("Server {} marked bad, reason: {}", self, reason);
         self.bad = true;
     }
 
@@ -688,6 +685,15 @@ impl Server {
             return self.bad;
         };
         false
+    }
+
+    // We should avoid using racing and should not use it on a connection whose status is unknown.
+    pub async fn shutdown(&mut self) {
+        warn!("Server {} shutdown socket", self.address);
+        match self.stream.get_mut().shutdown().await {
+            Ok(()) => (),
+            Err(err) => error!("Server {} shutdown problem: {}", self.address, err),
+        }
     }
 
     pub async fn wait_available(&mut self) {
@@ -733,7 +739,7 @@ impl Server {
             Err(err) => {
                 self.stats.wait_idle();
                 error!("Terminating server {} because of: {:?}", self, err);
-                self.mark_bad("flush to server error", true);
+                self.mark_bad("flush to server error");
                 Err(err)
             }
         }
@@ -761,18 +767,27 @@ impl Server {
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
         if self.in_copy_mode() {
             warn!("Server {} returned while still in copy-mode", self);
-            self.mark_bad("returned in copy-mode", true);
-            return Err(Error::ProtocolSyncError(format!("server {} returned in copy-mode", self.address)))
+            self.mark_bad("returned in copy-mode");
+            return Err(Error::ProtocolSyncError(format!(
+                "server {} returned in copy-mode",
+                self.address
+            )));
         }
         if self.is_data_available() {
             warn!("Server {} returned while still has data available", self);
-            self.mark_bad("returned with data available", true);
-            return Err(Error::ProtocolSyncError(format!("server {} returned with data available", self.address)))
+            self.mark_bad("returned with data available");
+            return Err(Error::ProtocolSyncError(format!(
+                "server {} returned with data available",
+                self.address
+            )));
         }
         if !self.buffer.is_empty() {
             warn!("Server {} returned while buffer is not empty", self);
-            self.mark_bad("returned with not-empty buffer", true);
-            return Err(Error::ProtocolSyncError(format!("server {} with not-empty buffer", self.address)))
+            self.mark_bad("returned with not-empty buffer");
+            return Err(Error::ProtocolSyncError(format!(
+                "server {} with not-empty buffer",
+                self.address
+            )));
         }
         // Client disconnected with an open transaction on the server connection.
         // Pgbouncer behavior is to close the server connection but that can cause
@@ -977,7 +992,7 @@ impl Server {
         let mut stream = if host.starts_with('/') {
             create_unix_stream_inner(host, port).await?
         } else {
-            create_tcp_stream_inner(host, port, false, false).await?
+            create_tcp_stream_inner(host, port).await?
         };
 
         warn!(
@@ -1018,13 +1033,7 @@ impl Server {
         let mut stream = if address.host.starts_with('/') {
             create_unix_stream_inner(&address.host, address.port).await?
         } else {
-            create_tcp_stream_inner(
-                &address.host,
-                address.port,
-                config.general.server_tls,
-                config.general.verify_server_certificate,
-            )
-            .await?
+            create_tcp_stream_inner(&address.host, address.port).await?
         };
 
         let username = user
@@ -1032,7 +1041,13 @@ impl Server {
             .server_username
             .unwrap_or(user.clone().username);
         // StartupMessage
-        startup(&mut stream, username.clone(), database, application_name.clone()).await?;
+        startup(
+            &mut stream,
+            username.clone(),
+            database,
+            application_name.clone(),
+        )
+        .await?;
 
         let mut process_id: i32 = 0;
         let mut secret_key: i32 = 0;
@@ -1240,7 +1255,15 @@ impl Server {
                                 password_response.put_slice(token.as_bytes());
                                 password_response.put_u8(b'\0');
                                 match stream.try_write(&password_response) {
-                                    Ok(_) => (),
+                                    Ok(size) => {
+                                        if size != password_response.len() {
+                                            return Err(Error::ServerAuthError(
+                                            format!(
+                                                "jwt authentication on the server failed: write only {} of {}", size, len),
+                                            server_identifier,
+                                        ));
+                                        }
+                                    }
                                     Err(err) => {
                                         return Err(Error::ServerAuthError(
                                             format!(
@@ -1297,7 +1320,14 @@ impl Server {
                                 password_response.put_i32(password_hash.len() as i32 + 4);
                                 password_response.put_slice(&password_hash);
                                 match stream.try_write(&password_response) {
-                                    Ok(_) => (),
+                                    Ok(size) => if size != password_response.len(){
+                                        return Err(Error::ServerAuthError(
+                                            format!(
+                                                "md5 authentication on the server failed: write only {} bytes", size
+                                            ),
+                                            server_identifier,
+                                        ));
+                                    },
                                     Err(err) => {
                                         return Err(Error::ServerAuthError(
                                             format!(
@@ -1491,6 +1521,7 @@ impl Server {
                         },
                         registering_prepared_statement: VecDeque::new(),
                         max_message_size: config.general.message_size_to_be_stream as i32,
+                        last_checked_at: SystemTime::now(),
                     };
                     server.stats.update_process_id(process_id);
 
@@ -1525,15 +1556,18 @@ impl Drop for Server {
             let mut guard = CANCELED_PIDS.lock();
             guard.retain(|&pid| pid != self.process_id);
         }
-        let mut bytes = BytesMut::with_capacity(5);
-        bytes.put_u8(b'X');
-        bytes.put_i32(4);
 
-        match self.stream.get_mut().try_write(&bytes) {
-            Ok(5) => (),
-            Err(err) => warn!("Dirty server {} shutdown: {}", self, err),
-            _ => warn!("Dirty server {} shutdown", self),
-        };
+        if !self.bad {
+            let mut bytes = BytesMut::with_capacity(5);
+            bytes.put_u8(b'X');
+            bytes.put_i32(4);
+
+            match self.stream.get_mut().try_write(&bytes) {
+                Ok(5) => (),
+                Err(err) => warn!("Dirty server {} shutdown: {}", self, err),
+                _ => warn!("Dirty server {} shutdown", self),
+            };
+        }
 
         let now = chrono::offset::Utc::now().naive_utc();
         let duration = now - self.connected_at;
@@ -1570,13 +1604,8 @@ async fn create_unix_stream_inner(host: &str, port: u16) -> Result<StreamInner, 
     Ok(StreamInner::UnixSocket { stream })
 }
 
-async fn create_tcp_stream_inner(
-    host: &str,
-    port: u16,
-    tls: bool,
-    _verify_server_certificate: bool,
-) -> Result<StreamInner, Error> {
-    let mut stream = match TcpStream::connect(&format!("{}:{}", host, port)).await {
+async fn create_tcp_stream_inner(host: &str, port: u16) -> Result<StreamInner, Error> {
+    let stream = match TcpStream::connect(&format!("{}:{}", host, port)).await {
         Ok(stream) => stream,
         Err(err) => {
             error!("Could not connect to server: {}", err);
@@ -1586,41 +1615,6 @@ async fn create_tcp_stream_inner(
             )));
         }
     };
-
-    // TCP timeouts.
     configure_tcp_socket(&stream);
-
-    let stream = if tls {
-        // Request a TLS connection
-        ssl_request(&mut stream).await?;
-
-        let response = match stream.read_u8().await {
-            Ok(response) => response as char,
-            Err(err) => {
-                return Err(Error::SocketError(format!(
-                    "Server socket error: {:?}",
-                    err
-                )));
-            }
-        };
-
-        match response {
-            // Server supports TLS
-            'S' => {
-                error!("Connection to server via tls is not supported");
-                return Err(Error::SocketError("Server TLS is unsupported".to_string()));
-            }
-
-            // Server does not support TLS
-            'N' => StreamInner::TCPPlain { stream },
-
-            // Something else?
-            m => {
-                return Err(Error::SocketError(format!("Unknown message: {}", { m })));
-            }
-        }
-    } else {
-        StreamInner::TCPPlain { stream }
-    };
-    Ok(stream)
+    Ok(StreamInner::TCPPlain { stream })
 }

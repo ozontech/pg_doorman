@@ -300,9 +300,6 @@ pub struct General {
     pub tls_rate_limit_per_second: usize,
 
     #[serde(default)] // false
-    pub server_tls: bool,
-
-    #[serde(default)] // false
     pub verify_server_certificate: bool,
 
     pub admin_username: String,
@@ -524,7 +521,6 @@ impl Default for General {
             tls_certificate: None,
             tls_private_key: None,
             tls_rate_limit_per_second: Self::default_tls_rate_limit_per_second(),
-            server_tls: false,
             verify_server_certificate: false,
             admin_username: String::from("admin"),
             admin_password: String::from("admin"),
@@ -789,7 +785,6 @@ impl Config {
                 info!("TLS support is disabled");
             }
         };
-        info!("Server TLS enabled: {}", self.general.server_tls);
         info!(
             "Server TLS certificate verification: {}",
             self.general.verify_server_certificate
@@ -815,8 +810,7 @@ impl Config {
             );
             info!(
                 "[pool: {}] Default pool mode: {}",
-                pool_name,
-                pool_config.pool_mode
+                pool_name, pool_config.pool_mode
             );
             let connect_timeout = pool_config
                 .connect_timeout
@@ -1085,7 +1079,7 @@ mod test {
             .join("tests.toml");
         parse(file.as_os_str().to_str().unwrap()).await.unwrap();
 
-        assert_eq!(get_config().general.idle_timeout, 300000000);
+        assert_eq!(get_config().general.idle_timeout, 3000);
         assert_eq!(get_config().pools.len(), 4);
         assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
         assert_eq!(get_config().pools["example_db"].users.len(), 4);

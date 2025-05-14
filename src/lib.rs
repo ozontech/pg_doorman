@@ -9,6 +9,7 @@ pub mod errors;
 mod jwt_auth;
 pub mod logger;
 pub mod messages;
+pub mod mobc;
 pub mod pool;
 pub mod rate_limit;
 mod scram_client;
