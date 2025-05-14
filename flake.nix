@@ -47,6 +47,17 @@
                 rust-jemalloc-sys
               ];
             };
+          dockerImage =
+            let
+              rev = inputs.self.sourceInfo.shortRev or "dirty";
+              tag = "${(pg_doorman rust).version}-${rev}";
+            in
+            pkgs.dockerTools.buildLayeredImage {
+              inherit tag;
+              name = "pg_doorman";
+              contents = [ (pg_doorman rust) ];
+              created = "now";
+            };
           mkShell =
             rust: extra-packages:
             pkgs.mkShell {
@@ -62,7 +73,7 @@
           };
           formatter = pkgs.nixfmt-rfc-style;
           packages = {
-            inherit pg_doorman rust;
+            inherit pg_doorman dockerImage rust;
             default = pg_doorman rust;
           };
           devShells = {

@@ -49,6 +49,12 @@ With Docker image:
 1. docker build -t pg_doorman -f Dockerfile .
 2. docker run -p 6432:6432 -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml --rm -t -i pg_doorman
 
+With nix-generated Docker image:
+
+1. nix build .#dockerImage
+2. docker load -i result
+3. docker run -p 6432:6432 -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml --rm -t -i pg_doorman
+
 With docker compose:
 
 1. cd example && docker compose up
