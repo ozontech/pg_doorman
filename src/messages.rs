@@ -206,7 +206,12 @@ where
 
 /// Send the startup packet the server. We're pretending we're a Pg client.
 /// This tells the server which user we are and what database we want.
-pub async fn startup<S>(stream: &mut S, user: String, database: &str, application_name: String) -> Result<(), Error>
+pub async fn startup<S>(
+    stream: &mut S,
+    user: String,
+    database: &str,
+    application_name: String,
+) -> Result<(), Error>
 where
     S: tokio::io::AsyncWrite + std::marker::Unpin,
 {

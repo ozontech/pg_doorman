@@ -9,7 +9,7 @@ use std::ops::DerefMut;
 use std::str;
 use std::sync::atomic::Ordering;
 use std::sync::{atomic::AtomicUsize, Arc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::{split, AsyncReadExt, BufReader, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::Receiver;
@@ -1027,7 +1027,7 @@ where
                                 let mut guard = CANCELED_PIDS.lock();
                                 if guard.contains(&conn.get_process_id()) {
                                     guard.retain(|&id| id != conn.get_process_id());
-                                    conn.mark_bad("because was canceled", true);
+                                    conn.mark_bad("because was canceled");
                                     continue; // try to find another server.
                                 }
                             }
@@ -1035,8 +1035,12 @@ where
                             match conn.checkin_cleanup().await {
                                 Ok(()) => break conn,
                                 Err(err) => {
-                                    warn!("Server {} cleanup error: {:?}", conn.address_to_string(), err);
-                                    continue
+                                    warn!(
+                                        "Server {} cleanup error: {:?}",
+                                        conn.address_to_string(),
+                                        err
+                                    );
+                                    continue;
                                 }
                             };
                         }
@@ -1382,7 +1386,6 @@ where
                                     server.mark_bad(
                                         format!("write to client {}: {:?}", self.addr, err)
                                             .as_str(),
-                                        false,
                                     );
                                     return Err(err);
                                 }
@@ -1395,8 +1398,12 @@ where
                         'd' => {
                             if !server.in_copy_mode() {
                                 self.stats.disconnect();
-                                server.mark_bad("client expects COPY mode, but server are not in", true);
-                                return Err(Error::ProtocolSyncError("server not in copy mode".to_string()))
+                                server.mark_bad(
+                                    "client expects COPY mode, but server are not in",
+                                );
+                                return Err(Error::ProtocolSyncError(
+                                    "server not in copy mode".to_string(),
+                                ));
                             }
                             self.buffer.put(&message[..]);
 
@@ -1413,8 +1420,12 @@ where
                         'c' | 'f' => {
                             if !server.in_copy_mode() {
                                 self.stats.disconnect();
-                                server.mark_bad("client expects COPY mode, but server are not in", true);
-                                return Err(Error::ProtocolSyncError("server not in copy mode".to_string()))
+                                server.mark_bad(
+                                    "client expects COPY mode, but server are not in",
+                                );
+                                return Err(Error::ProtocolSyncError(
+                                    "server not in copy mode".to_string(),
+                                ));
                             }
                             // We may already have some copy data in the buffer, add this message to buffer
                             self.buffer.put(&message[..]);
@@ -1439,7 +1450,6 @@ where
                                             self.addr, err
                                         )
                                         .as_str(),
-                                        false,
                                     );
                                     return Err(err);
                                 }
@@ -1777,7 +1787,9 @@ where
         server: &mut Server,
     ) -> Result<(), Error> {
         let message = message.unwrap_or(&self.buffer);
-        server.send_and_flush(message).await?;
+        server
+            .send_and_flush_timeout(message, Duration::from_secs(5))
+            .await?;
         // Read all data the server has to offer, which can be multiple messages
         // buffered in 8196 bytes chunks.
         loop {
@@ -1791,7 +1803,6 @@ where
                     server.wait_available().await;
                     server.mark_bad(
                         format!("loop with client {}: {:?}", self.addr, err).as_str(),
-                        true,
                     );
                     return Err(err);
                 }
@@ -1820,7 +1831,6 @@ where
                     server.wait_available().await;
                     server.mark_bad(
                         format!("flush to client {} {:?}", self.addr, err_write).as_str(),
-                        true,
                     );
                     return Err(err_write);
                 }
