@@ -251,11 +251,16 @@ impl ConnectionPool {
                     };
 
                     let prepared_statements_cache_size = match config.general.prepared_statements {
-                        true => pool_config.prepared_statements_cache_size.unwrap_or(config.general.prepared_statements_cache_size),
+                        true => pool_config
+                            .prepared_statements_cache_size
+                            .unwrap_or(config.general.prepared_statements_cache_size),
                         false => 0,
                     };
 
-                    let application_name = pool_config.application_name.clone().unwrap_or_else(|| "pg_doorman".to_string());
+                    let application_name = pool_config
+                        .application_name
+                        .clone()
+                        .unwrap_or_else(|| "pg_doorman".to_string());
 
                     let manager = ServerPool::new(
                         address.clone(),
@@ -396,7 +401,10 @@ impl ConnectionPool {
         if !guard.is_empty() {
             return Ok(guard.clone());
         }
-        info!("Fetching new server parameters from server: {}", self.address);
+        info!(
+            "Fetching new server parameters from server: {}",
+            self.address
+        );
         {
             let conn = match self.database.get().await {
                 Ok(conn) => conn,

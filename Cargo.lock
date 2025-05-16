@@ -832,6 +832,7 @@ dependencies = [
  "openssl",
  "parking_lot",
  "pin-project",
+ "pin-project-lite",
  "rand",
  "serde",
  "serde-toml-merge",

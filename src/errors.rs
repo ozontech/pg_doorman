@@ -30,6 +30,7 @@ pub enum Error {
     ScramServerError(String),
     HbaForbiddenError(String),
     PreparedStatementError,
+    FlushTimeout,
     MaxMessageSize,
     CurrentMemoryUsage,
     JWTPubKey(String),
