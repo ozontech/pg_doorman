@@ -27,13 +27,13 @@ In order not to compromise transaction semantics for connection
 pooling, **pg_doorman** supports several types of pooling when
 rotating connections:
 
-Session pooling
+* Session pooling
 :   Most polite method. When a client connects, a server connection will
     be assigned to it for the whole duration the client stays connected. When
     the client disconnects, the server connection will be put back into the pool.
     This is the default method.
 
-Transaction pooling
+* Transaction pooling
 :   A server connection is assigned to a client only during a transaction.
     When PgDoorman notices that transaction is over, the server connection
     will be put back into the pool.
@@ -99,26 +99,26 @@ Basic setup and usage is as follows.
 
 ## Command line switches
 
-`-d`, `--daemon`
+* `-d`, `--daemon`
 :   Run in the background. Without it, the process will run in the foreground.
 
     In daemon mode, setting `daemon_pid_file` as well as `syslog_prog_name`
     is required.  No log messages will be written to stderr after
     going into the background.
 
-`-l`, `--log-level`
+* `-l`, `--log-level`
 :   Set log-level: `INFO` or `DEBUG` or `WARN`.
 
-`-F`, `--log-format`
+* `-F`, `--log-format`
 :   Possible values: text, structured, debug.
 
-`-n`, `--no-color`
+* `-n`, `--no-color`
 :   Disable colors in the log output.
 
-`-V`, `--version`
+* `-V`, `--version`
 :   Show version.
 
-`-h`, `--help`
+* `-h`, `--help`
 :   Show short help.
 
 
@@ -141,147 +141,147 @@ The **SHOW** commands output information. Each command is described below.
 
 #### SHOW STATS
 
-Shows statistics.  In this and related commands, the total figures are
+Shows statistics. In this and related commands, the total figures are
 since process start, the averages are updated every `15 seconds`.
 
-database
+* `database`
 :   Statistics are presented per database.
 
-total_xact_count
+* `total_xact_count`
 :   Total number of SQL transactions pooled by **pg_doorman**.
 
-total_query_count
+* `total_query_count`
 :   Total number of SQL commands pooled by **pg_doorman**.
 
-total_received
+* `total_received`
 :   Total volume in bytes of network traffic received by **pg_doorman**.
 
-total_sent
+* `total_sent`
 :   Total volume in bytes of network traffic sent by **pg_doorman**.
 
-total_xact_time
+* `total_xact_time`
 :   Total number of microseconds spent by **pg_doorman** when connected
     to PostgreSQL in a transaction, either idle in transaction or
     executing queries.
 
-total_query_time
+* `total_query_time`
 :   Total number of microseconds spent by **pg_doorman** when actively
     connected to PostgreSQL, executing queries.
 
-total_wait_time
+* `total_wait_time`
 :   Time spent by clients waiting for a server, in microseconds. Updated
     when a client connection is assigned a backend connection.
 
-avg_xact_count
+* `avg_xact_count`
 :   Average transactions per second in last stat period.
 
-avg_query_count
+* `avg_query_count`
 :   Average queries per second in last stat period.
 
-avg_server_assignment_count
+* `avg_server_assignment_count`
 :   Average number of times a server as assigned to a client per second in the
     last stat period.
 
-avg_recv
+* `avg_recv`
 :   Average received (from clients) bytes per second.
 
-avg_sent
+* `avg_sent`
 :   Average sent (to clients) bytes per second.
 
-avg_xact_time
+* `avg_xact_time`
 :   Average transaction duration, in microseconds.
 
-avg_query_time
+* `avg_query_time`
 :   Average query duration, in microseconds.
 
-avg_wait_time
+* `avg_wait_time`
 :   Time spent by clients waiting for a server, in microseconds (average
     of the wait times for clients assigned a backend during the current
     `15 seconds`).
 
 #### SHOW SERVERS
 
-server_id
+* `server_id`
 :   Unique ID for server.
 
-server_process_id
+* `server_process_id`
 :   PID of backend server process.  In case connection is made over
     Unix socket and OS supports getting process ID info, its
     OS PID.
 
-database_name
+* `database_name`
 :   Database name.
 
-user
+* `user`
 :   User name **pg_doorman** uses to connect to server.
 
-application_name
+* `application_name`
 :   A string containing the `application_name` set on the server connection.
 
-state
+* `state`
 :   State of the pg_doorman server connection, one of **active**,
     **idle**, **used**.
 
-wait
+* `wait`
 :   Wait state of the pg_doorman server connection, one of **idle**,
     **read**, **write**.
 
-transaction_count
+* `transaction_count`
 :   Total number of processed transactions.
 
-query_count
+* `query_count`
 :   Total number of processed queries.
 
-bytes_sent
+* `bytes_sent`
 :   Total bytes sent to PostgreSQL server.
 
-bytes_received
+* `bytes_received`
 :   Total bytes received from PostgreSQL server.
 
-age_seconds
+* `age_seconds`
 :   Lifetime of the current server connection.
 
-prepare_cache_hit
+* `prepare_cache_hit`
 :   Total number of cache hit prepared statements.
 
-prepare_cache_miss
+* `prepare_cache_miss`
 :   Total number of cache miss prepared statements.
 
-prepare_cache_size
+* `prepare_cache_size`
 :   The total number of unique prepared statements.
 
 #### SHOW CLIENTS
 
-client_id
+* `client_id`
 :   Unique ID for client.
 
-database
+* `database`
 :   Database (pool) name.
 
-user
+* `user`
 :   Client connected user.
 
-addr
+* `addr`
 :   IP:port of client.
 
-tls
+* `tls`
 :   Can be **true**, **false**.
 
-state
+* `state`
 :   State of the client connection, one of **active**,
     **idle**, **waiting**.
 
-wait
+* `wait`
 :   Wait state of the pg_doorman client connection, one of **idle**,
     **read**, **write**.
 
-transaction_count
+* `transaction_count`
 :   Total number of processed transactions.
 
-query_count
+* `query_count`
 :   Total number of processed queries.
 
-age_seconds
+* `age_seconds`
 :   Lifetime of the current client connection.
 
 
@@ -289,75 +289,75 @@ age_seconds
 
 A new pool entry is made for each couple of (database, user).
 
-database
+* `database`
 :   Database name.
 
-user
+* `user`
 :   User name.
 
-pool_mode
+* `pool_mode`
 :   The pooling mode in use.
 
-cl_active
+* `cl_active`
 :   Client connections that are either linked to server connections or are idle with no queries waiting to be processed.
 
-cl_waiting
+* `cl_waiting`
 :   Client connections that have sent queries but have not yet got a server connection.
 
-sv_active
+* `sv_active`
 :   Server connections that are linked to a client.
 
-sv_idle
+* `sv_idle`
 :   Server connections that are unused and immediately usable for client queries.
 
-sv_login
+* `sv_login`
 :   Server connections currently in the process of logging in.
 
-maxwait
+* `maxwait`
 :   How long the first (oldest) client in the queue has waited, in seconds.
     If this starts increasing, then the current pool of servers does
     not handle requests quickly enough.  The reason may be either an overloaded
     server or just too small of a **pool_size** setting.
 
-maxwait_us
+* `maxwait_us`
 :   Microsecond part of the maximum waiting time.
 
 #### SHOW USERS
 
-name
+* `name`
 :   The user name
 
-pool_size
-:   The user's override pool_size. or NULL if not set.
+* `pool_mode`
+:   The pooling mode in use.
 
 #### SHOW DATABASES
 
-database
+* `database`
 :   Name of configured database entry.
 
-host
+* `host`
 :   Host pg_doorman connects to.
 
-port
+* `port`
 :   Port pg_doorman connects to.
 
-pool_size
+* `pool_size`
 :   Maximum number of server connections.
 
-min_pool_size
+* `min_pool_size`
 :   Minimum number of server connections.
 
-reserve_pool_size
+* `reserve_pool_size`
 :   Maximum number of additional connections for this database.
 
-pool_mode
-:   The database's override pool_mode, or NULL if the default will be used instead.
+* `pool_mode`
+:   The pooling mode in use.
 
-max_connections
+* `max_connections`
 :   Maximum number of allowed server connections for this database, as set by
     **max_db_connections**, either globally or per database.
 
-current_connections
+* `current_connections`
 :   Current number of server connections for this database.
 
 #### SHOW SOCKETS
@@ -390,11 +390,11 @@ parameters.
 
 ### Signals
 
-SIGHUP
+* SIGHUP
 :   Reload config. Same as issuing the command **RELOAD** on the console.
 
-SIGTERM
+* SIGTERM
 :   Immediate shutdown.
 
-SIGINT
+* SIGINT
 :   Graceful shutdown [looks here](binary_upgrade.md) for more information.
