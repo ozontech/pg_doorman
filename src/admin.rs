@@ -360,15 +360,6 @@ where
     write_all_half(stream, &res).await
 }
 
-/// Ignore any SET commands the client sends.
-/// This is common initialization done by ORMs.
-async fn ignore_set<T>(stream: &mut T) -> Result<(), Error>
-where
-    T: tokio::io::AsyncWrite + std::marker::Unpin,
-{
-    custom_protocol_response_ok(stream, "SET").await
-}
-
 /// Reload the configuration file without restarting the process.
 async fn reload<T>(stream: &mut T, client_server_map: ClientServerMap) -> Result<(), Error>
 where
