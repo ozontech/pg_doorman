@@ -95,8 +95,7 @@ Default: true.
 
 ### virtual_pool_count
 
-Increasing the number of virtual pools can help deal with internal blockages
-that occur when processing very large numbers of fast queries.
+Increasing the number of virtual pools can help deal with internal latches that occur when processing very large numbers of fast queries.
 It is strongly recommended not to change this parameter if you do not understand what you are doing.
 
 Default: 1.

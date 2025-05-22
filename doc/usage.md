@@ -15,31 +15,20 @@
 
 ## Description
 
-**pg_doorman** is a PostgreSQL connection pooler. Any target application
-can be connected to **pg_doorman** as if it were a PostgreSQL server,
-and **pg_doorman** will create a connection to the actual server, or it
-will reuse one of its existing connections.
+**pg_doorman** is a PostgreSQL connection pooler. Any application can consider connection to **pg_doorman** as if it were a 
+connection to Postgresql server. **pg_doorman** will create a connection to the actual server or will reuse an existed connection.
 
-The aim of **pg_doorman** is to lower the performance impact of opening
-new connections to PostgreSQL.
-
-In order not to compromise transaction semantics for connection
-pooling, **pg_doorman** supports several types of pooling when
-rotating connections:
+In order not to compromise transaction semantics for connection  pooling, **pg_doorman** supports several types of pooling when rotating connections:
 
 * Session pooling
-:   Most polite method. When a client connects, a server connection will
-    be assigned to it for the whole duration the client stays connected. When
-    the client disconnects, the server connection will be put back into the pool.
-    This is the default method.
+:   Client gets an assigned server connection for the lifetime of the client connection.
+    After the client disconnects, server connection will be released back into the pool.
 
 * Transaction pooling
-:   A server connection is assigned to a client only during a transaction.
-    When PgDoorman notices that transaction is over, the server connection
-    will be put back into the pool.
+:   Client gets an assigned server connection only for the duration of transaction.
+    After PgDoorman notices the end of the transaction, connection will be released back into the pool.
 
-The administration interface of **pg_doorman** consists of some new
-`SHOW` commands available when connected to a special "virtual"
+The administration interface of **pg_doorman** consists of some new `SHOW` commands available when connected to a special "virtual"
 database **pgbouncer** or **pgdoorman**.
 
 ## Quick-start
@@ -148,10 +137,10 @@ since process start, the averages are updated every `15 seconds`.
 :   Statistics are presented per database.
 
 * `total_xact_count`
-:   Total number of SQL transactions pooled by **pg_doorman**.
+:   Total number of SQL transactions processed by **pg_doorman**.
 
 * `total_query_count`
-:   Total number of SQL commands pooled by **pg_doorman**.
+:   Total number of SQL commands processed by **pg_doorman**.
 
 * `total_received`
 :   Total volume in bytes of network traffic received by **pg_doorman**.
