@@ -4,7 +4,6 @@
 ## Synopsis
 
     pg_doorman [OPTIONS] [CONFIG_FILE]
-    pgbouncer -V|-h
 
     Options:
       -l, --log-level <LOG_LEVEL>    [env: LOG_LEVEL=] [default: INFO]
@@ -38,7 +37,7 @@ Session pooling
 Transaction pooling
 
 :   A server connection is assigned to a client only during a transaction.
-    When PgBouncer notices that transaction is over, the server connection
+    When PgDoorman notices that transaction is over, the server connection
     will be put back into the pool.
 
 The administration interface of **pg_doorman** consists of some new
@@ -96,7 +95,7 @@ Basic setup and usage is as follows.
 
 5. If you made changes to the pg_doorman.toml file, you can reload it with:
 
-        pgbouncer=# RELOAD;
+        pgdoorman=# RELOAD;
 
 ## Command line switches
 
@@ -126,7 +125,7 @@ Basic setup and usage is as follows.
 ## Admin console
 
 The console is available by connecting as normal to the
-database **pgbouncer**:
+database **pgdoorman** or **pgbouncer**:
 
     $ psql -p 6432 pgdoorman
 
@@ -158,7 +157,7 @@ total_received
 :   Total volume in bytes of network traffic received by **pg_doorman**.
 
 total_sent
-:   Total volume in bytes of network traffic sent by **pgbouncer**.
+:   Total volume in bytes of network traffic sent by **pg_doorman**.
 
 total_xact_time
 :   Total number of microseconds spent by **pg_doorman** when connected
@@ -208,9 +207,7 @@ server_id
 server_process_id
 :   PID of backend server process.  In case connection is made over
     Unix socket and OS supports getting process ID info, its
-    OS PID.  Otherwise it's extracted from cancel packet the server sent,
-    which should be the PID in case the server is PostgreSQL, but it's a random
-    number in case the server it is another PgBouncer.
+    OS PID.
 
 database_name
 :   Database name.
@@ -222,7 +219,7 @@ application_name
 :   A string containing the `application_name` set on the server connection.
 
 state
-:   State of the pgbouncer server connection, one of **active**,
+:   State of the pg_doorman server connection, one of **active**,
     **idle**, **used**.
 
 wait
@@ -339,10 +336,10 @@ database
 :   Name of configured database entry.
 
 host
-:   Host pgbouncer connects to.
+:   Host pg_doorman connects to.
 
 port
-:   Port pgbouncer connects to.
+:   Port pg_doorman connects to.
 
 pool_size
 :   Maximum number of server connections.
