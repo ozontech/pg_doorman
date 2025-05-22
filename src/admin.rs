@@ -48,36 +48,46 @@ where
 
     match query_parts[0].to_ascii_uppercase().as_str() {
         "RELOAD" => reload(stream, client_server_map).await,
-        "SET" => ignore_set(stream).await,
         "SHUTDOWN" => shutdown(stream).await,
-        "SHOW" => match query_parts[1].to_ascii_uppercase().as_str() {
-            "HELP" => show_help(stream).await,
-            "CONFIG" => show_config(stream).await,
-            "DATABASES" => show_databases(stream).await,
-            "LISTS" => show_lists(stream).await,
-            "POOLS" => show_pools(stream).await,
-            "POOLS_EXTENDED" => show_pools_extended(stream).await,
-            "CLIENTS" => show_clients(stream).await,
-            "SERVERS" => show_servers(stream).await,
-            "CONNECTIONS" => show_connections(stream).await,
-            "STATS" => show_stats(stream).await,
-            "VERSION" => show_version(stream).await,
-            "USERS" => show_users(stream).await,
-            #[cfg(target_os = "linux")]
-            "SOCKETS" => show_sockets(stream).await,
-            _ => {
-                error!(
-                    "unsupported admin subcommand for SHOW: {}",
-                    query_parts[1].to_ascii_uppercase().as_str()
-                );
+        "SHOW" => {
+            if query_parts.len() != 2 {
+                error!("unsupported admin subcommand for SHOW: {:?}", query_parts);
                 error_response(
                     stream,
-                    "Unsupported SHOW query against the admin database",
+                    "Unsupported query against the admin database",
                     "58000",
-                )
-                .await
+                ).await
+            } else {
+                match query_parts[1].to_ascii_uppercase().as_str() {
+                    "HELP" => show_help(stream).await,
+                    "CONFIG" => show_config(stream).await,
+                    "DATABASES" => show_databases(stream).await,
+                    "LISTS" => show_lists(stream).await,
+                    "POOLS" => show_pools(stream).await,
+                    "POOLS_EXTENDED" => show_pools_extended(stream).await,
+                    "CLIENTS" => show_clients(stream).await,
+                    "SERVERS" => show_servers(stream).await,
+                    "CONNECTIONS" => show_connections(stream).await,
+                    "STATS" => show_stats(stream).await,
+                    "VERSION" => show_version(stream).await,
+                    "USERS" => show_users(stream).await,
+                    #[cfg(target_os = "linux")]
+                    "SOCKETS" => show_sockets(stream).await,
+                    _ => {
+                        error!(
+                            "unsupported admin subcommand for SHOW: {}",
+                            query_parts[1].to_ascii_uppercase().as_str()
+                        );
+                        error_response(
+                            stream,
+                            "Unsupported SHOW query against the admin database",
+                            "58000",
+                        )
+                        .await
+                    }
+                }
             }
-        },
+        }
         _ => {
             error!(
                 "unsupported admin command: {}",
@@ -273,7 +283,7 @@ where
         "SHOW CONNECTIONS",
         // "SHOW DNS_HOSTS|DNS_ZONES", // missing DNS_HOSTS|DNS_ZONES
         "SHOW STATS", // missing STATS_TOTALS|STATS_AVERAGES|TOTALS
-        "SET key = arg",
+        //"SET key = arg",
         "RELOAD",
         // "PAUSE [<db>, <user>]",
         // "RESUME [<db>, <user>]",

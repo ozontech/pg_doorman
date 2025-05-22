@@ -4,6 +4,7 @@
 
 - `application_name` parameter in pool #30.
 - link-time optimization #29.
+- `DEALLOCATE ALL` client support.
 
 ### Fixed
 

@@ -411,20 +411,11 @@ where
     send_ready_for_query(stream).await
 }
 
-pub async fn error_response_terminal<S>(
-    stream: &mut S,
-    message: &str,
-    code: &str,
-) -> Result<(), Error>
-where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
-{
+pub fn error_message(message: &str, code: &str) -> BytesMut {
     let mut error = BytesMut::new();
-
     // Error level
     error.put_u8(b'S');
     error.put_slice(&b"FATAL\0"[..]);
-
     // Error level (non-translatable)
     error.put_u8(b'V');
     error.put_slice(&b"FATAL\0"[..]);
@@ -446,7 +437,18 @@ where
     res.put_u8(b'E');
     res.put_i32(error.len() as i32 + 4);
     res.put(error);
+    res
+}
 
+pub async fn error_response_terminal<S>(
+    stream: &mut S,
+    message: &str,
+    code: &str,
+) -> Result<(), Error>
+where
+    S: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let res = error_message(message, code);
     write_all_flush(stream, &res).await
 }
 
@@ -1868,7 +1870,6 @@ mod tests {
         let out_msg = set_messages_right_place(in_msg.to_vec()).expect("parse");
         assert_eq!(show_headers(out_msg), "12tC12tCZ".to_string());
     }
-
     #[test]
     fn parse_fields() {
         let mut complete_msg = vec![];

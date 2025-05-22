@@ -22,13 +22,6 @@ idle_timeout = 300000
 # Server lifetime (5 minutes in milliseconds).
 server_lifetime = 300000
 
-# Connect to the server using the TLS protocol.
-server_tls = false
-
-# Verify TLS server certificates.
-verify_server_certificate = false
-
-
 # Socket TCP keepalive settings (in seconds).
 tcp_keepalives_idle = 5
 tcp_keepalives_interval = 1

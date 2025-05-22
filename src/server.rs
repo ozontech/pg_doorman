@@ -29,6 +29,8 @@ use tokio::time::timeout;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
+const COMMAND_COMPLETE_BY_DEALLOCATE_ALL: &[u8; 15] = b"DEALLOCATE ALL\0";
+const COMMAND_COMPLETE_BY_DISCARD_ALL: &[u8; 12] = b"DISCARD ALL\0";
 
 pin_project! {
     #[project = SteamInnerProj]
@@ -557,6 +559,28 @@ impl Server {
                     }
                     if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DECLARE) {
                         self.cleanup_state.needs_cleanup_declare = true;
+                    }
+                    if message.len() == 12 && message.to_vec().eq(COMMAND_COMPLETE_BY_DISCARD_ALL) {
+                        self.registering_prepared_statement.clear();
+                        if self.prepared_statement_cache.is_some() {
+                            warn!(
+                                "Cleanup server {} prepared statements cache (DISCARD ALL)",
+                                self
+                            );
+                            self.prepared_statement_cache.as_mut().unwrap().clear();
+                        }
+                    }
+                    if message.len() == 15
+                        && message.to_vec().eq(COMMAND_COMPLETE_BY_DEALLOCATE_ALL)
+                    {
+                        self.registering_prepared_statement.clear();
+                        if self.prepared_statement_cache.is_some() {
+                            warn!(
+                                "Cleanup server {} prepared statements cache (DEALLOCATE ALL)",
+                                self
+                            );
+                            self.prepared_statement_cache.as_mut().unwrap().clear();
+                        }
                     }
                     if self.flush_wait_code == 'C' {
                         self.data_available = false;

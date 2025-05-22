@@ -34,13 +34,14 @@ Some of the key differences include:
 - Enhanced monitoring metrics to improve visibility into database activity..
 - Careful resource management to avoid memory issues (`max_memory_usage`, `message_size_to_be_stream`).
 - SCRAM client/server authentication support.
-- [Gracefully binary upgrade](/BINARY_UPGRADE.md).
+- [Gracefully binary upgrade](/doc/binary_upgrade.md).
 - Supporting JWT for service-to-database authentication.
 - Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).
 
-### Config
+### Config && Usage
 
-[See Configuration](/pg_doorman.toml).
+* [Configuration](/doc/config.md).
+* [Usage](/doc/usage.md).
 
 ### How to try
 

@@ -1398,9 +1398,7 @@ where
                         'd' => {
                             if !server.in_copy_mode() {
                                 self.stats.disconnect();
-                                server.mark_bad(
-                                    "client expects COPY mode, but server are not in",
-                                );
+                                server.mark_bad("client expects COPY mode, but server are not in");
                                 return Err(Error::ProtocolSyncError(
                                     "server not in copy mode".to_string(),
                                 ));
@@ -1420,9 +1418,7 @@ where
                         'c' | 'f' => {
                             if !server.in_copy_mode() {
                                 self.stats.disconnect();
-                                server.mark_bad(
-                                    "client expects COPY mode, but server are not in",
-                                );
+                                server.mark_bad("client expects COPY mode, but server are not in");
                                 return Err(Error::ProtocolSyncError(
                                     "server not in copy mode".to_string(),
                                 ));
@@ -1801,9 +1797,7 @@ where
                 Ok(msg) => msg,
                 Err(err) => {
                     server.wait_available().await;
-                    server.mark_bad(
-                        format!("loop with client {}: {:?}", self.addr, err).as_str(),
-                    );
+                    server.mark_bad(format!("loop with client {}: {:?}", self.addr, err).as_str());
                     return Err(err);
                 }
             };
