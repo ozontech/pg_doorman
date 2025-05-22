@@ -280,10 +280,10 @@ Example: "exampledb-pool".
 
 ### pool_mode
 
-session
-:   Server is released back to pool after client disconnects.  Default.
+* `session`
+:   Server is released back to pool after client disconnects.
 
-transaction
+* `transaction`
 :   Server is released back to pool after transaction finishes.
 
 Example: "session" or "transaction".
@@ -336,21 +336,23 @@ Example: 40.
 
 Small example configuration (database: exampledb, user: doorman):
 
-    [general]
-    host = "0.0.0.0"
-    port = 6432
-    
-    admin_username = "admin"
-    admin_password = "admin"
-    
-    [pools]
-    
-    [pools.exampledb]
-    server_host = "127.0.0.1"
-    server_port = 5432
-    pool_mode = "transaction"
-    
-    [pools.exampledb.users.0]
-    pool_size = 40
-    username = "doorman"
-    password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+```toml
+[general]
+host = "0.0.0.0"
+port = 6432
+
+admin_username = "admin"
+admin_password = "admin"
+
+[pools]
+
+[pools.exampledb]
+server_host = "127.0.0.1"
+server_port = 5432
+pool_mode = "transaction"
+
+[pools.exampledb.users.0]
+pool_size = 40
+username = "doorman"
+password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+```
