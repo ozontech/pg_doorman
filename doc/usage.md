@@ -1,4 +1,4 @@
-# pg-doorman
+# pg_doorman
 
 
 ## Synopsis
@@ -46,26 +46,28 @@ database **pgbouncer** or **pgdoorman**.
 
 Basic setup and usage is as follows.
 
-1. Create a pg_doorman.toml file.  Details in [config.md](config.md).  Simple example:
+1. Create a pg_doorman.toml file.  Details in [config.md](config.md). Simple example:
 
-    [general]
-    host = "0.0.0.0"
-    port = 6432
-    
-    admin_username = "admin"
-    admin_password = "admin"
-    
-    [pools]
-    
-    [pools.exampledb]
-    server_host = "127.0.0.1"
-    server_port = 5432
-    pool_mode = "transaction"
-    
-    [pools.exampledb.users.0]
-    pool_size = 40
-    username = "doorman"
-    password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+    ```toml
+        [general]
+        host = "0.0.0.0"
+        port = 6432
+        
+        admin_username = "admin"
+        admin_password = "admin"
+        
+        [pools]
+        
+        [pools.exampledb]
+        server_host = "127.0.0.1"
+        server_port = 5432
+        pool_mode = "transaction"
+        
+        [pools.exampledb.users.0]
+        pool_size = 40
+        username = "doorman"
+        password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+    ```
 
 2. Launch **pg_doorman**:
 

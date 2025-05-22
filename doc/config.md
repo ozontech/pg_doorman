@@ -56,7 +56,7 @@ Default: 0.
 
 ### daemon_pid_file
 
-Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground.
+Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground with `-d`.
 
 Default: None.
 
