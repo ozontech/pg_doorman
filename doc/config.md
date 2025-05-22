@@ -103,21 +103,21 @@ Default: 1.
 
 ### tokio_global_queue_interval 
 
-Tokio runtime settings (https://docs.rs/tokio/latest/tokio/).
+[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/).
 It is strongly recommended not to change this parameter if you do not understand what you are doing.
 
 Default: 5.
 
 ### tokio_event_interval
 
-Tokio runtime settings (https://docs.rs/tokio/latest/tokio/).
+[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/).
 It is strongly recommended not to change this parameter if you do not understand what you are doing.
 
 Default: 1.
 
 ### worker_stack_size
 
-Tokio runtime settings (https://docs.rs/tokio/latest/tokio/).
+[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/).
 It is strongly recommended not to change this parameter if you do not understand what you are doing.
 
 Default: 8388608.

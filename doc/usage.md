@@ -28,14 +28,12 @@ pooling, **pg_doorman** supports several types of pooling when
 rotating connections:
 
 Session pooling
-
 :   Most polite method. When a client connects, a server connection will
     be assigned to it for the whole duration the client stays connected. When
     the client disconnects, the server connection will be put back into the pool.
     This is the default method.
 
 Transaction pooling
-
 :   A server connection is assigned to a client only during a transaction.
     When PgDoorman notices that transaction is over, the server connection
     will be put back into the pool.
