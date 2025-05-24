@@ -1,42 +1,38 @@
-# pg_doorman
+---
+title: Basic Usage
+---
+
+# Basic Usage
 
 
-## Synopsis
+```
+$ pg_doorman --help
 
-    pg_doorman [OPTIONS] [CONFIG_FILE]
+PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
 
-    Options:
-      -l, --log-level <LOG_LEVEL>    [env: LOG_LEVEL=] [default: INFO]
-      -F, --log-format <LOG_FORMAT>  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
-      -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
-      -d, --daemon                   run as daemon [env: DAEMON=]
-      -h, --help                     Print help
-      -V, --version                  Print version
+Usage: pg_doorman [OPTIONS] [CONFIG_FILE]
 
-## Description
+Arguments:
+  [CONFIG_FILE]  [env: CONFIG_FILE=] [default: pg_doorman.toml]
 
-**pg_doorman** is a PostgreSQL connection pooler. Any application can consider connection to **pg_doorman** as if it were a 
-connection to Postgresql server. **pg_doorman** will create a connection to the actual server or will reuse an existed connection.
+Options:
+  -l, --log-level <LOG_LEVEL>    [env: LOG_LEVEL=] [default: INFO]
+  -F, --log-format <LOG_FORMAT>  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
+  -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
+  -d, --daemon                   run as daemon [env: DAEMON=]
+  -h, --help                     Print help
+  -V, --version                  Print version
+```
 
-In order not to compromise transaction semantics for connection  pooling, **pg_doorman** supports several types of pooling when rotating connections:
 
-* Session pooling
-:   Client gets an assigned server connection for the lifetime of the client connection.
-    After the client disconnects, server connection will be released back into the pool.
+## Setup and Running
 
-* Transaction pooling
-:   Client gets an assigned server connection only for the duration of transaction.
-    After PgDoorman notices the end of the transaction, connection will be released back into the pool.
+First thing you should do is fullfil config file.
+The configuration file is in ["toml" format](https://toml.io/).
+Some parameters MUST be specified in the configuration file (pg_doorman will not start without it), despite their default values.
+For example, you MUST specify a admin username and password to access the administrative console.
 
-The administration interface of **pg_doorman** consists of some new `SHOW` commands available when connected to a special "virtual"
-database **pgbouncer** or **pgdoorman**.
-
-## Quick-start
-
-Basic setup and usage is as follows.
-
-1. Create a pg_doorman.toml file.  Details in [config.md](config.md). Simple example:
-
+ Minimal example to follow is below:
     ```toml
         [general]
         host = "0.0.0.0"
@@ -58,33 +54,40 @@ Basic setup and usage is as follows.
         password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
     ```
 
-2. Launch **pg_doorman**:
+All configuration options are described in [Settings Reference Guide](../reference/settings.md). 
 
-        $ pg_doorman pg_doorman.toml
+After configuring options, you can run PgDoorman from the command line:
 
-3. Have your application (or the **psql** client) connect to
-   **pg_doorman** instead of directly to the PostgreSQL server:
+```
+$ pg_doorman pg_doorman.toml
+```
 
-        $ psql -p 6432 -U doorman exampledb
+Once launched, you can connect to PgDoorman, instead directly connected to Postgresql database:
 
-4. Manage **pg_doorman** by connecting to the special administration
-   database **pgdoorman** and issuing `SHOW HELP;` to begin:
+```
+$ psql -p 6432 -U doorman exampledb
+```
 
-        $ psql -p 6432 -U admin pgdoorman
-			pgdoorman=> show help;
-			NOTICE:  Console usage
-			DETAIL:
-				SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
-				SHOW LISTS
-				SHOW CONNECTIONS
-				SHOW STATS
-				RELOAD
-				SHUTDOWN
-			SHOW
+Managing of PgDoorman can be done by connecting to special administration database **pgdoorman**:
 
-5. If you made changes to the pg_doorman.toml file, you can reload it with:
+```
+$ psql -p 6432 -U admin pgdoorman
+pgdoorman=> show help;
+NOTICE:  Console usage
+DETAIL:
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
+	SHOW LISTS
+	SHOW CONNECTIONS
+	SHOW STATS
+	RELOAD
+    SHUTDOWN
+	SHOW
+```
 
-        pgdoorman=# RELOAD;
+Also, if you made changes to the pg_doorman.toml file, you can reload it:
+```
+pgdoorman=# RELOAD;
+```
 
 ## Command line switches
 
@@ -118,11 +121,11 @@ database **pgdoorman** or **pgbouncer**:
 
     $ psql -p 6432 pgdoorman
 
-Only user `admin_username` are allowed to log in to the console.
+Only user `admin_username` is allowed to log in to the console.
 
-The admin console currently only supports the simple query protocol.
-Some drivers use the extended query protocol for all commands; these
-drivers will not work for this.
+!!! note
+     Admin console currently supports only simple query protocol.
+     Some drivers use extended query protocol for all of the commands, so these drivers are not suitable.
 
 ### Show commands
 
@@ -137,24 +140,24 @@ since process start, the averages are updated every `15 seconds`.
 :   Statistics are presented per database.
 
 * `total_xact_count`
-:   Total number of SQL transactions processed by **pg_doorman**.
+:   Total number of SQL transactions processed by PgDoorman.
 
 * `total_query_count`
-:   Total number of SQL commands processed by **pg_doorman**.
+:   Total number of SQL commands processed by PgDoorman.
 
 * `total_received`
-:   Total volume in bytes of network traffic received by **pg_doorman**.
+:   Total volume in bytes of network traffic received by PgDoorman.
 
 * `total_sent`
-:   Total volume in bytes of network traffic sent by **pg_doorman**.
+:   Total volume in bytes of network traffic sent by PgDoorman.
 
 * `total_xact_time`
-:   Total number of microseconds spent by **pg_doorman** when connected
+:   Total number of microseconds spent by PgDoorman when connected
     to PostgreSQL in a transaction, either idle in transaction or
     executing queries.
 
 * `total_query_time`
-:   Total number of microseconds spent by **pg_doorman** when actively
+:   Total number of microseconds spent by PgDoorman when actively
     connected to PostgreSQL, executing queries.
 
 * `total_wait_time`
@@ -202,7 +205,7 @@ since process start, the averages are updated every `15 seconds`.
 :   Database name.
 
 * `user`
-:   User name **pg_doorman** uses to connect to server.
+:   User name PgDoorman uses to connect to server.
 
 * `application_name`
 :   A string containing the `application_name` set on the server connection.
@@ -386,4 +389,4 @@ parameters.
 :   Immediate shutdown.
 
 * SIGINT
-:   Graceful shutdown [looks here](binary_upgrade.md) for more information.
+:   Graceful shutdown [looks here](binary-upgrade.md) for more information.

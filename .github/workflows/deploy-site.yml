@@ -1,0 +1,36 @@
+---
+name: Manual website deployment
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "!*"
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  publish-website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout code
+        with:
+          fetch-depth: 0 # fetch all commits and branches for mike to work properly
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        name: Set up Python
+        with:
+          python-version-file: "documentation/pyproject.toml"
+      - name: Other tools setup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+      - name: Render docs and publish
+        run: |
+          export PROJECT_VERSION=$(cat Cargo.toml | grep version | head -n 1 | cut -d '=' -f 2 | tr -d '"')
+          cd documentation
+          uv sync --all-extras --dev
+          uv run mkdocs build
+          uv run mike deploy --push --update-aliases $PROJECT_VERSION latest
+          uv run mike set-default --push latest

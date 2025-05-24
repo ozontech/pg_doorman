@@ -1,3 +1,7 @@
+---
+title: Benchmarks
+---
+
 ## Disclaimer:
 
 Benchmarks always lie to you :) We recommend that you benchmark the application yourself and verify the results.

@@ -1,12 +1,10 @@
-# pg_doorman.toml
+---
+title: Settings
+---
 
-## Description
+# Settings
 
-The configuration file is in ["toml" format](https://toml.io/).
-Some parameters MUST be specified in the configuration file (pg_doorman will not start without it), despite their default values.
-For example, you MUST specify a admin username and password to access the administrative console.
-
-## Generic settings
+## General Settings
 
 ### host
 
@@ -244,7 +242,7 @@ It can be used to check the connection at the application level.
 
 Default: `;`.
 
-## Pools
+## Pool Settings
 
 Each record in the pool is the name of the virtual database that the pg-doorman client can connect to.
 
@@ -293,7 +291,7 @@ Log information about any SET command in the log.
 
 Default: `false`.
 
-## Pool users
+## Pool Users Settings
 
 ```toml
 [pools.exampledb.users.0]
@@ -330,28 +328,3 @@ Example: `"password"`.
 The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.
 
 Example: `40`.
-
-## Examples
-
-Small example configuration (database: exampledb, user: doorman):
-
-```toml
-[general]
-host = "0.0.0.0"
-port = 6432
-
-admin_username = "admin"
-admin_password = "admin"
-
-[pools]
-
-[pools.exampledb]
-server_host = "127.0.0.1"
-server_port = 5432
-pool_mode = "transaction"
-
-[pools.exampledb.users.0]
-pool_size = 40
-username = "doorman"
-password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
-```
