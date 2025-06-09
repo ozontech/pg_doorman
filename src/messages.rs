@@ -60,17 +60,14 @@ impl From<&DataType> for i32 {
 }
 
 /// Tell the client that authentication handshake completed successfully.
-pub async fn auth_ok<S>(stream: &mut S) -> Result<(), Error>
-where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
-{
+pub fn auth_ok() -> BytesMut {
     let mut auth_ok = BytesMut::with_capacity(9);
 
     auth_ok.put_u8(b'R');
     auth_ok.put_i32(8);
     auth_ok.put_i32(0);
 
-    write_all(stream, auth_ok).await
+    auth_ok
 }
 
 /// Generate md5 password challenge.
@@ -169,20 +166,13 @@ where
 
 /// Give the client the process_id and secret we generated
 /// used in query cancellation.
-pub async fn backend_key_data<S>(
-    stream: &mut S,
-    backend_id: i32,
-    secret_key: i32,
-) -> Result<(), Error>
-where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
-{
+pub fn backend_key_data<S>(backend_id: i32, secret_key: i32) -> BytesMut {
     let mut key_data = BytesMut::from(&b"K"[..]);
     key_data.put_i32(12);
     key_data.put_i32(backend_id);
     key_data.put_i32(secret_key);
 
-    write_all(stream, key_data).await
+    key_data
 }
 
 /// Construct a `Q`: Query message.
@@ -194,14 +184,6 @@ pub fn simple_query(query: &str) -> BytesMut {
     res.put_slice(query.as_bytes());
 
     res
-}
-
-/// Tell the client we're ready for another query.
-pub async fn send_ready_for_query<S>(stream: &mut S) -> Result<(), Error>
-where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
-{
-    write_all(stream, ready_for_query(false)).await
 }
 
 /// Send the startup packet the server. We're pretending we're a Pg client.
@@ -383,32 +365,13 @@ where
     write_all(stream, message).await
 }
 
-/// Implements a response to our custom `SET ...`
-/// This tells the client we're ready for the next query.
-pub async fn custom_protocol_response_ok<S>(stream: &mut S, message: &str) -> Result<(), Error>
-where
-    S: tokio::io::AsyncWrite + std::marker::Unpin,
-{
-    let mut res = BytesMut::with_capacity(25);
-
-    let set_complete = BytesMut::from(&format!("{}\0", message)[..]);
-    let len = (set_complete.len() + 4) as i32;
-
-    // CommandComplete
-    res.put_u8(b'C');
-    res.put_i32(len);
-    res.put_slice(&set_complete[..]);
-
-    write_all_half(stream, &res).await?;
-    send_ready_for_query(stream).await
-}
-
 pub async fn error_response<S>(stream: &mut S, message: &str, code: &str) -> Result<(), Error>
 where
     S: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    error_response_terminal(stream, message, code).await?;
-    send_ready_for_query(stream).await
+    let mut buf = error_message(message, code);
+    buf.put(ready_for_query(false));
+    write_all_flush(stream, &buf).await
 }
 
 pub fn error_message(message: &str, code: &str) -> BytesMut {

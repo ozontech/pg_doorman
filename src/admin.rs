@@ -56,7 +56,8 @@ where
                     stream,
                     "Unsupported query against the admin database",
                     "58000",
-                ).await
+                )
+                .await
             } else {
                 match query_parts[1].to_ascii_uppercase().as_str() {
                     "HELP" => show_help(stream).await,

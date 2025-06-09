@@ -782,10 +782,23 @@ where
 
         // Update the parameters to merge what the application sent and what's originally on the server
         server_parameters.set_from_hashmap(parameters.clone(), false);
-        auth_ok(&mut write).await?;
-        write_all(&mut write, (&server_parameters).into()).await?;
-        backend_key_data(&mut write, process_id, secret_key).await?;
-        send_ready_for_query(&mut write).await?;
+        let mut buf = BytesMut::new();
+        {
+            let mut auth_ok = BytesMut::with_capacity(9);
+            auth_ok.put_u8(b'R');
+            auth_ok.put_i32(8);
+            auth_ok.put_i32(0);
+            buf.put(auth_ok);
+            let server_params_buf: BytesMut = (&server_parameters).into();
+            buf.put(server_params_buf);
+            let mut key_data = BytesMut::from(&b"K"[..]);
+            key_data.put_i32(12);
+            key_data.put_i32(process_id);
+            key_data.put_i32(secret_key);
+            buf.put(key_data);
+            buf.put(ready_for_query(false));
+        }
+        write_all_flush(&mut write, &buf).await?;
 
         let stats = Arc::new(ClientStats::new(
             process_id,
@@ -1074,7 +1087,7 @@ where
                         }}",
                                 self.pool_name, self.username, err
                             );
-                            continue;
+                            return Err(Error::ProtocolSyncError(err.to_string()));
                         }
                     };
                 };
