@@ -848,7 +848,6 @@ impl Server {
             }
             self.cleanup_state.reset();
         }
-        self.small_simple_query(";").await?;
         Ok(())
     }
 

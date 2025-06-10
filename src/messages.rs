@@ -59,17 +59,6 @@ impl From<&DataType> for i32 {
     }
 }
 
-/// Tell the client that authentication handshake completed successfully.
-pub fn auth_ok() -> BytesMut {
-    let mut auth_ok = BytesMut::with_capacity(9);
-
-    auth_ok.put_u8(b'R');
-    auth_ok.put_i32(8);
-    auth_ok.put_i32(0);
-
-    auth_ok
-}
-
 /// Generate md5 password challenge.
 pub async fn md5_challenge<S>(stream: &mut S) -> Result<[u8; 4], Error>
 where
@@ -164,16 +153,6 @@ where
     Ok(password_response)
 }
 
-/// Give the client the process_id and secret we generated
-/// used in query cancellation.
-pub fn backend_key_data<S>(backend_id: i32, secret_key: i32) -> BytesMut {
-    let mut key_data = BytesMut::from(&b"K"[..]);
-    key_data.put_i32(12);
-    key_data.put_i32(backend_id);
-    key_data.put_i32(secret_key);
-
-    key_data
-}
 
 /// Construct a `Q`: Query message.
 pub fn simple_query(query: &str) -> BytesMut {
