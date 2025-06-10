@@ -1087,7 +1087,7 @@ where
                         }}",
                                 self.pool_name, self.username, err
                             );
-                            return Err(Error::ProtocolSyncError(err.to_string()));
+                            return Err(Error::AllServersDown);
                         }
                     };
                 };
