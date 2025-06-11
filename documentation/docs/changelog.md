@@ -6,6 +6,10 @@ title: Changelog
 
 ## PgDoorman
 
+### 1.8.3 <small>Jun 11, 2025</small> { id="1.8.3" }
+
+- Fixed critical bug: if a free connection was not available on the Server in pool (query_wait_timeout), the Client's buffer was not cleared, leading to an incorrect response error #38.
+
 ### 1.8.2 <small>May 24, 2025</small> { id="1.8.2" }
 
 - Added `application_name` parameter in pool #30.

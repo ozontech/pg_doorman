@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "pg_doorman"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
