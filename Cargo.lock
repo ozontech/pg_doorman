@@ -837,6 +837,7 @@ dependencies = [
  "serde",
  "serde-toml-merge",
  "serde_derive",
+ "serde_json",
  "sha-1",
  "sha2",
  "socket2",

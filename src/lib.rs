@@ -15,6 +15,7 @@ mod scram_client;
 pub mod scram_server;
 pub mod server;
 pub mod stats;
+mod talos;
 pub mod tls;
 
 /// Format chrono::Duration to be more human-friendly.

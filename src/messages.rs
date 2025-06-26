@@ -153,7 +153,6 @@ where
     Ok(password_response)
 }
 
-
 /// Construct a `Q`: Query message.
 pub fn simple_query(query: &str) -> BytesMut {
     let mut res = BytesMut::from(&b"Q"[..]);
