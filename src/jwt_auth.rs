@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 #[allow(dead_code)]
-static KEYS: Lazy<RwLock<HashMap<String, PKeyWithDigest<Public>>>> =
+pub static KEYS: Lazy<RwLock<HashMap<String, PKeyWithDigest<Public>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 #[derive(Serialize, Deserialize)]
