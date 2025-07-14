@@ -8,26 +8,26 @@ title: Changelog
 
 ### 1.8.3 <small>Jun 11, 2025</small> { id="1.8.3" }
 
-- Fixed critical bug: if a free connection was not available on the Server in pool (query_wait_timeout), the Client's buffer was not cleared, leading to an incorrect response error #38.
-- Fixed ngsql issue: https://github.com/npgsql/npgsql/issues/6115.
+- Fixed critical bug: if a free connection was not available on the Server in pool (query_wait_timeout), the Client's buffer was not cleared, leading to an incorrect response error [#38](https://github.com/ozontech/pg_doorman/pull/38).
+- Fixed ngsql-related issue: https://github.com/npgsql/npgsql/issues/6115.
 
 ### 1.8.2 <small>May 24, 2025</small> { id="1.8.2" }
 
-- Added `application_name` parameter in pool #30.
-- Added link-time optimization #29.
+- Added `application_name` parameter in pool [#30](https://github.com/ozontech/pg_doorman/pull/30).
+- Added link-time optimization [#29](https://github.com/ozontech/pg_doorman/pull/29).
 - Added `DISCARD ALL`/`DEALLOCATE ALL` client query support.
 - Fixed panics in admin console.
 - Fixed connection leakage on inproperly handled errors in client's copy mode
 
 ### 1.8.1 <small>April 12, 2025</small> { id="1.8.1" }
 
-- Fixed config value of prepared_statements #21.
-- Fixed close declared cursors #23.
-- Fixed proxy server parameters #25.
+- Fixed config value of prepared_statements [#21](https://github.com/ozontech/pg_doorman/pull/21).
+- Fixed close declared cursors [#23](https://github.com/ozontech/pg_doorman/pull/23).
+- Fixed proxy server parameters [#25](https://github.com/ozontech/pg_doorman/pull/25).
 
 ### 1.8.0 <small>Mar 20, 2025</small> { id="1.8.0" }
 
-- Fixed #15: Dependencies
+- Fixed [#15](https://github.com/ozontech/pg_doorman/pull/15): Dependencies
 - Added release vendor-licenses.txt, [related thread](https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com).
 
 ### 1.7.9 <small>Mar 16, 2025</small> { id="1.7.9" }

@@ -69,13 +69,13 @@ Default: `None`.
 
 Log client connections and disconnections for monitoring.
 
-Default: `true`.
+Default: `false`.
 
 ### log_client_disconnections 
 
 Log client connections and disconnections for monitoring.
 
-Default: `true`.
+Default: `false`.
 
 ### worker_threads
 
