@@ -8,6 +8,7 @@ use bytes::{BufMut, BytesMut};
 // Internal crate imports
 use crate::errors::Error;
 use crate::messages::extended::close_complete;
+use crate::messages::parse_complete;
 
 /// PostgreSQL error message structure.
 /// See: https://www.postgresql.org/docs/12/protocol-error-fields.html
@@ -195,7 +196,6 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
     let mut count_parse_complete = 0;
     let mut count_stmt_close = 0;
     let mut result = BytesMut::with_capacity(in_msg_len);
-    let mut prev_msg = ' ';
 
     // count parse message.
     loop {
@@ -209,16 +209,74 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
         }
 
         match in_msg[cursor] as char {
+            '1' => count_parse_complete += 1,
+            '3' => count_stmt_close += 1,
+            _ => (),
+        }
+
+        cursor += 1;
+        if cursor + 4 > in_msg_len {
+            return Err(Error::ServerMessageParserError(
+                "Can't read i32 from server message".to_string(),
+            ));
+        }
+        let len_ref = match <[u8; 4]>::try_from(&in_msg[cursor..cursor + 4]) {
+            Ok(len_ref) => len_ref,
+            _ => {
+                return Err(Error::ServerMessageParserError(
+                    "Can't convert i32 from server message".to_string(),
+                ))
+            }
+        };
+        let mut len = i32::from_be_bytes(len_ref) as usize;
+        if len < 4 {
+            return Err(Error::ServerMessageParserError(
+                "Message len less than 4".to_string(),
+            ));
+        }
+        len -= 4;
+        cursor += 4;
+        if cursor + len > in_msg_len {
+            return Err(Error::ServerMessageParserError(
+                "Message len more than server message size".to_string(),
+            ));
+        }
+        cursor += len;
+    }
+    if count_stmt_close == 0 && count_parse_complete == 0 {
+        result.put(&in_msg[..]);
+        return Ok(result);
+    }
+
+    cursor = 0;
+    let mut prev_msg: char = ' ';
+    loop {
+        if cursor == in_msg_len {
+            return Ok(result);
+        }
+        match in_msg[cursor] as char {
             '1' => {
-                count_parse_complete += 1;
-                if count_parse_complete == 2 && prev_msg == 'C' {
-                    result.put(close_complete())
+                if count_parse_complete == 0 || prev_msg == '1' {
+                    // ParseComplete: ignore.
+                    cursor += 5;
+                    continue;
+                }
+                count_parse_complete -= 1;
+            }
+            '2' | 't' => {
+                if (prev_msg != '1') && (prev_msg != '2') && count_parse_complete > 0 {
+                    // BindComplete, just add before ParseComplete.
+                    result.put(parse_complete());
+                    count_parse_complete -= 1;
                 }
             }
-            'C' => {
-                if in_msg[cursor + 5] as char == 'C' {
-                    count_stmt_close += 1;
+            '3' => {
+                if count_stmt_close == 1 {
+                    cursor += 5;
+                    continue;
                 }
+            }
+            'Z' => {
                 if count_stmt_close == 1 {
                     result.put(close_complete())
                 }
@@ -241,6 +299,4 @@ pub fn set_messages_right_place(in_msg: Vec<u8>) -> Result<BytesMut, Error> {
         result.put(&in_msg[cursor - 5..cursor + len]);
         cursor += len;
     }
-
-    Ok(result)
 }
