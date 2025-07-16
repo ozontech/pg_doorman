@@ -1,15 +1,20 @@
-use crate::errors::Error;
+// Standard library imports
+use std::collections::HashMap;
+use std::fs;
+use std::ops::Add;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+// External crate imports
 use jwt::{Header, PKeyWithDigest, RegisteredClaims, SignWithKey, Token, VerifyWithKey};
 use once_cell::sync::Lazy;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Public};
 use openssl::rsa::Rsa;
 use serde_derive::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs;
-use std::ops::Add;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
+
+// Internal crate imports
+use crate::errors::Error;
 
 #[allow(dead_code)]
 static KEYS: Lazy<RwLock<HashMap<String, PKeyWithDigest<Public>>>> =
@@ -178,7 +183,7 @@ mod tests {
             .await
         {
             Ok(token) => token,
-            Err(err) => panic!("{:?}", err),
+            Err(err) => panic!("{err:?}"),
         };
         load_jwt_pub_key("./tests/data/jwt/public.pem".to_string())
             .await
@@ -186,7 +191,7 @@ mod tests {
         let token_username =
             match get_user_name_from_jwt("./tests/data/jwt/public.pem".to_string(), token).await {
                 Ok(username) => username,
-                Err(err) => panic!("{:?}", err),
+                Err(err) => panic!("{err:?}"),
             };
         assert_eq!(username, token_username);
     }

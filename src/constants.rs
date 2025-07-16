@@ -11,6 +11,8 @@ pub const JWT_PUB_KEY_PASSWORD_PREFIX: &str = "jwt-pkey-fpath:";
 pub const JWT_PRIV_KEY_PASSWORD_PREFIX: &str = "jwt-priv-key-fpath:";
 pub const NONCE_LENGTH: usize = 24;
 
+pub const TALOS_USERNAME: &str = "talos";
+
 // ErrorResponse: A code identifying the field type; if zero, this is the message terminator and no string follows.
 pub const MESSAGE_TERMINATOR: u8 = 0;
 

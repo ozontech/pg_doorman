@@ -1,25 +1,32 @@
-use crate::stats::pool::PoolStats;
+// Standard library imports
+use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+
+// External crate imports
 use bytes::{Buf, BufMut, BytesMut};
 use log::{debug, error, info};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
-use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use tokio::time::Instant;
 
+// Internal crate imports
 use crate::config::{get_config, reload_config, VERSION};
 use crate::errors::Error;
-use crate::messages::*;
-use crate::pool::get_all_pools;
-use crate::pool::ClientServerMap;
+use crate::messages::protocol::{
+    command_complete, data_row, error_response, notify, row_description,
+};
+use crate::messages::socket::write_all_half;
+use crate::messages::types::DataType;
+use crate::pool::{get_all_pools, ClientServerMap};
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
-#[cfg(target_os = "linux")]
-use crate::stats::get_socket_states_count;
+use crate::stats::pool::PoolStats;
 use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE};
 use crate::stats::{
     get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
+#[cfg(target_os = "linux")]
+use crate::stats::get_socket_states_count;
 
 /// Handle admin client.
 pub async fn handle_admin<T>(
@@ -34,15 +41,14 @@ where
 
     if code != 'Q' {
         return Err(Error::ProtocolSyncError(format!(
-            "Invalid code, expected 'Q' but got '{}'",
-            code
+            "Invalid code, expected 'Q' but got '{code}'"
         )));
     }
 
     let len = query.get_i32() as usize;
     let query = String::from_utf8_lossy(&query[..len - 5]).to_string();
 
-    debug!("Admin query: {}", query);
+    debug!("Admin query: {query}");
 
     let query_parts: Vec<&str> = query.trim_end_matches(';').split_whitespace().collect();
 
@@ -51,7 +57,7 @@ where
         "SHUTDOWN" => shutdown(stream).await,
         "SHOW" => {
             if query_parts.len() != 2 {
-                error!("unsupported admin subcommand for SHOW: {:?}", query_parts);
+                error!("unsupported admin subcommand for SHOW: {query_parts:?}");
                 error_response(
                     stream,
                     "Unsupported query against the admin database",
@@ -631,7 +637,7 @@ where
 
     let pid = std::process::id();
     if signal::kill(Pid::from_raw(pid.try_into().unwrap()), Signal::SIGINT).is_err() {
-        error!("Unable to send SIGINT to PID: {}", pid);
+        error!("Unable to send SIGINT to PID: {pid}");
         shutdown_success = "f";
     }
 

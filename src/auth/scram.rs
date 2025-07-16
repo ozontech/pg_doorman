@@ -265,7 +265,7 @@ pub fn prepare_server_first_response(
     let key = rng.random::<[u8; 18]>(); //  bytes 18 -> base64 24 (( 4*(18/3) ))
     let nonce = client_nonce.to_owned() + &*general_purpose::STANDARD.encode(key);
 
-    let server_first_bare = format!("r={},s={},i={}", nonce, server_salt, server_iteration,);
+    let server_first_bare = format!("r={nonce},s={server_salt},i={server_iteration}",);
     ServerFirstMessage {
         nonce,
         client_first_bare: client_first_bare.to_string(),

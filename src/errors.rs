@@ -1,11 +1,11 @@
 //! Errors.
 
+// Standard library imports
+
 /// Various errors.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Error {
     SocketError(String),
-    ClientSocketError(String, ClientIdentifier),
-    ClientGeneralError(String, ClientIdentifier),
     ClientBadStartup,
     ProtocolSyncError(String),
     BadQuery(String),
@@ -19,7 +19,6 @@ pub enum Error {
     QueryWaitTimeout,
     ClientError(String),
     TlsError,
-    StatementTimeout,
     DNSCachedError(String),
     ShuttingDown,
     ParseBytesError(String),
@@ -37,6 +36,7 @@ pub enum Error {
     JWTPrivKey(String),
     JWTValidate(String),
     ProxyTimeout,
+    ConvertError(String),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -45,6 +45,7 @@ pub struct ClientIdentifier {
     pub application_name: String,
     pub username: String,
     pub pool_name: String,
+    pub is_talos: bool,
 }
 
 impl ClientIdentifier {
@@ -59,6 +60,7 @@ impl ClientIdentifier {
             application_name: application_name.into(),
             username: username.into(),
             pool_name: pool_name.into(),
+            is_talos: false,
         }
     }
 }
@@ -101,25 +103,49 @@ impl std::fmt::Display for ServerIdentifier {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self {
-            &Error::ClientSocketError(error, client_identifier) => write!(
-                f,
-                "Error reading {} from client {}",
-                error, client_identifier
-            ),
-            &Error::ClientGeneralError(error, client_identifier) => {
-                write!(f, "{} {}", error, client_identifier)
+            Error::SocketError(msg) => write!(f, "Socket connection error: {msg}"),
+            Error::ClientBadStartup => write!(f, "Client sent an invalid startup message"),
+            Error::ProtocolSyncError(msg) => write!(f, "Protocol synchronization error: {msg}"),
+            Error::BadQuery(msg) => write!(f, "Invalid query: {msg}"),
+            Error::ServerError => write!(f, "Server encountered an error"),
+            Error::ServerMessageParserError(msg) => {
+                write!(f, "Failed to parse server message: {msg}")
             }
-            &Error::ServerStartupError(error, server_identifier) => write!(
+            Error::ServerStartupError(error, server_identifier) => write!(
                 f,
-                "Error reading {} on server startup {}",
-                error, server_identifier,
+                "Error reading {error} on server startup {server_identifier}"
             ),
-            &Error::ServerAuthError(error, server_identifier) => {
-                write!(f, "{} for {}", error, server_identifier,)
+            Error::ServerAuthError(error, server_identifier) => {
+                write!(f, "{error} for {server_identifier}")
             }
-
-            // The rest can use Debug.
-            err => write!(f, "{:?}", err),
+            Error::ServerStartupReadParameters(msg) => {
+                write!(f, "Failed to read server parameters: {msg}")
+            }
+            Error::BadConfig(msg) => write!(f, "Configuration error: {msg}"),
+            Error::AllServersDown => write!(f, "All database servers are currently unavailable"),
+            Error::QueryWaitTimeout => write!(f, "Query wait timed out"),
+            Error::ClientError(msg) => write!(f, "Client error: {msg}"),
+            Error::TlsError => write!(f, "TLS connection error"),
+            Error::DNSCachedError(msg) => write!(f, "DNS resolution error: {msg}"),
+            Error::ShuttingDown => write!(f, "Connection pooler is shutting down"),
+            Error::ParseBytesError(msg) => write!(f, "Failed to parse bytes: {msg}"),
+            Error::AuthError(msg) => write!(f, "Authentication failed: {msg}"),
+            Error::UnsupportedStatement => write!(f, "Unsupported SQL statement"),
+            Error::QueryError(msg) => write!(f, "Query execution error: {msg}"),
+            Error::ScramClientError(msg) => write!(f, "SCRAM client error: {msg}"),
+            Error::ScramServerError(msg) => write!(f, "SCRAM server error: {msg}"),
+            Error::HbaForbiddenError(msg) => {
+                write!(f, "Connection rejected by HBA configuration: {msg}")
+            }
+            Error::PreparedStatementError => write!(f, "Error with prepared statement"),
+            Error::FlushTimeout => write!(f, "Timeout while flushing data to client"),
+            Error::MaxMessageSize => write!(f, "Message exceeds maximum allowed size"),
+            Error::CurrentMemoryUsage => write!(f, "Operation would exceed memory limits"),
+            Error::JWTPubKey(msg) => write!(f, "JWT public key error: {msg}"),
+            Error::JWTPrivKey(msg) => write!(f, "JWT private key error: {msg}"),
+            Error::JWTValidate(msg) => write!(f, "JWT validation error: {msg}"),
+            Error::ProxyTimeout => write!(f, "Proxy operation timed out"),
+            Error::ConvertError(msg) => write!(f, "Data conversion error: {msg}"),
         }
     }
 }

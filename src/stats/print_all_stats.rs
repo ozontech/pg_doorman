@@ -57,10 +57,10 @@ pub fn print_all_stats() {
         if clients_flag {
             match get_socket_states_count(std::process::id()) {
                 Ok(info) => {
-                    info!("Connection states: {}", info)
+                    info!("Connection states: {info}")
                 }
                 Err(err) => {
-                    error!("Connection states: {}", err)
+                    error!("Connection states: {err}")
                 }
             };
         }

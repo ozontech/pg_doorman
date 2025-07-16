@@ -16,16 +16,13 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::mpsc::Sender;
 
 use crate::admin::handle_admin;
-use crate::config::{addr_in_hba, get_config, PoolMode};
+use crate::auth::authenticate;
+use crate::auth::talos::{extract_talos_token, talos_role_to_string};
+use crate::config::{addr_in_hba, get_config};
 use crate::constants::*;
-use crate::jwt_auth::get_user_name_from_jwt;
 use crate::messages::*;
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool, CANCELED_PIDS};
 use crate::rate_limit::RateLimiter;
-use crate::scram_server::{
-    parse_client_final_message, parse_client_first_message, parse_server_secret,
-    prepare_server_final_message, prepare_server_first_response,
-};
 use crate::server::{Server, ServerParameters};
 use crate::stats::{
     ClientStats, ServerStats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
@@ -138,8 +135,7 @@ pub async fn client_entrypoint_too_many_clients_already(
         Ok(addr) => addr,
         Err(err) => {
             return Err(Error::SocketError(format!(
-                "Failed to get peer address: {:?}",
-                err
+                "Failed to get peer address: {err:?}"
             )));
         }
     };
@@ -162,7 +158,7 @@ pub async fn client_entrypoint_too_many_clients_already(
             return match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
             {
                 Ok(mut client) => {
-                    info!("Client {:?} issued a cancel query request", addr);
+                    info!("Client {addr:?} issued a cancel query request");
                     if !client.is_admin() {
                         let _ = drain.send(1).await;
                     }
@@ -202,8 +198,7 @@ pub async fn client_entrypoint(
         Ok(addr) => addr,
         Err(err) => {
             return Err(Error::SocketError(format!(
-                "Failed to get peer address: {:?}",
-                err
+                "Failed to get peer address: {err:?}"
             )));
         }
     };
@@ -234,7 +229,7 @@ pub async fn client_entrypoint(
                 {
                     Ok(mut client) => {
                         if log_client_connections {
-                            info!("Client {:?} connected (TLS)", addr);
+                            info!("Client {addr:?} connected (TLS)");
                         }
 
                         if !client.is_admin() {
@@ -286,7 +281,7 @@ pub async fn client_entrypoint(
                         {
                             Ok(mut client) => {
                                 if log_client_connections {
-                                    info!("Client {:?} connected (plain)", addr);
+                                    info!("Client {addr:?} connected (plain)");
                                 }
                                 if !client.is_admin() {
                                     let _ = drain.send(1).await;
@@ -339,7 +334,7 @@ pub async fn client_entrypoint(
             {
                 Ok(mut client) => {
                     if log_client_connections {
-                        info!("Client {:?} connected (plain)", addr);
+                        info!("Client {addr:?} connected (plain)");
                     }
                     if !client.is_admin() {
                         let _ = drain.send(1).await;
@@ -369,7 +364,7 @@ pub async fn client_entrypoint(
             // Continue with cancel query request.
             match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await {
                 Ok(mut client) => {
-                    info!("Client {:?} issued a cancel query request", addr);
+                    info!("Client {addr:?} issued a cancel query request");
 
                     if !client.is_admin() {
                         let _ = drain.send(1).await;
@@ -438,8 +433,7 @@ where
         // Something else, probably something is wrong, and it's not our fault,
         // e.g. badly implemented Postgres client.
         _ => Err(Error::ProtocolSyncError(format!(
-            "Unexpected startup code: {}",
-            code
+            "Unexpected startup code: {code}"
         ))),
     }
 }
@@ -463,8 +457,7 @@ pub async fn startup_tls(
         Ok(addr) => addr,
         Err(err) => {
             return Err(Error::SocketError(format!(
-                "Failed to get peer address: {:?}",
-                err
+                "Failed to get peer address: {err:?}"
             )));
         }
     };
@@ -474,7 +467,7 @@ pub async fn startup_tls(
 
         // TLS negotiation failed.
         Err(err) => {
-            error!("TLS negotiation failed: {:?}", err);
+            error!("TLS negotiation failed: {err:?}");
             return Err(Error::TlsError);
         }
     };
@@ -540,28 +533,71 @@ where
         let parameters = parse_startup(bytes.clone())?;
 
         // This parameter is mandatory by the protocol.
-        let username = match parameters.get("user") {
+        let username_from_parameters = match parameters.get("user") {
             Some(user) => user,
             None => {
                 return Err(Error::ClientError(
-                    "Missing user parameter on client startup".into(),
+                    "Missing 'user' parameter in connection string. Please specify a username in your connection string.".into(),
                 ))
             }
         };
 
-        let pool_name = parameters.get("database").unwrap_or(username);
+        let pool_name = parameters
+            .get("database")
+            .unwrap_or(username_from_parameters);
 
         let application_name = match parameters.get("application_name") {
             Some(application_name) => application_name,
             None => "pg_doorman",
         };
 
-        let client_identifier = ClientIdentifier::new(
+        let mut client_identifier = ClientIdentifier::new(
             application_name,
-            username,
+            username_from_parameters,
             pool_name,
             addr.to_string().as_str(),
         );
+
+        {
+            // talos
+            if username_from_parameters == TALOS_USERNAME && addr_in_hba(addr.ip()) {
+                plain_password_challenge(&mut write).await?;
+                let talos_token_response = read_password(&mut read).await?;
+                let talos_token_with_nul = match str::from_utf8(&talos_token_response) {
+                    Ok(token) => token,
+                    Err(_) => {
+                        error_response_terminal(
+                            &mut write,
+                            "Invalid Talos token format. Token must be valid UTF-8 text.",
+                            "3D000",
+                        )
+                        .await?;
+                        return Err(Error::AuthError(format!(
+                            "Failed to parse Talos token as UTF-8 for user: {TALOS_USERNAME}"
+                        )));
+                    }
+                };
+                let talos_token = match CStr::from_bytes_until_nul(talos_token_with_nul.as_ref()) {
+                    Ok(token) => token.to_str().unwrap().to_string(),
+                    Err(_) => {
+                        error_response_terminal(
+                            &mut write,
+                            "Invalid Talos token format. Token must be a null-terminated string.",
+                            "3D000",
+                        )
+                        .await?;
+                        return Err(Error::AuthError(format!(
+                            "Failed to convert Talos token to string for user: {TALOS_USERNAME}. Token must be null-terminated."
+                        )));
+                    }
+                };
+                let talos_databases = get_config().talos.databases;
+                let token = extract_talos_token(talos_token, talos_databases).await?;
+                client_identifier.application_name = token.client_id;
+                client_identifier.username = talos_role_to_string(token.role);
+                client_identifier.is_talos = true;
+            }
+        }
 
         let admin = ["pgdoorman", "pgbouncer"]
             .iter()
@@ -581,10 +617,14 @@ where
         }
 
         if !addr_in_hba(addr.ip()) {
-            error_response_terminal(&mut write, "hba forbidden for this ip address", "28000")
+            error_response_terminal(
+                &mut write,
+                format!("Connection from IP address {} is not allowed by HBA configuration. Please contact your database administrator.", addr.ip()).as_str(),
+                "28000"
+            )
                 .await?;
             return Err(Error::HbaForbiddenError(format!(
-                "hba forbidden client: {} from address: {:?}",
+                "Connection rejected by HBA configuration for client: {} from address: {:?}",
                 client_identifier,
                 addr.ip()
             )));
@@ -594,191 +634,17 @@ where
         let process_id: i32 = rand::random();
         let secret_key: i32 = rand::random();
 
-        let mut prepared_statements_enabled = false;
-
-        // Authenticate admin user.
-        let (transaction_mode, mut server_parameters) = if admin {
-            // Authenticate admin user with md5.
-            let salt = md5_challenge(&mut write).await?;
-            let password_response = read_password(&mut read).await?;
-            let config = get_config();
-
-            // Compare server and client hashes.
-            let password_hash = md5_hash_password(
-                &config.general.admin_username,
-                &config.general.admin_password,
-                &salt,
-            );
-
-            if password_hash != password_response {
-                let error = Error::ClientGeneralError("Invalid password".into(), client_identifier);
-
-                warn!("{}", error);
-                wrong_password(&mut write, username).await?;
-
-                return Err(error);
-            }
-
-            (false, ServerParameters::admin())
-        }
-        // Authenticate normal user.
-        else {
-            let virtual_pool_id = 0;
-            let mut pool = match get_pool(pool_name, username, virtual_pool_id) {
-                Some(pool) => pool,
-                None => {
-                    error_response(
-                        &mut write,
-                        &format!(
-                            "No pool configured for database: {}, user: {}, virtual pool id: {}",
-                            pool_name, username, virtual_pool_id
-                        ),
-                        "3D000",
-                    )
-                    .await?;
-
-                    return Err(Error::ClientGeneralError(
-                        "Invalid pool name".into(),
-                        client_identifier,
-                    ));
-                }
-            };
-            let pool_password = pool.settings.user.password.clone();
-            if pool_password.starts_with(SCRAM_SHA_256) {
-                // scram auth.
-                scram_start_challenge(&mut write).await?;
-                let server_secret = match parse_server_secret(pool_password.as_str()) {
-                    Ok(server_secret) => server_secret,
-                    Err(err) => {
-                        warn!("parse server secret for client {}: {}", username, err);
-                        wrong_password(&mut write, username).await?;
-                        return Err(err);
-                    }
-                };
-                let first_message = read_password(&mut read).await?;
-                let client_first_message =
-                    match parse_client_first_message(String::from_utf8_lossy(&first_message)) {
-                        Ok(client_first_message) => client_first_message,
-                        Err(err) => {
-                            warn!("parse first client message error: {}", err);
-                            wrong_password(&mut write, username).await?;
-                            return Err(err);
-                        }
-                    };
-                let server_first_response = prepare_server_first_response(
-                    client_first_message.nonce.as_str(),
-                    client_first_message.client_first_bare.as_str(),
-                    server_secret.salt_base64.as_str(),
-                    server_secret.iteration,
-                );
-                scram_server_response(
-                    &mut write,
-                    SASL_CONTINUE,
-                    server_first_response.server_first_bare.as_str(),
-                )
-                .await?;
-                let final_message = read_password(&mut read).await?;
-                let client_final_message =
-                    match parse_client_final_message(String::from_utf8_lossy(&final_message)) {
-                        Ok(client_final_message) => client_final_message,
-                        Err(err) => {
-                            warn!(
-                                "parse final scram client {} message error: {}",
-                                username, err
-                            );
-                            wrong_password(&mut write, username).await?;
-                            return Err(err);
-                        }
-                    };
-                let server_final_message = match prepare_server_final_message(
-                    client_first_message,
-                    client_final_message,
-                    server_first_response,
-                    server_secret.server_key,
-                    server_secret.stored_key,
-                ) {
-                    Ok(server_final_message) => server_final_message,
-                    Err(err) => {
-                        warn!(
-                            "parse final scram server message for {} error: {}",
-                            username, err
-                        );
-                        wrong_password(&mut write, username).await?;
-                        return Err(err);
-                    }
-                };
-                scram_server_response(&mut write, SASL_FINAL, server_final_message.as_str())
-                    .await?;
-            } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
-                // md5 auth.
-                let salt = md5_challenge(&mut write).await?;
-                let password_response = read_password(&mut read).await?;
-                let except_md5_hash =
-                    md5_hash_second_pass(pool_password.strip_prefix("md5").unwrap(), &salt);
-                if except_md5_hash != password_response {
-                    error!("md5 auth error for: {}", pool.address);
-                    wrong_password(&mut write, username).await?;
-                    return Err(Error::AuthError(username.into()));
-                }
-            } else if pool_password.starts_with(JWT_PUB_KEY_PASSWORD_PREFIX) {
-                // jwt.
-                plain_password_challenge(&mut write).await?;
-                let jwt_token_response = read_password(&mut read).await?;
-                let jwt_token_with_nul = match str::from_utf8(&jwt_token_response) {
-                    Ok(token) => token,
-                    Err(_) => return Err(Error::AuthError(username.into())),
-                };
-                let jwt_token = match CStr::from_bytes_until_nul(jwt_token_with_nul.as_ref()) {
-                    Ok(token) => token.to_str().unwrap().to_string(),
-                    Err(_) => return Err(Error::AuthError(username.into())),
-                };
-                let jwt_user_name = match get_user_name_from_jwt(
-                    pool_password
-                        .strip_prefix(JWT_PUB_KEY_PASSWORD_PREFIX)
-                        .unwrap()
-                        .to_string(),
-                    jwt_token,
-                )
-                .await
-                {
-                    Ok(u) => u,
-                    Err(err) => {
-                        wrong_password(&mut write, username).await?;
-                        error!("unpack jwt for user {}: {:?}", username, err);
-                        return Err(Error::AuthError(username.into()));
-                    }
-                };
-                if !jwt_user_name.eq(username) {
-                    wrong_password(&mut write, username).await?;
-                    return Err(Error::AuthError(username.into()));
-                }
-            } else {
-                warn!("unsupported password type");
-                wrong_password(&mut write, username).await?;
-                return Err(Error::AuthError(username.into()));
-            }
-
-            let transaction_mode = pool.settings.pool_mode == PoolMode::Transaction;
-            prepared_statements_enabled =
-                transaction_mode && pool.prepared_statement_cache.is_some();
-            let server_parameters = match pool.get_server_parameters().await {
-                Ok(params) => params,
-                Err(err) => {
-                    error!("Can't proxy server parameters for database: {:?}", err);
-                    error_response(
-                        &mut write,
-                        &format!(
-                            "Can't proxy server parameters for database: {}, user: {}",
-                            pool_name, username
-                        ),
-                        "3D000",
-                    )
-                    .await?;
-                    return Err(err);
-                }
-            };
-            (transaction_mode, server_parameters)
-        };
+        // Authenticate user
+        let (transaction_mode, mut server_parameters, prepared_statements_enabled) =
+            authenticate(
+                &mut read,
+                &mut write,
+                admin,
+                &client_identifier,
+                pool_name,
+                username_from_parameters,
+            )
+            .await?;
 
         // Update the parameters to merge what the application sent and what's originally on the server
         server_parameters.set_from_hashmap(parameters.clone(), false);
@@ -802,8 +668,8 @@ where
 
         let stats = Arc::new(ClientStats::new(
             process_id,
-            application_name,
-            username,
+            client_identifier.application_name.as_str(),
+            client_identifier.username.as_str(),
             pool_name,
             addr.to_string().as_str(),
             tokio::time::Instant::now(),
@@ -828,7 +694,7 @@ where
             last_server_stats: None,
             connected_to_server: false,
             pool_name: pool_name.clone(),
-            username: username.clone(),
+            username: client_identifier.username.clone(),
             server_parameters,
             shutdown,
             prepared_statements_enabled,
@@ -945,8 +811,12 @@ where
             tokio::select! {
                 _ = self.shutdown.recv() => {
                     if !self.admin {
-                        warn!("Drop client {:?} because shutdown and client completed transaction", self.addr);
-                        error_response_terminal(&mut self.write, "pooler is shut down now", "58006").await?;
+                        warn!("Dropping client {:?} because connection pooler is shutting down", self.addr);
+                        error_response_terminal(
+                            &mut self.write,
+                            "pooler is shut down now",
+                            "58006"
+                        ).await?;
                         self.stats.disconnect();
                         return Ok(());
                     }
@@ -1072,19 +942,13 @@ where
 
                             error_response(
                                 &mut self.write,
-                                format!("could not get connection from the pool - {}", err)
-                                    .as_str(),
+                                format!("Could not get a database connection from the pool. All servers may be busy or down. Error details: {err}. Please try again later.").as_str(),
                                 "53300",
                             )
                             .await?;
 
                             error!(
-                                "Could not get connection from pool: \
-                        {{ \
-                            pool_name: {:?}, \
-                            username: {:?}, \
-                            error: \"{:?}\" \
-                        }}",
+                                "Failed to get connection from pool: {{ pool_name: {:?}, username: {:?}, error: \"{:?}\" }}",
                                 self.pool_name, self.username, err
                             );
                             return Err(Error::AllServersDown);
@@ -1481,7 +1345,7 @@ where
                         // Some unexpected message. We either did not implement the protocol correctly
                         // or this is not a Postgres client we're talking to.
                         _ => {
-                            error!("Unexpected code: {}", code);
+                            error!("Unexpected code: {code}");
                         }
                     }
                 }
@@ -1530,7 +1394,7 @@ where
     ) -> Result<(), Error> {
         match self.prepared_statements.get(&client_name) {
             Some((parse, hash)) => {
-                debug!("Prepared statement `{}` found in cache", client_name);
+                debug!("Prepared statement `{client_name}` found in cache");
                 // In this case we want to send the parse message to the server
                 // since pgcat is initiating the prepared statement on this specific server
                 match self
@@ -1540,7 +1404,7 @@ where
                     Ok(_) => (),
                     Err(err) => match err {
                         Error::PreparedStatementError => {
-                            debug!("Removed {} from client cache", client_name);
+                            debug!("Removed {client_name} from client cache");
                             self.prepared_statements.remove(&client_name);
                         }
 
@@ -1553,8 +1417,7 @@ where
 
             None => {
                 return Err(Error::ClientError(format!(
-                    "prepared statement `{}` not found",
-                    client_name
+                    "prepared statement `{client_name}` not found"
                 )))
             }
         };
@@ -1607,8 +1470,7 @@ where
             Some(parse) => parse,
             None => {
                 return Err(Error::ClientError(format!(
-                    "Could not store Prepared statement `{}`",
-                    client_given_name
+                    "Could not store Prepared statement `{client_given_name}`"
                 )))
             }
         };
@@ -1659,24 +1521,17 @@ where
                 Ok(())
             }
             None => {
-                debug!(
-                    "Got bind for unknown prepared statement {:?}",
-                    client_given_name
-                );
+                debug!("Got bind for unknown prepared statement {client_given_name:?}");
 
                 error_response(
                     &mut self.write,
-                    &format!(
-                        "prepared statement \"{}\" does not exist",
-                        client_given_name
-                    ),
+                    &format!("prepared statement \"{client_given_name}\" does not exist"),
                     "58000",
                 )
                 .await?;
 
                 Err(Error::ClientError(format!(
-                    "Prepared statement `{}` doesn't exist",
-                    client_given_name
+                    "Prepared statement `{client_given_name}` doesn't exist"
                 )))
             }
         }
@@ -1725,21 +1580,17 @@ where
             }
 
             None => {
-                debug!("Got describe for unknown prepared statement {:?}", describe);
+                debug!("Got describe for unknown prepared statement {describe:?}");
 
                 error_response(
                     &mut self.write,
-                    &format!(
-                        "prepared statement \"{}\" does not exist",
-                        client_given_name
-                    ),
+                    &format!("prepared statement \"{client_given_name}\" does not exist"),
                     "58000",
                 )
                 .await?;
 
                 Err(Error::ClientError(format!(
-                    "Prepared statement `{}` doesn't exist",
-                    client_given_name
+                    "Prepared statement `{client_given_name}` doesn't exist"
                 )))
             }
         }
@@ -1855,7 +1706,7 @@ where
             Error::MaxMessageSize => {
                 error_response(
                     &mut self.write,
-                    format!("could not read full message - {}", err).as_str(),
+                    "Message exceeds maximum allowed size. Please reduce the size of your query or data.",
                     "53200",
                 )
                 .await?;
@@ -1864,8 +1715,65 @@ where
             Error::CurrentMemoryUsage => {
                 error_response(
                     &mut self.write,
-                    format!("could not read message, temporary out of memory - {}", err).as_str(),
+                    "Server is temporarily out of memory. Please try again later or reduce the size of your query.",
                     "53200",
+                )
+                .await?;
+                Err(err)
+            }
+            Error::SocketError(ref msg) => {
+                error_response(
+                    &mut self.write,
+                    format!(
+                        "Network connection error: {msg}. Please check your network connection."
+                    )
+                    .as_str(),
+                    "08006",
+                )
+                .await?;
+                Err(err)
+            }
+            Error::QueryWaitTimeout => {
+                error_response(
+                    &mut self.write,
+                    "Query wait timed out. The server may be overloaded.",
+                    "57014",
+                )
+                .await?;
+                Err(err)
+            }
+            Error::AllServersDown => {
+                error_response(
+                    &mut self.write,
+                    "All database servers are currently unavailable. Please try again later.",
+                    "08006",
+                )
+                .await?;
+                Err(err)
+            }
+            Error::ShuttingDown => {
+                error_response(
+                    &mut self.write,
+                    "Connection pooler is shutting down. Please reconnect in a few moments.",
+                    "58006",
+                )
+                .await?;
+                Err(err)
+            }
+            Error::FlushTimeout => {
+                error_response(
+                    &mut self.write,
+                    "Timeout while sending data to client. Please check your network connection.",
+                    "08006",
+                )
+                .await?;
+                Err(err)
+            }
+            Error::ProxyTimeout => {
+                error_response(
+                    &mut self.write,
+                    "Proxy operation timed out. Please try again later.",
+                    "08006",
                 )
                 .await?;
                 Err(err)

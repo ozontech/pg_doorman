@@ -299,8 +299,8 @@ impl ConnectionPool {
                     let pool = match builder_config.build() {
                         Ok(p) => p,
                         Err(err) => {
-                            error!("error build pool: {:?}", err);
-                            return Err(Error::BadConfig(format!("error build pool: {:?}", err)));
+                            error!("error build pool: {err:?}");
+                            return Err(Error::BadConfig(format!("error build pool: {err:?}")));
                         }
                     };
 

@@ -6,16 +6,15 @@ pub mod constants;
 pub mod core_affinity;
 pub mod daemon;
 pub mod errors;
-mod jwt_auth;
 pub mod logger;
 pub mod messages;
 pub mod pool;
 pub mod rate_limit;
 mod scram_client;
-pub mod scram_server;
 pub mod server;
 pub mod stats;
 pub mod tls;
+pub mod auth;
 
 /// Format chrono::Duration to be more human-friendly.
 ///
@@ -33,8 +32,5 @@ pub fn format_duration(duration: &chrono::Duration) -> String {
 
     let days = duration.num_days().to_string();
 
-    format!(
-        "{}d {}:{}:{}.{}",
-        days, hours, minutes, seconds, milliseconds
-    )
+    format!("{days}d {hours}:{minutes}:{seconds}.{milliseconds}")
 }

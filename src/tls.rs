@@ -16,9 +16,6 @@ pub fn load_identity(cert: &Path, key: &Path) -> std::io::Result<Identity> {
     fd_key.read_to_end(&mut key_body)?;
     match Identity::from_pkcs8(&cert_body, &key_body) {
         Ok(identity) => Ok(identity),
-        Err(err) => Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            err.to_string(),
-        )),
+        Err(err) => Err(std::io::Error::other(err.to_string())),
     }
 }

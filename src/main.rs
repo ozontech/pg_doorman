@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Config parse error: {err}");
                         io::stdout().flush().unwrap();
                     } else {
-                        error!("Config parse error: {:?}", err);
+                        error!("Config parse error: {err:?}");
                     }
                     std::process::exit(exitcode::CONFIG);
                 }
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = get_config();
     logger::init(&args, config.general.syslog_prog_name.clone());
 
-    info!("Welcome to PgDoorman! (Version {})", VERSION);
+    info!("Welcome to PgDoorman! (Version {VERSION})");
 
     if args.daemon {
         let pid_file = config.general.daemon_pid_file.clone();
@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match daemonize.start() {
             Ok(_) => println!("Success, daemonized"),
             Err(e) => {
-                eprintln!("Error daemonize: {}", e);
+                eprintln!("Error daemonize: {e}");
                 process::exit(exitcode::OSERR);
             }
         }
@@ -166,11 +166,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let listener = match listen_socket.listen(backlog) {
             Ok(sock) => sock,
             Err(err) => {
-                error!("Listener socket error: {:?}", err);
+                error!("Listener socket error: {err:?}");
                 std::process::exit(exitcode::CONFIG);
             }
         };
-        info!("Running on {}", addr);
+        info!("Running on {addr}");
 
         config.show();
 
@@ -184,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match ConnectionPool::from_config(client_server_map.clone()).await {
             Ok(_) => (),
             Err(err) => {
-                error!("Pool error: {:?}", err);
+                error!("Pool error: {err:?}");
                 std::process::exit(exitcode::CONFIG);
             }
         };
@@ -286,7 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = drain_tx.send(0).await;
 
                     tokio::task::spawn(async move {
-                        info!("waiting {} client", total_clients);
+                        info!("waiting {total_clients} client");
 
                         let mut interval = tokio::time::interval(Duration::from_millis(config.general.shutdown_timeout));
 
@@ -297,14 +297,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         interval.tick().await;
 
                         // We're done waiting.
-                        error!("Graceful shutdown timed out. {} active clients being closed", total_clients);
+                        error!("Graceful shutdown timed out. {total_clients} active clients being closed");
 
                         let _ = exit_tx.send(()).await;
                     });
                 },
 
                 _ = term_signal.recv() => {
-                    info!("Got SIGTERM, closing with {} clients active", total_clients);
+                    info!("Got SIGTERM, closing with {total_clients} clients active");
                     break;
                 },
 
@@ -313,12 +313,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let (mut socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),
                         Err(err) => {
-                            error!("accept error: {:?}", err);
+                            error!("accept error: {err:?}");
                             continue;
                         }
                     };
                     if admin_only {
-                        error!("Accepting new client {} after shutdown", addr);
+                        error!("Accepting new client {addr} after shutdown");
                         let _ = socket.shutdown().await;
                         continue;
                     }
@@ -338,12 +338,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
                         // max clients.
                         if current_clients as u64 > max_connections {
-                            warn!("Client {:?}: too many clients already", addr);
+                            warn!("Client {addr:?}: too many clients already");
                            match pg_doorman::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map, shutdown_rx, drain_tx).await {
                                 Ok(()) => (),
                                 Err(err) => {
-                                    error!("Client {:?}: disconnected with error: {}", addr, err);
+                                    error!("Client {addr:?}: disconnected with error: {err}");
                                 }
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);

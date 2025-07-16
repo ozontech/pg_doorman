@@ -169,9 +169,9 @@ impl Display for SocketAddr {
 impl Display for SocketInfoErr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            SocketInfoErr::Io(io_error) => write!(f, "{}", io_error),
-            SocketInfoErr::Nix(n_error) => write!(f, "{}", n_error),
-            SocketInfoErr::Convert(int_error) => write!(f, "{}", int_error),
+            SocketInfoErr::Io(io_error) => write!(f, "{io_error}"),
+            SocketInfoErr::Nix(n_error) => write!(f, "{n_error}"),
+            SocketInfoErr::Convert(int_error) => write!(f, "{int_error}"),
         }
     }
 }
@@ -301,7 +301,7 @@ pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoE
     };
     let mut inodes: HashSet<String> = HashSet::new();
     // run through /proc/<pid>/fd to find sockets with their inodes
-    for entry in fs::read_dir(format!("/proc/{}/{}", pid, FD_DIR))? {
+    for entry in fs::read_dir(format!("/proc/{pid}/{FD_DIR}"))? {
         let path = &entry.unwrap().path();
         if !is_socket(path) {
             continue;
@@ -319,19 +319,19 @@ pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoE
     }
 
     // match inodes with tcp connections in /proc/<pid>/net/tcp
-    let mut file = File::open(format!("/proc/{}/net/tcp", pid))?;
+    let mut file = File::open(format!("/proc/{pid}/net/tcp"))?;
     let mut content = String::new();
     file.read_to_string(&mut content)?;
     fill_tcp(&content, &mut inodes, &mut result.tcp);
 
     // match inodes with tcp connections in /proc/<pid>/net/tcp6
-    let mut file = File::open(format!("/proc/{}/net/tcp6", pid))?;
+    let mut file = File::open(format!("/proc/{pid}/net/tcp6"))?;
     let mut content = String::new();
     file.read_to_string(&mut content)?;
     fill_tcp(&content, &mut inodes, &mut result.tcp6);
 
     // match inodes with unix sockets in /proc/<pid>/net/unix
-    file = File::open(format!("/proc/{}/net/unix", pid))?;
+    file = File::open(format!("/proc/{pid}/net/unix"))?;
     content = String::new();
     file.read_to_string(&mut content)?;
     fill_unix(&content, &mut inodes, &mut result);

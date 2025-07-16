@@ -1,31 +1,34 @@
-/// Implementation of the PostgreSQL server (database) protocol.
-/// Here we are pretending to the a Postgres client.
+// Implementation of the PostgreSQL server (database) protocol.
+
+// Standard library imports
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::mem;
+use std::num::NonZeroUsize;
+use std::string::ToString;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+
+// External crate imports
 use bytes::{Buf, BufMut, BytesMut};
 use log::{error, info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::mem;
-use std::num::NonZeroUsize;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufStream};
 use tokio::net::{TcpStream, UnixStream};
+use tokio::time::timeout;
 
+// Internal crate imports
+use crate::auth::jwt::{new_claims, sign_with_jwt_priv_key};
 use crate::config::{get_config, Address, User, VERSION};
 use crate::constants::*;
 use crate::errors::{Error, ServerIdentifier};
+use crate::errors::Error::MaxMessageSize;
 use crate::messages::BytesMutReader;
 use crate::messages::*;
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
-use crate::stats::ServerStats;
-use std::string::ToString;
-
-use crate::errors::Error::MaxMessageSize;
-use crate::jwt_auth::{new_claims, sign_with_jwt_priv_key};
 use crate::scram_client::ScramSha256;
-use pin_project_lite::pin_project;
-use tokio::time::timeout;
+use crate::stats::ServerStats;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
@@ -454,12 +457,38 @@ impl Server {
                 self.stats.wait_idle();
                 return Ok(self.buffer.clone());
             }
+            // COPY protocol, 'd'
+            if self.max_message_size > 0
+                && message_len > self.max_message_size
+                && code_u8 as char == 'd'
+            {
+                // send current buffer + header.
+                self.buffer.put_u8(code_u8);
+                self.buffer.put_i32(message_len);
+                let prev_bad = self.bad;
+                self.bad = true;
+                write_all_flush(&mut client_stream, &self.buffer).await?;
+                proxy_copy_data(
+                    &mut self.stream,
+                    &mut client_stream,
+                    message_len as usize - mem::size_of::<i32>(),
+                )
+                .await?;
+                self.bad = prev_bad;
+                self.stats
+                    .data_received(self.buffer.len() + message_len as usize);
+                self.last_activity = SystemTime::now();
+                self.buffer.clear();
+                self.stats.wait_idle();
+                return Ok(self.buffer.clone());
+            }
+
             if message_len > MAX_MESSAGE_SIZE {
                 error!(
-                    "Terminating server {} because of: {:?}",
-                    self.address, MaxMessageSize
+                    "Message size limit exceeded for server connection to {} (database: {}, user: {}). Received message size: {} bytes, maximum allowed: {} bytes. Connection will be terminated.",
+                    self.address.host, self.address.database, self.address.username, message_len, MAX_MESSAGE_SIZE
                 );
-                self.mark_bad("by MAX_MESSAGE_SIZE");
+                self.mark_bad(format!("Message size limit exceeded: {message_len} bytes (max: {MAX_MESSAGE_SIZE} bytes)").as_str());
                 return Err(MaxMessageSize);
             }
 
@@ -470,8 +499,11 @@ impl Server {
                     message
                 }
                 Err(err) => {
-                    error!("Terminating server {} because of: {:?}", self, err);
-                    self.mark_bad(err.to_string().as_str());
+                    error!(
+                        "Terminating server connection to {} (database: {}, user: {}) while reading message data. Error details: {err}",
+                        self.address.host, self.address.database, self.address.username
+                    );
+                    self.mark_bad(format!("Failed to read message data: {err}").as_str());
                     return Err(err);
                 }
             };
@@ -502,20 +534,37 @@ impl Server {
                         'E' => {
                             if let Ok(msg) = PgErrorMsg::parse(&message) {
                                 error!(
-                                    "Server error (in tx) {} (severity: {} code: {} message: {})",
-                                    self, msg.severity, msg.code, msg.message
-                                )
-                            };
+                                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Position: {}]",
+                                    self.address.host,
+                                    self.address.database,
+                                    self.address.username,
+                                    msg.severity,
+                                    msg.code,
+                                    msg.message,
+                                    msg.hint.as_deref().unwrap_or("none"),
+                                    msg.position.unwrap_or(0)
+                                );
+                            } else {
+                                error!(
+                                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Could not parse error details.",
+                                    self.address.host, self.address.database, self.address.username
+                                );
+                            }
                             self.in_transaction = true;
                         }
 
                         // Something totally unexpected, this is not a Postgres server we know.
                         _ => {
                             let err = Error::ProtocolSyncError(format!(
-                                "Server {}: unknown transaction state: {}",
-                                self, transaction_state
+                                "Protocol synchronization error with server {} (database: {}, user: {}). Received unknown transaction state character: '{}' (ASCII: {}). This may indicate an incompatible PostgreSQL server version or a corrupted message.",
+                                self.address.host,
+                                self.address.database,
+                                self.address.username,
+                                transaction_state,
+                                transaction_state as u8
                             ));
-                            self.mark_bad(err.to_string().as_str());
+                            error!("{err}");
+                            self.mark_bad(format!("Protocol sync error: unknown transaction state '{transaction_state}'").as_str());
                             return Err(err);
                         }
                     };
@@ -528,23 +577,54 @@ impl Server {
                 // ErrorResponse
                 'E' => {
                     if let Ok(msg) = PgErrorMsg::parse(&message) {
+                        let transaction_status = if self.in_transaction {
+                            "in active transaction"
+                        } else {
+                            "not in transaction"
+                        };
+                        let copy_mode_status = if self.in_copy_mode {
+                            "in COPY mode"
+                        } else {
+                            "not in COPY mode"
+                        };
+
                         error!(
-                            "Server {}: {} ({}) - {}",
-                            self, msg.severity, msg.code, msg.message
-                        )
-                    };
+                            "PostgreSQL server error from {} (database: {}, user: {}). Status: [{}, {}]. Error details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Detail: \"{}\", Position: {}]",
+                            self.address.host,
+                            self.address.database,
+                            self.address.username,
+                            transaction_status,
+                            copy_mode_status,
+                            msg.severity,
+                            msg.code,
+                            msg.message,
+                            msg.hint.as_deref().unwrap_or("none"),
+                            msg.detail.as_deref().unwrap_or("none"),
+                            msg.position.unwrap_or(0)
+                        );
+                    } else {
+                        error!(
+                            "PostgreSQL server error from {} (database: {}, user: {}). Could not parse error details.",
+                            self.address.host, self.address.database, self.address.username
+                        );
+                    }
+
+                    // Exit COPY mode if we're in it
                     if self.in_copy_mode {
                         self.in_copy_mode = false;
                     }
-                    // при ошибке сбрасываем все prepared, потому как мы не можем сказать в чем ошибка.
+
+                    // Reset prepared statements cache on error since we can't determine the exact cause
                     if self.prepared_statement_cache.is_some() {
                         self.cleanup_state.needs_cleanup_prepare = true;
                     }
+
+                    // Handle async mode errors
                     if self.is_async() {
                         self.data_available = false;
                         self.set_flush_wait_code(code);
                         self.cleanup_state.needs_cleanup();
-                        self.mark_bad("error in async")
+                        self.mark_bad("PostgreSQL error in asynchronous operation mode");
                     }
                 }
 
@@ -563,10 +643,7 @@ impl Server {
                     if message.len() == 12 && message.to_vec().eq(COMMAND_COMPLETE_BY_DISCARD_ALL) {
                         self.registering_prepared_statement.clear();
                         if self.prepared_statement_cache.is_some() {
-                            warn!(
-                                "Cleanup server {} prepared statements cache (DISCARD ALL)",
-                                self
-                            );
+                            warn!("Cleanup server {self} prepared statements cache (DISCARD ALL)");
                             self.prepared_statement_cache.as_mut().unwrap().clear();
                         }
                     }
@@ -576,8 +653,7 @@ impl Server {
                         self.registering_prepared_statement.clear();
                         if self.prepared_statement_cache.is_some() {
                             warn!(
-                                "Cleanup server {} prepared statements cache (DEALLOCATE ALL)",
-                                self
+                                "Cleanup server {self} prepared statements cache (DEALLOCATE ALL)"
                             );
                             self.prepared_statement_cache.as_mut().unwrap().clear();
                         }
@@ -595,10 +671,7 @@ impl Server {
                     if let Some(client_server_parameters) = client_server_parameters.as_mut() {
                         client_server_parameters.set_param(key.clone(), value.clone(), false);
                         if self.log_client_parameter_status_changes {
-                            info!(
-                                "Server {}: client parameter status change: {} = {}",
-                                self, key, value
-                            )
+                            info!("Server {self}: client parameter status change: {key} = {value}")
                         }
                     }
 
@@ -682,7 +755,7 @@ impl Server {
 
     /// Indicate that this server connection cannot be re-used and must be discarded.
     pub fn mark_bad(&mut self, reason: &str) {
-        error!("Server {} marked bad, reason: {}", self, reason);
+        error!("Server {self} marked bad, reason: {reason}");
         self.bad = true;
     }
 
@@ -700,7 +773,7 @@ impl Server {
             self.stats.wait_idle();
             return;
         }
-        warn!("Reading available data from server: {}", self);
+        warn!("Reading available data from server: {self}");
         loop {
             if !self.is_data_available() {
                 self.stats.wait_idle();
@@ -710,10 +783,7 @@ impl Server {
             match self.recv(&mut tokio::io::sink(), None).await {
                 Ok(_) => self.stats.wait_idle(),
                 Err(err_read_response) => {
-                    error!(
-                        "Server {} while reading available data: {:?}",
-                        self, err_read_response
-                    );
+                    error!("Server {self} while reading available data: {err_read_response:?}");
                     break;
                 }
             }
@@ -752,7 +822,7 @@ impl Server {
             }
             Err(err) => {
                 self.stats.wait_idle();
-                error!("Terminating server {} because of: {:?}", self, err);
+                error!("Terminating server {self} because of: {err:?}");
                 self.mark_bad("flush to server error");
                 Err(err)
             }
@@ -780,15 +850,14 @@ impl Server {
     /// connection back in the pool
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
         if self.in_copy_mode() {
-            warn!("Server {} returned while still in copy-mode", self);
+            warn!("Server {self} returned while still in copy-mode");
             self.mark_bad("returned in copy-mode");
             return Err(Error::ProtocolSyncError(format!(
-                "server {} returned in copy-mode",
-                self.address
+                "server {self} returned in copy-mode"
             )));
         }
         if self.is_data_available() {
-            warn!("Server {} returned while still has data available", self);
+            warn!("Server {self} returned while still has data available");
             self.mark_bad("returned with data available");
             return Err(Error::ProtocolSyncError(format!(
                 "server {} returned with data available",
@@ -796,7 +865,7 @@ impl Server {
             )));
         }
         if !self.buffer.is_empty() {
-            warn!("Server {} returned while buffer is not empty", self);
+            warn!("Server {self} returned while buffer is not empty");
             self.mark_bad("returned with not-empty buffer");
             return Err(Error::ProtocolSyncError(format!(
                 "server {} with not-empty buffer",
@@ -808,10 +877,7 @@ impl Server {
         // server connection thrashing if clients repeatedly do this.
         // Instead, we ROLLBACK that transaction before putting the connection back in the pool
         if self.in_transaction() {
-            warn!(
-                "Server {} returned while still in transaction, rolling back transaction",
-                self
-            );
+            warn!("Server {self} returned while still in transaction, rolling back transaction",);
             self.small_simple_query("ROLLBACK").await?;
         }
 
@@ -842,7 +908,7 @@ impl Server {
                 // flush prepared.
                 self.registering_prepared_statement.clear();
                 if self.prepared_statement_cache.is_some() {
-                    warn!("Cleanup server {} prepared statements cache", self);
+                    warn!("Cleanup server {self} prepared statements cache");
                     self.prepared_statement_cache.as_mut().unwrap().clear();
                 }
             }
@@ -985,7 +1051,7 @@ impl Server {
         let mut query = String::from("");
 
         for (key, value) in parameter_diff {
-            query.push_str(&format!("SET {} TO '{}';", key, value));
+            query.push_str(&format!("SET {key} TO '{value}';"));
         }
 
         let res = self.small_simple_query(&query).await;
@@ -1009,10 +1075,7 @@ impl Server {
             create_tcp_stream_inner(host, port, false, false).await?
         };
 
-        warn!(
-            "Sending CancelRequest to [{}] {}:{}",
-            process_id, host, port
-        );
+        warn!("Sending CancelRequest to [{process_id}] {host}:{port}");
 
         let mut bytes = BytesMut::with_capacity(16);
         bytes.put_i32(16);
@@ -1090,8 +1153,7 @@ impl Server {
                 Err(err) => {
                     return Err(Error::ServerStartupError(
                         format!(
-                            "couldn't read message code on startup from server backend: {:?}",
-                            err
+                            "couldn't read message code on startup from server backend: {err:?}"
                         ),
                         server_identifier,
                     ));
@@ -1102,10 +1164,7 @@ impl Server {
                 Ok(len) => len,
                 Err(err) => {
                     return Err(Error::ServerStartupError(
-                        format!(
-                            "couldn't read length on startup from server backend: {:?}",
-                            err
-                        ),
+                        format!("couldn't read length on startup from server backend: {err:?}"),
                         server_identifier,
                     ));
                 }
@@ -1170,13 +1229,13 @@ impl Server {
                                         + sasl_response.len() as i32, // length of SASL response
                                         );
 
-                                        res.put_slice(format!("{}\0", SCRAM_SHA_256).as_bytes());
+                                        res.put_slice(format!("{SCRAM_SHA_256}\0").as_bytes());
                                         res.put_i32(sasl_response.len() as i32);
                                         res.put(sasl_response);
 
                                         write_all_flush(&mut stream, &res).await?;
                                     } else {
-                                        error!("Unsupported SCRAM version: {}", sasl_type);
+                                        error!("Unsupported SCRAM version: {sasl_type}");
                                         return Err(Error::ServerError);
                                     }
                                 }
@@ -1279,8 +1338,7 @@ impl Server {
                                     Err(err) => {
                                         return Err(Error::ServerAuthError(
                                             format!(
-                                                "jwt authentication on the server failed: {:?}",
-                                                err
+                                                "jwt authentication on the server failed: {err:?}"
                                             ),
                                             server_identifier,
                                         ));
@@ -1317,7 +1375,7 @@ impl Server {
                                     Ok(_) => (),
                                     Err(err) => {
                                         return Err(Error::ServerAuthError(
-                                            format!("md5 authentication on the server: {:?}", err),
+                                            format!("md5 authentication on the server: {err:?}"),
                                             server_identifier,
                                         ));
                                     }
@@ -1336,8 +1394,7 @@ impl Server {
                                     Err(err) => {
                                         return Err(Error::ServerAuthError(
                                             format!(
-                                                "md5 authentication on the server failed: {:?}",
-                                                err
+                                                "md5 authentication on the server failed: {err:?}"
                                             ),
                                             server_identifier,
                                         ));
@@ -1386,7 +1443,7 @@ impl Server {
                                 Ok(_) => (),
                                 Err(err) => {
                                     return Err(Error::ServerStartupError(
-                                        format!("while create new connection to postgresql received error, but can't read it: {:?}", err),
+                                        format!("while create new connection to postgresql received error, but can't read it: {err:?}"),
                                         server_identifier,
                                     ));
                                 }
@@ -1401,9 +1458,9 @@ impl Server {
                                     Err(Error::ServerStartupError(f.message, server_identifier))
                                 }
                                 Err(err) => {
-                                    error!("Get unparsed server error: {:?}", error);
+                                    error!("Get unparsed server error: {err:?}");
                                     Err(Error::ServerStartupError(
-                                         format!("while create new connection to postgresql received error, but can't read it: {:?}", err),
+                                         format!("while create new connection to postgresql received error, but can't read it: {err:?}"),
                                          server_identifier,
                                      ))
                                 }
@@ -1535,13 +1592,9 @@ impl Server {
                 // We have an unexpected message from the server during this exchange.
                 // Means we implemented the protocol wrong or we're not talking to a Postgres server.
                 _ => {
-                    error!(
-                        "An unprocessed message code from server backend while startup: {}",
-                        code
-                    );
+                    error!("An unprocessed message code from server backend while startup: {code}");
                     return Err(Error::ProtocolSyncError(format!(
-                        "An unprocessed message code from server backend while startup: {}",
-                        code
+                        "An unprocessed message code from server backend while startup: {code}"
                     )));
                 }
             };
@@ -1567,8 +1620,8 @@ impl Drop for Server {
 
             match self.stream.get_mut().try_write(&bytes) {
                 Ok(5) => (),
-                Err(err) => warn!("Dirty server {} shutdown: {}", self, err),
-                _ => warn!("Dirty server {} shutdown", self),
+                Err(err) => warn!("Dirty server {self} shutdown: {err}"),
+                _ => warn!("Dirty server {self} shutdown"),
             };
         }
 
@@ -1591,13 +1644,12 @@ impl Drop for Server {
 }
 
 async fn create_unix_stream_inner(host: &str, port: u16) -> Result<StreamInner, Error> {
-    let stream = match UnixStream::connect(&format!("{}/.s.PGSQL.{}", host, port)).await {
+    let stream = match UnixStream::connect(&format!("{host}/.s.PGSQL.{port}")).await {
         Ok(s) => s,
         Err(err) => {
-            error!("Could not connect to server: {}", err);
+            error!("Could not connect to server: {err}");
             return Err(Error::SocketError(format!(
-                "Could not connect to server: {}",
-                err
+                "Could not connect to server: {err}"
             )));
         }
     };
@@ -1613,13 +1665,12 @@ async fn create_tcp_stream_inner(
     tls: bool,
     _verify_server_certificate: bool,
 ) -> Result<StreamInner, Error> {
-    let mut stream = match TcpStream::connect(&format!("{}:{}", host, port)).await {
+    let mut stream = match TcpStream::connect(&format!("{host}:{port}")).await {
         Ok(stream) => stream,
         Err(err) => {
-            error!("Could not connect to server: {}", err);
+            error!("Could not connect to server: {err}");
             return Err(Error::SocketError(format!(
-                "Could not connect to server: {}",
-                err
+                "Could not connect to server: {err}"
             )));
         }
     };
@@ -1634,10 +1685,7 @@ async fn create_tcp_stream_inner(
         let response = match stream.read_u8().await {
             Ok(response) => response as char,
             Err(err) => {
-                return Err(Error::SocketError(format!(
-                    "Server socket error: {:?}",
-                    err
-                )));
+                return Err(Error::SocketError(format!("Server socket error: {err:?}")));
             }
         };
 

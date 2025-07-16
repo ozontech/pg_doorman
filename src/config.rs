@@ -17,8 +17,9 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
+use crate::auth::jwt::load_jwt_pub_key;
+use crate::auth::talos::load_talos_pub_key;
 use crate::errors::Error;
-use crate::jwt_auth::load_jwt_pub_key;
 use crate::pool::{ClientServerMap, ConnectionPool};
 use crate::stats::AddressStats;
 use crate::tls::load_identity;
@@ -138,7 +139,7 @@ impl Display for PoolMode {
             PoolMode::Transaction => "transaction".to_string(),
             PoolMode::Session => "session".to_string(),
         };
-        write!(f, "{}", str)
+        write!(f, "{str}")
     }
 }
 
@@ -156,6 +157,8 @@ pub struct User {
     // of THIS server_user and server_password.
     pub server_username: Option<String>,
     pub server_password: Option<String>,
+    // Pam auth
+    pub auth_pam_service: Option<String>,
 }
 
 impl Default for User {
@@ -169,6 +172,7 @@ impl Default for User {
             server_lifetime: None,
             server_username: None,
             server_password: None,
+            auth_pam_service: None,
         }
     }
 }
@@ -292,7 +296,6 @@ pub struct General {
     #[serde(default = "General::default_pooler_check_query")]
     pub pooler_check_query: String,
     pooler_check_query_request_bytes: Option<Vec<u8>>,
-    pooler_check_query_response_bytes: Option<Vec<u8>>,
 
     pub tls_certificate: Option<String>,
     pub tls_private_key: Option<String>,
@@ -464,19 +467,6 @@ impl General {
         self.pooler_check_query_request_bytes = Option::from(buf.to_vec());
         self.pooler_check_query_request_bytes.unwrap()
     }
-    pub fn poller_check_query_response_bytes_vec(mut self) -> Vec<u8> {
-        if self.pooler_check_query_response_bytes.is_some() {
-            return self.pooler_check_query_response_bytes.unwrap();
-        }
-        let mut res = BytesMut::with_capacity(128);
-        res.put_u8(b'I');
-        res.put_i32(mem::size_of::<i32>() as i32);
-        res.put_u8(b'Z');
-        res.put_i32(mem::size_of::<i32>() as i32 + 1);
-        res.put_u8(b'I');
-        self.pooler_check_query_response_bytes = Option::from(res.to_vec());
-        self.pooler_check_query_response_bytes.unwrap()
-    }
 
     pub fn default_hba() -> Vec<IpNet> {
         vec![]
@@ -532,12 +522,11 @@ impl Default for General {
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
-            hba: vec![],
+            hba: Self::default_hba(),
             daemon_pid_file: Self::default_daemon_pid_file(),
             syslog_prog_name: None,
             pooler_check_query: Self::default_pooler_check_query(),
             pooler_check_query_request_bytes: None,
-            pooler_check_query_response_bytes: None,
             backlog: Self::default_backlog(),
         }
     }
@@ -578,6 +567,7 @@ pub struct Pool {
 
     pub prepared_statements_cache_size: Option<usize>,
 
+    #[serde(default = "Pool::default_users")]
     pub users: BTreeMap<String, User>,
     // Note, don't put simple fields below these configs. There's a compatibility issue with TOML that makes it
     // incompatible to have simple fields in TOML after complex objects. See
@@ -599,6 +589,9 @@ impl Pool {
         5432
     }
 
+    pub fn default_users() -> BTreeMap<String, User> {
+        BTreeMap::default()
+    }
     pub fn default_server_host() -> String {
         String::from("127.0.0.1")
     }
@@ -631,6 +624,27 @@ impl Default for Pool {
             log_client_parameter_status_changes: false,
             application_name: None,
             prepared_statements_cache_size: None,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug, Hash, Eq, Default)]
+pub struct Talos {
+    pub keys: Vec<String>,
+    pub databases: Vec<String>,
+}
+
+impl Talos {
+    pub async fn validate(&mut self) -> Result<(), Error> {
+        for key_file in self.keys.iter() {
+            load_talos_pub_key(key_file.to_string()).await?
+        }
+        Ok(())
+    }
+    pub fn empty() -> Self {
+        Talos {
+            keys: vec![],
+            databases: vec![],
         }
     }
 }
@@ -673,6 +687,10 @@ pub struct Config {
     // General and global settings.
     pub general: General,
 
+    // Talos settings.
+    #[serde(default = "Talos::empty")]
+    pub talos: Talos,
+
     // Connection pools.
     pub pools: HashMap<String, Pool>,
 
@@ -693,6 +711,10 @@ impl Default for Config {
             path: Self::default_path(),
             general: General::default(),
             pools: HashMap::default(),
+            talos: Talos {
+                keys: vec![],
+                databases: vec![],
+            },
             include: Include { files: Vec::new() },
         }
     }
@@ -706,11 +728,11 @@ impl From<&Config> for std::collections::HashMap<String, String> {
             .flat_map(|(pool_name, pool)| {
                 [
                     (
-                        format!("pools.{}.pool_mode", pool_name),
+                        format!("pools.{pool_name}.pool_mode"),
                         pool.pool_mode.to_string(),
                     ),
                     (
-                        format!("pools.{:?}.users", pool_name),
+                        format!("pools.{pool_name:?}.users"),
                         pool.users
                             .values()
                             .map(|user| &user.username)
@@ -777,10 +799,10 @@ impl Config {
         info!("HBA config: {:?}", self.general.hba);
         match self.general.tls_certificate.clone() {
             Some(tls_certificate) => {
-                info!("TLS certificate: {}", tls_certificate);
+                info!("TLS certificate: {tls_certificate}");
 
                 if let Some(tls_private_key) = self.general.tls_private_key.clone() {
-                    info!("TLS private key: {}", tls_private_key);
+                    info!("TLS private key: {tls_private_key}");
                     info!("TLS support is enabled");
                 }
             }
@@ -820,14 +842,11 @@ impl Config {
             let connect_timeout = pool_config
                 .connect_timeout
                 .unwrap_or(self.general.connect_timeout);
-            info!(
-                "[pool: {}] Connection timeout: {}ms",
-                pool_name, connect_timeout
-            );
+            info!("[pool: {pool_name}] Connection timeout: {connect_timeout}ms");
             let idle_timeout = pool_config
                 .idle_timeout
                 .unwrap_or(self.general.idle_timeout);
-            info!("[pool: {}] Idle timeout: {}ms", pool_name, idle_timeout);
+            info!("[pool: {pool_name}] Idle timeout: {idle_timeout}ms");
             info!(
                 "[pool: {}] Number of users: {}",
                 pool_name,
@@ -837,7 +856,7 @@ impl Config {
                 "[pool: {}] Max server lifetime: {}",
                 pool_name,
                 match pool_config.server_lifetime {
-                    Some(server_lifetime) => format!("{}ms", server_lifetime),
+                    Some(server_lifetime) => format!("{server_lifetime}ms"),
                     None => "default".to_string(),
                 }
             );
@@ -875,7 +894,7 @@ impl Config {
                     pool_name,
                     user.1.username,
                     match user.1.server_lifetime {
-                        Some(server_lifetime) => format!("{}ms", server_lifetime),
+                        Some(server_lifetime) => format!("{server_lifetime}ms"),
                         None => "default".to_string(),
                     }
                 );
@@ -884,20 +903,13 @@ impl Config {
     }
 
     pub async fn validate(&mut self) -> Result<(), Error> {
+        self.talos.validate().await?;
         for (name, pool) in self.pools.iter() {
             for (_name, user_data) in pool.users.iter() {
                 if self.general.virtual_pool_count > user_data.pool_size as u16 {
                     return Err(Error::BadConfig(format!(
-                        "Error in pool {{ {} }}. \
-                    Please set virtual_pool_count less then pool_size.",
-                        name
-                    )));
-                }
-                if user_data.password.is_empty() {
-                    return Err(Error::BadConfig(format!(
-                        "Error in pool {{ {} }}. \
-                        You don't have to specify a user password for every pool",
-                        name
+                        "Error in pool {{ {name} }}. \
+                    Please set virtual_pool_count less then pool_size."
                     )));
                 }
             }
@@ -928,8 +940,7 @@ impl Config {
                     Ok(_) => (),
                     Err(err) => {
                         return Err(Error::BadConfig(format!(
-                            "tls is incorrectly configured: {:?}",
-                            err
+                            "tls is incorrectly configured: {err:?}"
                         )));
                     }
                 }
@@ -955,18 +966,14 @@ async fn load_file(path: &str) -> Result<String, Error> {
     let mut file = match File::open(path).await {
         Ok(file) => file,
         Err(err) => {
-            return Err(Error::BadConfig(format!(
-                "Could not open '{}': {}",
-                path, err
-            )));
+            return Err(Error::BadConfig(format!("Could not open '{path}': {err}")));
         }
     };
     match file.read_to_string(&mut contents).await {
         Ok(_) => (),
         Err(err) => {
             return Err(Error::BadConfig(format!(
-                "Could not read config file: {}",
-                err
+                "Could not read config file: {err}"
             )));
         }
     };
@@ -981,8 +988,7 @@ pub async fn parse(path: &str) -> Result<(), Error> {
         Ok(config) => config,
         Err(err) => {
             return Err(Error::BadConfig(format!(
-                "Could not parse config file {}: {}",
-                path, err
+                "Could not parse config file {path}: {err}"
             )));
         }
     };
@@ -992,20 +998,18 @@ pub async fn parse(path: &str) -> Result<(), Error> {
         Ok(value) => value,
         Err(err) => {
             return Err(Error::BadConfig(format!(
-                "Could not toml parse file {}: {:?}",
-                path, err
+                "Could not toml parse file {path}: {err:?}"
             )));
         }
     };
     for file in include_config.include.files {
-        info!("Merge config with include file: {}", file);
+        info!("Merge config with include file: {file}");
         let include_file_content = load_file(file.as_str()).await?;
         let include_file_value = match include_file_content.parse() {
             Ok(value) => value,
             Err(err) => {
                 return Err(Error::BadConfig(format!(
-                    "Could not toml parse file {}: {:?}",
-                    file, err
+                    "Could not toml parse file {file}: {err:?}"
                 )));
             }
         };
@@ -1013,8 +1017,7 @@ pub async fn parse(path: &str) -> Result<(), Error> {
             Ok(value) => value,
             Err(err) => {
                 return Err(Error::BadConfig(format!(
-                    "Could merge config file {}: {:?}",
-                    file, err
+                    "Could merge config file {file}: {err:?}"
                 )));
             }
         };
@@ -1024,10 +1027,7 @@ pub async fn parse(path: &str) -> Result<(), Error> {
     let mut config: Config = match toml::from_str(&table.to_string()) {
         Ok(config) => config,
         Err(err) => {
-            return Err(Error::BadConfig(format!(
-                "Could not merge config: {:?}",
-                err
-            )));
+            return Err(Error::BadConfig(format!("Could not merge config: {err:?}")));
         }
     };
 
@@ -1047,8 +1047,8 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     match parse(&old_config.path).await {
         Ok(()) => (),
         Err(err) => {
-            error!("Config reload error: {:?}", err);
-            return Err(Error::BadConfig(format!("Config reload error: {:?}", err)));
+            error!("Config reload error: {err:?}");
+            return Err(Error::BadConfig(format!("Config reload error: {err:?}")));
         }
     };
 
@@ -1084,7 +1084,7 @@ mod test {
             .join("tests.toml");
         parse(file.as_os_str().to_str().unwrap()).await.unwrap();
 
-        assert_eq!(get_config().general.idle_timeout, 300000000);
+        assert_eq!(get_config().general.idle_timeout, 3000);
         assert_eq!(get_config().pools.len(), 4);
         assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
         assert_eq!(get_config().pools["example_db"].users.len(), 4);
