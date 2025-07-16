@@ -875,26 +875,26 @@
 <h2 id="pgdoorman">PgDoorman</h2>
 <h3 id="1.8.3">1.8.3 <small>Jun 11, 2025</small></h3>
 <ul>
-<li>Fixed critical bug: if a free connection was not available on the Server in pool (query_wait_timeout), the Client's buffer was not cleared, leading to an incorrect response error #38.</li>
-<li>Fixed ngsql issue: https://github.com/npgsql/npgsql/issues/6115.</li>
+<li>Fixed critical bug: if a free connection was not available on the Server in pool (query_wait_timeout), the Client's buffer was not cleared, leading to an incorrect response error <a href="https://github.com/ozontech/pg_doorman/pull/38">#38</a>.</li>
+<li>Fixed ngsql-related issue: https://github.com/npgsql/npgsql/issues/6115.</li>
 </ul>
 <h3 id="1.8.2">1.8.2 <small>May 24, 2025</small></h3>
 <ul>
-<li>Added <code>application_name</code> parameter in pool #30.</li>
-<li>Added link-time optimization #29.</li>
+<li>Added <code>application_name</code> parameter in pool <a href="https://github.com/ozontech/pg_doorman/pull/30">#30</a>.</li>
+<li>Added link-time optimization <a href="https://github.com/ozontech/pg_doorman/pull/29">#29</a>.</li>
 <li>Added <code>DISCARD ALL</code>/<code>DEALLOCATE ALL</code> client query support.</li>
 <li>Fixed panics in admin console.</li>
 <li>Fixed connection leakage on inproperly handled errors in client's copy mode</li>
 </ul>
 <h3 id="1.8.1">1.8.1 <small>April 12, 2025</small></h3>
 <ul>
-<li>Fixed config value of prepared_statements #21.</li>
-<li>Fixed close declared cursors #23.</li>
-<li>Fixed proxy server parameters #25.</li>
+<li>Fixed config value of prepared_statements <a href="https://github.com/ozontech/pg_doorman/pull/21">#21</a>.</li>
+<li>Fixed close declared cursors <a href="https://github.com/ozontech/pg_doorman/pull/23">#23</a>.</li>
+<li>Fixed proxy server parameters <a href="https://github.com/ozontech/pg_doorman/pull/25">#25</a>.</li>
 </ul>
 <h3 id="1.8.0">1.8.0 <small>Mar 20, 2025</small></h3>
 <ul>
-<li>Fixed #15: Dependencies</li>
+<li>Fixed <a href="https://github.com/ozontech/pg_doorman/pull/15">#15</a>: Dependencies</li>
 <li>Added release vendor-licenses.txt, <a href="https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com">related thread</a>.</li>
 </ul>
 <h3 id="1.7.9">1.7.9 <small>Mar 16, 2025</small></h3>
