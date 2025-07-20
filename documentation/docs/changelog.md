@@ -4,7 +4,12 @@ title: Changelog
 
 # Changelog
 
-## PgDoorman
+### 1.9.0 <small>July 20, 2025</small> { id="1.9.0" }
+
+- Added pam auth support.
+- Added `talos` (yet another jwt auth support).
+- When using the COPY protocol, if a row contains a large column, pg_doorman may run out of memory. Now this happens when streaming, when the response is not stored in memory.
+- Updating rust and tokio.
 
 ### 1.8.3 <small>Jun 11, 2025</small> { id="1.8.3" }
 

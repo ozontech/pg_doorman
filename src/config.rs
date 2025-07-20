@@ -371,7 +371,7 @@ impl General {
     }
 
     pub fn default_worker_cpu_affinity_pinning() -> bool {
-        true
+        false
     }
 
     pub fn default_worker_stack_size() -> usize {

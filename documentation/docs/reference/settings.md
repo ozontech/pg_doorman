@@ -89,7 +89,7 @@ Default: `4`.
 
 Automatically assign workers to different CPUs (man 3 cpu_set).
 
-Default: `true`.
+Default: `false`.
 
 ### virtual_pool_count
 
@@ -310,6 +310,10 @@ Password can be specified in `MD5`, `SCRAM-SHA-256`, or `JWT` format.
 Also, you can create a mirror list of users using secrets from the PostgreSQL instance: `select usename, passwd from pg_shadow`.
 
 Example: `md5dd9a0f2...76a09bbfad` or `SCRAM-SHA-256$4096:E+QNCSW3r58yM+Twj1P5Uw==$LQrKl...Ro1iBKM=` or in jwt format: `jwt-pkey-fpath:/etc/pg_doorman/jwt/public-exampledb-user.pem`
+
+### auth_pam_service
+
+The pam-service that is responsible for client authorization. In this case, pg_doorman will ignore the `password` value.
 
 ### server_username
 
