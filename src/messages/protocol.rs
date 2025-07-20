@@ -5,7 +5,7 @@ use std::mem;
 use bytes::{Buf, BufMut, BytesMut};
 use md5::{Digest, Md5};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
+use crate::constants::SCRAM_SHA_256;
 // Internal crate imports
 use crate::errors::Error;
 use crate::messages::socket::{write_all, write_all_flush};
@@ -33,7 +33,7 @@ where
     match stream.write_all(&res).await {
         Ok(_) => Ok(salt),
         Err(err) => Err(Error::SocketError(format!(
-            "Error writing md5 challenge to socket - Error: {err:?}"
+            "Failed to write MD5 challenge to socket: {err}"
         ))),
     }
 }
@@ -51,7 +51,7 @@ where
     match stream.write_all(&res).await {
         Ok(_) => Ok(()),
         Err(err) => Err(Error::SocketError(format!(
-            "Error writing plain password challenge to socket - Error: {err:?}"
+            "Failed to write plain password challenge to socket: {err}"
         ))),
     }
 }
@@ -65,13 +65,14 @@ where
     res.put_u8(b'R');
     res.put_i32(23);
     res.put_i32(10); // SCRAM-SHA-256
-    res.put_slice(b"SCRAM-SHA-256");
+    res.put_slice(SCRAM_SHA_256.as_bytes());
+    res.put_u8(0);
     res.put_u8(0);
 
     match stream.write_all(&res).await {
         Ok(_) => Ok(()),
         Err(err) => Err(Error::SocketError(format!(
-            "Error writing SCRAM-SHA-256 challenge to socket - Error: {err:?}"
+            "Failed to write SCRAM-SHA-256 challenge to socket: {err}"
         ))),
     }
 }
@@ -83,15 +84,14 @@ where
 {
     let mut res = BytesMut::new();
     res.put_u8(b'R');
-    res.put_i32(4 + 4 + data.len() as i32 + 1);
+    res.put_i32(4 + 4 + data.len() as i32);
     res.put_i32(code);
     res.put_slice(data.as_bytes());
-    res.put_u8(0);
 
     match stream.write_all(&res).await {
         Ok(_) => Ok(()),
         Err(err) => Err(Error::SocketError(format!(
-            "Error writing SCRAM-SHA-256 server response to socket - Error: {err:?}"
+            "Failed to write SCRAM-SHA-256 server response to socket: {err}"
         ))),
     }
 }
@@ -105,15 +105,15 @@ where
     match stream.read_exact(&mut code).await {
         Ok(_) => {}
         Err(err) => {
-            return Err(Error::AuthError(format!(
-                "can't first read symbol of password code: {err:?}"
+            return Err(Error::SocketError(format!(
+                "Failed to read password message type identifier: {err}"
             )))
         }
     }
 
     if code[0] != b'p' {
         return Err(Error::ProtocolSyncError(format!(
-            "Expected p, got {}",
+            "Protocol synchronization error: Expected password message (p), received '{}' instead",
             code[0] as char
         )));
     }
@@ -122,8 +122,8 @@ where
     match stream.read_exact(&mut len_buf).await {
         Ok(_) => {}
         Err(err) => {
-            return Err(Error::AuthError(format!(
-                "can't read password message length: {err:?}"
+            return Err(Error::SocketError(format!(
+                "Failed to read password message length: {err}"
             )))
         }
     }
@@ -133,8 +133,8 @@ where
     match stream.read_exact(&mut password).await {
         Ok(_) => {}
         Err(err) => {
-            return Err(Error::AuthError(format!(
-                "can't read password message: {err:?}"
+            return Err(Error::SocketError(format!(
+                "Failed to read password message content: {err}"
             )))
         }
     }
@@ -193,7 +193,7 @@ where
     match stream.write_all(&startup).await {
         Ok(_) => Ok(()),
         Err(err) => Err(Error::SocketError(format!(
-            "Error writing startup to server socket - Error: {err:?}"
+            "Failed to write startup message to server socket: {err}"
         ))),
     }
 }
@@ -208,7 +208,7 @@ pub async fn ssl_request(stream: &mut tokio::net::TcpStream) -> Result<(), Error
     match stream.write_all(&bytes).await {
         Ok(_) => Ok(()),
         Err(err) => Err(Error::SocketError(format!(
-            "Error writing SSLRequest to server socket - Error: {err:?}"
+            "Failed to write SSL request to server socket: {err}"
         ))),
     }
 }
@@ -237,7 +237,10 @@ pub fn parse_params(mut bytes: BytesMut) -> Result<HashMap<String, String>, Erro
     // Expect pairs of name and value
     // and at least one pair to be present.
     if buf.len() % 2 != 0 || buf.len() < 2 {
-        return Err(Error::ClientBadStartup);
+        return Err(Error::ProtocolSyncError(format!(
+            "Invalid client startup message: Expected key-value pairs, but received {} parameters",
+            buf.len()
+        )));
     }
 
     let mut i = 0;

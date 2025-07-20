@@ -635,16 +635,15 @@ where
         let secret_key: i32 = rand::random();
 
         // Authenticate user
-        let (transaction_mode, mut server_parameters, prepared_statements_enabled) =
-            authenticate(
-                &mut read,
-                &mut write,
-                admin,
-                &client_identifier,
-                pool_name,
-                username_from_parameters,
-            )
-            .await?;
+        let (transaction_mode, mut server_parameters, prepared_statements_enabled) = authenticate(
+            &mut read,
+            &mut write,
+            admin,
+            &client_identifier,
+            pool_name,
+            username_from_parameters,
+        )
+        .await?;
 
         // Update the parameters to merge what the application sent and what's originally on the server
         server_parameters.set_from_hashmap(parameters.clone(), false);

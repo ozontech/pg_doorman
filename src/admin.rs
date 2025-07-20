@@ -19,14 +19,14 @@ use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
 use crate::pool::{get_all_pools, ClientServerMap};
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
+#[cfg(target_os = "linux")]
+use crate::stats::get_socket_states_count;
 use crate::stats::pool::PoolStats;
 use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE};
 use crate::stats::{
     get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
-#[cfg(target_os = "linux")]
-use crate::stats::get_socket_states_count;
 
 /// Handle admin client.
 pub async fn handle_admin<T>(

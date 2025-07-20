@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod auth;
 pub mod client;
 pub mod cmd_args;
 pub mod config;
@@ -14,7 +15,6 @@ mod scram_client;
 pub mod server;
 pub mod stats;
 pub mod tls;
-pub mod auth;
 
 /// Format chrono::Duration to be more human-friendly.
 ///

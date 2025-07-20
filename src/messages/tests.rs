@@ -13,11 +13,11 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 // Internal crate imports
 use crate::errors::Error;
+use crate::messages::protocol::row_description;
 use crate::messages::{
     data_row, data_row_nullable, error_message, parse_startup, ready_for_query,
     set_messages_right_place, DataType, PgErrorMsg,
 };
-use crate::messages::protocol::row_description;
 
 // Mock implementation for AsyncReadExt
 struct MockReader {

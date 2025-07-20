@@ -22,8 +22,8 @@ use tokio::time::timeout;
 use crate::auth::jwt::{new_claims, sign_with_jwt_priv_key};
 use crate::config::{get_config, Address, User, VERSION};
 use crate::constants::*;
-use crate::errors::{Error, ServerIdentifier};
 use crate::errors::Error::MaxMessageSize;
+use crate::errors::{Error, ServerIdentifier};
 use crate::messages::BytesMutReader;
 use crate::messages::*;
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
@@ -804,7 +804,8 @@ impl Server {
             Ok(result) => result,
             Err(err) => {
                 self.mark_bad("flush timeout error");
-                error!("Server {} flush timeout: {:?}", self.address, err);
+                error!("Flush timeout for server {} (database: {}, user: {}). Operation took longer than the configured timeout: {}", 
+                      self.address.host, self.address.database, self.address.username, err);
                 Err(Error::FlushTimeout)
             }
         }
@@ -822,7 +823,10 @@ impl Server {
             }
             Err(err) => {
                 self.stats.wait_idle();
-                error!("Terminating server {self} because of: {err:?}");
+                error!(
+                    "Terminating connection to server {} (database: {}, user: {}) due to error: {}",
+                    self.address.host, self.address.database, self.address.username, err
+                );
                 self.mark_bad("flush to server error");
                 Err(err)
             }
@@ -853,23 +857,24 @@ impl Server {
             warn!("Server {self} returned while still in copy-mode");
             self.mark_bad("returned in copy-mode");
             return Err(Error::ProtocolSyncError(format!(
-                "server {self} returned in copy-mode"
+                "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool while still in COPY mode. This may indicate a client disconnected during a COPY operation.",
+                self.address.host, self.address.database, self.address.username
             )));
         }
         if self.is_data_available() {
             warn!("Server {self} returned while still has data available");
             self.mark_bad("returned with data available");
             return Err(Error::ProtocolSyncError(format!(
-                "server {} returned with data available",
-                self.address
+                "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool while still having data available. This may indicate a client disconnected before receiving all query results.",
+                self.address.host, self.address.database, self.address.username
             )));
         }
         if !self.buffer.is_empty() {
             warn!("Server {self} returned while buffer is not empty");
             self.mark_bad("returned with not-empty buffer");
             return Err(Error::ProtocolSyncError(format!(
-                "server {} with not-empty buffer",
-                self.address
+                "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool with a non-empty buffer. This may indicate a client disconnected before the server response was fully processed.",
+                self.address.host, self.address.database, self.address.username
             )));
         }
         // Client disconnected with an open transaction on the server connection.
@@ -1136,15 +1141,13 @@ impl Server {
         let mut secret_key: i32 = 0;
         let server_identifier = ServerIdentifier::new(username.clone(), database);
 
-        let mut scram_client_auth =
-            if user.server_username.is_some() && user.server_password.is_some() {
-                let server_password = <Option<String> as Clone>::clone(&user.server_password)
-                    .unwrap()
-                    .clone();
-                Some(ScramSha256::new(server_password.as_str()))
-            } else {
-                None
-            };
+        let mut scram_client_auth = if let (Some(_), Some(server_password)) =
+            (&user.server_username, &user.server_password)
+        {
+            Some(ScramSha256::new(server_password))
+        } else {
+            None
+        };
         let mut server_parameters = ServerParameters::new();
 
         loop {
@@ -1152,9 +1155,7 @@ impl Server {
                 Ok(code) => code as char,
                 Err(err) => {
                     return Err(Error::ServerStartupError(
-                        format!(
-                            "couldn't read message code on startup from server backend: {err:?}"
-                        ),
+                        format!("Failed to read message code during server startup: {err}"),
                         server_identifier,
                     ));
                 }
@@ -1164,7 +1165,7 @@ impl Server {
                 Ok(len) => len,
                 Err(err) => {
                     return Err(Error::ServerStartupError(
-                        format!("couldn't read length on startup from server backend: {err:?}"),
+                        format!("Failed to read message length during server startup: {err}"),
                         server_identifier,
                     ));
                 }
@@ -1178,7 +1179,7 @@ impl Server {
                         Ok(auth_code) => auth_code,
                         Err(_) => {
                             return Err(Error::ServerStartupError(
-                                "auth code".into(),
+                                "Failed to read authentication code from server".into(),
                                 server_identifier,
                             ));
                         }
@@ -1202,7 +1203,7 @@ impl Server {
                                         Ok(_) => (),
                                         Err(_) => {
                                             return Err(Error::ServerStartupError(
-                                                "sasl message".into(),
+                                                "Failed to read SASL authentication message from server".into(),
                                                 server_identifier,
                                             ))
                                         }
@@ -1236,7 +1237,10 @@ impl Server {
                                         write_all_flush(&mut stream, &res).await?;
                                     } else {
                                         error!("Unsupported SCRAM version: {sasl_type}");
-                                        return Err(Error::ServerError);
+                                        return Err(Error::ServerAuthError(
+                                            format!("Unsupported SCRAM version: {sasl_type}"),
+                                            server_identifier,
+                                        ));
                                     }
                                 }
                             }
@@ -1248,7 +1252,8 @@ impl Server {
                                 Ok(_) => (),
                                 Err(_) => {
                                     return Err(Error::ServerStartupError(
-                                        "sasl cont message".into(),
+                                        "Failed to read SASL continuation message from server"
+                                            .into(),
                                         server_identifier,
                                     ))
                                 }
@@ -1592,9 +1597,10 @@ impl Server {
                 // We have an unexpected message from the server during this exchange.
                 // Means we implemented the protocol wrong or we're not talking to a Postgres server.
                 _ => {
-                    error!("An unprocessed message code from server backend while startup: {code}");
+                    error!("Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.", code, code as u8);
                     return Err(Error::ProtocolSyncError(format!(
-                        "An unprocessed message code from server backend while startup: {code}"
+                        "Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.",
+                        code, code as u8
                     )));
                 }
             };
@@ -1685,7 +1691,9 @@ async fn create_tcp_stream_inner(
         let response = match stream.read_u8().await {
             Ok(response) => response as char,
             Err(err) => {
-                return Err(Error::SocketError(format!("Server socket error: {err:?}")));
+                return Err(Error::SocketError(format!(
+                    "Failed to read TLS response from server: {err}"
+                )));
             }
         };
 
@@ -1701,7 +1709,7 @@ async fn create_tcp_stream_inner(
 
             // Something else?
             m => {
-                return Err(Error::SocketError(format!("Unknown message: {}", { m })));
+                return Err(Error::SocketError(format!("Received unexpected response '{}' (ASCII: {}) during TLS negotiation. Expected 'S' (supports TLS) or 'N' (does not support TLS).", m, m as u8)));
             }
         }
     } else {

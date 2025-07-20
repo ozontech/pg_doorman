@@ -1,7 +1,7 @@
 pub mod jwt;
 pub mod pam;
-pub mod talos;
 pub mod scram;
+pub mod talos;
 
 // Standard library imports
 use std::marker::Unpin;
@@ -23,9 +23,9 @@ use crate::constants::{
 };
 use crate::errors::{ClientIdentifier, Error};
 use crate::messages::{
-    error_response, error_response_terminal, md5_challenge, md5_hash_password, md5_hash_second_pass,
-    plain_password_challenge, read_password, scram_server_response, scram_start_challenge,
-    vec_to_string, wrong_password,
+    error_response, error_response_terminal, md5_challenge, md5_hash_password,
+    md5_hash_second_pass, plain_password_challenge, read_password, scram_server_response,
+    scram_start_challenge, vec_to_string, wrong_password,
 };
 use crate::pool::{get_pool, ConnectionPool};
 use crate::server::ServerParameters;
@@ -272,8 +272,6 @@ where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
 {
-    // scram auth.
-    scram_start_challenge(write).await?;
     let server_secret = match parse_server_secret(pool_password) {
         Ok(server_secret) => server_secret,
         Err(err) => {
@@ -288,6 +286,8 @@ where
             )));
         }
     };
+    // scram auth.
+    scram_start_challenge(write).await?;
     let first_message = read_password(read).await?;
     let client_first_message = match parse_client_first_message(String::from_utf8_lossy(
         &first_message,

@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .global_queue_interval(config.general.tokio_global_queue_interval)
         .event_interval(config.general.tokio_event_interval)
         .thread_stack_size(config.general.worker_stack_size)
-        .max_blocking_threads(16 * config.general.worker_stack_size)
+        .max_blocking_threads(16 * config.general.worker_threads)
         .on_thread_start(move || {
             if worker_cpu_affinity_pinning {
                 let core_id = thread_id.fetch_add(1, Ordering::SeqCst);
@@ -139,7 +139,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 core_affinity::set_for_current(core_ids[core_id]);
                 if core_id == core_ids.len() - 1 {
                     thread_id.store(0, Ordering::SeqCst);
-                    thread_id.fetch_add(1, Ordering::SeqCst);
                 }
             }
         })
@@ -219,7 +218,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // It is not updated by 'HUP'.
         let tls_rate_limiter: Option<RateLimiter> = if config.general.tls_rate_limit_per_second > 0 {
             info!("Building rate limit: {} per second", config.general.tls_rate_limit_per_second);
-            Some(RateLimiter::new(config.general.tls_rate_limit_per_second/100, 10))
+            let rate = std::cmp::max(1, config.general.tls_rate_limit_per_second/100);
+            Some(RateLimiter::new(rate, 10))
         } else {
             None
         };
@@ -286,7 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = drain_tx.send(0).await;
 
                     tokio::task::spawn(async move {
-                        info!("waiting {total_clients} client");
+                        info!("waiting for {} client{}", total_clients, if total_clients == 1 { "" } else { "s" });
 
                         let mut interval = tokio::time::interval(Duration::from_millis(config.general.shutdown_timeout));
 
@@ -322,6 +322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = socket.shutdown().await;
                         continue;
                     }
+                    info!("Client {addr} connected");
                     let tls_rate_limiter = tls_rate_limiter.clone();
                     let tls_acceptor = tls_acceptor.clone();
                     let shutdown_rx = shutdown_tx.subscribe();
@@ -404,7 +405,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             }
         }
-    info!("Shutting down...");
+        info!("Shutting down...");
     });
 
     Ok(())
