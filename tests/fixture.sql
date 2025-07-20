@@ -1,5 +1,9 @@
 create database example_db;
 
+alter system set log_min_duration_statement to 0;
+alter system set log_line_prefix to '%m [%p] %q%u@%d/%a ';
+select pg_reload_conf();
+
 \c example_db;
 
 --
