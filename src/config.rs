@@ -481,6 +481,21 @@ impl General {
             files: Self::default_include_files(),
         }
     }
+
+    pub fn only_ssl_connections(&self) -> bool {
+        self.tls_mode
+            .as_ref()
+            .map(|mode| tls::TLSMode::from_string(mode.as_str()))
+            .is_some_and(|result| match result {
+                Ok(tls_mode) => {
+                    match tls_mode {
+                        tls::TLSMode::VerifyFull | tls::TLSMode::Require => true,
+                        _ => false, // allow non-ssl connections
+                    }
+                }
+                Err(_) => false,
+            })
+    }
 }
 
 impl Default for General {
@@ -963,7 +978,9 @@ impl Config {
                 }
                 #[cfg(not(target_os = "linux"))]
                 if mode == tls::TLSMode::VerifyFull {
-                    return Err(Error::BadConfig("tls_mode verify-full is supported only on linux".to_string()));
+                    return Err(Error::BadConfig(
+                        "tls_mode verify-full is supported only on linux".to_string(),
+                    ));
                 }
             }
 
@@ -1320,7 +1337,9 @@ mod test {
         let result = config.validate().await;
         assert!(result.is_err());
         if let Err(Error::BadConfig(msg)) = result {
-            assert!(msg.contains("tls_mode is require but tls_certificate or tls_private_key is not"));
+            assert!(
+                msg.contains("tls_mode is require but tls_certificate or tls_private_key is not")
+            );
         } else {
             panic!("Expected BadConfig error about tls_mode without cert/key");
         }
@@ -1354,11 +1373,14 @@ mod test {
 
         // Set valid TLS config for "allow" mode
         config.general.tls_mode = Some("allow".to_string());
-        
+
         // For "allow" mode, certificates are optional
         // Test without certificates to avoid certificate validation
         let result = config.validate().await;
-        assert!(result.is_ok(), "Validation should pass for 'allow' mode without certificates");
+        assert!(
+            result.is_ok(),
+            "Validation should pass for 'allow' mode without certificates"
+        );
     }
 
     // Test valid TLS configuration with mode "disable"
@@ -1368,46 +1390,13 @@ mod test {
 
         // Set valid TLS config for "disable" mode
         config.general.tls_mode = Some("disable".to_string());
-        
+
         // For "disable" mode, certificates are optional
         // Test without certificates to avoid certificate validation
         let result = config.validate().await;
-        assert!(result.is_ok(), "Validation should pass for 'disable' mode without certificates");
-    }
-
-    // Test valid TLS configuration with mode "require"
-    // This test is skipped because it requires valid certificate and key files
-    // which are not available in the test environment
-    #[tokio::test]
-    #[ignore]
-    async fn test_validate_valid_tls_mode_require() {
-        let mut config = Config::default();
-
-        // Set valid TLS config for "require" mode
-        config.general.tls_mode = Some("require".to_string());
-        
-        // Note: In a real test, we would need to provide valid certificate and key files
-        // or mock the load_identity function
-        
-        // For now, we'll skip this test
-        assert!(true, "This test is skipped");
-    }
-
-    // Test valid TLS configuration with mode "verify-full"
-    // This test is platform-specific and requires valid certificate files
-    #[tokio::test]
-    #[ignore]
-    async fn test_validate_valid_tls_mode_verify_full() {
-        // This test is skipped because:
-        // 1. verify-full mode is only supported on Linux
-        // 2. It requires valid certificate and key files
-        
-        // Note: In a real test, we would need to:
-        // - Check if running on Linux
-        // - Provide valid certificate, key, and CA certificate files
-        // - Or mock the load_identity function
-        
-        // For now, we'll skip this test
-        assert!(true, "This test is skipped");
+        assert!(
+            result.is_ok(),
+            "Validation should pass for 'disable' mode without certificates"
+        );
     }
 }

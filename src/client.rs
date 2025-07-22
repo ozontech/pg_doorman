@@ -28,7 +28,6 @@ use crate::stats::{
     ClientStats, ServerStats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER,
 };
-use crate::tls;
 
 /// Incrementally count prepared statements
 /// to avoid random conflicts in places where the random number generator is weak.
@@ -194,7 +193,7 @@ pub async fn client_entrypoint(
 ) -> Result<(), Error> {
     let config = get_config();
     let log_client_connections = config.general.log_client_connections;
-    let tls_mode = config.general.tls_mode;
+    let tls_mode = config.general.tls_mode.clone();
 
     // Figure out if the client wants TLS or not.
     let addr = match stream.peer_addr() {
@@ -319,7 +318,7 @@ pub async fn client_entrypoint(
 
         // Client wants to use plain connection without encryption.
         Ok((ClientConnectionType::Startup, bytes)) => {
-            if tls_mode.is_some() && tls_mode.unwrap() != tls::TLSMode::Allow.to_string() {
+            if tls_mode.is_some() && config.general.only_ssl_connections() {
                 error_response_terminal(
                     &mut stream,
                     "Connection without SSL is not allowed by tls_mode.",
