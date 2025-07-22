@@ -28,6 +28,7 @@ use crate::stats::{
     ClientStats, ServerStats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
     TLS_CONNECTION_COUNTER,
 };
+use crate::tls;
 
 /// Incrementally count prepared statements
 /// to avoid random conflicts in places where the random number generator is weak.
@@ -318,10 +319,10 @@ pub async fn client_entrypoint(
 
         // Client wants to use plain connection without encryption.
         Ok((ClientConnectionType::Startup, bytes)) => {
-            if tls_mode.is_some() && tls_mode.unwrap() != "allow" {
+            if tls_mode.is_some() && tls_mode.unwrap() != tls::TLSMode::Allow.to_string() {
                 error_response_terminal(
                     &mut stream,
-                    "Connection without SSL is not allowed by tls_mode in pg_doorman.",
+                    "Connection without SSL is not allowed by tls_mode.",
                     "28000",
                 )
                 .await?;
