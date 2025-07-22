@@ -191,7 +191,9 @@ pub async fn client_entrypoint(
     tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
     tls_rate_limiter: Option<RateLimiter>,
 ) -> Result<(), Error> {
-    let log_client_connections = get_config().general.log_client_connections;
+    let config = get_config();
+    let log_client_connections = config.general.log_client_connections;
+    let tls_mode = config.general.tls_mode;
 
     // Figure out if the client wants TLS or not.
     let addr = match stream.peer_addr() {
@@ -316,6 +318,15 @@ pub async fn client_entrypoint(
 
         // Client wants to use plain connection without encryption.
         Ok((ClientConnectionType::Startup, bytes)) => {
+            if tls_mode.is_some() && tls_mode.unwrap() != "allow" {
+                error_response_terminal(
+                    &mut stream,
+                    "Connection without SSL is not allowed by tls_mode in pg_doorman.",
+                    "28000",
+                )
+                .await?;
+                return Err(Error::ProtocolSyncError("ssl is required".to_string()));
+            }
             PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             let (read, write) = split(stream);
 

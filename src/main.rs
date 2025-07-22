@@ -56,7 +56,7 @@ use pg_doorman::messages::configure_tcp_socket;
 use pg_doorman::pool::{retain_connections, ClientServerMap, ConnectionPool};
 use pg_doorman::rate_limit::RateLimiter;
 use pg_doorman::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
-use pg_doorman::tls::load_identity;
+use pg_doorman::tls::build_acceptor;
 use pg_doorman::{cmd_args, logger};
 
 pub static CURRENT_CLIENT_COUNT: Lazy<Arc<AtomicI64>> = Lazy::new(|| Arc::new(AtomicI64::new(0)));
@@ -226,13 +226,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // It is not updated by 'HUP'.
         let tls_acceptor: Option<tokio_native_tls::TlsAcceptor> = if config.general.tls_certificate.is_some() {
-            match load_identity(
+            match build_acceptor(
                 Path::new(&config.general.tls_certificate.unwrap()),
-                Path::new(&config.general.tls_private_key.unwrap())) {
-                Ok(identity) => {
-                    Some(tokio_native_tls::TlsAcceptor::from(native_tls::TlsAcceptor::new(identity).unwrap()))
-                },
-                Err(_) => None
+                Path::new(&config.general.tls_private_key.unwrap()),
+                config.general.tls_ca_cert,
+                config.general.tls_mode) {
+                Ok(acceptor) => Some(acceptor),
+                Err(err) => {
+                    error!("Failed to build TLS acceptor: {err}");
+                    std::process::exit(exitcode::CONFIG);
+                }
             }
         } else {
             None

@@ -32,6 +32,18 @@ The maximum number of clients that can connect to the pooler simultaneously. Whe
 
 Default: `8192`.
 
+### tls_mode
+
+The TLS mode for incoming connections. It can be one of the following: allow/disable/require/verify-full.
+
+Default: `"allow"`.
+
+### tls_ca_file
+
+The file containing the CA certificate to verify the client certificate.
+
+Default: `None`.
+
 ### tls_private_key
 
 It is necessary to allow the processing of incoming connections from TLS clients.
@@ -67,15 +79,15 @@ Default: `None`.
 
 ### log_client_connections 
 
-Log client connections and disconnections for monitoring.
+Log client connections for monitoring.
 
-Default: `false`.
+Default: `true`.
 
 ### log_client_disconnections 
 
-Log client connections and disconnections for monitoring.
+Log client disconnections for monitoring.
 
-Default: `false`.
+Default: `true`.
 
 ### worker_threads
 
@@ -124,13 +136,19 @@ Default: `8388608`.
 
 Connection timeout to server in milliseconds.
 
-Default: `2000` (2 sec).
+Default: `3000` (3 sec).
+
+### query_wait_timeout
+
+Maximum time to wait for a query to complete, in milliseconds.
+
+Default: `5000` (5 sec).
 
 ### idle_timeout
 
 Server idle timeout in milliseconds.
 
-Default: `300000` (5 min).
+Default: `300000000` (5000 min).
 
 ### server_lifetime
 
@@ -231,6 +249,24 @@ With a graceful shutdown, we wait for transactions to be completed within this t
 
 Default: `10000`.
 
+### proxy_copy_data_timeout
+
+Maximum time to wait for data copy operations during proxying, in milliseconds.
+
+Default: `15000` (15 sec).
+
+### server_tls
+
+Enable TLS for connections to the PostgreSQL server.
+
+Default: `false`.
+
+### verify_server_certificate
+
+Verify the PostgreSQL server's TLS certificate.
+
+Default: `false`.
+
 ### hba
 
 The list of IP addresses from which it is permitted to connect to the pg-doorman.
@@ -291,6 +327,12 @@ Log information about any SET command in the log.
 
 Default: `false`.
 
+### cleanup_server_connections
+
+When enabled, the pool will automatically clean up server connections that are no longer needed.
+
+Default: `false`.
+
 ## Pool Users Settings
 
 ```toml
@@ -331,4 +373,10 @@ Example: `"password"`.
 
 The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.
 
-Example: `40`.
+Default: `40`.
+
+### min_pool_size
+
+The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size.
+
+Default: `None`.

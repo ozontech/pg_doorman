@@ -736,8 +736,6 @@ dependencies = [
 [[package]]
 name = "native-tls"
 version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87de3442987e9dbec73158d5c715e7ad9072fda936bb03d19d7fa10e00520f0e"
 dependencies = [
  "libc",
  "log",
@@ -749,6 +747,13 @@ dependencies = [
  "security-framework-sys",
  "tempfile",
 ]
+
+[[package]]
+name = "native-tls"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87de3442987e9dbec73158d5c715e7ad9072fda936bb03d19d7fa10e00520f0e"
+replace = "native-tls 0.2.14"
 
 [[package]]
 name = "nix"
@@ -930,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "pg_doorman"
-version = "1.9.0"
+version = "2.0.0"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -948,7 +953,7 @@ dependencies = [
  "log",
  "lru",
  "md-5",
- "native-tls",
+ "native-tls 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix",
  "num_cpus",
  "once_cell",
@@ -1510,7 +1515,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
- "native-tls",
+ "native-tls 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio",
 ]
 

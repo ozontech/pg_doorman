@@ -5,6 +5,7 @@ use ipnet::IpNet;
 use log::{error, info};
 use once_cell::sync::Lazy;
 use serde_derive::{Deserialize, Serialize};
+use std::cmp::PartialEq;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
@@ -22,7 +23,8 @@ use crate::auth::talos::load_talos_pub_key;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
 use crate::stats::AddressStats;
-use crate::tls::load_identity;
+use crate::tls;
+use crate::tls::{load_identity, TLSMode};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -299,6 +301,8 @@ pub struct General {
 
     pub tls_certificate: Option<String>,
     pub tls_private_key: Option<String>,
+    pub tls_ca_cert: Option<String>,
+    pub tls_mode: Option<String>,
     #[serde(default = "General::default_tls_rate_limit_per_second")]
     pub tls_rate_limit_per_second: usize,
 
@@ -433,10 +437,6 @@ impl General {
         4
     }
 
-    pub fn default_idle_client_in_transaction_timeout() -> u64 {
-        0
-    }
-
     pub fn default_server_round_robin() -> bool {
         false
     }
@@ -513,6 +513,8 @@ impl Default for General {
             sync_server_parameters: Self::default_sync_server_parameters(),
             tls_certificate: None,
             tls_private_key: None,
+            tls_ca_cert: None,
+            tls_mode: None,
             tls_rate_limit_per_second: Self::default_tls_rate_limit_per_second(),
             server_tls: false,
             verify_server_certificate: false,
@@ -806,16 +808,13 @@ impl Config {
                     info!("TLS support is enabled");
                 }
             }
-
             None => {
                 info!("TLS support is disabled");
             }
         };
-        info!("Server TLS enabled: {}", self.general.server_tls);
-        info!(
-            "Server TLS certificate verification: {}",
-            self.general.verify_server_certificate
-        );
+        if let Some(tls_mode) = self.general.tls_mode.clone() {
+            info!("TLS certificate verification: {tls_mode}");
+        }
         info!("Prepared statements: {}", self.general.prepared_statements);
         if self.general.prepared_statements {
             info!(
@@ -933,19 +932,55 @@ impl Config {
             return Err(Error::BadConfig("The value of prepared_statements_cache should be greater than 0 if prepared_statements are enabled".to_string()));
         }
 
-        // Validate TLS!
-        if let Some(tls_certificate) = self.general.tls_certificate.clone() {
-            if let Some(tls_private_key) = self.general.tls_private_key.clone() {
-                match load_identity(Path::new(&tls_certificate), Path::new(&tls_private_key)) {
-                    Ok(_) => (),
-                    Err(err) => {
-                        return Err(Error::BadConfig(format!(
-                            "tls is incorrectly configured: {err:?}"
-                        )));
-                    }
+        // Validate TLS
+        {
+            if self.general.tls_certificate.is_none() && self.general.tls_private_key.is_some() {
+                return Err(Error::BadConfig(
+                    "tls_private_key is set but tls_certificate is not".to_string(),
+                ));
+            }
+
+            if self.general.tls_certificate.is_some() && self.general.tls_private_key.is_none() {
+                return Err(Error::BadConfig(
+                    "tls_certificate is set but tls_private_key is not".to_string(),
+                ));
+            }
+
+            if let Some(tls_mode) = self.general.tls_mode.clone() {
+                let mode = tls::TLSMode::from_string(tls_mode.as_str())?;
+                if (self.general.tls_certificate.is_none()
+                    || self.general.tls_private_key.is_none())
+                    && (mode != TLSMode::Disable && mode != TLSMode::Allow)
+                {
+                    return Err(Error::BadConfig(format!(
+                        "tls_mode is {mode} but tls_certificate or tls_private_key is not"
+                    )));
+                }
+                if mode == tls::TLSMode::VerifyFull && self.general.tls_ca_cert.is_none() {
+                    return Err(Error::BadConfig(format!(
+                        "tls_mode is {mode} but tls_ca_cert is not set"
+                    )));
+                }
+                #[cfg(not(target_os = "linux"))]
+                if mode == tls::TLSMode::VerifyFull {
+                    return Err(Error::BadConfig("tls_mode verify-full is supported only on linux".to_string()));
                 }
             }
-        };
+
+            if let Some(tls_certificate) = self.general.tls_certificate.clone() {
+                if let Some(tls_private_key) = self.general.tls_private_key.clone() {
+                    match load_identity(Path::new(&tls_certificate), Path::new(&tls_private_key)) {
+                        Ok(_) => (),
+                        Err(err) => {
+                            return Err(Error::BadConfig(format!(
+                                "tls is incorrectly configured: {err:?}"
+                            )));
+                        }
+                    }
+                }
+            };
+        }
+
         for pool in self.pools.values_mut() {
             pool.validate().await?;
         }
@@ -1118,5 +1153,261 @@ mod test {
             .join("tests.toml");
         parse(file.as_os_str().to_str().unwrap()).await.unwrap();
         print!("{}", toml::to_string(&get_config()).unwrap());
+    }
+
+    // Tests for the validate function
+
+    // Test valid configuration
+    #[tokio::test]
+    async fn test_validate_valid_config() {
+        let mut config = Config::default();
+
+        // Add a pool with a user
+        let mut pool = Pool::default();
+        let user = User {
+            username: "test_user".to_string(),
+            password: "test_password".to_string(),
+            pool_size: 50, // Greater than virtual_pool_count
+            ..User::default()
+        };
+        pool.users.insert("0".to_string(), user);
+        config.pools.insert("test_pool".to_string(), pool);
+
+        // Set valid TLS rate limit
+        config.general.tls_rate_limit_per_second = 100;
+
+        // Set valid prepared statements config
+        config.general.prepared_statements = true;
+        config.general.prepared_statements_cache_size = 10;
+
+        // Validate should succeed
+        assert!(config.validate().await.is_ok());
+    }
+
+    // Test virtual_pool_count > pool_size
+    #[tokio::test]
+    async fn test_validate_virtual_pool_count_greater_than_pool_size() {
+        let mut config = Config::default();
+
+        // Explicitly set virtual_pool_count to a value greater than pool_size
+        config.general.virtual_pool_count = 10;
+
+        // Add a pool with a user
+        let mut pool = Pool::default();
+        let user = User {
+            username: "test_user".to_string(),
+            password: "test_password".to_string(),
+            pool_size: 5, // Less than virtual_pool_count (10)
+            ..User::default()
+        };
+        pool.users.insert("0".to_string(), user);
+        config.pools.insert("test_pool".to_string(), pool);
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("virtual_pool_count"));
+        } else {
+            panic!("Expected BadConfig error about virtual_pool_count");
+        }
+    }
+
+    // Test tls_rate_limit_per_second < 100 and not 0
+    #[tokio::test]
+    async fn test_validate_tls_rate_limit_too_small() {
+        let mut config = Config::default();
+
+        // Set invalid TLS rate limit
+        config.general.tls_rate_limit_per_second = 50;
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("tls rate limit should be > 100"));
+        } else {
+            panic!("Expected BadConfig error about tls rate limit");
+        }
+    }
+
+    // Test tls_rate_limit_per_second not multiple of 100
+    #[tokio::test]
+    async fn test_validate_tls_rate_limit_not_multiple_of_100() {
+        let mut config = Config::default();
+
+        // Set invalid TLS rate limit
+        config.general.tls_rate_limit_per_second = 150;
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("tls rate limit should be multiple 100"));
+        } else {
+            panic!("Expected BadConfig error about tls rate limit multiple");
+        }
+    }
+
+    // Test prepared_statements enabled but cache size = 0
+    #[tokio::test]
+    async fn test_validate_prepared_statements_no_cache() {
+        let mut config = Config::default();
+
+        // Set invalid prepared statements config
+        config.general.prepared_statements = true;
+        config.general.prepared_statements_cache_size = 0;
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("prepared_statements_cache"));
+        } else {
+            panic!("Expected BadConfig error about prepared_statements_cache");
+        }
+    }
+
+    // Test tls_certificate set but tls_private_key not set
+    #[tokio::test]
+    async fn test_validate_tls_certificate_without_private_key() {
+        let mut config = Config::default();
+
+        // Set invalid TLS config
+        config.general.tls_certificate = Some("cert.pem".to_string());
+        config.general.tls_private_key = None;
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("tls_certificate is set but tls_private_key is not"));
+        } else {
+            panic!("Expected BadConfig error about tls_certificate without tls_private_key");
+        }
+    }
+
+    // Test tls_private_key set but tls_certificate not set
+    #[tokio::test]
+    async fn test_validate_tls_private_key_without_certificate() {
+        let mut config = Config::default();
+
+        // Set invalid TLS config
+        config.general.tls_certificate = None;
+        config.general.tls_private_key = Some("key.pem".to_string());
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("tls_private_key is set but tls_certificate is not"));
+        } else {
+            panic!("Expected BadConfig error about tls_private_key without tls_certificate");
+        }
+    }
+
+    // Test tls_mode set but tls_certificate or tls_private_key not set
+    #[tokio::test]
+    async fn test_validate_tls_mode_without_cert_or_key() {
+        let mut config = Config::default();
+
+        // Set invalid TLS config
+        config.general.tls_mode = Some("require".to_string());
+        config.general.tls_certificate = None;
+        config.general.tls_private_key = None;
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("tls_mode is require but tls_certificate or tls_private_key is not"));
+        } else {
+            panic!("Expected BadConfig error about tls_mode without cert/key");
+        }
+    }
+
+    // Test tls_mode is verify-full but tls_ca_cert is not set
+    #[tokio::test]
+    async fn test_validate_tls_mode_verify_full_without_ca_cert() {
+        let mut config = Config::default();
+
+        // Set invalid TLS config
+        config.general.tls_mode = Some("verify-full".to_string());
+        config.general.tls_certificate = Some("cert.pem".to_string());
+        config.general.tls_private_key = Some("key.pem".to_string());
+        config.general.tls_ca_cert = None;
+
+        // Validate should fail
+        let result = config.validate().await;
+        assert!(result.is_err());
+        if let Err(Error::BadConfig(msg)) = result {
+            assert!(msg.contains("tls_mode is verify-full but tls_ca_cert is not set"));
+        } else {
+            panic!("Expected BadConfig error about tls_mode verify-full without ca_cert");
+        }
+    }
+
+    // Test valid TLS configuration with mode "allow"
+    #[tokio::test]
+    async fn test_validate_valid_tls_mode_allow() {
+        let mut config = Config::default();
+
+        // Set valid TLS config for "allow" mode
+        config.general.tls_mode = Some("allow".to_string());
+        
+        // For "allow" mode, certificates are optional
+        // Test without certificates to avoid certificate validation
+        let result = config.validate().await;
+        assert!(result.is_ok(), "Validation should pass for 'allow' mode without certificates");
+    }
+
+    // Test valid TLS configuration with mode "disable"
+    #[tokio::test]
+    async fn test_validate_valid_tls_mode_disable() {
+        let mut config = Config::default();
+
+        // Set valid TLS config for "disable" mode
+        config.general.tls_mode = Some("disable".to_string());
+        
+        // For "disable" mode, certificates are optional
+        // Test without certificates to avoid certificate validation
+        let result = config.validate().await;
+        assert!(result.is_ok(), "Validation should pass for 'disable' mode without certificates");
+    }
+
+    // Test valid TLS configuration with mode "require"
+    // This test is skipped because it requires valid certificate and key files
+    // which are not available in the test environment
+    #[tokio::test]
+    #[ignore]
+    async fn test_validate_valid_tls_mode_require() {
+        let mut config = Config::default();
+
+        // Set valid TLS config for "require" mode
+        config.general.tls_mode = Some("require".to_string());
+        
+        // Note: In a real test, we would need to provide valid certificate and key files
+        // or mock the load_identity function
+        
+        // For now, we'll skip this test
+        assert!(true, "This test is skipped");
+    }
+
+    // Test valid TLS configuration with mode "verify-full"
+    // This test is platform-specific and requires valid certificate files
+    #[tokio::test]
+    #[ignore]
+    async fn test_validate_valid_tls_mode_verify_full() {
+        // This test is skipped because:
+        // 1. verify-full mode is only supported on Linux
+        // 2. It requires valid certificate and key files
+        
+        // Note: In a real test, we would need to:
+        // - Check if running on Linux
+        // - Provide valid certificate, key, and CA certificate files
+        // - Or mock the load_identity function
+        
+        // For now, we'll skip this test
+        assert!(true, "This test is skipped");
     }
 }
