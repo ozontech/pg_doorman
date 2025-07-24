@@ -126,7 +126,13 @@ where
         return Err(Error::CurrentMemoryUsage);
     }
     CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
-    let bytes = read_message_data(stream, code, len).await?;
+    let bytes = match read_message_data(stream, code, len).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            CURRENT_MEMORY.fetch_add(-len as i64, Ordering::Relaxed);
+            return Err(err)
+        }
+    };
     CURRENT_MEMORY.fetch_add(-len as i64, Ordering::Relaxed);
     Ok(bytes)
 }

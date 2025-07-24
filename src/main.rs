@@ -325,7 +325,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = socket.shutdown().await;
                         continue;
                     }
-                    info!("Client {addr} connected");
                     let tls_rate_limiter = tls_rate_limiter.clone();
                     let tls_acceptor = tls_acceptor.clone();
                     let shutdown_rx = shutdown_tx.subscribe();
