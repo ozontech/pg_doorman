@@ -4,7 +4,11 @@ title: Changelog
 
 # Changelog
 
-### 2.0.0 <small>July 22, 2025</small> { id="1.9.0" }
+### 2.0.1 <small>July 24, 2025</small> { id="2.0.1" }
+
+- Fix "memory-leak" while processing client messages.
+
+### 2.0.0 <small>July 22, 2025</small> { id="2.0.0" }
 
 - Added `tls_mode` configuration option to enhance security with flexible TLS connection management and client certificate validation capabilities.
 
