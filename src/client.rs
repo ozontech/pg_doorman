@@ -1798,11 +1798,11 @@ impl<S, T> Drop for Client<S, T> {
         let mut guard = self.client_server_map.lock();
         guard.remove(&(self.process_id, self.secret_key));
 
-        // Dirty shutdown
-        // TODO: refactor, this is not the best way to handle state management.
-
-        if self.connected_to_server && self.last_server_stats.is_some() {
-            self.last_server_stats.as_ref().unwrap().idle(0);
+        // Update server stats if the client was connected to a server
+        if self.connected_to_server {
+            if let Some(stats) = self.last_server_stats.as_ref() {
+                stats.idle(0);
+            }
         }
     }
 }

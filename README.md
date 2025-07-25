@@ -13,12 +13,15 @@ When an application connects to PgDoorman, it behaves exactly like a PostgreSQL 
 - **Improved Scalability**: Allows more client applications to connect to your database
 - **Connection Management**: Provides tools to monitor and manage database connections
 - **Seamless Binary Upgrades**: Update the software with minimal disruption to your database connections
+- **Transparent Pooling**: Connect applications to the database without adapting them to work with transaction pool mode
 
 ## Comparison with Alternatives
 
 PgDoorman is a good alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat).
 
 We aimed to create a more efficient, multithreaded version of PgBouncer with a focus on performing pooler tasks efficiently and fast, in line with the Unix philosophy. While we've removed load balancing and sharding, we believe it's more efficient to handle these at the application level.
+
+A key advantage of PgDoorman is its ability to work transparently with applications in transaction pool mode. Unlike some other poolers, applications can connect to PgDoorman without requiring modifications to handle the complexities of transaction pooling, such as connection state management between transactions.
 
 Over two years of use, we've improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
 
@@ -160,7 +163,8 @@ Before you begin, make sure you have the following installed:
 2. **Build the project**: `cargo build`
 3. **Configure PgDoorman**: Copy and modify the example configuration
 4. **Run PgDoorman**: `cargo run --release`
-5. **Run tests**: `cargo test`
+5. **Run tests**: `make test`
+6. **Run integration tests**: `make docker-compose-test-all`
 
 For more detailed information on contributing, please see the [Contributing Guide](https://ozontech.github.io/pg_doorman/tutorials/contributing/).
 
