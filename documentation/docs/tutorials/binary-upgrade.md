@@ -1,22 +1,35 @@
 ---
-title: How to upgrade
+title: Binary Upgrade Process
 ---
 
-## Binary upgrade
+# Binary Upgrade Process
 
-When you send a `SIGINT` signal to the pg_doorman process, the binary upgrade begins.
-The old pg_doorman instance executes the exec command and starts a new, daemonized process.
-This new process uses the `SO_REUSE_PORT` parameter, and the operating system sends traffic to the new instance.
-After that, the old instance closes its socket for incoming connections.
+## Overview
 
-We then give the option to complete any current queries and transactions within the specified `shutdown_timeout` (10 seconds).
-After successful completion of each query or transaction, we return an error code `58006` to the client, indicating that they need to reconnect.
-After reconnecting, the client can safely retry their queries.
+PgDoorman supports seamless binary upgrades that allow you to update the software with minimal disruption to your database connections. This document explains how the upgrade process works and what to expect during an upgrade.
 
-!!! warning
+## How the Upgrade Process Works
 
-    Repeating query (without code `58006`) may cause problems as described in [issue](https://github.com/lib/pq/issues/939)
+When you send a `SIGINT` signal to the PgDoorman process, the binary upgrade process is initiated:
 
-!!! tip
+1. The current PgDoorman instance executes the exec command and starts a new, daemonized process
+2. The new process uses the `SO_REUSE_PORT` socket option, allowing the operating system to distribute incoming traffic to the new instance
+3. The old instance then closes its socket for incoming connections
+4. Existing connections are handled gracefully during the transition
 
-    Be careful when using `github.com/lib/pq` or `database/sql`.
+## Handling Existing Connections
+
+During the upgrade process, PgDoorman handles existing connections as follows:
+
+1. Current queries and transactions are allowed to complete within the specified `shutdown_timeout` (default: 10 seconds)
+2. After each query or transaction completes successfully, PgDoorman returns error code `58006` to the client
+3. This error code indicates to the client that they need to reconnect to the server
+4. After reconnecting, clients can safely retry their queries with the new PgDoorman instance
+
+## Important Considerations
+
+!!! warning "Query Repetition"
+    Repeating a query without receiving error code `58006` may cause problems as described in [this issue](https://github.com/lib/pq/issues/939). Make sure your client application properly handles reconnection scenarios.
+
+!!! tip "Client Library Compatibility"
+    Be careful when using client libraries like `github.com/lib/pq` or Go's standard `database/sql` package. Ensure they properly handle the reconnection process during binary upgrades.

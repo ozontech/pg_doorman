@@ -2,19 +2,49 @@
 title: Overview
 ---
 
-# Overview
+# PgDoorman Overview
 
-PgDoorman is a PostgreSQL connection pooler. Any application can consider connection to PgDoorman as if it were a 
-connection to Postgresql server. PgDoorman will create a connection to the actual server or will reuse an existed connection.
+## What is PgDoorman?
 
-In order not to compromise transaction semantics for connection  pooling, PgDoorman supports several types of pooling when rotating connections.
+PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.
 
-## Session pooling
-Client gets an assigned server connection for the lifetime of the client connection. After the client disconnects, server connection will be released back into the pool.
+When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.
 
-## Transaction pooling
-Client gets an assigned server connection only for the duration of transaction. After PgDoorman notices the end of the transaction, connection will be released back into the pool.
+## Key Benefits
 
-## Managing
+- **Reduced Connection Overhead**: Minimizes the performance impact of establishing new database connections
+- **Resource Optimization**: Limits the number of connections to your PostgreSQL server
+- **Improved Scalability**: Allows more client applications to connect to your database
+- **Connection Management**: Provides tools to monitor and manage database connections
 
-You can manage PgDoorman via [Admin Console](./basic-usage.md#admin-console)
+## Pooling Modes
+
+To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:
+
+### Session Pooling
+
+In session pooling mode:
+
+- Each client is assigned a dedicated server connection for the entire duration of the client connection
+- The server connection remains exclusively allocated to that client until disconnection
+- After the client disconnects, the server connection is released back into the pool for reuse
+- This mode is ideal for applications that rely on session-level features like temporary tables or session variables
+
+### Transaction Pooling
+
+In transaction pooling mode:
+
+- A client is assigned a server connection only for the duration of a transaction
+- Once PgDoorman detects the end of a transaction, the server connection is immediately released back into the pool
+- This mode allows for higher connection efficiency as connections are shared between clients
+- Ideal for applications with many short-lived connections or those that don't rely on session state
+
+## Administration
+
+PgDoorman provides comprehensive tools for monitoring and management:
+
+- **Admin Console**: A PostgreSQL-compatible interface for viewing statistics and managing the pooler
+- **Configuration Options**: Extensive settings to customize behavior for your specific needs
+- **Monitoring**: Detailed metrics about connection usage and performance
+
+For detailed information on managing PgDoorman, see the [Admin Console documentation](./basic-usage.md#admin-console).

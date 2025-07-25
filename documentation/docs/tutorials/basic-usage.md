@@ -2,10 +2,15 @@
 title: Basic Usage
 ---
 
-# Basic Usage
+# PgDoorman Basic Usage Guide
 
+PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. This comprehensive guide will help you get started with configuring, running, and managing PgDoorman for your PostgreSQL environment.
 
-```
+## Command Line Options
+
+PgDoorman offers several command-line options to customize its behavior when starting the service:
+
+```bash
 $ pg_doorman --help
 
 PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
@@ -24,55 +29,103 @@ Options:
   -V, --version                  Print version
 ```
 
+### Available Options
 
-## Setup and Running
+| Option | Description |
+|--------|-------------|
+| `-d`, `--daemon` | Run in the background. Without this option, the process will run in the foreground.<br><br>In daemon mode, setting `daemon_pid_file` and `syslog_prog_name` is required. No log messages will be written to stderr after going into the background. |
+| `-l`, `--log-level` | Set log level: `INFO`, `DEBUG`, or `WARN`. |
+| `-F`, `--log-format` | Set log format. Possible values: `text`, `structured`, `debug`. |
+| `-n`, `--no-color` | Disable colors in the log output. |
+| `-V`, `--version` | Show version information. |
+| `-h`, `--help` | Show help information. |
 
-First thing you should do is fullfil config file.
-The configuration file is in ["toml" format](https://toml.io/).
-Some parameters MUST be specified in the configuration file (pg_doorman will not start without it), despite their default values.
-For example, you MUST specify a admin username and password to access the administrative console.
+## Setup and Configuration
 
- Minimal example to follow is below:
-    ```toml
-        [general]
-        host = "0.0.0.0"
-        port = 6432
-        
-        admin_username = "admin"
-        admin_password = "admin"
-        
-        [pools]
-        
-        [pools.exampledb]
-        server_host = "127.0.0.1"
-        server_port = 5432
-        pool_mode = "transaction"
-        
-        [pools.exampledb.users.0]
-        pool_size = 40
-        username = "doorman"
-        password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
-    ```
+### Configuration File Structure
 
-All configuration options are described in [Settings Reference Guide](../reference/settings.md). 
+PgDoorman uses a [TOML format](https://toml.io/) configuration file to define its behavior. The configuration file is organized into several sections:
 
-After configuring options, you can run PgDoorman from the command line:
+- `[general]` - Global settings for the PgDoorman service
+- `[pools]` - Database pool definitions
+- `[pools.<name>]` - Settings for a specific database pool
+- `[pools.<name>.users.<n>]` - User settings for a specific database pool
 
+!!! important
+    Some parameters **must** be specified in the configuration file for PgDoorman to start, even if they have default values. For example, you must specify an admin username and password to access the administrative console.
+
+### Minimal Configuration Example
+
+Here's a minimal configuration example to get you started:
+
+```toml
+# Global settings
+[general]
+host = "0.0.0.0"    # Listen on all interfaces
+port = 6432         # Port for client connections
+
+# Admin credentials for the management console
+admin_username = "admin"
+admin_password = "admin"  # Change this in production!
+
+# Database pools section
+[pools]
+
+# Example database pool
+[pools.exampledb]
+server_host = "127.0.0.1"  # PostgreSQL server address
+server_port = 5432         # PostgreSQL server port
+pool_mode = "transaction"  # Connection pooling mode
+
+# User configuration for this pool
+[pools.exampledb.users.0]
+pool_size = 40             # Maximum number of connections in the pool
+username = "doorman"       # Username for PostgreSQL server
+password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="  # Hashed password
 ```
+
+For a complete list of configuration options and their descriptions, see the [Settings Reference Guide](../reference/settings.md).
+
+### Running PgDoorman
+
+After creating your configuration file, you can run PgDoorman from the command line:
+
+```bash
 $ pg_doorman pg_doorman.toml
 ```
 
-Once launched, you can connect to PgDoorman, instead directly connected to Postgresql database:
+If you don't specify a configuration file, PgDoorman will look for `pg_doorman.toml` in the current directory.
+
+### Connecting to PostgreSQL via PgDoorman
+
+Once PgDoorman is running, connect to it instead of connecting directly to your PostgreSQL database:
+
+```bash
+$ psql -h localhost -p 6432 -U doorman exampledb
+```
+
+Your application's connection string should be updated to point to PgDoorman instead of directly to PostgreSQL:
 
 ```
-$ psql -p 6432 -U doorman exampledb
+postgresql://doorman:password@localhost:6432/exampledb
 ```
 
-Managing of PgDoorman can be done by connecting to special administration database **pgdoorman**:
+PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.
 
+## Administration
+
+### Admin Console
+
+PgDoorman provides a powerful administrative interface that allows you to monitor and manage the connection pooler. You can access this interface by connecting to the special administration database named **pgdoorman**:
+
+```bash
+$ psql -h localhost -p 6432 -U admin pgdoorman
 ```
-$ psql -p 6432 -U admin pgdoorman
-pgdoorman=> show help;
+
+Once connected, you can view available commands:
+
+```sql
+pgdoorman=> SHOW HELP;
 NOTICE:  Console usage
 DETAIL:
 	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
@@ -84,309 +137,268 @@ DETAIL:
 	SHOW
 ```
 
-Also, if you made changes to the pg_doorman.toml file, you can reload it:
-```
+!!! note "Protocol Compatibility"
+    The admin console currently supports only the simple query protocol.
+    Some database drivers use the extended query protocol for all commands, making them unsuitable for admin console access. In such cases, use the `psql` command-line client for administration.
+
+!!! warning "Security"
+    Only the user specified by `admin_username` in the configuration file is allowed to log in to the admin console. 
+    Make sure to use a strong password for this account in production environments.
+
+### Monitoring PgDoorman
+
+The admin console provides several commands to monitor the current state of PgDoorman:
+
+- `SHOW STATS` - View performance statistics
+- `SHOW CLIENTS` - List current client connections
+- `SHOW SERVERS` - List current server connections
+- `SHOW POOLS` - View connection pool status
+- `SHOW DATABASES` - List configured databases
+- `SHOW USERS` - List configured users
+
+These commands are described in detail in the [Admin Console Commands](#admin-console-commands) section below.
+
+### Reloading Configuration
+
+If you make changes to the `pg_doorman.toml` file, you can apply them without restarting the service:
+
+```sql
 pgdoorman=# RELOAD;
 ```
 
-## Command line switches
+When you reload the configuration:
 
-* `-d`, `--daemon`
-:   Run in the background. Without it, the process will run in the foreground.
+1. PgDoorman reads the updated configuration file
+2. Changes to database connection parameters are detected
+3. Existing server connections are closed when they're next released (according to the pooling mode)
+4. New server connections immediately use the updated parameters
 
-    In daemon mode, setting `daemon_pid_file` as well as `syslog_prog_name`
-    is required.  No log messages will be written to stderr after
-    going into the background.
+This allows you to make configuration changes with minimal disruption to your applications.
 
-* `-l`, `--log-level`
-:   Set log-level: `INFO` or `DEBUG` or `WARN`.
+## Admin Console Commands
 
-* `-F`, `--log-format`
-:   Possible values: text, structured, debug.
+The admin console provides a set of commands to monitor and manage PgDoorman. These commands follow a SQL-like syntax and can be executed from any PostgreSQL client connected to the admin console.
 
-* `-n`, `--no-color`
-:   Disable colors in the log output.
+### Show Commands
 
-* `-V`, `--version`
-:   Show version.
-
-* `-h`, `--help`
-:   Show short help.
-
-
-## Admin console
-
-The console is available by connecting as normal to the
-database **pgdoorman** or **pgbouncer**:
-
-    $ psql -p 6432 pgdoorman
-
-Only user `admin_username` is allowed to log in to the console.
-
-!!! note
-     Admin console currently supports only simple query protocol.
-     Some drivers use extended query protocol for all of the commands, so these drivers are not suitable.
-
-### Show commands
-
-The **SHOW** commands output information. Each command is described below.
+The `SHOW` commands display information about PgDoorman's operation. Each command provides different insights into the pooler's performance and current state.
 
 #### SHOW STATS
 
-Shows statistics. In this and related commands, the total figures are
-since process start, the averages are updated every `15 seconds`.
+The `SHOW STATS` command displays comprehensive statistics about PgDoorman's operation:
 
-* `database`
-:   Statistics are presented per database.
+```sql
+pgdoorman=> SHOW STATS;
+```
 
-* `total_xact_count`
-:   Total number of SQL transactions processed by PgDoorman.
+Statistics are presented per database with the following metrics:
 
-* `total_query_count`
-:   Total number of SQL commands processed by PgDoorman.
+| Metric | Description |
+|--------|-------------|
+| `database` | The database name these statistics apply to |
+| `total_xact_count` | Total number of SQL transactions processed since startup |
+| `total_query_count` | Total number of SQL commands processed since startup |
+| `total_received` | Total bytes of network traffic received from clients |
+| `total_sent` | Total bytes of network traffic sent to clients |
+| `total_xact_time` | Total microseconds spent in transactions (including idle in transaction) |
+| `total_query_time` | Total microseconds spent actively executing queries |
+| `total_wait_time` | Total microseconds clients spent waiting for a server connection |
+| `avg_xact_count` | Average transactions per second in the last 15-second period |
+| `avg_query_count` | Average queries per second in the last 15-second period |
+| `avg_server_assignment_count` | Average server assignments per second in the last 15-second period |
+| `avg_recv` | Average bytes received per second from clients |
+| `avg_sent` | Average bytes sent per second to clients |
+| `avg_xact_time` | Average transaction duration in microseconds |
+| `avg_query_time` | Average query duration in microseconds |
+| `avg_wait_time` | Average time clients spent waiting for a server in microseconds |
 
-* `total_received`
-:   Total volume in bytes of network traffic received by PgDoorman.
-
-* `total_sent`
-:   Total volume in bytes of network traffic sent by PgDoorman.
-
-* `total_xact_time`
-:   Total number of microseconds spent by PgDoorman when connected
-    to PostgreSQL in a transaction, either idle in transaction or
-    executing queries.
-
-* `total_query_time`
-:   Total number of microseconds spent by PgDoorman when actively
-    connected to PostgreSQL, executing queries.
-
-* `total_wait_time`
-:   Time spent by clients waiting for a server, in microseconds. Updated
-    when a client connection is assigned a backend connection.
-
-* `avg_xact_count`
-:   Average transactions per second in last stat period.
-
-* `avg_query_count`
-:   Average queries per second in last stat period.
-
-* `avg_server_assignment_count`
-:   Average number of times a server as assigned to a client per second in the
-    last stat period.
-
-* `avg_recv`
-:   Average received (from clients) bytes per second.
-
-* `avg_sent`
-:   Average sent (to clients) bytes per second.
-
-* `avg_xact_time`
-:   Average transaction duration, in microseconds.
-
-* `avg_query_time`
-:   Average query duration, in microseconds.
-
-* `avg_wait_time`
-:   Time spent by clients waiting for a server, in microseconds (average
-    of the wait times for clients assigned a backend during the current
-    `15 seconds`).
+!!! tip "Performance Monitoring"
+    Pay special attention to the `avg_wait_time` metric. If this value is consistently high, it may indicate that your pool size is too small for your workload.
 
 #### SHOW SERVERS
 
-* `server_id`
-:   Unique ID for server.
+The `SHOW SERVERS` command displays detailed information about all server connections:
 
-* `server_process_id`
-:   PID of backend server process.  In case connection is made over
-    Unix socket and OS supports getting process ID info, its
-    OS PID.
+```sql
+pgdoorman=> SHOW SERVERS;
+```
 
-* `database_name`
-:   Database name.
+| Column | Description |
+|--------|-------------|
+| `server_id` | Unique identifier for the server connection |
+| `server_process_id` | PID of the backend PostgreSQL server process (if available) |
+| `database_name` | Name of the database this connection is using |
+| `user` | Username PgDoorman uses to connect to the PostgreSQL server |
+| `application_name` | Value of the `application_name` parameter set on the server connection |
+| `state` | Current state of the connection: **active**, **idle**, or **used** |
+| `wait` | Wait state of the connection: **idle**, **read**, or **write** |
+| `transaction_count` | Total number of transactions processed by this connection |
+| `query_count` | Total number of queries processed by this connection |
+| `bytes_sent` | Total bytes sent to the PostgreSQL server |
+| `bytes_received` | Total bytes received from the PostgreSQL server |
+| `age_seconds` | Lifetime of the current server connection in seconds |
+| `prepare_cache_hit` | Number of prepared statement cache hits |
+| `prepare_cache_miss` | Number of prepared statement cache misses |
+| `prepare_cache_size` | Number of unique prepared statements in the cache |
 
-* `user`
-:   User name PgDoorman uses to connect to server.
-
-* `application_name`
-:   A string containing the `application_name` set on the server connection.
-
-* `state`
-:   State of the pg_doorman server connection, one of **active**,
-    **idle**, **used**.
-
-* `wait`
-:   Wait state of the pg_doorman server connection, one of **idle**,
-    **read**, **write**.
-
-* `transaction_count`
-:   Total number of processed transactions.
-
-* `query_count`
-:   Total number of processed queries.
-
-* `bytes_sent`
-:   Total bytes sent to PostgreSQL server.
-
-* `bytes_received`
-:   Total bytes received from PostgreSQL server.
-
-* `age_seconds`
-:   Lifetime of the current server connection.
-
-* `prepare_cache_hit`
-:   Total number of cache hit prepared statements.
-
-* `prepare_cache_miss`
-:   Total number of cache miss prepared statements.
-
-* `prepare_cache_size`
-:   The total number of unique prepared statements.
+!!! info "Connection States"
+    - **active**: The connection is currently executing a query
+    - **idle**: The connection is available for use
+    - **used**: The connection is allocated to a client but not currently executing a query
 
 #### SHOW CLIENTS
 
-* `client_id`
-:   Unique ID for client.
+The `SHOW CLIENTS` command displays information about all client connections to PgDoorman:
 
-* `database`
-:   Database (pool) name.
+```sql
+pgdoorman=> SHOW CLIENTS;
+```
 
-* `user`
-:   Client connected user.
+| Column | Description |
+|--------|-------------|
+| `client_id` | Unique identifier for the client connection |
+| `database` | Name of the database (pool) the client is connected to |
+| `user` | Username the client used to connect |
+| `addr` | Client's IP address and port (IP:port) |
+| `tls` | Whether the connection uses TLS encryption (**true** or **false**) |
+| `state` | Current state of the client connection: **active**, **idle**, or **waiting** |
+| `wait` | Wait state of the client connection: **idle**, **read**, or **write** |
+| `transaction_count` | Total number of transactions processed for this client |
+| `query_count` | Total number of queries processed for this client |
+| `age_seconds` | Lifetime of the client connection in seconds |
 
-* `addr`
-:   IP:port of client.
-
-* `tls`
-:   Can be **true**, **false**.
-
-* `state`
-:   State of the client connection, one of **active**,
-    **idle**, **waiting**.
-
-* `wait`
-:   Wait state of the pg_doorman client connection, one of **idle**,
-    **read**, **write**.
-
-* `transaction_count`
-:   Total number of processed transactions.
-
-* `query_count`
-:   Total number of processed queries.
-
-* `age_seconds`
-:   Lifetime of the current client connection.
-
+!!! tip "Monitoring Long-Running Connections"
+    The `age_seconds` column can help identify long-running connections that might be holding resources unnecessarily. Consider implementing connection timeouts in your application for idle connections.
 
 #### SHOW POOLS
 
-A new pool entry is made for each couple of (database, user).
+The `SHOW POOLS` command displays information about connection pools. A new pool entry is created for each (database, user) pair:
 
-* `database`
-:   Database name.
+```sql
+pgdoorman=> SHOW POOLS;
+```
 
-* `user`
-:   User name.
+| Column | Description |
+|--------|-------------|
+| `database` | Name of the database |
+| `user` | Username associated with this pool |
+| `pool_mode` | Pooling mode in use: **session** or **transaction** |
+| `cl_active` | Number of active client connections (linked to servers or idle) |
+| `cl_waiting` | Number of client connections waiting for a server connection |
+| `sv_active` | Number of server connections linked to clients |
+| `sv_idle` | Number of idle server connections available for immediate use |
+| `sv_login` | Number of server connections currently in the login process |
+| `maxwait` | Maximum wait time in seconds for the oldest client in the queue |
+| `maxwait_us` | Microsecond part of the maximum waiting time |
 
-* `pool_mode`
-:   The pooling mode in use.
-
-* `cl_active`
-:   Client connections that are either linked to server connections or are idle with no queries waiting to be processed.
-
-* `cl_waiting`
-:   Client connections that have sent queries but have not yet got a server connection.
-
-* `sv_active`
-:   Server connections that are linked to a client.
-
-* `sv_idle`
-:   Server connections that are unused and immediately usable for client queries.
-
-* `sv_login`
-:   Server connections currently in the process of logging in.
-
-* `maxwait`
-:   How long the first (oldest) client in the queue has waited, in seconds.
-    If this starts increasing, then the current pool of servers does
-    not handle requests quickly enough.  The reason may be either an overloaded
-    server or just too small of a **pool_size** setting.
-
-* `maxwait_us`
-:   Microsecond part of the maximum waiting time.
+!!! warning "Performance Alert"
+    If the `maxwait` value starts increasing, your server pool may not be handling requests quickly enough. This could be due to an overloaded PostgreSQL server or insufficient `pool_size` setting.
 
 #### SHOW USERS
 
-* `name`
-:   The user name
+The `SHOW USERS` command displays information about all configured users:
 
-* `pool_mode`
-:   The pooling mode in use.
+```sql
+pgdoorman=> SHOW USERS;
+```
+
+| Column | Description |
+|--------|-------------|
+| `name` | Username as configured in PgDoorman |
+| `pool_mode` | Pooling mode assigned to this user: **session** or **transaction** |
 
 #### SHOW DATABASES
 
-* `database`
-:   Name of configured database entry.
+The `SHOW DATABASES` command displays information about all configured database pools:
 
-* `host`
-:   Host pg_doorman connects to.
+```sql
+pgdoorman=> SHOW DATABASES;
+```
 
-* `port`
-:   Port pg_doorman connects to.
+| Column | Description |
+|--------|-------------|
+| `database` | Name of the configured database pool |
+| `host` | Hostname of the PostgreSQL server PgDoorman connects to |
+| `port` | Port number of the PostgreSQL server |
+| `pool_size` | Maximum number of server connections for this database |
+| `min_pool_size` | Minimum number of server connections to maintain |
+| `reserve_pool_size` | Maximum number of additional connections allowed |
+| `pool_mode` | Default pooling mode for this database |
+| `max_connections` | Maximum allowed server connections (from `max_db_connections`) |
+| `current_connections` | Current number of server connections for this database |
 
-* `pool_size`
-:   Maximum number of server connections.
-
-* `min_pool_size`
-:   Minimum number of server connections.
-
-* `reserve_pool_size`
-:   Maximum number of additional connections for this database.
-
-* `pool_mode`
-:   The pooling mode in use.
-
-* `max_connections`
-:   Maximum number of allowed server connections for this database, as set by
-    **max_db_connections**, either globally or per database.
-
-* `current_connections`
-:   Current number of server connections for this database.
+!!! tip "Connection Management"
+    Monitor the ratio between `current_connections` and `pool_size` to ensure your pool is properly sized. If `current_connections` frequently reaches `pool_size`, consider increasing the pool size.
 
 #### SHOW SOCKETS
 
-Shows low-level information about sockets or only active sockets.
-This includes the information shown under **SHOW CLIENTS** and **SHOW
-SERVERS** as well as other more low-level information.
+The `SHOW SOCKETS` command displays low-level information about network sockets:
 
+```sql
+pgdoorman=> SHOW SOCKETS;
+```
+
+This command includes all information shown in `SHOW CLIENTS` and `SHOW SERVERS` plus additional low-level details about the socket connections.
 
 #### SHOW VERSION
 
-Show the PgDoorman version string.
+The `SHOW VERSION` command displays the PgDoorman version information:
+
+```sql
+pgdoorman=> SHOW VERSION;
+```
+
+This is useful for verifying which version you're running, especially after upgrades.
+
+### Control Commands
+
+PgDoorman provides control commands that allow you to manage the service operation directly from the admin console.
 
 #### SHUTDOWN
 
-The PgDoorman process will exit.
+The `SHUTDOWN` command gracefully terminates the PgDoorman process:
+
+```sql
+pgdoorman=> SHUTDOWN;
+```
+
+When executed:
+
+1. PgDoorman stops accepting new client connections
+2. Existing transactions are allowed to complete (within the configured timeout)
+3. All connections are closed
+4. The process exits
+
+!!! warning "Service Interruption"
+    Using the `SHUTDOWN` command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.
 
 #### RELOAD
 
-The PgDoorman process will reload its configuration files and update
-changeable settings.
+The `RELOAD` command refreshes PgDoorman's configuration without restarting the service:
 
-PgDoorman notices when a configuration file reload changes the
-connection parameters of a database definition.  An existing server
-connection to the old destination will be closed when the server
-connection is next released (according to the pooling mode), and new
-server connections will immediately use the updated connection
-parameters.
+```sql
+pgdoorman=> RELOAD;
+```
 
+This command:
 
-### Signals
+1. Rereads the configuration file
+2. Updates all changeable settings
+3. Applies changes to connection parameters for new connections
+4. Maintains existing connections until they're released back to the pool
 
-* SIGHUP
-:   Reload config. Same as issuing the command **RELOAD** on the console.
+!!! tip "Zero-Downtime Configuration Changes"
+    The `RELOAD` command allows you to modify most configuration parameters without disrupting existing connections. This is ideal for production environments where downtime must be minimized.
 
-* SIGTERM
-:   Immediate shutdown.
+## Signal Handling
 
-* SIGINT
-:   Graceful shutdown [looks here](binary-upgrade.md) for more information.
+PgDoorman responds to standard Unix signals for control and management. These signals can be sent using the `kill` command (e.g., `kill -HUP <pid>`).
+
+| Signal | Description | Effect |
+|--------|-------------|--------|
+| **SIGHUP** | Configuration reload | Equivalent to the `RELOAD` command in the admin console. Rereads the configuration file and applies changes to settings. |
+| **SIGTERM** | Immediate shutdown | Forces PgDoorman to exit immediately. Active connections may be terminated abruptly. |
+| **SIGINT** | Graceful shutdown | Initiates a binary upgrade process. The current process starts a new instance and gracefully transfers connections. See [Binary Upgrade Process](binary-upgrade.md) for details. |
+
+!!! note "Process Management"
+    In systemd-based environments, you can use `systemctl reload pg_doorman` to send SIGHUP and `systemctl restart pg_doorman` for a complete restart.
