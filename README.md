@@ -166,7 +166,7 @@ Before you begin, make sure you have the following installed:
 5. **Run tests**: `make test`
 6. **Run integration tests**: `make docker-compose-test-all`
 
-For more detailed information on contributing, please see the [Contributing Guide](https://ozontech.github.io/pg_doorman/tutorials/contributing/).
+For more detailed information on contributing, please see the [Contributing Guide](https://ozontech.github.io/pg_doorman/latest/tutorials/contributing/).
 
 ## Documentation
 
