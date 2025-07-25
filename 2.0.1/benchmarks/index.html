@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#disclaimer" class="md-skip">
+        <a href="#performance-benchmarks" class="md-skip">
           Skip to content
         </a>
       
@@ -467,7 +467,7 @@
   
   
   <span class="md-ellipsis">
-    Installing PgDoorman
+    Installation Guide
     
   </span>
   
@@ -513,7 +513,7 @@
   
   
   <span class="md-ellipsis">
-    How to upgrade
+    Binary Upgrade Process
     
   </span>
   
@@ -536,7 +536,7 @@
   
   
   <span class="md-ellipsis">
-    Contributing
+    Contributing to PgDoorman
     
   </span>
   
@@ -612,6 +612,8 @@
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
       
+        
+      
       
         <label class="md-nav__link md-nav__link--active" for="__toc">
           
@@ -644,6 +646,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -652,46 +656,55 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#disclaimer" class="md-nav__link">
+  <a href="#introduction" class="md-nav__link">
     <span class="md-ellipsis">
-      Disclaimer:
+      Introduction
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#smoke-perf-test" class="md-nav__link">
+  <a href="#testing-environment" class="md-nav__link">
     <span class="md-ellipsis">
-      Smoke perf test
+      Testing Environment
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Smoke perf test">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#benchmark-scenarios" class="md-nav__link">
+    <span class="md-ellipsis">
+      Benchmark Scenarios
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Benchmark Scenarios">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#prepared-without-ssl" class="md-nav__link">
+  <a href="#1-prepared-statements-without-ssl" class="md-nav__link">
     <span class="md-ellipsis">
-      Prepared without SSL:
+      1. Prepared Statements without SSL
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#simple-without-ssl" class="md-nav__link">
+  <a href="#2-simple-queries-without-ssl" class="md-nav__link">
     <span class="md-ellipsis">
-      Simple without SSL:
+      2. Simple Queries without SSL
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#reconnect-with-ssl" class="md-nav__link">
+  <a href="#3-reconnect-performance-with-ssl" class="md-nav__link">
     <span class="md-ellipsis">
-      Reconnect with SSL:
+      3. Reconnect Performance with SSL
     </span>
   </a>
   
@@ -699,6 +712,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conclusion
+    </span>
+  </a>
   
 </li>
       
@@ -727,6 +749,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -735,46 +759,55 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#disclaimer" class="md-nav__link">
+  <a href="#introduction" class="md-nav__link">
     <span class="md-ellipsis">
-      Disclaimer:
+      Introduction
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#smoke-perf-test" class="md-nav__link">
+  <a href="#testing-environment" class="md-nav__link">
     <span class="md-ellipsis">
-      Smoke perf test
+      Testing Environment
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Smoke perf test">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#benchmark-scenarios" class="md-nav__link">
+    <span class="md-ellipsis">
+      Benchmark Scenarios
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Benchmark Scenarios">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#prepared-without-ssl" class="md-nav__link">
+  <a href="#1-prepared-statements-without-ssl" class="md-nav__link">
     <span class="md-ellipsis">
-      Prepared without SSL:
+      1. Prepared Statements without SSL
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#simple-without-ssl" class="md-nav__link">
+  <a href="#2-simple-queries-without-ssl" class="md-nav__link">
     <span class="md-ellipsis">
-      Simple without SSL:
+      2. Simple Queries without SSL
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#reconnect-with-ssl" class="md-nav__link">
+  <a href="#3-reconnect-performance-with-ssl" class="md-nav__link">
     <span class="md-ellipsis">
-      Reconnect with SSL:
+      3. Reconnect Performance with SSL
     </span>
   </a>
   
@@ -782,6 +815,15 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conclusion
+    </span>
+  </a>
   
 </li>
       
@@ -804,104 +846,121 @@
   
 
 
-  <h1>Benchmarks</h1>
-
-<h2 id="disclaimer">Disclaimer:</h2>
-<p>Benchmarks always lie to you :) We recommend that you benchmark the application yourself and verify the results.
-The current benchmarks provided here are intended to give you an idea of approximate figures.</p>
-<p>In addition to being fast, a pooler should also be predictable and error-free.
-While benchmarks may not provide real-world experience, they can reveal potential problems.</p>
-<h2 id="smoke-perf-test">Smoke perf test</h2>
-<p>PG 15, CPU 20, pool_size = 40, client with SCRAM auth.</p>
-<h3 id="prepared-without-ssl">Prepared without SSL:</h3>
+<h1 id="performance-benchmarks">Performance Benchmarks</h1>
+<h2 id="introduction">Introduction</h2>
+<p>Performance benchmarks provide valuable insights into the operational characteristics of connection poolers. While these benchmarks offer a comparative view of different poolers, we strongly recommend conducting your own tests in an environment that matches your production setup for the most accurate results.</p>
+<p>The benchmarks presented here are designed to:
+- Compare PgDoorman with other popular PostgreSQL connection poolers
+- Demonstrate performance under different workload scenarios
+- Highlight the resource utilization patterns of each pooler</p>
+<h2 id="testing-environment">Testing Environment</h2>
+<p>All benchmarks were conducted with the following configuration:
+- PostgreSQL 15
+- Server with 20 CPU cores
+- Connection pool size: 40 connections
+- Client authentication: SCRAM
+- Testing tool: pgbench
+- Test duration: 600 seconds (10 minutes)
+- Client connections: 80
+- Job parallelism: 4</p>
+<h2 id="benchmark-scenarios">Benchmark Scenarios</h2>
+<h3 id="1-prepared-statements-without-ssl">1. Prepared Statements without SSL</h3>
+<p>This scenario tests the performance of prepared statements execution without SSL encryption.</p>
+<p><strong>Command:</strong>
 <div class="language-shell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">PGSSLMODE</span><span class="o">=</span>disable<span class="w"> </span>pgbench<span class="w"> </span>-s<span class="w"> </span><span class="m">10</span><span class="w"> </span>-T<span class="w"> </span><span class="m">600</span><span class="w"> </span>-P<span class="w"> </span><span class="m">1</span><span class="w"> </span>-S<span class="w"> </span>-n<span class="w"> </span>-j<span class="w"> </span><span class="m">4</span><span class="w"> </span>-c<span class="w"> </span><span class="m">80</span><span class="w"> </span>-M<span class="w"> </span>prepared<span class="w"> </span>-r
-</span></code></pre></div>
+</span></code></pre></div></p>
+<p><strong>Results:</strong></p>
 <table>
 <thead>
 <tr>
 <th>Pooler</th>
-<th>Usage</th>
-<th>TPS</th>
+<th>CPU Usage</th>
+<th>Transactions Per Second</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>PostgreSQL</td>
 <td>-</td>
-<td>230_000</td>
+<td>230,000</td>
 </tr>
 <tr>
 <td>PgBouncer</td>
-<td>1 CPU</td>
-<td>45_000</td>
+<td>1 core</td>
+<td>45,000</td>
 </tr>
 <tr>
 <td>Odyssey</td>
-<td>5-6 CPU</td>
-<td>125_000</td>
+<td>5-6 cores</td>
+<td>125,000</td>
 </tr>
 <tr>
 <td>PgCat</td>
 <td>-</td>
-<td>-</td>
+<td>Not available*</td>
 </tr>
 <tr>
 <td>PgDoorman</td>
-<td>6-7 CPU</td>
-<td>135_000</td>
+<td>6-7 cores</td>
+<td>135,000</td>
 </tr>
 </tbody>
 </table>
-<p>Notes:
-  + pgcat (1.3.0) settings: <code>prepared_statements_cache_size = 500</code>, but prepared with pgbench is not working.</p>
-<h3 id="simple-without-ssl">Simple without SSL:</h3>
+<p>*Note: PgCat (version 1.3.0) was configured with <code>prepared_statements_cache_size = 500</code>, but prepared statements with pgbench were not functioning correctly.</p>
+<h3 id="2-simple-queries-without-ssl">2. Simple Queries without SSL</h3>
+<p>This scenario tests the performance of simple queries without SSL encryption.</p>
+<p><strong>Command:</strong>
 <div class="language-shell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">PGSSLMODE</span><span class="o">=</span>disable<span class="w"> </span>pgbench<span class="w"> </span>-s<span class="w"> </span><span class="m">10</span><span class="w"> </span>-T<span class="w"> </span><span class="m">600</span><span class="w"> </span>-P<span class="w"> </span><span class="m">1</span><span class="w"> </span>-S<span class="w"> </span>-n<span class="w"> </span>-j<span class="w"> </span><span class="m">4</span><span class="w"> </span>-c<span class="w"> </span><span class="m">80</span><span class="w"> </span>-r
-</span></code></pre></div>
+</span></code></pre></div></p>
+<p><strong>Results:</strong></p>
 <table>
 <thead>
 <tr>
 <th>Pooler</th>
-<th>Usage</th>
-<th>TPS</th>
+<th>CPU Usage</th>
+<th>Transactions Per Second</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>PostgreSQL</td>
 <td>-</td>
-<td>150_000</td>
+<td>150,000</td>
 </tr>
 <tr>
 <td>PgBouncer</td>
-<td>1 CPU</td>
-<td>60_000</td>
+<td>1 core</td>
+<td>60,000</td>
 </tr>
 <tr>
 <td>Odyssey</td>
-<td>4 CPU</td>
-<td>105_000</td>
+<td>4 cores</td>
+<td>105,000</td>
 </tr>
 <tr>
 <td>PgCat</td>
-<td>3-4 CPU</td>
-<td>85_000</td>
+<td>3-4 cores</td>
+<td>85,000</td>
 </tr>
 <tr>
 <td>PgDoorman</td>
-<td>4-5 CPU</td>
-<td>110_000</td>
+<td>4-5 cores</td>
+<td>110,000</td>
 </tr>
 </tbody>
 </table>
-<h3 id="reconnect-with-ssl">Reconnect with SSL:</h3>
-<div class="language-shell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">PGSSLMODE</span><span class="o">=</span>require<span class="w"> </span><span class="nv">PGHOST</span><span class="o">=</span><span class="m">10</span>.251.28.154<span class="w"> </span>pgbench<span class="w"> </span>-s<span class="w"> </span><span class="m">10</span><span class="w"> </span>-T<span class="w"> </span><span class="m">600</span><span class="w"> </span>-P<span class="w"> </span><span class="m">1</span><span class="w"> </span>-S<span class="w"> </span>-n<span class="w"> </span>-j<span class="w"> </span><span class="m">4</span><span class="w"> </span>-c<span class="w"> </span><span class="m">80</span><span class="w"> </span>-M<span class="w"> </span>prepared<span class="w"> </span>-r<span class="w"> </span>-C
-</span></code></pre></div>
+<h3 id="3-reconnect-performance-with-ssl">3. Reconnect Performance with SSL</h3>
+<p>This scenario tests the connection establishment rate with SSL encryption enabled.</p>
+<p><strong>Command:</strong>
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">PGSSLMODE</span><span class="o">=</span>require<span class="w"> </span>pgbench<span class="w"> </span>-s<span class="w"> </span><span class="m">10</span><span class="w"> </span>-T<span class="w"> </span><span class="m">600</span><span class="w"> </span>-P<span class="w"> </span><span class="m">1</span><span class="w"> </span>-S<span class="w"> </span>-n<span class="w"> </span>-j<span class="w"> </span><span class="m">4</span><span class="w"> </span>-c<span class="w"> </span><span class="m">80</span><span class="w"> </span>-M<span class="w"> </span>prepared<span class="w"> </span>-r<span class="w"> </span>-C
+</span></code></pre></div></p>
+<p><strong>Results:</strong></p>
 <table>
 <thead>
 <tr>
 <th>Pooler</th>
-<th>Usage</th>
-<th>TPS</th>
+<th>CPU Usage</th>
+<th>Connections Per Second</th>
 </tr>
 </thead>
 <tbody>
@@ -912,29 +971,32 @@ While benchmarks may not provide real-world experience, they can reveal potentia
 </tr>
 <tr>
 <td>PgBouncer</td>
-<td>1 CPU</td>
+<td>1 core</td>
 <td>240</td>
 </tr>
 <tr>
 <td>Odyssey</td>
-<td>1 CPU</td>
-<td>260</td>
+<td>1 core</td>
+<td>260*</td>
 </tr>
 <tr>
 <td>PgCat</td>
-<td>1 CPU</td>
-<td>530</td>
+<td>1 core</td>
+<td>530**</td>
 </tr>
 <tr>
 <td>PgDoorman</td>
-<td>1 CPU</td>
+<td>1 core</td>
 <td>260</td>
 </tr>
 </tbody>
 </table>
-<p>Notes: 
-  + odyssey irregular errors: <code>error: connection to server at "10.251.28.154", port 6432 failed: ERROR:  odyssey: c3d386c5e5c2f: password authentication failed</code>.
-  + pgcat (rutls) is faster pg_doorman (openssl), but we experienced problems when using this library (rutls) with npgsql, and we had switched to openssl-wrappers.</p>
+<p><strong>Notes:</strong>
+* <em>Odyssey occasionally produced authentication errors: <code>error: connection to server at "10.251.28.154", port 6432 failed: ERROR: odyssey: c3d386c5e5c2f: password authentication failed</code>.
+* </em>*PgCat (using rustls) showed higher connection rates than PgDoorman (using OpenSSL), but we encountered compatibility issues with rustls when using certain client drivers like npgsql, which led us to adopt OpenSSL wrappers instead.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>These benchmarks demonstrate that PgDoorman offers competitive performance compared to other PostgreSQL connection poolers. While it may use more CPU resources in some scenarios, it delivers higher throughput, particularly for prepared statements and simple queries.</p>
+<p>When selecting a connection pooler, consider not only raw performance but also stability, feature set, and compatibility with your specific application stack.</p>
 
 
 

@@ -22,7 +22,7 @@
     
     
       
-        <title>Installing PgDoorman - PgDoorman Documentation</title>
+        <title>Installation Guide - PgDoorman Documentation</title>
       
     
     
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Installing PgDoorman
+              Installation Guide
             
           </span>
         </div>
@@ -483,7 +483,7 @@
   
   
   <span class="md-ellipsis">
-    Installing PgDoorman
+    Installation Guide
     
   </span>
   
@@ -496,7 +496,7 @@
   
   
   <span class="md-ellipsis">
-    Installing PgDoorman
+    Installation Guide
     
   </span>
   
@@ -519,46 +519,37 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#docker" class="md-nav__link">
+  <a href="#system-requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Docker
+      System Requirements
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#nix-docker" class="md-nav__link">
+  <a href="#installation-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Nix (Docker)
+      Installation Methods
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#dockerpodman-compose" class="md-nav__link">
-    <span class="md-ellipsis">
-      Docker/Podman Compose
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Docker/Podman Compose">
+    <nav class="md-nav" aria-label="Installation Methods">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#running-docker-compose" class="md-nav__link">
+  <a href="#pre-built-binaries-recommended" class="md-nav__link">
     <span class="md-ellipsis">
-      Running Docker Compose
+      Pre-built Binaries (Recommended)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#running-podman-compose" class="md-nav__link">
+  <a href="#building-from-source" class="md-nav__link">
     <span class="md-ellipsis">
-      Running Podman Compose
+      Building from Source
     </span>
   </a>
   
@@ -566,6 +557,90 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#docker-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docker Installation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Docker Installation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#using-the-dockerfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using the Dockerfile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-nix-with-docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using Nix with Docker
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-docker-compose-or-podman-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using Docker Compose or Podman Compose
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using Docker Compose or Podman Compose">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-with-docker-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running with Docker Compose
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-with-podman-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running with Podman Compose
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verifying-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Verifying Installation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      Next Steps
+    </span>
+  </a>
   
 </li>
       
@@ -613,7 +688,7 @@
   
   
   <span class="md-ellipsis">
-    How to upgrade
+    Binary Upgrade Process
     
   </span>
   
@@ -636,7 +711,7 @@
   
   
   <span class="md-ellipsis">
-    Contributing
+    Contributing to PgDoorman
     
   </span>
   
@@ -748,46 +823,37 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#docker" class="md-nav__link">
+  <a href="#system-requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Docker
+      System Requirements
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#nix-docker" class="md-nav__link">
+  <a href="#installation-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Nix (Docker)
+      Installation Methods
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#dockerpodman-compose" class="md-nav__link">
-    <span class="md-ellipsis">
-      Docker/Podman Compose
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Docker/Podman Compose">
+    <nav class="md-nav" aria-label="Installation Methods">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#running-docker-compose" class="md-nav__link">
+  <a href="#pre-built-binaries-recommended" class="md-nav__link">
     <span class="md-ellipsis">
-      Running Docker Compose
+      Pre-built Binaries (Recommended)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#running-podman-compose" class="md-nav__link">
+  <a href="#building-from-source" class="md-nav__link">
     <span class="md-ellipsis">
-      Running Podman Compose
+      Building from Source
     </span>
   </a>
   
@@ -795,6 +861,90 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#docker-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docker Installation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Docker Installation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#using-the-dockerfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using the Dockerfile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-nix-with-docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using Nix with Docker
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-docker-compose-or-podman-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using Docker Compose or Podman Compose
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Using Docker Compose or Podman Compose">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-with-docker-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running with Docker Compose
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-with-podman-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running with Podman Compose
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verifying-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Verifying Installation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      Next Steps
+    </span>
+  </a>
   
 </li>
       
@@ -818,32 +968,79 @@
 
 
 <h1 id="installing-pgdoorman">Installing PgDoorman</h1>
-<p>As first class option, you can obtain PgDoorman distribution via <a href="https://github.com/ozontech/pg_doorman/releases">GitHub releases</a>.</p>
-<p>Any other option implies, that you have already cloned project with <a href="https://git-scm.com/">Git</a>:</p>
-<p><code>git clone https://github.com/ozontech/pg_doorman.git</code></p>
-<h3 id="docker">Docker</h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker build -t pg_doorman -f Dockerfile .
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>docker run -p 6432:6432 -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml --rm -t -i pg_doorman
+<p>This guide covers different methods for installing and running PgDoorman on your system.</p>
+<h2 id="system-requirements">System Requirements</h2>
+<ul>
+<li>Linux (recommended) or macOS</li>
+<li>PostgreSQL server (version 10 or higher)</li>
+<li>Sufficient memory for connection pooling (depends on expected load)</li>
+</ul>
+<h2 id="installation-methods">Installation Methods</h2>
+<h3 id="pre-built-binaries-recommended">Pre-built Binaries (Recommended)</h3>
+<p>The simplest way to install PgDoorman is to download a pre-built binary from the <a href="https://github.com/ozontech/pg_doorman/releases">GitHub releases page</a>.</p>
+<ol>
+<li>Download the appropriate binary for your platform</li>
+<li>Make the file executable: <code>chmod +x pg_doorman</code></li>
+<li>Move it to a directory in your PATH: <code>sudo mv pg_doorman /usr/local/bin/</code></li>
+<li>Create a configuration file (see <a href="../basic-usage/">Basic Usage</a> for details)</li>
+</ol>
+<h3 id="building-from-source">Building from Source</h3>
+<p>If you prefer to build from source, you'll need to clone the repository first:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/ozontech/pg_doorman.git
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>pg_doorman
 </span></code></pre></div>
-<h2 id="nix-docker">Nix (Docker)</h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>nix build .#dockerImage
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>docker load -i result
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>docker run -p 6432:6432 -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml --rm -t -i pg_doorman
+<p>Then follow the instructions in the <a href="../contributing/">Contributing guide</a> to build the project.</p>
+<h2 id="docker-installation">Docker Installation</h2>
+<h3 id="using-the-dockerfile">Using the Dockerfile</h3>
+<p>You can build and run PgDoorman using Docker:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Build the Docker image</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>pg_doorman<span class="w"> </span>-f<span class="w"> </span>Dockerfile<span class="w"> </span>.
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Run PgDoorman with your configuration</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>docker<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span>:6432<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>-v<span class="w"> </span>/path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span>--rm<span class="w"> </span>-t<span class="w"> </span>-i<span class="w"> </span>pg_doorman
 </span></code></pre></div>
-<h2 id="dockerpodman-compose">Docker/Podman Compose</h2>
-<p>Discover minimal compose configuration file in the <a href="https://github.com/ozontech/pg_doorman/tree/master/example">repository directory</a></p>
-<h3 id="running-docker-compose">Running Docker Compose</h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker compose up -d
+<h3 id="using-nix-with-docker">Using Nix with Docker</h3>
+<p>If you use Nix, you can build a Docker image:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Build the Docker image using Nix</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>nix<span class="w"> </span>build<span class="w"> </span>.#dockerImage
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Load the image into Docker</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>docker<span class="w"> </span>load<span class="w"> </span>-i<span class="w"> </span>result
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Run PgDoorman with your configuration</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>docker<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span>:6432<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span>-v<span class="w"> </span>/path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span>--rm<span class="w"> </span>-t<span class="w"> </span>-i<span class="w"> </span>pg_doorman
 </span></code></pre></div>
-<h3 id="running-podman-compose">Running Podman Compose</h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>podman-compose up -d
+<h2 id="using-docker-compose-or-podman-compose">Using Docker Compose or Podman Compose</h2>
+<p>For a more complete setup including PostgreSQL, you can use Docker Compose or Podman Compose.</p>
+<p>A minimal compose configuration file is available in the <a href="https://github.com/ozontech/pg_doorman/tree/master/example">repository examples directory</a>.</p>
+<h3 id="running-with-docker-compose">Running with Docker Compose</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
 </span></code></pre></div>
+<h3 id="running-with-podman-compose">Running with Podman Compose</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>podman-compose<span class="w"> </span>up<span class="w"> </span>-d
+</span></code></pre></div>
+<h2 id="verifying-installation">Verifying Installation</h2>
+<p>After installation, you can verify that PgDoorman is running correctly by:</p>
+<ol>
+<li>Checking the process: <code>ps aux | grep pg_doorman</code></li>
+<li>Connecting to the admin console: <code>psql -h localhost -p 6432 -U admin pgdoorman</code></li>
+<li>Running <code>SHOW VERSION;</code> in the admin console</li>
+</ol>
+<h2 id="next-steps">Next Steps</h2>
+<p>After installation, see the <a href="../basic-usage/">Basic Usage guide</a> to configure and start using PgDoorman.</p>
 
 
 
 
 
 
+
+  
+  
 
 
 

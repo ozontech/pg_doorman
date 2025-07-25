@@ -474,7 +474,7 @@
   
   
   <span class="md-ellipsis">
-    Installing PgDoorman
+    Installation Guide
     
   </span>
   
@@ -520,7 +520,7 @@
   
   
   <span class="md-ellipsis">
-    How to upgrade
+    Binary Upgrade Process
     
   </span>
   
@@ -543,7 +543,7 @@
   
   
   <span class="md-ellipsis">
-    Contributing
+    Contributing to PgDoorman
     
   </span>
   
@@ -897,68 +897,57 @@
 
 <h1 id="changelog">Changelog</h1>
 <h3 id="2.0.1">2.0.1 <small>July 24, 2025</small></h3>
-<ul>
-<li>Fix "memory-leak" while processing client messages.</li>
-</ul>
+<p><strong>Bug Fixes:</strong>
+- Fixed <code>max_memory_usage</code> counter leak when clients disconnect improperly.</p>
 <h3 id="2.0.0">2.0.0 <small>July 22, 2025</small></h3>
-<ul>
-<li>Added <code>tls_mode</code> configuration option to enhance security with flexible TLS connection management and client certificate validation capabilities.</li>
-</ul>
+<p><strong>Features:</strong>
+- Added <code>tls_mode</code> configuration option to enhance security with flexible TLS connection management and client certificate validation capabilities.</p>
 <h3 id="1.9.0">1.9.0 <small>July 20, 2025</small></h3>
-<ul>
-<li>Added pam auth support.</li>
-<li>Added <code>talos</code> (yet another jwt auth support).</li>
-<li>When using the COPY protocol, if a row contains a large column, pg_doorman may run out of memory. Now this happens when streaming, when the response is not stored in memory.</li>
-<li>Updating rust and tokio.</li>
-</ul>
+<p><strong>Features:</strong>
+- Added PAM authentication support.
+- Added <code>talos</code> JWT authentication support.</p>
+<p><strong>Improvements:</strong>
+- Implemented streaming for COPY protocol with large columns to prevent memory exhaustion.
+- Updated Rust and Tokio dependencies.</p>
 <h3 id="1.8.3">1.8.3 <small>Jun 11, 2025</small></h3>
-<ul>
-<li>Fixed critical bug: if a free connection was not available on the Server in pool (query_wait_timeout), the Client's buffer was not cleared, leading to an incorrect response error <a href="https://github.com/ozontech/pg_doorman/pull/38">#38</a>.</li>
-<li>Fixed ngsql-related issue: https://github.com/npgsql/npgsql/issues/6115.</li>
-</ul>
+<p><strong>Bug Fixes:</strong>
+- Fixed critical bug where Client's buffer wasn't cleared when no free connections were available in the Server pool (query_wait_timeout), leading to incorrect response errors. <a href="https://github.com/ozontech/pg_doorman/pull/38">#38</a>
+- Fixed Npgsql-related issue. <a href="https://github.com/npgsql/npgsql/issues/6115">Npgsql#6115</a></p>
 <h3 id="1.8.2">1.8.2 <small>May 24, 2025</small></h3>
-<ul>
-<li>Added <code>application_name</code> parameter in pool <a href="https://github.com/ozontech/pg_doorman/pull/30">#30</a>.</li>
-<li>Added link-time optimization <a href="https://github.com/ozontech/pg_doorman/pull/29">#29</a>.</li>
-<li>Added <code>DISCARD ALL</code>/<code>DEALLOCATE ALL</code> client query support.</li>
-<li>Fixed panics in admin console.</li>
-<li>Fixed connection leakage on inproperly handled errors in client's copy mode</li>
-</ul>
+<p><strong>Features:</strong>
+- Added <code>application_name</code> parameter in pool. <a href="https://github.com/ozontech/pg_doorman/pull/30">#30</a>
+- Added support for <code>DISCARD ALL</code> and <code>DEALLOCATE ALL</code> client queries.</p>
+<p><strong>Improvements:</strong>
+- Implemented link-time optimization. <a href="https://github.com/ozontech/pg_doorman/pull/29">#29</a></p>
+<p><strong>Bug Fixes:</strong>
+- Fixed panics in admin console.
+- Fixed connection leakage on improperly handled errors in client's copy mode.</p>
 <h3 id="1.8.1">1.8.1 <small>April 12, 2025</small></h3>
-<ul>
-<li>Fixed config value of prepared_statements <a href="https://github.com/ozontech/pg_doorman/pull/21">#21</a>.</li>
-<li>Fixed close declared cursors <a href="https://github.com/ozontech/pg_doorman/pull/23">#23</a>.</li>
-<li>Fixed proxy server parameters <a href="https://github.com/ozontech/pg_doorman/pull/25">#25</a>.</li>
-</ul>
+<p><strong>Bug Fixes:</strong>
+- Fixed config value of prepared_statements. <a href="https://github.com/ozontech/pg_doorman/pull/21">#21</a>
+- Fixed handling of declared cursors closure. <a href="https://github.com/ozontech/pg_doorman/pull/23">#23</a>
+- Fixed proxy server parameters. <a href="https://github.com/ozontech/pg_doorman/pull/25">#25</a></p>
 <h3 id="1.8.0">1.8.0 <small>Mar 20, 2025</small></h3>
-<ul>
-<li>Fixed <a href="https://github.com/ozontech/pg_doorman/pull/15">#15</a>: Dependencies</li>
-<li>Added release vendor-licenses.txt, <a href="https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com">related thread</a>.</li>
-</ul>
+<p><strong>Bug Fixes:</strong>
+- Fixed dependencies issue. <a href="https://github.com/ozontech/pg_doorman/pull/15">#15</a></p>
+<p><strong>Improvements:</strong>
+- Added release vendor-licenses.txt file. <a href="https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com">Related thread</a></p>
 <h3 id="1.7.9">1.7.9 <small>Mar 16, 2025</small></h3>
-<ul>
-<li>
-<p>Added release vendor.tar.gz for offline build, <a href="https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com">related thread</a>.</p>
-</li>
-<li>
-<p>Fixed This update addresses issues related to the inability to send pqCancel messages over the TLS protocol. 
-To clarify, drivers should send pqCancel messages exclusively via TLS if the primary connection was established using TLS.
-<a href="https://github.com/npgsql/npgsql">Npgsql</a> strictly adheres to this rule, however, <a href="https://github.com/jackc/pgx">PGX</a> currently does not follow this flow, potentially leading to inconsistencies in secure connection handling (aka hostssl).
-Both of these behaviors are currently supported and functional.</p>
-</li>
-</ul>
+<p><strong>Improvements:</strong>
+- Added release vendor.tar.gz for offline build. <a href="https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com">Related thread</a></p>
+<p><strong>Bug Fixes:</strong>
+- Fixed issues with pqCancel messages over TLS protocol. Drivers should send pqCancel messages exclusively via TLS if the primary connection was established using TLS. <a href="https://github.com/npgsql/npgsql">Npgsql</a> follows this rule, while <a href="https://github.com/jackc/pgx">PGX</a> currently does not. Both behaviors are now supported.</p>
 <h3 id="1.7.8">1.7.8 <small>Mar 8, 2025</small></h3>
-<ul>
-<li>Fixed In some cases, when using batch processing with the extended protocol, messages were delivered to the client in the wrong order.</li>
-<li>Fixed Error messages in the log lacked sufficient detail to diagnose issues encountered during server-side login attempts.</li>
-</ul>
+<p><strong>Bug Fixes:</strong>
+- Fixed message ordering issue when using batch processing with the extended protocol.
+- Improved error message detail in logs for server-side login attempt failures.</p>
 <h3 id="1.7.7">1.7.7 <small>Mar 8, 2025</small></h3>
-<ul>
-<li>Added <code>show clients</code>: added <code>state</code> (waiting/idle/active), <code>wait</code> (read/write/idle) fields.</li>
-<li>Added <code>show servers</code>: added <code>state</code> (login/idle/active), <code>wait</code> (read/write/idle), <code>server_process_pid</code> fields.</li>
-<li>Added The proxy timeout for streaming large <code>message_size_to_be_stream</code> responses is now set to 15 seconds.</li>
-<li>Fixed counter <code>max_memory_usage</code> leak when clients disconnect improperly.</li>
-</ul>
+<p><strong>Features:</strong>
+- Enhanced <code>show clients</code> command with new fields: <code>state</code> (waiting/idle/active) and <code>wait</code> (read/write/idle).
+- Enhanced <code>show servers</code> command with new fields: <code>state</code> (login/idle/active), <code>wait</code> (read/write/idle), and <code>server_process_pid</code>.
+- Added 15-second proxy timeout for streaming large <code>message_size_to_be_stream</code> responses.</p>
+<p><strong>Bug Fixes:</strong>
+- Fixed <code>max_memory_usage</code> counter leak when clients disconnect improperly.</p>
 
 
 
@@ -997,7 +986,7 @@ Both of these behaviors are currently supported and functional.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../tutorials/contributing/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Contributing">
+          <a href="../tutorials/contributing/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Contributing to PgDoorman">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1007,7 +996,7 @@ Both of these behaviors are currently supported and functional.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Contributing
+                Contributing to PgDoorman
               </div>
             </div>
           </a>

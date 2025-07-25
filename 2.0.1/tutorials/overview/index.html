@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#overview" class="md-skip">
+        <a href="#pgdoorman-overview" class="md-skip">
           Skip to content
         </a>
       
@@ -496,27 +496,60 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-is-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      What is PgDoorman?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-benefits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key Benefits
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pooling-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pooling Modes
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pooling Modes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#session-pooling" class="md-nav__link">
     <span class="md-ellipsis">
-      Session pooling
+      Session Pooling
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#transaction-pooling" class="md-nav__link">
     <span class="md-ellipsis">
-      Transaction pooling
+      Transaction Pooling
     </span>
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#managing" class="md-nav__link">
+  <a href="#administration" class="md-nav__link">
     <span class="md-ellipsis">
-      Managing
+      Administration
     </span>
   </a>
   
@@ -543,7 +576,7 @@
   
   
   <span class="md-ellipsis">
-    Installing PgDoorman
+    Installation Guide
     
   </span>
   
@@ -589,7 +622,7 @@
   
   
   <span class="md-ellipsis">
-    How to upgrade
+    Binary Upgrade Process
     
   </span>
   
@@ -612,7 +645,7 @@
   
   
   <span class="md-ellipsis">
-    Contributing
+    Contributing to PgDoorman
     
   </span>
   
@@ -724,27 +757,60 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#what-is-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      What is PgDoorman?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-benefits" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key Benefits
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pooling-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pooling Modes
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pooling Modes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#session-pooling" class="md-nav__link">
     <span class="md-ellipsis">
-      Session pooling
+      Session Pooling
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#transaction-pooling" class="md-nav__link">
     <span class="md-ellipsis">
-      Transaction pooling
+      Transaction Pooling
     </span>
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#managing" class="md-nav__link">
+  <a href="#administration" class="md-nav__link">
     <span class="md-ellipsis">
-      Managing
+      Administration
     </span>
   </a>
   
@@ -769,16 +835,43 @@
   
 
 
-<h1 id="overview">Overview</h1>
-<p>PgDoorman is a PostgreSQL connection pooler. Any application can consider connection to PgDoorman as if it were a 
-connection to Postgresql server. PgDoorman will create a connection to the actual server or will reuse an existed connection.</p>
-<p>In order not to compromise transaction semantics for connection  pooling, PgDoorman supports several types of pooling when rotating connections.</p>
-<h2 id="session-pooling">Session pooling</h2>
-<p>Client gets an assigned server connection for the lifetime of the client connection. After the client disconnects, server connection will be released back into the pool.</p>
-<h2 id="transaction-pooling">Transaction pooling</h2>
-<p>Client gets an assigned server connection only for the duration of transaction. After PgDoorman notices the end of the transaction, connection will be released back into the pool.</p>
-<h2 id="managing">Managing</h2>
-<p>You can manage PgDoorman via <a href="../basic-usage/#admin-console">Admin Console</a></p>
+<h1 id="pgdoorman-overview">PgDoorman Overview</h1>
+<h2 id="what-is-pgdoorman">What is PgDoorman?</h2>
+<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
+<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
+<h2 id="key-benefits">Key Benefits</h2>
+<ul>
+<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
+<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
+<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
+<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+</ul>
+<h2 id="pooling-modes">Pooling Modes</h2>
+<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
+<h3 id="session-pooling">Session Pooling</h3>
+<p>In session pooling mode:</p>
+<ul>
+<li>Each client is assigned a dedicated server connection for the entire duration of the client connection</li>
+<li>The server connection remains exclusively allocated to that client until disconnection</li>
+<li>After the client disconnects, the server connection is released back into the pool for reuse</li>
+<li>This mode is ideal for applications that rely on session-level features like temporary tables or session variables</li>
+</ul>
+<h3 id="transaction-pooling">Transaction Pooling</h3>
+<p>In transaction pooling mode:</p>
+<ul>
+<li>A client is assigned a server connection only for the duration of a transaction</li>
+<li>Once PgDoorman detects the end of a transaction, the server connection is immediately released back into the pool</li>
+<li>This mode allows for higher connection efficiency as connections are shared between clients</li>
+<li>Ideal for applications with many short-lived connections or those that don't rely on session state</li>
+</ul>
+<h2 id="administration">Administration</h2>
+<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
+<ul>
+<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
+<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
+<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
+</ul>
+<p>For detailed information on managing PgDoorman, see the <a href="../basic-usage/#admin-console">Admin Console documentation</a>.</p>
 
 
 
@@ -834,13 +927,13 @@ connection to Postgresql server. PgDoorman will create a connection to the actua
         
         
           
-          <a href="../installation/" class="md-footer__link md-footer__link--next" aria-label="Next: Installing PgDoorman">
+          <a href="../installation/" class="md-footer__link md-footer__link--next" aria-label="Next: Installation Guide">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Installing PgDoorman
+                Installation Guide
               </div>
             </div>
             <div class="md-footer__button md-icon">

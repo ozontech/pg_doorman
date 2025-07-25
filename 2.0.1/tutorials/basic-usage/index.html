@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#basic-usage" class="md-skip">
+        <a href="#pgdoorman-basic-usage-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -474,7 +474,7 @@
   
   
   <span class="md-ellipsis">
-    Installing PgDoorman
+    Installation Guide
     
   </span>
   
@@ -542,41 +542,140 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#setup-and-running" class="md-nav__link">
+  <a href="#command-line-options" class="md-nav__link">
     <span class="md-ellipsis">
-      Setup and Running
+      Command Line Options
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Command Line Options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available Options
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#command-line-switches" class="md-nav__link">
-    <span class="md-ellipsis">
-      Command line switches
-    </span>
-  </a>
+        
+      </ul>
+    </nav>
   
 </li>
       
         <li class="md-nav__item">
+  <a href="#setup-and-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Setup and Configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setup and Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-file-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration File Structure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minimal-configuration-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Minimal Configuration Example
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running PgDoorman
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connecting-to-postgresql-via-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connecting to PostgreSQL via PgDoorman
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#administration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Administration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Administration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#admin-console" class="md-nav__link">
     <span class="md-ellipsis">
-      Admin console
+      Admin Console
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Admin console">
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#monitoring-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      Monitoring PgDoorman
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reloading-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reloading Configuration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-console-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Admin Console Commands
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin Console Commands">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
   <a href="#show-commands" class="md-nav__link">
     <span class="md-ellipsis">
-      Show commands
+      Show Commands
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Show commands">
+    <nav class="md-nav" aria-label="Show Commands">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -651,6 +750,21 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#control-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Control Commands
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Control Commands">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#shutdown" class="md-nav__link">
     <span class="md-ellipsis">
@@ -674,17 +788,17 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#signals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Signals
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signal-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Signal Handling
+    </span>
+  </a>
   
 </li>
       
@@ -709,7 +823,7 @@
   
   
   <span class="md-ellipsis">
-    How to upgrade
+    Binary Upgrade Process
     
   </span>
   
@@ -732,7 +846,7 @@
   
   
   <span class="md-ellipsis">
-    Contributing
+    Contributing to PgDoorman
     
   </span>
   
@@ -844,41 +958,140 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#setup-and-running" class="md-nav__link">
+  <a href="#command-line-options" class="md-nav__link">
     <span class="md-ellipsis">
-      Setup and Running
+      Command Line Options
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Command Line Options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#available-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available Options
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#command-line-switches" class="md-nav__link">
-    <span class="md-ellipsis">
-      Command line switches
-    </span>
-  </a>
+        
+      </ul>
+    </nav>
   
 </li>
       
         <li class="md-nav__item">
+  <a href="#setup-and-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Setup and Configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setup and Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-file-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration File Structure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minimal-configuration-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Minimal Configuration Example
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running PgDoorman
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connecting-to-postgresql-via-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connecting to PostgreSQL via PgDoorman
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#administration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Administration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Administration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#admin-console" class="md-nav__link">
     <span class="md-ellipsis">
-      Admin console
+      Admin Console
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Admin console">
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#monitoring-pgdoorman" class="md-nav__link">
+    <span class="md-ellipsis">
+      Monitoring PgDoorman
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reloading-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reloading Configuration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-console-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Admin Console Commands
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin Console Commands">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
   <a href="#show-commands" class="md-nav__link">
     <span class="md-ellipsis">
-      Show commands
+      Show Commands
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Show commands">
+    <nav class="md-nav" aria-label="Show Commands">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -953,6 +1166,21 @@
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#control-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Control Commands
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Control Commands">
+      <ul class="md-nav__list">
+        
           <li class="md-nav__item">
   <a href="#shutdown" class="md-nav__link">
     <span class="md-ellipsis">
@@ -976,17 +1204,17 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#signals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Signals
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signal-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Signal Handling
+    </span>
+  </a>
   
 </li>
       
@@ -1009,433 +1237,600 @@
   
 
 
-<h1 id="basic-usage">Basic Usage</h1>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>$ pg_doorman --help
+<h1 id="pgdoorman-basic-usage-guide">PgDoorman Basic Usage Guide</h1>
+<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. This comprehensive guide will help you get started with configuring, running, and managing PgDoorman for your PostgreSQL environment.</p>
+<h2 id="command-line-options">Command Line Options</h2>
+<p>PgDoorman offers several command-line options to customize its behavior when starting the service:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>$<span class="w"> </span>pg_doorman<span class="w"> </span>--help
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>PgDoorman:<span class="w"> </span>Nextgen<span class="w"> </span>PostgreSQL<span class="w"> </span>Pooler<span class="w"> </span><span class="o">(</span>based<span class="w"> </span>on<span class="w"> </span>PgCat<span class="o">)</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Usage: pg_doorman [OPTIONS] [CONFIG_FILE]
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Usage:<span class="w"> </span>pg_doorman<span class="w"> </span><span class="o">[</span>OPTIONS<span class="o">]</span><span class="w"> </span><span class="o">[</span>CONFIG_FILE<span class="o">]</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>Arguments:
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  [CONFIG_FILE]  [env: CONFIG_FILE=] [default: pg_doorman.toml]
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="o">[</span>CONFIG_FILE<span class="o">]</span><span class="w">  </span><span class="o">[</span>env:<span class="w"> </span><span class="nv">CONFIG_FILE</span><span class="o">=]</span><span class="w"> </span><span class="o">[</span>default:<span class="w"> </span>pg_doorman.toml<span class="o">]</span>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>Options:
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  -l, --log-level &lt;LOG_LEVEL&gt;    [env: LOG_LEVEL=] [default: INFO]
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  -F, --log-format &lt;LOG_FORMAT&gt;  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>  -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>  -d, --daemon                   run as daemon [env: DAEMON=]
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>  -h, --help                     Print help
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>  -V, --version                  Print version
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span>-l,<span class="w"> </span>--log-level<span class="w"> </span>&lt;LOG_LEVEL&gt;<span class="w">    </span><span class="o">[</span>env:<span class="w"> </span><span class="nv">LOG_LEVEL</span><span class="o">=]</span><span class="w"> </span><span class="o">[</span>default:<span class="w"> </span>INFO<span class="o">]</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span>-F,<span class="w"> </span>--log-format<span class="w"> </span>&lt;LOG_FORMAT&gt;<span class="w">  </span><span class="o">[</span>env:<span class="w"> </span><span class="nv">LOG_FORMAT</span><span class="o">=]</span><span class="w"> </span><span class="o">[</span>default:<span class="w"> </span>text<span class="o">]</span><span class="w"> </span><span class="o">[</span>possible<span class="w"> </span>values:<span class="w"> </span>text,<span class="w"> </span>structured,<span class="w"> </span>debug<span class="o">]</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span>-n,<span class="w"> </span>--no-color<span class="w">                 </span>disable<span class="w"> </span>colors<span class="w"> </span><span class="k">in</span><span class="w"> </span>the<span class="w"> </span>log<span class="w"> </span>output<span class="w"> </span><span class="o">[</span>env:<span class="w"> </span><span class="nv">NO_COLOR</span><span class="o">=]</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">  </span>-d,<span class="w"> </span>--daemon<span class="w">                   </span>run<span class="w"> </span>as<span class="w"> </span>daemon<span class="w"> </span><span class="o">[</span>env:<span class="w"> </span><span class="nv">DAEMON</span><span class="o">=]</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">  </span>-h,<span class="w"> </span>--help<span class="w">                     </span>Print<span class="w"> </span><span class="nb">help</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">  </span>-V,<span class="w"> </span>--version<span class="w">                  </span>Print<span class="w"> </span>version
 </span></code></pre></div>
-<h2 id="setup-and-running">Setup and Running</h2>
-<p>First thing you should do is fullfil config file.
-The configuration file is in <a href="https://toml.io/">"toml" format</a>.
-Some parameters MUST be specified in the configuration file (pg_doorman will not start without it), despite their default values.
-For example, you MUST specify a admin username and password to access the administrative console.</p>
-<p>Minimal example to follow is below:
-    <div class="language-toml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="w">    </span><span class="k">[general]</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.0.0.0&quot;</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6432</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="n">admin_username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="n">admin_password</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="k">[pools]</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="k">[pools.exampledb]</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="n">server_host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;127.0.0.1&quot;</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="n">server_port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5432</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="n">pool_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;transaction&quot;</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span><span class="k">[pools.exampledb.users.0]</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span><span class="n">pool_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">40</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="n">username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;doorman&quot;</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span><span class="n">password</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4=&quot;</span>
-</span></code></pre></div></p>
-<p>All configuration options are described in <a href="../../reference/settings/">Settings Reference Guide</a>. </p>
-<p>After configuring options, you can run PgDoorman from the command line:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>$ pg_doorman pg_doorman.toml
-</span></code></pre></div>
-<p>Once launched, you can connect to PgDoorman, instead directly connected to Postgresql database:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>$ psql -p 6432 -U doorman exampledb
-</span></code></pre></div>
-<p>Managing of PgDoorman can be done by connecting to special administration database <strong>pgdoorman</strong>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>$ psql -p 6432 -U admin pgdoorman
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>pgdoorman=&gt; show help;
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>NOTICE:  Console usage
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>DETAIL:
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    SHOW LISTS
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    SHOW CONNECTIONS
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    SHOW STATS
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    RELOAD
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    SHUTDOWN
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    SHOW
-</span></code></pre></div>
-<p>Also, if you made changes to the pg_doorman.toml file, you can reload it:
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pgdoorman=# RELOAD;
-</span></code></pre></div></p>
-<h2 id="command-line-switches">Command line switches</h2>
+<h3 id="available-options">Available Options</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-d</code>, <code>--daemon</code></td>
+<td>Run in the background. Without this option, the process will run in the foreground.<br><br>In daemon mode, setting <code>daemon_pid_file</code> and <code>syslog_prog_name</code> is required. No log messages will be written to stderr after going into the background.</td>
+</tr>
+<tr>
+<td><code>-l</code>, <code>--log-level</code></td>
+<td>Set log level: <code>INFO</code>, <code>DEBUG</code>, or <code>WARN</code>.</td>
+</tr>
+<tr>
+<td><code>-F</code>, <code>--log-format</code></td>
+<td>Set log format. Possible values: <code>text</code>, <code>structured</code>, <code>debug</code>.</td>
+</tr>
+<tr>
+<td><code>-n</code>, <code>--no-color</code></td>
+<td>Disable colors in the log output.</td>
+</tr>
+<tr>
+<td><code>-V</code>, <code>--version</code></td>
+<td>Show version information.</td>
+</tr>
+<tr>
+<td><code>-h</code>, <code>--help</code></td>
+<td>Show help information.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="setup-and-configuration">Setup and Configuration</h2>
+<h3 id="configuration-file-structure">Configuration File Structure</h3>
+<p>PgDoorman uses a <a href="https://toml.io/">TOML format</a> configuration file to define its behavior. The configuration file is organized into several sections:</p>
 <ul>
-<li>
-<p><code>-d</code>, <code>--daemon</code>
-:   Run in the background. Without it, the process will run in the foreground.</p>
-<p>In daemon mode, setting <code>daemon_pid_file</code> as well as <code>syslog_prog_name</code>
-is required.  No log messages will be written to stderr after
-going into the background.</p>
-</li>
-<li>
-<p><code>-l</code>, <code>--log-level</code>
-:   Set log-level: <code>INFO</code> or <code>DEBUG</code> or <code>WARN</code>.</p>
-</li>
-<li>
-<p><code>-F</code>, <code>--log-format</code>
-:   Possible values: text, structured, debug.</p>
-</li>
-<li>
-<p><code>-n</code>, <code>--no-color</code>
-:   Disable colors in the log output.</p>
-</li>
-<li>
-<p><code>-V</code>, <code>--version</code>
-:   Show version.</p>
-</li>
-<li>
-<p><code>-h</code>, <code>--help</code>
-:   Show short help.</p>
-</li>
+<li><code>[general]</code> - Global settings for the PgDoorman service</li>
+<li><code>[pools]</code> - Database pool definitions</li>
+<li><code>[pools.&lt;name&gt;]</code> - Settings for a specific database pool</li>
+<li><code>[pools.&lt;name&gt;.users.&lt;n&gt;]</code> - User settings for a specific database pool</li>
 </ul>
-<h2 id="admin-console">Admin console</h2>
-<p>The console is available by connecting as normal to the
-database <strong>pgdoorman</strong> or <strong>pgbouncer</strong>:</p>
-<div class="language-text highlight"><pre><span></span><code>$ psql -p 6432 pgdoorman
-</code></pre></div>
-<p>Only user <code>admin_username</code> is allowed to log in to the console.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>Admin console currently supports only simple query protocol.
- Some drivers use extended query protocol for all of the commands, so these drivers are not suitable.</p>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>Some parameters <strong>must</strong> be specified in the configuration file for PgDoorman to start, even if they have default values. For example, you must specify an admin username and password to access the administrative console.</p>
 </div>
-<h3 id="show-commands">Show commands</h3>
-<p>The <strong>SHOW</strong> commands output information. Each command is described below.</p>
+<h3 id="minimal-configuration-example">Minimal Configuration Example</h3>
+<p>Here's a minimal configuration example to get you started:</p>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Global settings</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">[general]</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.0.0.0&quot;</span><span class="w">    </span><span class="c1"># Listen on all interfaces</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6432</span><span class="w">         </span><span class="c1"># Port for client connections</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Admin credentials for the management console</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">admin_username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">admin_password</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span><span class="w">  </span><span class="c1"># Change this in production!</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="c1"># Database pools section</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="k">[pools]</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># Example database pool</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="k">[pools.exampledb]</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">server_host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;127.0.0.1&quot;</span><span class="w">  </span><span class="c1"># PostgreSQL server address</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">server_port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5432</span><span class="w">         </span><span class="c1"># PostgreSQL server port</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">pool_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;transaction&quot;</span><span class="w">  </span><span class="c1"># Connection pooling mode</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="c1"># User configuration for this pool</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="k">[pools.exampledb.users.0]</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="n">pool_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">40</span><span class="w">             </span><span class="c1"># Maximum number of connections in the pool</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;doorman&quot;</span><span class="w">       </span><span class="c1"># Username for PostgreSQL server</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="n">password</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4=&quot;</span><span class="w">  </span><span class="c1"># Hashed password</span>
+</span></code></pre></div>
+<p>For a complete list of configuration options and their descriptions, see the <a href="../../reference/settings/">Settings Reference Guide</a>.</p>
+<h3 id="running-pgdoorman">Running PgDoorman</h3>
+<p>After creating your configuration file, you can run PgDoorman from the command line:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>$<span class="w"> </span>pg_doorman<span class="w"> </span>pg_doorman.toml
+</span></code></pre></div>
+<p>If you don't specify a configuration file, PgDoorman will look for <code>pg_doorman.toml</code> in the current directory.</p>
+<h3 id="connecting-to-postgresql-via-pgdoorman">Connecting to PostgreSQL via PgDoorman</h3>
+<p>Once PgDoorman is running, connect to it instead of connecting directly to your PostgreSQL database:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>$<span class="w"> </span>psql<span class="w"> </span>-h<span class="w"> </span>localhost<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span><span class="w"> </span>-U<span class="w"> </span>doorman<span class="w"> </span>exampledb
+</span></code></pre></div>
+<p>Your application's connection string should be updated to point to PgDoorman instead of directly to PostgreSQL:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>postgresql://doorman:password@localhost:6432/exampledb
+</span></code></pre></div>
+<p>PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.</p>
+<h2 id="administration">Administration</h2>
+<h3 id="admin-console">Admin Console</h3>
+<p>PgDoorman provides a powerful administrative interface that allows you to monitor and manage the connection pooler. You can access this interface by connecting to the special administration database named <strong>pgdoorman</strong>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>$<span class="w"> </span>psql<span class="w"> </span>-h<span class="w"> </span>localhost<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span><span class="w"> </span>-U<span class="w"> </span>admin<span class="w"> </span>pgdoorman
+</span></code></pre></div>
+<p>Once connected, you can view available commands:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">HELP</span><span class="p">;</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">NOTICE</span><span class="p">:</span><span class="w">  </span><span class="n">Console</span><span class="w"> </span><span class="k">usage</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">DETAIL</span><span class="p">:</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">HELP</span><span class="o">|</span><span class="n">CONFIG</span><span class="o">|</span><span class="n">DATABASES</span><span class="o">|</span><span class="n">POOLS</span><span class="o">|</span><span class="n">POOLS_EXTENDED</span><span class="o">|</span><span class="n">CLIENTS</span><span class="o">|</span><span class="n">SERVERS</span><span class="o">|</span><span class="n">USERS</span><span class="o">|</span><span class="k">VERSION</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">LISTS</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">CONNECTIONS</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">STATS</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="n">RELOAD</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="n">SHUTDOWN</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">    </span><span class="k">SHOW</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Protocol Compatibility</p>
+<p>The admin console currently supports only the simple query protocol.
+Some database drivers use the extended query protocol for all commands, making them unsuitable for admin console access. In such cases, use the <code>psql</code> command-line client for administration.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Security</p>
+<p>Only the user specified by <code>admin_username</code> in the configuration file is allowed to log in to the admin console. 
+Make sure to use a strong password for this account in production environments.</p>
+</div>
+<h3 id="monitoring-pgdoorman">Monitoring PgDoorman</h3>
+<p>The admin console provides several commands to monitor the current state of PgDoorman:</p>
+<ul>
+<li><code>SHOW STATS</code> - View performance statistics</li>
+<li><code>SHOW CLIENTS</code> - List current client connections</li>
+<li><code>SHOW SERVERS</code> - List current server connections</li>
+<li><code>SHOW POOLS</code> - View connection pool status</li>
+<li><code>SHOW DATABASES</code> - List configured databases</li>
+<li><code>SHOW USERS</code> - List configured users</li>
+</ul>
+<p>These commands are described in detail in the <a href="#admin-console-commands">Admin Console Commands</a> section below.</p>
+<h3 id="reloading-configuration">Reloading Configuration</h3>
+<p>If you make changes to the <code>pg_doorman.toml</code> file, you can apply them without restarting the service:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">pgdoorman</span><span class="o">=#</span><span class="w"> </span><span class="n">RELOAD</span><span class="p">;</span>
+</span></code></pre></div>
+<p>When you reload the configuration:</p>
+<ol>
+<li>PgDoorman reads the updated configuration file</li>
+<li>Changes to database connection parameters are detected</li>
+<li>Existing server connections are closed when they're next released (according to the pooling mode)</li>
+<li>New server connections immediately use the updated parameters</li>
+</ol>
+<p>This allows you to make configuration changes with minimal disruption to your applications.</p>
+<h2 id="admin-console-commands">Admin Console Commands</h2>
+<p>The admin console provides a set of commands to monitor and manage PgDoorman. These commands follow a SQL-like syntax and can be executed from any PostgreSQL client connected to the admin console.</p>
+<h3 id="show-commands">Show Commands</h3>
+<p>The <code>SHOW</code> commands display information about PgDoorman's operation. Each command provides different insights into the pooler's performance and current state.</p>
 <h4 id="show-stats">SHOW STATS</h4>
-<p>Shows statistics. In this and related commands, the total figures are
-since process start, the averages are updated every <code>15 seconds</code>.</p>
-<ul>
-<li>
-<p><code>database</code>
-:   Statistics are presented per database.</p>
-</li>
-<li>
-<p><code>total_xact_count</code>
-:   Total number of SQL transactions processed by PgDoorman.</p>
-</li>
-<li>
-<p><code>total_query_count</code>
-:   Total number of SQL commands processed by PgDoorman.</p>
-</li>
-<li>
-<p><code>total_received</code>
-:   Total volume in bytes of network traffic received by PgDoorman.</p>
-</li>
-<li>
-<p><code>total_sent</code>
-:   Total volume in bytes of network traffic sent by PgDoorman.</p>
-</li>
-<li>
-<p><code>total_xact_time</code>
-:   Total number of microseconds spent by PgDoorman when connected
-    to PostgreSQL in a transaction, either idle in transaction or
-    executing queries.</p>
-</li>
-<li>
-<p><code>total_query_time</code>
-:   Total number of microseconds spent by PgDoorman when actively
-    connected to PostgreSQL, executing queries.</p>
-</li>
-<li>
-<p><code>total_wait_time</code>
-:   Time spent by clients waiting for a server, in microseconds. Updated
-    when a client connection is assigned a backend connection.</p>
-</li>
-<li>
-<p><code>avg_xact_count</code>
-:   Average transactions per second in last stat period.</p>
-</li>
-<li>
-<p><code>avg_query_count</code>
-:   Average queries per second in last stat period.</p>
-</li>
-<li>
-<p><code>avg_server_assignment_count</code>
-:   Average number of times a server as assigned to a client per second in the
-    last stat period.</p>
-</li>
-<li>
-<p><code>avg_recv</code>
-:   Average received (from clients) bytes per second.</p>
-</li>
-<li>
-<p><code>avg_sent</code>
-:   Average sent (to clients) bytes per second.</p>
-</li>
-<li>
-<p><code>avg_xact_time</code>
-:   Average transaction duration, in microseconds.</p>
-</li>
-<li>
-<p><code>avg_query_time</code>
-:   Average query duration, in microseconds.</p>
-</li>
-<li>
-<p><code>avg_wait_time</code>
-:   Time spent by clients waiting for a server, in microseconds (average
-    of the wait times for clients assigned a backend during the current
-    <code>15 seconds</code>).</p>
-</li>
-</ul>
+<p>The <code>SHOW STATS</code> command displays comprehensive statistics about PgDoorman's operation:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">STATS</span><span class="p">;</span>
+</span></code></pre></div>
+<p>Statistics are presented per database with the following metrics:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>database</code></td>
+<td>The database name these statistics apply to</td>
+</tr>
+<tr>
+<td><code>total_xact_count</code></td>
+<td>Total number of SQL transactions processed since startup</td>
+</tr>
+<tr>
+<td><code>total_query_count</code></td>
+<td>Total number of SQL commands processed since startup</td>
+</tr>
+<tr>
+<td><code>total_received</code></td>
+<td>Total bytes of network traffic received from clients</td>
+</tr>
+<tr>
+<td><code>total_sent</code></td>
+<td>Total bytes of network traffic sent to clients</td>
+</tr>
+<tr>
+<td><code>total_xact_time</code></td>
+<td>Total microseconds spent in transactions (including idle in transaction)</td>
+</tr>
+<tr>
+<td><code>total_query_time</code></td>
+<td>Total microseconds spent actively executing queries</td>
+</tr>
+<tr>
+<td><code>total_wait_time</code></td>
+<td>Total microseconds clients spent waiting for a server connection</td>
+</tr>
+<tr>
+<td><code>avg_xact_count</code></td>
+<td>Average transactions per second in the last 15-second period</td>
+</tr>
+<tr>
+<td><code>avg_query_count</code></td>
+<td>Average queries per second in the last 15-second period</td>
+</tr>
+<tr>
+<td><code>avg_server_assignment_count</code></td>
+<td>Average server assignments per second in the last 15-second period</td>
+</tr>
+<tr>
+<td><code>avg_recv</code></td>
+<td>Average bytes received per second from clients</td>
+</tr>
+<tr>
+<td><code>avg_sent</code></td>
+<td>Average bytes sent per second to clients</td>
+</tr>
+<tr>
+<td><code>avg_xact_time</code></td>
+<td>Average transaction duration in microseconds</td>
+</tr>
+<tr>
+<td><code>avg_query_time</code></td>
+<td>Average query duration in microseconds</td>
+</tr>
+<tr>
+<td><code>avg_wait_time</code></td>
+<td>Average time clients spent waiting for a server in microseconds</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Performance Monitoring</p>
+<p>Pay special attention to the <code>avg_wait_time</code> metric. If this value is consistently high, it may indicate that your pool size is too small for your workload.</p>
+</div>
 <h4 id="show-servers">SHOW SERVERS</h4>
+<p>The <code>SHOW SERVERS</code> command displays detailed information about all server connections:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">SERVERS</span><span class="p">;</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>server_id</code></td>
+<td>Unique identifier for the server connection</td>
+</tr>
+<tr>
+<td><code>server_process_id</code></td>
+<td>PID of the backend PostgreSQL server process (if available)</td>
+</tr>
+<tr>
+<td><code>database_name</code></td>
+<td>Name of the database this connection is using</td>
+</tr>
+<tr>
+<td><code>user</code></td>
+<td>Username PgDoorman uses to connect to the PostgreSQL server</td>
+</tr>
+<tr>
+<td><code>application_name</code></td>
+<td>Value of the <code>application_name</code> parameter set on the server connection</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td>Current state of the connection: <strong>active</strong>, <strong>idle</strong>, or <strong>used</strong></td>
+</tr>
+<tr>
+<td><code>wait</code></td>
+<td>Wait state of the connection: <strong>idle</strong>, <strong>read</strong>, or <strong>write</strong></td>
+</tr>
+<tr>
+<td><code>transaction_count</code></td>
+<td>Total number of transactions processed by this connection</td>
+</tr>
+<tr>
+<td><code>query_count</code></td>
+<td>Total number of queries processed by this connection</td>
+</tr>
+<tr>
+<td><code>bytes_sent</code></td>
+<td>Total bytes sent to the PostgreSQL server</td>
+</tr>
+<tr>
+<td><code>bytes_received</code></td>
+<td>Total bytes received from the PostgreSQL server</td>
+</tr>
+<tr>
+<td><code>age_seconds</code></td>
+<td>Lifetime of the current server connection in seconds</td>
+</tr>
+<tr>
+<td><code>prepare_cache_hit</code></td>
+<td>Number of prepared statement cache hits</td>
+</tr>
+<tr>
+<td><code>prepare_cache_miss</code></td>
+<td>Number of prepared statement cache misses</td>
+</tr>
+<tr>
+<td><code>prepare_cache_size</code></td>
+<td>Number of unique prepared statements in the cache</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">Connection States</p>
 <ul>
-<li>
-<p><code>server_id</code>
-:   Unique ID for server.</p>
-</li>
-<li>
-<p><code>server_process_id</code>
-:   PID of backend server process.  In case connection is made over
-    Unix socket and OS supports getting process ID info, its
-    OS PID.</p>
-</li>
-<li>
-<p><code>database_name</code>
-:   Database name.</p>
-</li>
-<li>
-<p><code>user</code>
-:   User name PgDoorman uses to connect to server.</p>
-</li>
-<li>
-<p><code>application_name</code>
-:   A string containing the <code>application_name</code> set on the server connection.</p>
-</li>
-<li>
-<p><code>state</code>
-:   State of the pg_doorman server connection, one of <strong>active</strong>,
-    <strong>idle</strong>, <strong>used</strong>.</p>
-</li>
-<li>
-<p><code>wait</code>
-:   Wait state of the pg_doorman server connection, one of <strong>idle</strong>,
-    <strong>read</strong>, <strong>write</strong>.</p>
-</li>
-<li>
-<p><code>transaction_count</code>
-:   Total number of processed transactions.</p>
-</li>
-<li>
-<p><code>query_count</code>
-:   Total number of processed queries.</p>
-</li>
-<li>
-<p><code>bytes_sent</code>
-:   Total bytes sent to PostgreSQL server.</p>
-</li>
-<li>
-<p><code>bytes_received</code>
-:   Total bytes received from PostgreSQL server.</p>
-</li>
-<li>
-<p><code>age_seconds</code>
-:   Lifetime of the current server connection.</p>
-</li>
-<li>
-<p><code>prepare_cache_hit</code>
-:   Total number of cache hit prepared statements.</p>
-</li>
-<li>
-<p><code>prepare_cache_miss</code>
-:   Total number of cache miss prepared statements.</p>
-</li>
-<li>
-<p><code>prepare_cache_size</code>
-:   The total number of unique prepared statements.</p>
-</li>
+<li><strong>active</strong>: The connection is currently executing a query</li>
+<li><strong>idle</strong>: The connection is available for use</li>
+<li><strong>used</strong>: The connection is allocated to a client but not currently executing a query</li>
 </ul>
+</div>
 <h4 id="show-clients">SHOW CLIENTS</h4>
-<ul>
-<li>
-<p><code>client_id</code>
-:   Unique ID for client.</p>
-</li>
-<li>
-<p><code>database</code>
-:   Database (pool) name.</p>
-</li>
-<li>
-<p><code>user</code>
-:   Client connected user.</p>
-</li>
-<li>
-<p><code>addr</code>
-:   IP:port of client.</p>
-</li>
-<li>
-<p><code>tls</code>
-:   Can be <strong>true</strong>, <strong>false</strong>.</p>
-</li>
-<li>
-<p><code>state</code>
-:   State of the client connection, one of <strong>active</strong>,
-    <strong>idle</strong>, <strong>waiting</strong>.</p>
-</li>
-<li>
-<p><code>wait</code>
-:   Wait state of the pg_doorman client connection, one of <strong>idle</strong>,
-    <strong>read</strong>, <strong>write</strong>.</p>
-</li>
-<li>
-<p><code>transaction_count</code>
-:   Total number of processed transactions.</p>
-</li>
-<li>
-<p><code>query_count</code>
-:   Total number of processed queries.</p>
-</li>
-<li>
-<p><code>age_seconds</code>
-:   Lifetime of the current client connection.</p>
-</li>
-</ul>
+<p>The <code>SHOW CLIENTS</code> command displays information about all client connections to PgDoorman:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">CLIENTS</span><span class="p">;</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>client_id</code></td>
+<td>Unique identifier for the client connection</td>
+</tr>
+<tr>
+<td><code>database</code></td>
+<td>Name of the database (pool) the client is connected to</td>
+</tr>
+<tr>
+<td><code>user</code></td>
+<td>Username the client used to connect</td>
+</tr>
+<tr>
+<td><code>addr</code></td>
+<td>Client's IP address and port (IP:port)</td>
+</tr>
+<tr>
+<td><code>tls</code></td>
+<td>Whether the connection uses TLS encryption (<strong>true</strong> or <strong>false</strong>)</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td>Current state of the client connection: <strong>active</strong>, <strong>idle</strong>, or <strong>waiting</strong></td>
+</tr>
+<tr>
+<td><code>wait</code></td>
+<td>Wait state of the client connection: <strong>idle</strong>, <strong>read</strong>, or <strong>write</strong></td>
+</tr>
+<tr>
+<td><code>transaction_count</code></td>
+<td>Total number of transactions processed for this client</td>
+</tr>
+<tr>
+<td><code>query_count</code></td>
+<td>Total number of queries processed for this client</td>
+</tr>
+<tr>
+<td><code>age_seconds</code></td>
+<td>Lifetime of the client connection in seconds</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Monitoring Long-Running Connections</p>
+<p>The <code>age_seconds</code> column can help identify long-running connections that might be holding resources unnecessarily. Consider implementing connection timeouts in your application for idle connections.</p>
+</div>
 <h4 id="show-pools">SHOW POOLS</h4>
-<p>A new pool entry is made for each couple of (database, user).</p>
-<ul>
-<li>
-<p><code>database</code>
-:   Database name.</p>
-</li>
-<li>
-<p><code>user</code>
-:   User name.</p>
-</li>
-<li>
-<p><code>pool_mode</code>
-:   The pooling mode in use.</p>
-</li>
-<li>
-<p><code>cl_active</code>
-:   Client connections that are either linked to server connections or are idle with no queries waiting to be processed.</p>
-</li>
-<li>
-<p><code>cl_waiting</code>
-:   Client connections that have sent queries but have not yet got a server connection.</p>
-</li>
-<li>
-<p><code>sv_active</code>
-:   Server connections that are linked to a client.</p>
-</li>
-<li>
-<p><code>sv_idle</code>
-:   Server connections that are unused and immediately usable for client queries.</p>
-</li>
-<li>
-<p><code>sv_login</code>
-:   Server connections currently in the process of logging in.</p>
-</li>
-<li>
-<p><code>maxwait</code>
-:   How long the first (oldest) client in the queue has waited, in seconds.
-    If this starts increasing, then the current pool of servers does
-    not handle requests quickly enough.  The reason may be either an overloaded
-    server or just too small of a <strong>pool_size</strong> setting.</p>
-</li>
-<li>
-<p><code>maxwait_us</code>
-:   Microsecond part of the maximum waiting time.</p>
-</li>
-</ul>
+<p>The <code>SHOW POOLS</code> command displays information about connection pools. A new pool entry is created for each (database, user) pair:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">POOLS</span><span class="p">;</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>database</code></td>
+<td>Name of the database</td>
+</tr>
+<tr>
+<td><code>user</code></td>
+<td>Username associated with this pool</td>
+</tr>
+<tr>
+<td><code>pool_mode</code></td>
+<td>Pooling mode in use: <strong>session</strong> or <strong>transaction</strong></td>
+</tr>
+<tr>
+<td><code>cl_active</code></td>
+<td>Number of active client connections (linked to servers or idle)</td>
+</tr>
+<tr>
+<td><code>cl_waiting</code></td>
+<td>Number of client connections waiting for a server connection</td>
+</tr>
+<tr>
+<td><code>sv_active</code></td>
+<td>Number of server connections linked to clients</td>
+</tr>
+<tr>
+<td><code>sv_idle</code></td>
+<td>Number of idle server connections available for immediate use</td>
+</tr>
+<tr>
+<td><code>sv_login</code></td>
+<td>Number of server connections currently in the login process</td>
+</tr>
+<tr>
+<td><code>maxwait</code></td>
+<td>Maximum wait time in seconds for the oldest client in the queue</td>
+</tr>
+<tr>
+<td><code>maxwait_us</code></td>
+<td>Microsecond part of the maximum waiting time</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Performance Alert</p>
+<p>If the <code>maxwait</code> value starts increasing, your server pool may not be handling requests quickly enough. This could be due to an overloaded PostgreSQL server or insufficient <code>pool_size</code> setting.</p>
+</div>
 <h4 id="show-users">SHOW USERS</h4>
-<ul>
-<li>
-<p><code>name</code>
-:   The user name</p>
-</li>
-<li>
-<p><code>pool_mode</code>
-:   The pooling mode in use.</p>
-</li>
-</ul>
+<p>The <code>SHOW USERS</code> command displays information about all configured users:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">USERS</span><span class="p">;</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>Username as configured in PgDoorman</td>
+</tr>
+<tr>
+<td><code>pool_mode</code></td>
+<td>Pooling mode assigned to this user: <strong>session</strong> or <strong>transaction</strong></td>
+</tr>
+</tbody>
+</table>
 <h4 id="show-databases">SHOW DATABASES</h4>
-<ul>
-<li>
-<p><code>database</code>
-:   Name of configured database entry.</p>
-</li>
-<li>
-<p><code>host</code>
-:   Host pg_doorman connects to.</p>
-</li>
-<li>
-<p><code>port</code>
-:   Port pg_doorman connects to.</p>
-</li>
-<li>
-<p><code>pool_size</code>
-:   Maximum number of server connections.</p>
-</li>
-<li>
-<p><code>min_pool_size</code>
-:   Minimum number of server connections.</p>
-</li>
-<li>
-<p><code>reserve_pool_size</code>
-:   Maximum number of additional connections for this database.</p>
-</li>
-<li>
-<p><code>pool_mode</code>
-:   The pooling mode in use.</p>
-</li>
-<li>
-<p><code>max_connections</code>
-:   Maximum number of allowed server connections for this database, as set by
-    <strong>max_db_connections</strong>, either globally or per database.</p>
-</li>
-<li>
-<p><code>current_connections</code>
-:   Current number of server connections for this database.</p>
-</li>
-</ul>
+<p>The <code>SHOW DATABASES</code> command displays information about all configured database pools:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">DATABASES</span><span class="p">;</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>database</code></td>
+<td>Name of the configured database pool</td>
+</tr>
+<tr>
+<td><code>host</code></td>
+<td>Hostname of the PostgreSQL server PgDoorman connects to</td>
+</tr>
+<tr>
+<td><code>port</code></td>
+<td>Port number of the PostgreSQL server</td>
+</tr>
+<tr>
+<td><code>pool_size</code></td>
+<td>Maximum number of server connections for this database</td>
+</tr>
+<tr>
+<td><code>min_pool_size</code></td>
+<td>Minimum number of server connections to maintain</td>
+</tr>
+<tr>
+<td><code>reserve_pool_size</code></td>
+<td>Maximum number of additional connections allowed</td>
+</tr>
+<tr>
+<td><code>pool_mode</code></td>
+<td>Default pooling mode for this database</td>
+</tr>
+<tr>
+<td><code>max_connections</code></td>
+<td>Maximum allowed server connections (from <code>max_db_connections</code>)</td>
+</tr>
+<tr>
+<td><code>current_connections</code></td>
+<td>Current number of server connections for this database</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Connection Management</p>
+<p>Monitor the ratio between <code>current_connections</code> and <code>pool_size</code> to ensure your pool is properly sized. If <code>current_connections</code> frequently reaches <code>pool_size</code>, consider increasing the pool size.</p>
+</div>
 <h4 id="show-sockets">SHOW SOCKETS</h4>
-<p>Shows low-level information about sockets or only active sockets.
-This includes the information shown under <strong>SHOW CLIENTS</strong> and <strong>SHOW
-SERVERS</strong> as well as other more low-level information.</p>
+<p>The <code>SHOW SOCKETS</code> command displays low-level information about network sockets:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">SOCKETS</span><span class="p">;</span>
+</span></code></pre></div>
+<p>This command includes all information shown in <code>SHOW CLIENTS</code> and <code>SHOW SERVERS</code> plus additional low-level details about the socket connections.</p>
 <h4 id="show-version">SHOW VERSION</h4>
-<p>Show the PgDoorman version string.</p>
+<p>The <code>SHOW VERSION</code> command displays the PgDoorman version information:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="k">VERSION</span><span class="p">;</span>
+</span></code></pre></div>
+<p>This is useful for verifying which version you're running, especially after upgrades.</p>
+<h3 id="control-commands">Control Commands</h3>
+<p>PgDoorman provides control commands that allow you to manage the service operation directly from the admin console.</p>
 <h4 id="shutdown">SHUTDOWN</h4>
-<p>The PgDoorman process will exit.</p>
+<p>The <code>SHUTDOWN</code> command gracefully terminates the PgDoorman process:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="n">SHUTDOWN</span><span class="p">;</span>
+</span></code></pre></div>
+<p>When executed:</p>
+<ol>
+<li>PgDoorman stops accepting new client connections</li>
+<li>Existing transactions are allowed to complete (within the configured timeout)</li>
+<li>All connections are closed</li>
+<li>The process exits</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Service Interruption</p>
+<p>Using the <code>SHUTDOWN</code> command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.</p>
+</div>
 <h4 id="reload">RELOAD</h4>
-<p>The PgDoorman process will reload its configuration files and update
-changeable settings.</p>
-<p>PgDoorman notices when a configuration file reload changes the
-connection parameters of a database definition.  An existing server
-connection to the old destination will be closed when the server
-connection is next released (according to the pooling mode), and new
-server connections will immediately use the updated connection
-parameters.</p>
-<h3 id="signals">Signals</h3>
-<ul>
-<li>
-<p>SIGHUP
-:   Reload config. Same as issuing the command <strong>RELOAD</strong> on the console.</p>
-</li>
-<li>
-<p>SIGTERM
-:   Immediate shutdown.</p>
-</li>
-<li>
-<p>SIGINT
-:   Graceful shutdown <a href="../binary-upgrade/">looks here</a> for more information.</p>
-</li>
-</ul>
+<p>The <code>RELOAD</code> command refreshes PgDoorman's configuration without restarting the service:</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="n">RELOAD</span><span class="p">;</span>
+</span></code></pre></div>
+<p>This command:</p>
+<ol>
+<li>Rereads the configuration file</li>
+<li>Updates all changeable settings</li>
+<li>Applies changes to connection parameters for new connections</li>
+<li>Maintains existing connections until they're released back to the pool</li>
+</ol>
+<div class="admonition tip">
+<p class="admonition-title">Zero-Downtime Configuration Changes</p>
+<p>The <code>RELOAD</code> command allows you to modify most configuration parameters without disrupting existing connections. This is ideal for production environments where downtime must be minimized.</p>
+</div>
+<h2 id="signal-handling">Signal Handling</h2>
+<p>PgDoorman responds to standard Unix signals for control and management. These signals can be sent using the <code>kill</code> command (e.g., <code>kill -HUP &lt;pid&gt;</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Description</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SIGHUP</strong></td>
+<td>Configuration reload</td>
+<td>Equivalent to the <code>RELOAD</code> command in the admin console. Rereads the configuration file and applies changes to settings.</td>
+</tr>
+<tr>
+<td><strong>SIGTERM</strong></td>
+<td>Immediate shutdown</td>
+<td>Forces PgDoorman to exit immediately. Active connections may be terminated abruptly.</td>
+</tr>
+<tr>
+<td><strong>SIGINT</strong></td>
+<td>Graceful shutdown</td>
+<td>Initiates a binary upgrade process. The current process starts a new instance and gracefully transfers connections. See <a href="../binary-upgrade/">Binary Upgrade Process</a> for details.</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Process Management</p>
+<p>In systemd-based environments, you can use <code>systemctl reload pg_doorman</code> to send SIGHUP and <code>systemctl restart pg_doorman</code> for a complete restart.</p>
+</div>
 
 
 
@@ -1474,7 +1869,7 @@ parameters.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../installation/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Installing PgDoorman">
+          <a href="../installation/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Installation Guide">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1484,20 +1879,20 @@ parameters.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Installing PgDoorman
+                Installation Guide
               </div>
             </div>
           </a>
         
         
           
-          <a href="../binary-upgrade/" class="md-footer__link md-footer__link--next" aria-label="Next: How to upgrade">
+          <a href="../binary-upgrade/" class="md-footer__link md-footer__link--next" aria-label="Next: Binary Upgrade Process">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                How to upgrade
+                Binary Upgrade Process
               </div>
             </div>
             <div class="md-footer__button md-icon">
