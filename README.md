@@ -90,6 +90,40 @@ username = "doorman"       # Username for PostgreSQL server
 password = "your_password" # Password for PostgreSQL server
 ```
 
+### Automatic Configuration Generation
+
+PgDoorman provides a powerful `generate` command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users:
+
+```bash
+# View all available options
+pg_doorman generate --help
+
+# Generate a configuration file with default settings
+pg_doorman generate --output pg_doorman.toml
+
+# Connect to a specific PostgreSQL server
+pg_doorman generate --host db.example.com --port 5432 --output pg_doorman.toml
+
+# Connect with specific credentials (requires superuser privileges)
+pg_doorman generate --user postgres --password secret --output pg_doorman.toml
+
+# Generate configuration with SSL/TLS enabled
+pg_doorman generate --ssl --output pg_doorman.toml
+
+# Set custom pool size and pool mode
+pg_doorman generate --pool-size 20 --session-pool-mode --output pg_doorman.toml
+```
+
+The `generate` command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
+
+Key features of the `generate` command:
+- Automatically detects all non-template databases
+- Retrieves user authentication information from PostgreSQL
+- Configures appropriate pool settings for each database
+- Supports both regular and SSL/TLS connections
+- Can use standard PostgreSQL environment variables (PGHOST, PGPORT, etc.)
+- Allows customization of pool size and pool mode
+
 ### Running PgDoorman
 
 After creating your configuration file, you can run PgDoorman from the command line:

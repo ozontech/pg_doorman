@@ -28,6 +28,7 @@ use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::io::{self, IsTerminal, Write};
+use std::net::ToSocketAddrs;
 use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -48,10 +49,12 @@ use tokio::{runtime::Builder, sync::mpsc};
 
 extern crate exitcode;
 
+use pg_doorman::cmd_args::Commands;
 use pg_doorman::config::{get_config, reload_config, VERSION};
 use pg_doorman::core_affinity;
 use pg_doorman::daemon;
 use pg_doorman::format_duration;
+use pg_doorman::generate::generate_config;
 use pg_doorman::messages::configure_tcp_socket;
 use pg_doorman::pool::{retain_connections, ClientServerMap, ConnectionPool};
 use pg_doorman::rate_limit::RateLimiter;
@@ -62,7 +65,22 @@ use pg_doorman::{cmd_args, logger};
 pub static CURRENT_CLIENT_COUNT: Lazy<Arc<AtomicI64>> = Lazy::new(|| Arc::new(AtomicI64::new(0)));
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = cmd_args::parse();
+    let cli = cmd_args::parse();
+
+    match &cli.command {
+        Some(Commands::Generate { config }) => {
+            let pg_doorman_config = generate_config(config)?;
+            let data = toml::to_string_pretty(&pg_doorman_config)?;
+            if let Some(output_path) = &config.output {
+                std::fs::write(output_path, &data)?;
+                info!("Config written to file: {}", output_path);
+            } else {
+                println!("{data}");
+            }
+            return Ok(());
+        }
+        None => (),
+    }
 
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -75,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let runtime = Builder::new_multi_thread().worker_threads(1).build()?;
 
         runtime.block_on(async {
-            match pg_doorman::config::parse(args.config_file.as_str()).await {
+            match pg_doorman::config::parse(cli.config_file.as_str()).await {
                 Ok(_) => (),
                 Err(err) => {
                     let stdin = io::stdin();
@@ -92,11 +110,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let config = get_config();
-    logger::init(&args, config.general.syslog_prog_name.clone());
+    logger::init(&cli, config.general.syslog_prog_name.clone());
 
     info!("Welcome to PgDoorman! (Version {VERSION})");
 
-    if args.daemon {
+    if cli.daemon {
         let pid_file = config.general.daemon_pid_file.clone();
         let daemonize = daemon::lib::Daemonize::new()
             .pid_file(pid_file)
@@ -147,14 +165,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime.block_on(async move {
 
         // starting listener.
-        let addr = format!("{}:{}", config.general.host, config.general.port).parse().unwrap();
-        let listen_socket = TcpSocket::new_v4().unwrap();
+        let addr = format!("{}:{}", config.general.host, config.general.port).to_socket_addrs().
+            unwrap().next().unwrap();
+        let listen_socket = if addr.is_ipv4() {
+            TcpSocket::new_v4().unwrap()
+        } else {
+            TcpSocket::new_v6().unwrap()
+        };
         listen_socket.set_reuseaddr(true).expect("can't set reuseaddr");
         listen_socket.set_reuseport(true).expect("can't set reuseport");
         listen_socket.set_nodelay(true).expect("can't set nodelay");
         listen_socket.set_linger(Some(Duration::from_secs(0))).expect("can't set linger 0");
         // IPTOS_LOWDELAY: u8 = 0x10;
-        listen_socket.set_tos(0x10).expect("can't set tos");
+        if addr.is_ipv4() {
+            match listen_socket.set_tos(0x10) {
+                Ok(_) => (),
+                Err(err) => {
+                    warn!("Can't set IPTOS_LOWDELAY: {err:?}");
+                }
+            };
+        };
         listen_socket.bind(addr).expect("can't bind");
         // end configure listener.
         let backlog = if config.general.backlog > 0 {
@@ -258,7 +288,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = interrupt_signal.recv() => {
                     info!("Got SIGINT, starting graceful shutdown");
 
-                    if args.daemon && !admin_only {
+                    if cli.daemon && !admin_only {
                         // start daemon.
                         let full_exe_args: Vec<_> = std::env::args().collect();
                         let exe_path = &full_exe_args[0];

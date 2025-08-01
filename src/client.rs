@@ -1635,11 +1635,10 @@ where
                 .await?;
 
                 Err(Error::ClientError(format!(
-                    "Invalid pool name {{ username: {}, pool_name: {}, application_name: {}, virtual pool id: {} }}",
+                    "Invalid pool name {{ username: {}, pool_name: {}, application_name: {} }}",
                     self.pool_name,
                     self.username,
                     self.server_parameters.get_application_name(),
-                    virtual_pool_id
                 )))
             }
         }

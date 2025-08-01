@@ -7,6 +7,7 @@ pub mod constants;
 pub mod core_affinity;
 pub mod daemon;
 pub mod errors;
+pub mod generate;
 pub mod logger;
 pub mod messages;
 pub mod pool;

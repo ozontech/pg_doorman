@@ -15,7 +15,11 @@ $ pg_doorman --help
 
 PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
 
-Usage: pg_doorman [OPTIONS] [CONFIG_FILE]
+Usage: pg_doorman [OPTIONS] [CONFIG_FILE] [COMMAND]
+
+Commands:
+  generate  Generate configuration for pg_doorman by connecting to PostgreSQL and auto-detecting databases and users
+  help      Print this message or the help of the given subcommand(s)
 
 Arguments:
   [CONFIG_FILE]  [env: CONFIG_FILE=] [default: pg_doorman.toml]
@@ -85,6 +89,40 @@ password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="  # Hashed pa
 ```
 
 For a complete list of configuration options and their descriptions, see the [Settings Reference Guide](../reference/settings.md).
+
+### Automatic Configuration Generation
+
+PgDoorman provides a powerful `generate` command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users:
+
+```bash
+# View all available options
+pg_doorman generate --help
+
+# Generate a configuration file with default settings
+pg_doorman generate --output pg_doorman.toml
+```
+
+The `generate` command supports several options:
+
+| Option | Description |
+|--------|-------------|
+| `--host`, `-h` | PostgreSQL host to connect to (default: localhost) |
+| `--port`, `-p` | PostgreSQL port to connect to (default: 5432) |
+| `--user`, `-u` | PostgreSQL user to connect as (requires superuser privileges) |
+| `--password` | PostgreSQL password to connect with |
+| `--database`, `-d` | PostgreSQL database to connect to |
+| `--ssl` | Use SSL/TLS for PostgreSQL connection |
+| `--pool-size` | Pool size for the generated configuration (default: 40) |
+| `--session-pool-mode`, `-s` | Use session pool mode instead of transaction mode |
+| `--output`, `-o` | Output file for the generated configuration |
+
+The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
+
+!!! note "PostgreSQL Environment Variables"
+    The `generate` command also respects standard PostgreSQL environment variables like `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE`.
+
+!!! warning "Superuser Privileges"
+    Reading user information from PostgreSQL requires superuser privileges to access the `pg_shadow` table.
 
 ### Running PgDoorman
 

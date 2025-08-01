@@ -130,7 +130,7 @@ where
         Ok(bytes) => bytes,
         Err(err) => {
             CURRENT_MEMORY.fetch_add(-len as i64, Ordering::Relaxed);
-            return Err(err)
+            return Err(err);
         }
     };
     CURRENT_MEMORY.fetch_add(-len as i64, Ordering::Relaxed);

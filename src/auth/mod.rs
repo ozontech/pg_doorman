@@ -129,7 +129,7 @@ where
             error_response(
                 write,
                 &format!(
-                    "No connection pool configured for database: {pool_name}, user: {username_from_parameters}, virtual pool id: {virtual_pool_id}. Please check your connection parameters and ensure the database/username is properly configured."
+                    "No connection pool configured for database: {pool_name}, user: {username_from_parameters}. Please check your connection parameters and ensure the database/username is properly configured."
                 ),
                 "3D000",
             )

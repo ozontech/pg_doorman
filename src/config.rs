@@ -326,7 +326,7 @@ pub struct General {
 
     pub syslog_prog_name: Option<String>,
 
-    #[serde(default = "General::default_hba")]
+    #[serde(default = "General::default_hba", skip_serializing_if = "<[_]>::is_empty")]
     pub hba: Vec<IpNet>,
 }
 
@@ -664,6 +664,10 @@ impl Talos {
             databases: vec![],
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty() && self.databases.is_empty()
+    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug, Hash, Eq)]
@@ -676,6 +680,12 @@ pub struct ServerConfig {
 pub struct Include {
     #[serde(default = "General::default_include_files")]
     pub files: Vec<String>,
+}
+
+impl Include {
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -698,21 +708,21 @@ pub struct Config {
     // [main.subconf]
     // field1_under_subconf = 1
     // field3_under_main = 3 # This field will be interpreted as being under subconf and not under main
-    #[serde(default = "Config::default_path")]
+    #[serde(default = "Config::default_path", skip_serializing_if = "String::is_empty")]
     pub path: String,
 
     // General and global settings.
     pub general: General,
 
     // Talos settings.
-    #[serde(default = "Talos::empty")]
+    #[serde(default = "Talos::empty", skip_serializing_if = "Talos::is_empty")]
     pub talos: Talos,
 
     // Connection pools.
     pub pools: HashMap<String, Pool>,
 
     // Include files.
-    #[serde(default = "General::default_include")]
+    #[serde(default = "General::default_include", skip_serializing_if = "Include::is_empty")]
     pub include: Include,
 }
 
