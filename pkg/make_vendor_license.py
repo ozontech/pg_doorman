@@ -11,10 +11,12 @@ white_list = ["(MIT OR Apache-2.0) AND Unicode-3.0", "0BSD OR Apache-2.0 OR MIT"
     "Apache-2.0 OR MIT OR Zlib", "BSD-3-Clause", "MIT", "MIT OR Unlicense", "Zlib",
     "(Apache-2.0 OR MIT) AND Unicode-3.0", "Apache-2.0 OR BSL-1.0 OR MIT"]
 
+bad_license_count = 0
 with open(sys.argv[1]) as r:
     with open(sys.argv[2], "w") as w:
         for pkg in json.load(r):
             if pkg["license"] not in white_list:
                 print("unknown license: %s for package %s" % (pkg["license"], pkg["name"]))
-                sys.exit(2)
+                bad_license_count += 1
             w.write("Files: vendor/%s/*\nLicense: %s\n\n" % (pkg["name"], pkg["license"]))
+sys.exit(bad_license_count)
