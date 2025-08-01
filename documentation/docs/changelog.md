@@ -4,7 +4,7 @@ title: Changelog
 
 # Changelog
 
-### 2.1.0 <small>Aug 1, 2025</small> { id="2.0.1" }
+### 2.1.0 <small>Aug 1, 2025</small> { id="2.1.0" }
 
 **Features:**
 - The new command `generate` connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
