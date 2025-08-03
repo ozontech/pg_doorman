@@ -5,7 +5,6 @@ on:
     branches: [ "master" ]
 
 jobs:
-
   licenses:
     name: Check licenses
     runs-on: ubuntu-latest
@@ -17,7 +16,7 @@ jobs:
           make vendor-licenses.txt
 
   build:
-    name: Rust tests and debug build.
+    name: Rust tests and debug build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -43,10 +42,80 @@ jobs:
           name: tests
           path: ./tests/
 
-  go-test:
-    name: Go (protocol,pgx,lib/pq).
+  language-tests:
+    name: ${{ matrix.language }} tests
     needs: build
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: [Go, Ruby, Python, NodeJS, DotNet]
+        include:
+          - language: Go
+            description: "(protocol,pgx,lib/pq)"
+            cache_path: |
+              ~/.cache/go-build
+              ~/go/pkg/mod
+            cache_key: "${{ runner.os }}-golang-${{ hashFiles('go/go.sum') }}"
+            cache_restore_key: ${{ runner.os }}-golang-
+            test_command: |
+              cd ./tests/go &&
+              source ./env &&
+              go test -v .
+            
+          - language: Ruby
+            description: "(protocol,pg)"
+            cache_path: ruby
+            cache_key: ${{ runner.os }}-ruby
+            cache_restore_key: ${{ runner.os }}-ruby
+            apt_packages: ruby-bundler ruby-dev
+            test_command: |
+              bundle config path ruby &&
+              cd ./tests/ruby &&
+              bundle install &&
+              bundle exec ruby test.rb &&
+              bundle exec rspec *_spec.rb
+            
+          - language: Python
+            description: "(psycopg2,asyncpg)"
+            cache_path: |
+              ./tests/python/.venv
+            cache_key: "${{ runner.os }}-python"
+            cache_restore_key: ${{ runner.os }}-python
+            test_command: |
+              cd ./tests/python &&
+              python3 -m venv .venv &&
+              source .venv/bin/activate &&
+              pip install -r requirements.txt &&
+              echo "Run async" && python ./test_async.py &&
+              echo "Run psycopg2" && python ./test_psycopg2.py &&
+              echo "Run session cursors" && python ./test_session_cursors.py
+            
+          - language: NodeJS
+            description: "(pg)"
+            cache_path: |
+              ./tests/nodejs/node_modules
+            cache_key: "${{ runner.os }}-nodejs"
+            cache_restore_key: ${{ runner.os }}-nodejs
+            apt_packages: nodejs npm
+            test_command: |
+              cd ./tests/nodejs &&
+              npm install pg &&
+              nodejs ./run.js
+            
+          - language: DotNet
+            description: "(npgsql)"
+            cache_path: ~/.nuget/packages
+            cache_key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Build.targets') }}
+            cache_restore_key: ${{ runner.os }}-nuget-
+            setup_step: |
+              - name: Setup .NET Core SDK
+                uses: actions/setup-dotnet@v4.3.0
+            test_command: |
+              mkdir -p ./tests/dotnet/prj && cd ./tests/dotnet/prj &&
+              mkdir -p ./pbde && cd ./pbde && dotnet new sln --name PBDE && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/PBDE_PBDE_S.cs ./Program.cs && dotnet run Program.cs &&
+              cd .. && mkdir -p ./prepared && cd ./prepared && dotnet new sln --name PREPARED && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/prepared.cs ./Program.cs && dotnet run Program.cs &&
+              echo "done"
+    
     services:
       postgres:
         image: postgres:15
@@ -59,218 +128,41 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+    
     steps:
       - name: Download tests
         uses: actions/download-artifact@v4
         with:
           name: tests
           path: tests
-      - name: Tree.
+      
+      - name: Tree
         run: tree tests
-      - name: Setup Golang caches
+      
+      - name: Setup ${{ matrix.language }} caches
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: "${{ runner.os }}-golang-${{ hashFiles('go/go.sum') }}"
-          restore-keys: |
-            ${{ runner.os }}-golang-
-      - name: Run fixtures.
+          path: ${{ matrix.cache_path }}
+          key: ${{ matrix.cache_key }}
+          restore-keys: ${{ matrix.cache_restore_key }}
+      
+      - name: Run fixtures
         run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
-      - name: Run tests.
-        run: |
-          chmod +x ./tests/pg_doorman &&
-          ./tests/pg_doorman --version &&
-          (./tests/pg_doorman -l debug ./tests/tests.toml > /tmp/pg_doorman.log &) &&
-          cd ./tests/go &&
-          source ./env &&
-          go test -v .
-
-  ruby-test:
-    name: Ruby (protocol,pg).
-    needs: build
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_HOST_AUTH_METHOD: "trust"
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - name: Download tests
-        uses: actions/download-artifact@v4
+      
+      - if: ${{ matrix.apt_packages != '' }}
+        uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          name: tests
-          path: tests
-      - name: Tree.
-        run: tree tests
-      - name: Setup Ruby caches
-        uses: actions/cache@v4
-        with:
-          path: ruby
-          key: ${{ runner.os }}-ruby
-          restore-keys: ${{ runner.os }}-ruby
-      - name: Run fixtures.
-        run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
-      - uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: ruby-bundler ruby-dev
+          packages: ${{ matrix.apt_packages }}
           version: 1.0
-      - name: Run tests.
-        run: |
-          chmod +x ./tests/pg_doorman &&
-          ./tests/pg_doorman --version &&
-          (./tests/pg_doorman -l debug ./tests/tests.toml > /tmp/pg_doorman.log &) &&
-          bundle config path ruby &&
-          cd ./tests/ruby &&
-          bundle install &&
-          bundle exec ruby test.rb &&
-          bundle exec rspec *_spec.rb
-
-  python-test:
-    name: Python (psycopg2,asyncpg).
-    needs: build
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_HOST_AUTH_METHOD: "trust"
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - name: Download tests
-        uses: actions/download-artifact@v4
-        with:
-          name: tests
-          path: tests
-      - name: Tree.
-        run: tree tests
-      - name: Setup Python caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            ./tests/python/.venv
-          key: "${{ runner.os }}-python"
-          restore-keys: |
-            ${{ runner.os }}-python
-      - name: Run fixtures.
-        run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
-      - name: Run tests.
+      
+      - ${{ matrix.setup_step }}
+      
+      - name: Run tests
         run: |
           chmod +x ./tests/pg_doorman &&
           ./tests/pg_doorman --version &&
           (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
-          cd ./tests/python &&
-          python3 -m venv .venv &&
-          source .venv/bin/activate &&
-          pip install -r requirements.txt &&
-          echo "Run async" && python ./test_async.py &&
-          echo "Run psycopg2" && python ./test_psycopg2.py
-          echo "Run session cursors" && python ./test_session_cursors.py
-
-  nodejs-test:
-    name: NodeJS (pg).
-    needs: build
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_HOST_AUTH_METHOD: "trust"
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - name: Download tests
-        uses: actions/download-artifact@v4
-        with:
-          name: tests
-          path: tests
-      - name: Tree.
-        run: tree tests
-      - name: Setup nodejs caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            ./tests/nodejs/node_modules
-          key: "${{ runner.os }}-nodejs"
-          restore-keys: |
-            ${{ runner.os }}-nodejs
-      - name: Run fixtures.
-        run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
-      - uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: nodejs npm
-          version: 1.0
-      - name: Run tests.
-        run: |
-          chmod +x ./tests/pg_doorman &&
-          ./tests/pg_doorman --version &&
-          (./tests/pg_doorman -l debug ./tests/tests.toml &) &&
-          cd ./tests/nodejs &&
-          npm install pg &&
-          nodejs ./run.js
-
-  dotnet-test:
-    name: DotNet (npgsql).
-    needs: build
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_HOST_AUTH_METHOD: "trust"
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - name: Download tests
-        uses: actions/download-artifact@v4
-        with:
-          name: tests
-          path: tests
-      - name: Tree.
-        run: tree tests
-      - name: NuGet Cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Build.targets') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-      - name: Run fixtures.
-        run: psql -h 127.0.0.1 -p 5432 -U postgres -f ./tests/fixture.sql
-      - name: Setup .NET Core SDK
-        uses: actions/setup-dotnet@v4.3.0
-      - name: Run tests.
-        run: |
-          chmod +x ./tests/pg_doorman &&
-          ./tests/pg_doorman --version &&
-          (./tests/pg_doorman -l debug ./tests/tests.toml &) && mkdir -p ./tests/dotnet/prj && cd ./tests/dotnet/prj &&
-          mkdir -p ./pbde && cd ./pbde && dotnet new sln --name PBDE && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/PBDE_PBDE_S.cs ./Program.cs && dotnet run Program.cs &&
-          cd .. && mkdir -p ./prepared && cd ./prepared && dotnet new sln --name PREPARED && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/prepared.cs ./Program.cs && dotnet run Program.cs &&
-          echo "done"
+          ${{ matrix.test_command }}
 
   docker-compose-test:
     name: Docker Compose Example Test
@@ -278,23 +170,25 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+      
       - name: Start Docker Compose
         run: |
           cd example
           docker compose up -d
           # Wait for services to be ready
           sleep 30
-      - uses: awalsh128/cache-apt-pkgs-action@latest
+      
+      - name: Install PostgreSQL client
+        uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: postgresql-client
           version: 1.0
+      
       - name: Test PostgreSQL Connection
         run: |
           cd example
-          # Install PostgreSQL client
-          sudo apt-get update && sudo apt-get install -y postgresql-client
-          # Test connection from the host
           PGPASSWORD=password psql -h 127.0.0.1 -p 6432 -d exampledb -U doorman -c "SELECT 'ok' as connection_test"
+      
       - name: Stop Docker Compose
         run: |
           cd example
