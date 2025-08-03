@@ -3,7 +3,8 @@ services:
     image: postgres:17
     environment:
       POSTGRES_USER: doorman
-      POSTGRES_PASSWORD: secret
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: exampledb
       PGDATA: /var/lib/postgresql/data
     ports:
       - "5432:5432"
@@ -28,3 +29,4 @@ services:
     restart: unless-stopped
     tty: true
     stdin_open: true
+
