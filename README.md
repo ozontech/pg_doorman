@@ -58,6 +58,12 @@ cd example
 docker compose up
 ```
 
+To connect to pg_doorman running in Docker Compose, use the following command:
+
+```bash
+PGPASSWORD=password psql -h 127.0.0.1 -p 6432 -d exampledb -U doorman
+```
+
 ## Basic Usage
 
 ### Configuration

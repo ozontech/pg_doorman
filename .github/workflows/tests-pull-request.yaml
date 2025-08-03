@@ -271,3 +271,27 @@ jobs:
           mkdir -p ./pbde && cd ./pbde && dotnet new sln --name PBDE && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/PBDE_PBDE_S.cs ./Program.cs && dotnet run Program.cs &&
           cd .. && mkdir -p ./prepared && cd ./prepared && dotnet new sln --name PREPARED && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/prepared.cs ./Program.cs && dotnet run Program.cs &&
           echo "done"
+
+  docker-compose-test:
+    name: Docker Compose Example Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Start Docker Compose
+        run: |
+          cd example
+          docker compose up -d
+          # Wait for services to be ready
+          sleep 30
+      - name: Test PostgreSQL Connection
+        run: |
+          cd example
+          # Install PostgreSQL client
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          # Test connection from the host
+          PGPASSWORD=password psql -h 127.0.0.1 -p 6432 -d exampledb -U doorman -c "SELECT 'ok' as connection_test"
+      - name: Stop Docker Compose
+        run: |
+          cd example
+          docker compose down

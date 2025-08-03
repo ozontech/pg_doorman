@@ -12,7 +12,7 @@ services:
       - ./postgres:/var/lib/postgresql/
     command: postgres -c config_file=/var/lib/postgresql/postgresql.conf -D /var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U doorman" ]
+      test: [ "CMD-SHELL", "pg_isready -U doorman -d exampledb" ]
       interval: 30s
       timeout: 10s
       retries: 5
