@@ -284,6 +284,10 @@ jobs:
           docker compose up -d
           # Wait for services to be ready
           sleep 30
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: postgresql-client
+          version: 1.0
       - name: Test PostgreSQL Connection
         run: |
           cd example
