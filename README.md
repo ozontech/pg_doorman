@@ -39,7 +39,19 @@ The simplest way to install PgDoorman is to download a pre-built binary from the
 
 ### Docker Installation
 
-You can build and run PgDoorman using Docker:
+PgDoorman provides an official Docker image that you can use directly:
+
+```bash
+# Pull the official Docker image
+docker pull ghcr.io/ozontech/pg_doorman
+
+# Run PgDoorman with your configuration
+docker run -p 6432:6432 \
+  -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
+  --rm -t -i ghcr.io/ozontech/pg_doorman
+```
+
+Alternatively, you can build and run PgDoorman using Docker:
 
 ```bash
 # Build the Docker image
@@ -121,6 +133,8 @@ pg_doorman generate --pool-size 20 --session-pool-mode --output pg_doorman.toml
 ```
 
 The `generate` command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
+
+**Warning:** If your PostgreSQL server requires authentication in pg_hba.conf, you will need to manually set the `server_password` parameter in the configuration file after using the `generate` command.
 
 Key features of the `generate` command:
 - Automatically detects all non-template databases

@@ -4,150 +4,223 @@
 # files = ["/etc/pg_doorman/hba.toml"]
 
 [general]
-# Listen host for incoming with support for TCP v4 only.
+# Listen host for incoming connections with support for TCP v4 only.
+# Default: "0.0.0.0"
 host = "0.0.0.0"
 
 # Listen port for incoming connections.
+# Default: 6432
 port = 6432
 
 # Connection timeout to server in milliseconds.
+# Default: 3000 (3 sec)
 connect_timeout = 2000
 
-# Analog of query_wait_timeout in PgBouncer (https://www.pgbouncer.org/config.html), in milliseconds.
+# Maximum time to wait for a query to complete, in milliseconds.
+# Analog of query_wait_timeout in PgBouncer (https://www.pgbouncer.org/config.html).
+# Default: 5000 (5 sec)
 query_wait_timeout = 5000
 
-# Server idle timeout (5 minutes in milliseconds).
+# Server idle timeout in milliseconds.
+# Default: 300000000 (5000 min)
 idle_timeout = 300000
 
-# Server lifetime (5 minutes in milliseconds).
+# Server lifetime in milliseconds. Only applied to idle connections.
+# Default: 300000 (5 min)
 server_lifetime = 300000
 
 # Socket TCP keepalive settings (in seconds).
+# Keepalive enabled by default and overwrite OS defaults.
+# Default: 5
 tcp_keepalives_idle = 5
+# Default: 1
 tcp_keepalives_interval = 1
+# Default: 5
 tcp_keepalives_count = 5
 
-# By default, we send RST instead of keeping the connection open for a long time (TCP wait timeout).
+# By default, pg_doorman sends RST instead of keeping the connection open for a long time (TCP wait timeout).
+# Default: 0
 tcp_so_linger = 0
 
 # Enable TCP_NODELAY to disable Nagle's algorithm for lower latency.
+# Default: true
 tcp_no_delay = true
 
-# TCP backlog (defaults to max_connections).
+# TCP backlog for incoming connections. A value of zero sets the max_connections as value for the TCP backlog.
+# Default: 0
 backlog = 0
 
 # Buffer size for read and write operations when connecting to PostgreSQL via a unix socket.
+# Default: 1048576
 unix_socket_buffer_size = 1048576
 
 # Log client connections and disconnections for monitoring.
+# Default: true
 log_client_connections = true
+# Default: true
 log_client_disconnections = true
 
-# With a graceful shutdown, we wait for queries to be completed within this time limit (10 seconds).
+# With a graceful shutdown, we wait for transactions to be completed within this time limit (in milliseconds).
+# Default: 10000 (10 sec)
 shutdown_timeout = 10000
 
 # Data responses from the server (message type 'D') greater than this value will be
 # transmitted through the proxy in small chunks (1 MB).
+# Default: 1048576
 message_size_to_be_stream = 1048576
 
 # We calculate the total amount of memory used by the internal buffers for all current queries.
-# If the limit is reached, the client will receive an error (256 MB).
+# If the limit is reached, the client will receive an error.
+# Default: 268435456 (256 MB)
 max_memory_usage = 268435456
 
 # The maximum number of clients that can connect to the pooler simultaneously.
 # When this limit is reached:
-# * A client connecting without SSL will receive the expected error.
+# * A client connecting without SSL will receive the expected error (code: 53300, message: "sorry, too many clients already").
 # * A client connecting via SSL will see a message indicating that the server does not support the SSL protocol.
+# Default: 8192
 max_connections = 8192
 
 # In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
 # By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.
+# Default: false
 server_round_robin = false
 
-# If enabled, we strive to restore the parameters that were set by the client (and application_name)
+# If enabled, we strive to restore the parameters (via query SET) that were set by the client (and application_name)
 # in transaction mode in other server backends. By default, this is disabled (false) due to performance.
+# If you need to know application_name, but don't want to experience performance issues due to constant server queries SET,
+# you can consider creating a separate pool for each application and using the application_name parameter in the pool settings.
+# Default: false
 sync_server_parameters = false
 
-# The number of Tokio worker processes that serve clients, which affects the performance of pg_doorman.
-# The more workers there are, the faster the system works, but only up to a certain limit.
+# The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
+# The more workers there are, the faster the system works, but only up to a certain limit (cpu count).
 # If you already have a lot of workers, you should consider increasing the number of virtual pools.
+# Default: 4
 worker_threads = 4
 
-# Increasing the number of virtual pools can help deal with internal blockages
-# that occur when processing very large numbers of fast queries.
+# Increasing the number of virtual pools can help deal with internal latches that occur when processing very large numbers of fast queries.
+# It is strongly recommended not to change this parameter if you do not understand what you are doing.
+# Default: 1
 virtual_pool_count = 1
 
-# Automatically assign workers to different CPUs.
+# Automatically assign workers to different CPUs (man 3 cpu_set).
+# Default: false
 worker_cpu_affinity_pinning = true
 
 # Tokio runtime settings (https://docs.rs/tokio/latest/tokio/).
+# It is strongly recommended not to change these parameters if you do not understand what you are doing.
+# Default: 5
 tokio_global_queue_interval = 5
+# Default: 1
 tokio_event_interval = 1
+# Default: 8388608
 worker_stack_size = 8388608
 
 # This query will not be sent to the server if it is run as a SimpleQuery.
 # It can be used to check the connection at the application level.
+# Default: ";"
 pooler_check_query = ";"
 
 # TLS settings.
+# The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections.
+# Must be used together with tls_certificate.
 # tls_private_key = "/etc/pg_doorman/ssl/server.key"
+# The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections.
+# Must be used together with tls_private_key.
 # tls_certificate = "/etc/pg_doorman/server.crt"
 
-# Limit the number of simultaneous attempts to create a TLS session (0 means no limit).
+# The TLS mode for incoming connections. It can be one of the following:
+# * `allow` - TLS connections are allowed but not required. The pg_doorman will attempt to establish a TLS connection if the client requests it.
+# * `disable` - TLS connections are not allowed. All connections will be established without TLS encryption.
+# * `require` - TLS connections are required. The pg_doorman will only accept connections that use TLS encryption.
+# * `verify-full` - TLS connections are required, and the pg_doorman will verify the client certificate. This mode provides the highest level of security.
+# Default: "allow"
+tls_mode = "allow"
+
+# Limit the number of simultaneous attempts to create a TLS session.
+# Any value other than zero implies that there is a queue through which clients must pass in order to establish a TLS connection.
+# In some cases, this is necessary in order to launch an application that opens many connections at startup (the so-called "hot start").
+# Default: 0 (no limit)
 tls_rate_limit_per_second = 0
 
-# Access to the virtual admin database is carried out through the administrator's username and password,
-# which are specified in plaintext format.
+# Access to the virtual admin database is carried out through the administrator's username and password.
+# Default: "admin"
 admin_username = "pgbouncer"
+
+# Access to the virtual admin database is carried out through the administrator's username and password.
+# It should be replaced with your secret.
+# Default: "admin"
 admin_password = "admin"
 
-# Enable caching of prepared statements.
+# Switcher to enable/disable caching of prepared statements.
+# Default: true
 prepared_statements = true
+
+# Cache size of prepared requests on the server side.
+# Default: 8192
 prepared_statements_cache_size = 512
 
 # PID file for daemon mode.
-# Comment this out if you want to run pg_doorman in the foreground.
+# Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground with `-d`.
+# Default: None
 daemon_pid_file = "/tmp/pg_doorman.pid"
 
 # When specified, pg_doorman starts sending messages to syslog (using /dev/log or /var/run/syslog).
 # Comment this out if you want to log to stdout.
+# Default: None
 syslog_prog_name = "pg_doorman"
 
-# Define the networks from which connections to pg_doorman are allowed.
+# The list of IP addresses from which it is permitted to connect to the pg-doorman.
 # For example, it can be the address mask 10.0.0.0/8. By default, access is allowed from any address.
 hba = []
 
 [pools]
-# Database: exampledb
+# Each record in the pool is the name of the virtual database that the pg-doorman client can connect to.
 [pools.exampledb]
+# The directory with unix sockets or the IPv4 address of the PostgreSQL server that serves this pool.
+# Example: "/var/run/postgresql" or "127.0.0.1"
 server_host = "/var/run/postgresql"  # or "127.0.0.1"
+
+# The port through which PostgreSQL server accepts incoming connections.
+# Default: 5432
 server_port = 5432
 
-# Parameter application_name, is sent to the server when opening a connection with postgresql.
-# It may be useful with the sync_server_parameters = false.
+# Parameter application_name, is sent to the server when opening a connection with PostgreSQL.
+# It may be useful with the sync_server_parameters = false setting.
+# Example: "pg_doorman"
 # application_name = "pg_doorman"
 
-# You can override the server database.
+# Optional parameter that determines which database should be connected to on the PostgreSQL server.
+# Example: "exampledb-2"
 # server_database = "exampledb-2"
 
-# Pooling mode: "session" or "transaction".
+# Pooling mode:
+# * "session" - Server is released back to pool after client disconnects.
+# * "transaction" - Server is released back to pool after transaction finishes.
 pool_mode = "transaction"
 
 # Log information about any SET command in the log.
+# Default: false
 log_client_parameter_status_changes = false
 
 [pools.exampledb.users.0]
+# A virtual username who can connect to this virtual database (pool).
 username = "test_md5"
 
+# The password for the virtual pool user.
 # Password can be specified in MD5, SCRAM-SHA-256, or JWT format.
-# Obtain the password using: select usename, passwd from pg_shadow.
+# Also, you can create a mirror list of users using secrets from the PostgreSQL instance: select usename, passwd from pg_shadow.
 password = "md5dd9a0f26a4302744db881776a09bbfad"
 # password = "SCRAM-SHA-256$4096:E+QNCSW3r58yM+Twj1P5Uw==$LQrKlTYWIYbYrd9WiDo9T0USF5+icN4RsySaYKuMWME=:4pfSZnjRqKjoOShT2UUjSSHJ5sIt1vzpWLTFRo1iBKM="
 # password = "jwt-pkey-fpath:/etc/pg_doorman/jwt/public-1.pem"
 
-# Pool size for this user.
+# The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.
+# Default: 40
 pool_size = 40
 
-# Server username and password if the PostgreSQL server requires authentication.
+# The real server user of the database who connects to this database.
 # server_username = "test_md5_server_user"
+
+# The password (plain text) of real server user of the database who connects to this database.
 # server_password = "password"

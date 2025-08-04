@@ -34,25 +34,30 @@ Default: `8192`.
 
 ### tls_mode
 
-The TLS mode for incoming connections. It can be one of the following: allow/disable/require/verify-full.
+The TLS mode for incoming connections. It can be one of the following:
+
+* `allow` - TLS connections are allowed but not required. The pg_doorman will attempt to establish a TLS connection if the client requests it.
+* `disable` - TLS connections are not allowed. All connections will be established without TLS encryption.
+* `require` - TLS connections are required. The pg_doorman will only accept connections that use TLS encryption.
+* `verify-full` - TLS connections are required and the pg_doorman will verify the client certificate. This mode provides the highest level of security.
 
 Default: `"allow"`.
 
 ### tls_ca_file
 
-The file containing the CA certificate to verify the client certificate.
+The file containing the CA certificate to verify the client certificate. This is required when `tls_mode` is set to `verify-full`.
 
 Default: `None`.
 
 ### tls_private_key
 
-It is necessary to allow the processing of incoming connections from TLS clients.
+The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_certificate`.
 
 Default: `None`.
 
 ### tls_certificate
 
-It is necessary to allow the processing of incoming connections from TLS clients.
+The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_private_key`.
 
 Default: `None`.
 
@@ -257,13 +262,13 @@ Default: `15000` (15 sec).
 
 ### server_tls
 
-Enable TLS for connections to the PostgreSQL server.
+Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers.
 
 Default: `false`.
 
 ### verify_server_certificate
 
-Verify the PostgreSQL server's TLS certificate.
+Verify the PostgreSQL server's TLS certificate when connecting with TLS. This setting is only relevant when `server_tls` is enabled.
 
 Default: `false`.
 
@@ -306,10 +311,27 @@ Example: `"exampledb-2"`
 
 ### application_name
 
-Parameter application_name, is sent to the server when opening a connection with postgresql.
-It may be useful with the sync_server_parameters = false.
+Parameter application_name, is sent to the server when opening a connection with PostgreSQL. It may be useful with the sync_server_parameters = false setting.
 
-Example: "exampledb-pool".
+Example: `"exampledb-pool"`
+
+### connect_timeout
+
+Maximum time to allow for establishing a new server connection for this pool, in milliseconds. If not specified, the global connect_timeout setting is used.
+
+Default: `None` (uses global setting).
+
+### idle_timeout
+
+Close idle connections in this pool that have been opened for longer than this value, in milliseconds. If not specified, the global idle_timeout setting is used.
+
+Default: `None` (uses global setting).
+
+### server_lifetime
+
+Close server connections in this pool that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the global server_lifetime setting is used.
+
+Default: `None` (uses global setting).
 
 ### pool_mode
 
@@ -329,9 +351,9 @@ Default: `false`.
 
 ### cleanup_server_connections
 
-When enabled, the pool will automatically clean up server connections that are no longer needed.
+When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections.
 
-Default: `false`.
+Default: `true`.
 
 ## Pool Users Settings
 
@@ -380,3 +402,9 @@ Default: `40`.
 The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size.
 
 Default: `None`.
+
+### server_lifetime
+
+Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used.
+
+Default: `None` (uses pool setting).

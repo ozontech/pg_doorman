@@ -36,6 +36,20 @@ Then follow the instructions in the [Contributing guide](./contributing.md) to b
 
 ## Docker Installation
 
+### Using the Official Docker Image (Recommended)
+
+PgDoorman provides an official Docker image that you can use directly:
+
+```bash
+# Pull the official Docker image
+docker pull ghcr.io/ozontech/pg_doorman
+
+# Run PgDoorman with your configuration
+docker run -p 6432:6432 \
+  -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
+  --rm -t -i ghcr.io/ozontech/pg_doorman
+```
+
 ### Using the Dockerfile
 
 You can build and run PgDoorman using Docker:

@@ -121,6 +121,9 @@ The command connects to your PostgreSQL server, automatically detects all databa
 !!! note "PostgreSQL Environment Variables"
     The `generate` command also respects standard PostgreSQL environment variables like `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE`.
 
+!!! warning "Authentication Required"
+    If your PostgreSQL server requires authentication in pg_hba.conf, you will need to manually set the `server_password` parameter in the configuration file after using the `generate` command.
+
 !!! warning "Superuser Privileges"
     Reading user information from PostgreSQL requires superuser privileges to access the `pg_shadow` table.
 
