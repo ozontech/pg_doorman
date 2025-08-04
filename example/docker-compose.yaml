@@ -20,7 +20,7 @@ services:
     tty: true
     stdin_open: true
   pg_doorman:
-    image: ghcr.io/ozontech:latest
+    image: ghcr.io/ozontech/pg_doorman:latest
     ports:
       - "6432:6432"
     command: /usr/bin/pg_doorman -l info /etc/pg_doorman/pg_doorman.toml
