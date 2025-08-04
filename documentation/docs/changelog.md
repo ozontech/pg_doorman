@@ -4,6 +4,12 @@ title: Changelog
 
 # Changelog
 
+### 2.1.2 <small>Aug 4, 2025</small> { id="2.1.2" }
+
+**Features:**
+- Added docker image `ghcr.io/ozontech/pg_doorman`
+
+
 ### 2.1.0 <small>Aug 1, 2025</small> { id="2.1.0" }
 
 **Features:**
