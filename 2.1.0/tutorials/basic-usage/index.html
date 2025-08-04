@@ -1416,6 +1416,10 @@
 <p>The <code>generate</code> command also respects standard PostgreSQL environment variables like <code>PGHOST</code>, <code>PGPORT</code>, <code>PGUSER</code>, <code>PGPASSWORD</code>, and <code>PGDATABASE</code>.</p>
 </div>
 <div class="admonition warning">
+<p class="admonition-title">Authentication Required</p>
+<p>If your PostgreSQL server requires authentication in pg_hba.conf, you will need to manually set the <code>server_password</code> parameter in the configuration file after using the <code>generate</code> command.</p>
+</div>
+<div class="admonition warning">
 <p class="admonition-title">Superuser Privileges</p>
 <p>Reading user information from PostgreSQL requires superuser privileges to access the <code>pg_shadow</code> table.</p>
 </div>

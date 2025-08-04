@@ -1084,6 +1084,33 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#connect_timeout_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      connect_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#idle_timeout_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      idle_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server_lifetime_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      server_lifetime
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#pool_mode" class="md-nav__link">
     <span class="md-ellipsis">
       pool_mode
@@ -1183,6 +1210,15 @@
   <a href="#min_pool_size" class="md-nav__link">
     <span class="md-ellipsis">
       min_pool_size
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server_lifetime_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      server_lifetime
     </span>
   </a>
   
@@ -1698,6 +1734,33 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#connect_timeout_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      connect_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#idle_timeout_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      idle_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server_lifetime_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      server_lifetime
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#pool_mode" class="md-nav__link">
     <span class="md-ellipsis">
       pool_mode
@@ -1802,6 +1865,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#server_lifetime_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      server_lifetime
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1843,16 +1915,22 @@
 * A client connecting via SSL will see a message indicating that the server does not support the SSL protocol.</p>
 <p>Default: <code>8192</code>.</p>
 <h3 id="tls_mode">tls_mode</h3>
-<p>The TLS mode for incoming connections. It can be one of the following: allow/disable/require/verify-full.</p>
+<p>The TLS mode for incoming connections. It can be one of the following:</p>
+<ul>
+<li><code>allow</code> - TLS connections are allowed but not required. The pg_doorman will attempt to establish a TLS connection if the client requests it.</li>
+<li><code>disable</code> - TLS connections are not allowed. All connections will be established without TLS encryption.</li>
+<li><code>require</code> - TLS connections are required. The pg_doorman will only accept connections that use TLS encryption.</li>
+<li><code>verify-full</code> - TLS connections are required and the pg_doorman will verify the client certificate. This mode provides the highest level of security.</li>
+</ul>
 <p>Default: <code>"allow"</code>.</p>
 <h3 id="tls_ca_file">tls_ca_file</h3>
-<p>The file containing the CA certificate to verify the client certificate.</p>
+<p>The file containing the CA certificate to verify the client certificate. This is required when <code>tls_mode</code> is set to <code>verify-full</code>.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="tls_private_key">tls_private_key</h3>
-<p>It is necessary to allow the processing of incoming connections from TLS clients.</p>
+<p>The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_certificate</code>.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="tls_certificate">tls_certificate</h3>
-<p>It is necessary to allow the processing of incoming connections from TLS clients.</p>
+<p>The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_private_key</code>.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="tls_rate_limit_per_second">tls_rate_limit_per_second</h3>
 <p>Limit the number of simultaneous attempts to create a TLS session.
@@ -1962,10 +2040,10 @@ If the limit is reached, the client will receive an error (256 MB).</p>
 <p>Maximum time to wait for data copy operations during proxying, in milliseconds.</p>
 <p>Default: <code>15000</code> (15 sec).</p>
 <h3 id="server_tls">server_tls</h3>
-<p>Enable TLS for connections to the PostgreSQL server.</p>
+<p>Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="verify_server_certificate">verify_server_certificate</h3>
-<p>Verify the PostgreSQL server's TLS certificate.</p>
+<p>Verify the PostgreSQL server's TLS certificate when connecting with TLS. This setting is only relevant when <code>server_tls</code> is enabled.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="hba">hba</h3>
 <p>The list of IP addresses from which it is permitted to connect to the pg-doorman.</p>
@@ -1987,9 +2065,17 @@ It can be used to check the connection at the application level.</p>
 <p>Optional parameter that determines which database should be connected to on the PostgreSQL server.</p>
 <p>Example: <code>"exampledb-2"</code></p>
 <h3 id="application_name">application_name</h3>
-<p>Parameter application_name, is sent to the server when opening a connection with postgresql.
-It may be useful with the sync_server_parameters = false.</p>
-<p>Example: "exampledb-pool".</p>
+<p>Parameter application_name, is sent to the server when opening a connection with PostgreSQL. It may be useful with the sync_server_parameters = false setting.</p>
+<p>Example: <code>"exampledb-pool"</code></p>
+<h3 id="connect_timeout_1">connect_timeout</h3>
+<p>Maximum time to allow for establishing a new server connection for this pool, in milliseconds. If not specified, the global connect_timeout setting is used.</p>
+<p>Default: <code>None</code> (uses global setting).</p>
+<h3 id="idle_timeout_1">idle_timeout</h3>
+<p>Close idle connections in this pool that have been opened for longer than this value, in milliseconds. If not specified, the global idle_timeout setting is used.</p>
+<p>Default: <code>None</code> (uses global setting).</p>
+<h3 id="server_lifetime_1">server_lifetime</h3>
+<p>Close server connections in this pool that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the global server_lifetime setting is used.</p>
+<p>Default: <code>None</code> (uses global setting).</p>
 <h3 id="pool_mode">pool_mode</h3>
 <ul>
 <li>
@@ -2006,8 +2092,8 @@ It may be useful with the sync_server_parameters = false.</p>
 <p>Log information about any SET command in the log.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="cleanup_server_connections">cleanup_server_connections</h3>
-<p>When enabled, the pool will automatically clean up server connections that are no longer needed.</p>
-<p>Default: <code>false</code>.</p>
+<p>When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections.</p>
+<p>Default: <code>true</code>.</p>
 <h2 id="pool-users-settings">Pool Users Settings</h2>
 <div class="language-toml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[pools.exampledb.users.0]</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;exampledb-user-0&quot;</span><span class="w"> </span><span class="c1"># A virtual user who can connect to this virtual database.</span>
@@ -2034,6 +2120,9 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <h3 id="min_pool_size">min_pool_size</h3>
 <p>The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size.</p>
 <p>Default: <code>None</code>.</p>
+<h3 id="server_lifetime_2">server_lifetime</h3>
+<p>Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used.</p>
+<p>Default: <code>None</code> (uses pool setting).</p>
 
 
 
