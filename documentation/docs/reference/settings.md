@@ -260,6 +260,18 @@ Maximum time to wait for data copy operations during proxying, in milliseconds.
 
 Default: `15000` (15 sec).
 
+### prometheus_exporter
+
+The host:port on which the Prometheus metrics exporter will listen.
+
+Default: `"0.0.0.0:9127"`.
+
+### prometheus_exporter_enabled
+
+Enable or disable the Prometheus metrics exporter.
+
+Default: `false`.
+
 ### server_tls
 
 Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers.

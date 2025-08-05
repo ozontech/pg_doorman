@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::error::Error;
 
 #[cfg(not(test))]
-use postgres::{Client, NoTls};
-#[cfg(not(test))]
 use native_tls::TlsConnector;
+#[cfg(not(test))]
+use postgres::{Client, NoTls};
 #[cfg(not(test))]
 use postgres_native_tls::MakeTlsConnector;
 
@@ -39,7 +39,7 @@ pub fn generate_config(config: &GenerateConfig) -> Result<Config, Box<dyn Error>
     } else {
         Client::connect(&connection_string, NoTls)?
     };
-    
+
     // Call the internal function with the created client
     generate_config_with_client(config, client)
 }
@@ -52,22 +52,24 @@ pub fn generate_config(config: &GenerateConfig) -> Result<Config, Box<dyn Error>
         ("postgres".to_string(), "md5abcdef1234567890".to_string()),
         ("testuser".to_string(), "md5fedcba0987654321".to_string()),
     ];
-    
-    let databases = vec![
-        "postgres".to_string(),
-        "testdb".to_string(),
-    ];
-    
+
+    let databases = vec!["postgres".to_string(), "testdb".to_string()];
+
     // Call the test-specific implementation with explicit error types
     tests::generate_config_with_client::<std::convert::Infallible, std::convert::Infallible>(
-        config, Ok(users), Ok(databases)
+        config,
+        Ok(users),
+        Ok(databases),
     )
 }
 
 #[cfg(not(test))]
 /// Internal function that accepts a client for testing purposes
 /// This allows us to inject a mock client in tests
-pub fn generate_config_with_client(config: &GenerateConfig, mut client: Client) -> Result<Config, Box<dyn Error>> {
+pub fn generate_config_with_client(
+    config: &GenerateConfig,
+    mut client: Client,
+) -> Result<Config, Box<dyn Error>> {
     // Initialize default configuration
     let mut result = Config::default();
     result.general.host = config.host.as_deref().unwrap_or("localhost").to_string();
@@ -145,7 +147,10 @@ mod tests {
 
     // Test-specific implementation of generate_config_with_client
     #[cfg(test)]
-    pub fn generate_config_with_client<E1: std::error::Error + 'static, E2: std::error::Error + 'static>(
+    pub fn generate_config_with_client<
+        E1: std::error::Error + 'static,
+        E2: std::error::Error + 'static,
+    >(
         config: &GenerateConfig,
         users: Result<Vec<(String, String)>, E1>,
         databases: Result<Vec<String>, E2>,
@@ -158,7 +163,7 @@ mod tests {
 
         // Store users with their authentication details
         let mut users_map = BTreeMap::new();
-        
+
         // Process users if available
         match users {
             Ok(user_list) => {
@@ -191,7 +196,7 @@ mod tests {
                     } else {
                         PoolMode::Transaction
                     };
-                    
+
                     // Add database to configuration with all discovered users
                     result.pools.insert(
                         db_name.clone(),
@@ -233,52 +238,50 @@ mod tests {
             session_pool_mode: false,
             output: None,
         };
-        
+
         // Create mock data
         let users = vec![
             ("postgres".to_string(), "md5abcdef1234567890".to_string()),
             ("testuser".to_string(), "md5fedcba0987654321".to_string()),
         ];
-        
-        let databases = vec![
-            "postgres".to_string(),
-            "testdb".to_string(),
-        ];
-        
+
+        let databases = vec!["postgres".to_string(), "testdb".to_string()];
+
         // Call the function with our mock data and explicit error types
-        let result = generate_config_with_client::<std::convert::Infallible, std::convert::Infallible>(
-            &config, Ok(users), Ok(databases)
-        );
-        
+        let result = generate_config_with_client::<
+            std::convert::Infallible,
+            std::convert::Infallible,
+        >(&config, Ok(users), Ok(databases));
+
         // Verify the result
         assert!(result.is_ok());
-        
+
         let config_result = result.unwrap();
-        
+
         // Verify the configuration has the expected values
         assert_eq!(config_result.general.host, "localhost");
         assert_eq!(config_result.general.port, 6432);
-        assert_eq!(config_result.general.server_tls, false);
-        
+        assert!(!config_result.general.server_tls);
+
         // Verify the pools
         assert_eq!(config_result.pools.len(), 2);
         assert!(config_result.pools.contains_key("postgres"));
         assert!(config_result.pools.contains_key("testdb"));
-        
+
         // Verify the users in the pools
         let postgres_pool = config_result.pools.get("postgres").unwrap();
         assert_eq!(postgres_pool.pool_mode, PoolMode::Transaction);
         assert_eq!(postgres_pool.users.len(), 2);
         assert!(postgres_pool.users.contains_key("postgres"));
         assert!(postgres_pool.users.contains_key("testuser"));
-        
+
         // Verify user details
         let postgres_user = postgres_pool.users.get("postgres").unwrap();
         assert_eq!(postgres_user.username, "postgres");
         assert_eq!(postgres_user.password, "md5abcdef1234567890");
         assert_eq!(postgres_user.pool_size, 40);
     }
-    
+
     #[test]
     fn test_generate_config_with_custom_parameters() {
         // Create a GenerateConfig with custom parameters
@@ -293,48 +296,46 @@ mod tests {
             session_pool_mode: true,
             output: None,
         };
-        
+
         // Create mock data
         let users = vec![
             ("postgres".to_string(), "md5abcdef1234567890".to_string()),
             ("testuser".to_string(), "md5fedcba0987654321".to_string()),
         ];
-        
-        let databases = vec![
-            "postgres".to_string(),
-            "testdb".to_string(),
-        ];
-        
+
+        let databases = vec!["postgres".to_string(), "testdb".to_string()];
+
         // Call the function with our mock data and explicit error types
-        let result = generate_config_with_client::<std::convert::Infallible, std::convert::Infallible>(
-            &config, Ok(users), Ok(databases)
-        );
-        
+        let result = generate_config_with_client::<
+            std::convert::Infallible,
+            std::convert::Infallible,
+        >(&config, Ok(users), Ok(databases));
+
         // Verify the result
         assert!(result.is_ok());
-        
+
         let config_result = result.unwrap();
-        
+
         // Verify the configuration has the expected values
         assert_eq!(config_result.general.host, "testhost");
         assert_eq!(config_result.general.port, 6432);
-        assert_eq!(config_result.general.server_tls, false);
-        
+        assert!(!config_result.general.server_tls);
+
         // Verify the pools
         assert_eq!(config_result.pools.len(), 2);
-        
+
         // Verify the pool mode is Session as specified
         let testdb_pool = config_result.pools.get("testdb").unwrap();
         assert_eq!(testdb_pool.pool_mode, PoolMode::Session);
         assert_eq!(testdb_pool.server_host, "testhost");
         assert_eq!(testdb_pool.server_port, 5433);
-        
+
         // Verify user details
         let testuser = testdb_pool.users.get("testuser").unwrap();
         assert_eq!(testuser.username, "testuser");
         assert_eq!(testuser.pool_size, 20);
     }
-    
+
     #[test]
     fn test_generate_config_with_ssl_enabled() {
         // Create a GenerateConfig with SSL enabled
@@ -349,32 +350,30 @@ mod tests {
             session_pool_mode: false,
             output: None,
         };
-        
+
         // Create mock data
         let users = vec![
             ("postgres".to_string(), "md5abcdef1234567890".to_string()),
             ("testuser".to_string(), "md5fedcba0987654321".to_string()),
         ];
-        
-        let databases = vec![
-            "postgres".to_string(),
-            "testdb".to_string(),
-        ];
-        
+
+        let databases = vec!["postgres".to_string(), "testdb".to_string()];
+
         // Call the function with our mock data and explicit error types
-        let result = generate_config_with_client::<std::convert::Infallible, std::convert::Infallible>(
-            &config, Ok(users), Ok(databases)
-        );
-        
+        let result = generate_config_with_client::<
+            std::convert::Infallible,
+            std::convert::Infallible,
+        >(&config, Ok(users), Ok(databases));
+
         // Verify the result
         assert!(result.is_ok());
-        
+
         let config_result = result.unwrap();
-        
+
         // Verify SSL is enabled
-        assert_eq!(config_result.general.server_tls, true);
+        assert!(config_result.general.server_tls);
     }
-    
+
     #[test]
     fn test_generate_config_with_database_error() {
         // Create a GenerateConfig
@@ -389,34 +388,31 @@ mod tests {
             session_pool_mode: false,
             output: None,
         };
-        
+
         // Create a simple error type for testing
         #[derive(Debug)]
         struct TestError(String);
-        
+
         impl std::fmt::Display for TestError {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(f, "{}", self.0)
             }
         }
-        
+
         impl std::error::Error for TestError {}
-        
+
         // Create an error directly instead of using postgres::Error
         let error = TestError("permission denied for table pg_shadow".to_string());
-        
-        let databases = vec![
-            "postgres".to_string(),
-            "testdb".to_string(),
-        ];
-        
+
+        let databases = vec!["postgres".to_string(), "testdb".to_string()];
+
         // Call the function with our mock data including the error and explicit error types
         let result = generate_config_with_client::<TestError, std::convert::Infallible>(
-            &config, 
-            Err(error), 
-            Ok(databases)
+            &config,
+            Err(error),
+            Ok(databases),
         );
-        
+
         // Verify the result is an error
         assert!(result.is_err());
     }

@@ -219,6 +219,11 @@ pub struct General {
     #[serde(default = "General::default_port")]
     pub port: u16,
 
+    #[serde(default = "General::default_prometheus_exporter")]
+    pub prometheus_exporter: String,
+    #[serde(default = "General::default_prometheus_exporter_enabled")]
+    pub prometheus_exporter_enabled: bool,
+
     #[serde(default = "General::default_virtual_pool_count")]
     pub virtual_pool_count: u16,
 
@@ -326,7 +331,10 @@ pub struct General {
 
     pub syslog_prog_name: Option<String>,
 
-    #[serde(default = "General::default_hba", skip_serializing_if = "<[_]>::is_empty")]
+    #[serde(
+        default = "General::default_hba",
+        skip_serializing_if = "<[_]>::is_empty"
+    )]
     pub hba: Vec<IpNet>,
 }
 
@@ -341,6 +349,14 @@ impl General {
 
     pub fn default_virtual_pool_count() -> u16 {
         1
+    }
+
+    pub fn default_prometheus_exporter() -> String {
+        "0.0.0.0:9127".to_string()
+    }
+
+    pub fn default_prometheus_exporter_enabled() -> bool {
+        false
     }
 
     pub fn default_tokio_global_queue_interval() -> u32 {
@@ -503,6 +519,8 @@ impl Default for General {
         General {
             host: Self::default_host(),
             port: Self::default_port(),
+            prometheus_exporter: Self::default_prometheus_exporter(),
+            prometheus_exporter_enabled: Self::default_prometheus_exporter_enabled(),
             virtual_pool_count: Self::default_virtual_pool_count(),
             tokio_global_queue_interval: Self::default_tokio_global_queue_interval(),
             tokio_event_interval: Self::default_tokio_event_interval(),
@@ -708,7 +726,10 @@ pub struct Config {
     // [main.subconf]
     // field1_under_subconf = 1
     // field3_under_main = 3 # This field will be interpreted as being under subconf and not under main
-    #[serde(default = "Config::default_path", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default = "Config::default_path",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub path: String,
 
     // General and global settings.
@@ -722,7 +743,10 @@ pub struct Config {
     pub pools: HashMap<String, Pool>,
 
     // Include files.
-    #[serde(default = "General::default_include", skip_serializing_if = "Include::is_empty")]
+    #[serde(
+        default = "General::default_include",
+        skip_serializing_if = "Include::is_empty"
+    )]
     pub include: Include,
 }
 

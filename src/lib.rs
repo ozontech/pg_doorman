@@ -1,4 +1,7 @@
 pub mod admin;
+pub mod prometheus_exporter;
+#[cfg(test)]
+mod prometheus_exporter_test;
 pub mod auth;
 pub mod client;
 pub mod cmd_args;

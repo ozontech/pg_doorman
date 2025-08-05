@@ -4,6 +4,11 @@ title: Changelog
 
 # Changelog
 
+### 2.2.0 <small>Aug 5, 2025</small> { id="2.2.0" }
+
+**Features:**
+- Added Prometheus exporter functionality that provides metrics about connections, memory usage, pools, queries, and transactions
+
 ### 2.1.2 <small>Aug 4, 2025</small> { id="2.1.2" }
 
 **Features:**

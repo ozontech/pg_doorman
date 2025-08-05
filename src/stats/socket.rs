@@ -84,6 +84,19 @@ impl SocketStateCount {
         ]);
         res
     }
+    pub fn get_tcp(&self) -> u32 {
+        self.tcp.get_total()
+    }
+    pub fn get_tcp6(&self) -> u32 {
+        self.tcp6.get_total()
+    }
+    pub fn get_unix(&self) -> u32 {
+        self.unix_stream.get_total()
+    }
+
+    pub fn get_unknown(&self) -> u32 {
+        self.unknown as u32
+    }
 }
 
 impl TcpStateCount {

@@ -49,6 +49,7 @@ use tokio::{runtime::Builder, sync::mpsc};
 
 extern crate exitcode;
 
+use pg_doorman::prometheus_exporter::start_prometheus_server;
 use pg_doorman::cmd_args::Commands;
 use pg_doorman::config::{get_config, reload_config, VERSION};
 use pg_doorman::core_affinity;
@@ -226,6 +227,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::task::spawn(async move {
             retain_connections().await;
         });
+
+        // Prometheus metrics exporter
+        if config.general.prometheus_exporter_enabled {
+            tokio::task::spawn(async move {
+                start_prometheus_server(config.general.prometheus_exporter.as_str()).await;
+            });
+        }
 
         #[cfg(windows)]
         let mut term_signal = win_signal::ctrl_close().unwrap();
