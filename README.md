@@ -191,22 +191,10 @@ pgdoorman=# RELOAD;
 
 ## Prometheus Metrics
 
-PgDoorman includes a built-in Prometheus exporter that runs by default on port 9127.
+PgDoorman includes a built-in Prometheus exporter that runs on port 9127.
 This allows you to monitor the application using Prometheus and visualize the metrics with tools like Grafana.
 
-The following metrics are available:
-
-- `pg_doorman_total_memory` - Total memory allocated to the pg_doorman process in bytes
-- `pg_doorman_connection_count` - Counter of new connections by type (plain, tls, cancel, total)
-- `pg_doorman_sockets` - Counter of sockets used by pg_doorman (tcp, tcp6, unix, unknown) - Linux only.
-- `pg_doorman_pools_clients` - Number of clients in connection pools by status (idle, waiting, active)
-- `pg_doorman_pools_servers` - Number of servers in connection pools by status (active, idle)
-- `pg_doorman_pools_bytes` - Total bytes transferred through connection pools (received, sent)
-- `pg_doorman_pools_queries_percentile` - Query execution time percentiles (99, 95, 90, 50)
-- `pg_doorman_pools_transactions_percentile` - Transaction execution time percentiles (99, 95, 90, 50)
-- `pg_doorman_pools_transactions_count` - Counter of transactions executed in connection pools
-- `pg_doorman_pools_queries_count` - Counter of queries executed in connection pools
-- `pg_doorman_pools_avg_wait_time` - Average wait time for clients in connection pools (milliseconds)
+Read more about the available prometheus metrics in the [Prometheus Documentation](https://ozontech.github.io/pg_doorman/latest/reference/prometheus/).
 
 ## Binary Upgrade Process
 

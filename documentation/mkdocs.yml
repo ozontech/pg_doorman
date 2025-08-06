@@ -71,7 +71,10 @@ nav:
         - 'tutorials/binary-upgrade.md'
         - 'tutorials/contributing.md'
         - 'changelog.md' 
-    - 'reference/settings.md'
+    - 'Reference':
+        - 'reference/general.md'
+        - 'reference/pool.md'
+        - 'reference/prometheus.md'
     - benchmarks.md
 plugins:
   - search

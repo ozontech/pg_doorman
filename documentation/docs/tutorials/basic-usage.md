@@ -88,7 +88,7 @@ username = "doorman"       # Username for PostgreSQL server
 password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="  # Hashed password
 ```
 
-For a complete list of configuration options and their descriptions, see the [Settings Reference Guide](../reference/settings.md).
+For a complete list of configuration options and their descriptions, see the [Settings Reference Guide](../reference/general.md).
 
 ### Automatic Configuration Generation
 

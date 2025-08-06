@@ -219,11 +219,6 @@ pub struct General {
     #[serde(default = "General::default_port")]
     pub port: u16,
 
-    #[serde(default = "General::default_prometheus_exporter")]
-    pub prometheus_exporter: String,
-    #[serde(default = "General::default_prometheus_exporter_enabled")]
-    pub prometheus_exporter_enabled: bool,
-
     #[serde(default = "General::default_virtual_pool_count")]
     pub virtual_pool_count: u16,
 
@@ -338,6 +333,35 @@ pub struct General {
     pub hba: Vec<IpNet>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Prometheus {
+    #[serde(default = "Prometheus::default_host")]
+    pub host: String,
+    #[serde(default = "Prometheus::default_port")]
+    pub port: u16,
+    #[serde(default = "Prometheus::default_enable")]
+    pub enabled: bool,
+}
+
+impl Prometheus {
+    pub fn empty() -> Prometheus {
+        Prometheus {
+            host: Self::default_host(),
+            port: Self::default_port(),
+            enabled: Self::default_enable(),
+        }
+    }
+    pub fn default_host() -> String {
+        "0.0.0.0".to_string()
+    }
+    pub fn default_port() -> u16 {
+        9127
+    }
+    pub fn default_enable() -> bool {
+        false
+    }
+}
+
 impl General {
     pub fn default_host() -> String {
         "0.0.0.0".into()
@@ -349,14 +373,6 @@ impl General {
 
     pub fn default_virtual_pool_count() -> u16 {
         1
-    }
-
-    pub fn default_prometheus_exporter() -> String {
-        "0.0.0.0:9127".to_string()
-    }
-
-    pub fn default_prometheus_exporter_enabled() -> bool {
-        false
     }
 
     pub fn default_tokio_global_queue_interval() -> u32 {
@@ -519,8 +535,6 @@ impl Default for General {
         General {
             host: Self::default_host(),
             port: Self::default_port(),
-            prometheus_exporter: Self::default_prometheus_exporter(),
-            prometheus_exporter_enabled: Self::default_prometheus_exporter_enabled(),
             virtual_pool_count: Self::default_virtual_pool_count(),
             tokio_global_queue_interval: Self::default_tokio_global_queue_interval(),
             tokio_event_interval: Self::default_tokio_event_interval(),
@@ -735,6 +749,10 @@ pub struct Config {
     // General and global settings.
     pub general: General,
 
+    // Prometheus settings.
+    #[serde(default = "Prometheus::empty")]
+    pub prometheus: Prometheus,
+
     // Talos settings.
     #[serde(default = "Talos::empty", skip_serializing_if = "Talos::is_empty")]
     pub talos: Talos,
@@ -761,6 +779,7 @@ impl Default for Config {
         Config {
             path: Self::default_path(),
             general: General::default(),
+            prometheus: Prometheus::empty(),
             pools: HashMap::default(),
             talos: Talos {
                 keys: vec![],

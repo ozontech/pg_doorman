@@ -1,8 +1,10 @@
+use crate::pool::StatsPoolIdentifier;
 /// Prometheus metrics exporter for pg_doorman
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
+use crate::stats::pool::PoolStats;
 use crate::stats::{
-    CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
+    get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
     TOTAL_CONNECTION_COUNTER,
 };
 use flate2::write::GzEncoder;
@@ -14,8 +16,6 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use tokio::net::TcpSocket;
-use crate::pool::StatsPoolIdentifier;
-use crate::stats::pool::PoolStats;
 
 // Define the metrics we want to expose
 static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
@@ -133,11 +133,37 @@ static SHOW_POOLS_TRANSACTIONS_COUNTER: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+static SHOW_POOLS_TRANSACTIONS_TOTAL_TIME: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pools_transactions_total_time",
+            "Total time spent executing transactions in connection pools by user and database. Values are in milliseconds. Helps monitor overall transaction performance and identify users or databases with high transaction execution times.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
 static SHOW_POOLS_QUERIES_COUNTER: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pools_queries_count",
             "Counter of queries executed in connection pools by user and database. Helps track query volume and identify users or databases with high query rates.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+static SHOW_POOLS_QUERIES_TOTAL_TIME: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pools_queries_total_time",
+            "Total time spent executing queries in connection pools by user and database. Values are in milliseconds. Helps monitor overall query performance and identify users or databases with high query execution times.",
         ),
         &["user", "database"],
     )
@@ -159,6 +185,32 @@ static SHOW_POOLS_WAIT_TIME_AVG: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+static SHOW_SERVERS_PREPARED_HITS: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_servers_prepared_hits",
+            "Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead.",
+        ),
+        &["user", "database", "backend_pid"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+static SHOW_SERVERS_PREPARED_MISSES: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_servers_prepared_misses",
+            "Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance.",
+        ),
+        &["user", "database", "backend_pid"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
 fn update_metrics() {
     update_memory_metrics();
@@ -168,6 +220,7 @@ fn update_metrics() {
     update_socket_metrics();
 
     update_pool_metrics();
+    update_server_metrics();
 }
 
 fn update_memory_metrics() {
@@ -226,25 +279,65 @@ fn update_pool_metrics() {
     }
 }
 
+fn update_server_metrics() {
+    SHOW_SERVERS_PREPARED_HITS.reset();
+    SHOW_SERVERS_PREPARED_MISSES.reset();
+    let stats = get_server_stats();
+    for (_, server) in stats {
+        // Create owned strings to avoid borrowing issues
+        let username = server.username().to_string();
+        let pool_name = server.pool_name().to_string();
+        let process_id = server.process_id().to_string();
+
+        let server_metrics = [
+            (
+                &SHOW_SERVERS_PREPARED_HITS,
+                server.prepared_hit_count.load(Ordering::Relaxed) as f64,
+            ),
+            (
+                &SHOW_SERVERS_PREPARED_MISSES,
+                server.prepared_miss_count.load(Ordering::Relaxed) as f64,
+            ),
+        ];
+
+        for (metric, value) in &server_metrics {
+            metric
+                .with_label_values(&[&username, &pool_name, &process_id])
+                .set(*value);
+        }
+    }
+}
+
 fn update_pool_avg_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
     let avg_metrics = [
-        (&SHOW_POOLS_WAIT_TIME_AVG, stats.avg_wait_time),
-        (&SHOW_POOLS_TRANSACTIONS_COUNTER, stats.avg_xact_count),
-        (&SHOW_POOLS_QUERIES_COUNTER, stats.avg_query_count),
+        (
+            &SHOW_POOLS_WAIT_TIME_AVG,
+            stats.avg_wait_time as f64 / 1_000f64,
+        ),
+        (
+            &SHOW_POOLS_TRANSACTIONS_COUNTER,
+            stats.total_xact_count as f64,
+        ),
+        (
+            &SHOW_POOLS_TRANSACTIONS_TOTAL_TIME,
+            stats.total_xact_time_microseconds as f64 / 1_000f64,
+        ),
+        (&SHOW_POOLS_QUERIES_COUNTER, stats.total_query_count as f64),
+        (
+            &SHOW_POOLS_QUERIES_TOTAL_TIME,
+            stats.total_query_time_microseconds as f64 / 1_000f64,
+        ),
     ];
 
     for (metric, value) in &avg_metrics {
         metric
             .with_label_values(&[&identifier.user, &identifier.db])
-            .set(*value as f64);
+            .set(*value);
     }
 }
 
 fn update_pool_server_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
-    let server_states = [
-        ("active", stats.sv_active),
-        ("idle", stats.sv_idle),
-    ];
+    let server_states = [("active", stats.sv_active), ("idle", stats.sv_idle)];
 
     for (state, value) in &server_states {
         SHOW_POOLS_SERVER
@@ -261,7 +354,9 @@ fn reset_pool_metrics() {
     SHOW_POOLS_TRANSACTIONS_PERCENTILE.reset();
     SHOW_POOLS_WAIT_TIME_AVG.reset();
     SHOW_POOLS_TRANSACTIONS_COUNTER.reset();
+    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME.reset();
     SHOW_POOLS_QUERIES_COUNTER.reset();
+    SHOW_POOLS_QUERIES_TOTAL_TIME.reset();
 }
 
 fn update_client_state_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
@@ -301,11 +396,11 @@ fn update_percentile_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats
 
         SHOW_POOLS_QUERIES_PERCENTILE
             .with_label_values(&[percentile, &identifier.user, &identifier.db])
-            .set(query_value as f64);
+            .set(query_value as f64 / 1_000f64);
 
         SHOW_POOLS_TRANSACTIONS_PERCENTILE
             .with_label_values(&[percentile, &identifier.user, &identifier.db])
-            .set(xact_value as f64);
+            .set(xact_value as f64 / 1_000f64);
     }
 }
 

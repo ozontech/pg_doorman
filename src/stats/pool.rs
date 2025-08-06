@@ -128,10 +128,10 @@ pub struct PoolStats {
     // Aggregated statistics for SHOW STATS command
     // ------------------------------------------------------------------------------------------
     /// Total number of transactions processed
-    total_xact_count: u64,
+    pub total_xact_count: u64,
 
     /// Total number of queries processed
-    total_query_count: u64,
+    pub total_query_count: u64,
 
     /// Total bytes received from clients
     total_received: u64,
@@ -140,10 +140,10 @@ pub struct PoolStats {
     total_sent: u64,
 
     /// Total transaction processing time (microseconds)
-    total_xact_time_microseconds: u64,
+    pub total_xact_time_microseconds: u64,
 
     /// Total query processing time (microseconds)
-    total_query_time_microseconds: u64,
+    pub total_query_time_microseconds: u64,
 
     /// Average bytes received per second
     avg_recv: u64,

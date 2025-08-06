@@ -49,7 +49,6 @@ use tokio::{runtime::Builder, sync::mpsc};
 
 extern crate exitcode;
 
-use pg_doorman::prometheus_exporter::start_prometheus_server;
 use pg_doorman::cmd_args::Commands;
 use pg_doorman::config::{get_config, reload_config, VERSION};
 use pg_doorman::core_affinity;
@@ -58,6 +57,7 @@ use pg_doorman::format_duration;
 use pg_doorman::generate::generate_config;
 use pg_doorman::messages::configure_tcp_socket;
 use pg_doorman::pool::{retain_connections, ClientServerMap, ConnectionPool};
+use pg_doorman::prometheus_exporter::start_prometheus_server;
 use pg_doorman::rate_limit::RateLimiter;
 use pg_doorman::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use pg_doorman::tls::build_acceptor;
@@ -229,9 +229,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         // Prometheus metrics exporter
-        if config.general.prometheus_exporter_enabled {
+        if config.prometheus.enabled {
             tokio::task::spawn(async move {
-                start_prometheus_server(config.general.prometheus_exporter.as_str()).await;
+                start_prometheus_server(format!("{}:{}", config.prometheus.host, config.prometheus.port).as_str()).await;
             });
         }
 

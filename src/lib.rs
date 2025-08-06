@@ -1,7 +1,4 @@
 pub mod admin;
-pub mod prometheus_exporter;
-#[cfg(test)]
-mod prometheus_exporter_test;
 pub mod auth;
 pub mod client;
 pub mod cmd_args;
@@ -14,6 +11,9 @@ pub mod generate;
 pub mod logger;
 pub mod messages;
 pub mod pool;
+pub mod prometheus_exporter;
+#[cfg(test)]
+mod prometheus_exporter_test;
 pub mod rate_limit;
 mod scram_client;
 pub mod server;
