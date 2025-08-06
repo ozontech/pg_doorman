@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/2.2.0/reference/settings/">
+        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/2.2.0/reference/pool/">
       
       
-        <link rel="prev" href="../../changelog/">
+        <link rel="prev" href="../general/">
       
       
-        <link rel="next" href="../../benchmarks/">
+        <link rel="next" href="../prometheus/">
       
       
       <link rel="icon" href="../../images/favicon.png">
@@ -22,7 +22,7 @@
     
     
       
-        <title>Settings - PgDoorman Documentation</title>
+        <title>Pool Settings - PgDoorman Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#settings" class="md-skip">
+        <a href="#pool-settings" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Settings
+              Pool Settings
             
           </span>
         </div>
@@ -271,17 +271,20 @@
     
   
   
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="./" class="md-tabs__link">
-        
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../general/" class="md-tabs__link">
+          
   
   
     
   
-  Settings
+  Reference
 
-      </a>
-    </li>
+        </a>
+      </li>
+    
   
 
       
@@ -587,12 +590,89 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../general/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    General Settings
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
     <li class="md-nav__item md-nav__item--active">
       
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
-      
-        
       
       
         <label class="md-nav__link md-nav__link--active" for="__toc">
@@ -600,7 +680,7 @@
   
   
   <span class="md-ellipsis">
-    Settings
+    Pool Settings
     
   </span>
   
@@ -613,7 +693,7 @@
   
   
   <span class="md-ellipsis">
-    Settings
+    Pool Settings
     
   </span>
   
@@ -626,434 +706,12 @@
   
   
   
-    
-  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#general-settings" class="md-nav__link">
-    <span class="md-ellipsis">
-      General Settings
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="General Settings">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#host" class="md-nav__link">
-    <span class="md-ellipsis">
-      host
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#port" class="md-nav__link">
-    <span class="md-ellipsis">
-      port
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#backlog" class="md-nav__link">
-    <span class="md-ellipsis">
-      backlog
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#max_connections" class="md-nav__link">
-    <span class="md-ellipsis">
-      max_connections
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_mode
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_ca_file" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_ca_file
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_private_key" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_private_key
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_certificate" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_certificate
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_rate_limit_per_second" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_rate_limit_per_second
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#daemon_pid_file" class="md-nav__link">
-    <span class="md-ellipsis">
-      daemon_pid_file
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#syslog_prog_name" class="md-nav__link">
-    <span class="md-ellipsis">
-      syslog_prog_name
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#log_client_connections" class="md-nav__link">
-    <span class="md-ellipsis">
-      log_client_connections
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#log_client_disconnections" class="md-nav__link">
-    <span class="md-ellipsis">
-      log_client_disconnections
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#worker_threads" class="md-nav__link">
-    <span class="md-ellipsis">
-      worker_threads
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#worker_cpu_affinity_pinning" class="md-nav__link">
-    <span class="md-ellipsis">
-      worker_cpu_affinity_pinning
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#virtual_pool_count" class="md-nav__link">
-    <span class="md-ellipsis">
-      virtual_pool_count
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tokio_global_queue_interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      tokio_global_queue_interval
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tokio_event_interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      tokio_event_interval
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#worker_stack_size" class="md-nav__link">
-    <span class="md-ellipsis">
-      worker_stack_size
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#connect_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      connect_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#query_wait_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      query_wait_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#idle_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      idle_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server_lifetime" class="md-nav__link">
-    <span class="md-ellipsis">
-      server_lifetime
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server_round_robin" class="md-nav__link">
-    <span class="md-ellipsis">
-      server_round_robin
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sync_server_parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      sync_server_parameters
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_so_linger" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_so_linger
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_no_delay" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_no_delay
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_keepalives_count" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_keepalives_count
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_keepalives_idle" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_keepalives_idle
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_keepalives_interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_keepalives_interval
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#unix_socket_buffer_size" class="md-nav__link">
-    <span class="md-ellipsis">
-      unix_socket_buffer_size
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#admin_username" class="md-nav__link">
-    <span class="md-ellipsis">
-      admin_username
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#admin_password" class="md-nav__link">
-    <span class="md-ellipsis">
-      admin_password
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prepared_statements" class="md-nav__link">
-    <span class="md-ellipsis">
-      prepared_statements
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prepared_statements_cache_size" class="md-nav__link">
-    <span class="md-ellipsis">
-      prepared_statements_cache_size
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#message_size_to_be_stream" class="md-nav__link">
-    <span class="md-ellipsis">
-      message_size_to_be_stream
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#max_memory_usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      max_memory_usage
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#shutdown_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      shutdown_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#proxy_copy_data_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      proxy_copy_data_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prometheus_exporter" class="md-nav__link">
-    <span class="md-ellipsis">
-      prometheus_exporter
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prometheus_exporter_enabled" class="md-nav__link">
-    <span class="md-ellipsis">
-      prometheus_exporter_enabled
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server_tls" class="md-nav__link">
-    <span class="md-ellipsis">
-      server_tls
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#verify_server_certificate" class="md-nav__link">
-    <span class="md-ellipsis">
-      verify_server_certificate
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hba" class="md-nav__link">
-    <span class="md-ellipsis">
-      hba
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#pooler_check_query" class="md-nav__link">
-    <span class="md-ellipsis">
-      pooler_check_query
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
   <a href="#pool-settings" class="md-nav__link">
@@ -1102,7 +760,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#connect_timeout_1" class="md-nav__link">
+  <a href="#connect_timeout" class="md-nav__link">
     <span class="md-ellipsis">
       connect_timeout
     </span>
@@ -1111,7 +769,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#idle_timeout_1" class="md-nav__link">
+  <a href="#idle_timeout" class="md-nav__link">
     <span class="md-ellipsis">
       idle_timeout
     </span>
@@ -1120,7 +778,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#server_lifetime_1" class="md-nav__link">
+  <a href="#server_lifetime" class="md-nav__link">
     <span class="md-ellipsis">
       server_lifetime
     </span>
@@ -1234,7 +892,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#server_lifetime_2" class="md-nav__link">
+  <a href="#server_lifetime_1" class="md-nav__link">
     <span class="md-ellipsis">
       server_lifetime
     </span>
@@ -1250,6 +908,37 @@
     </ul>
   
 </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prometheus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Prometheus Settings
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
       
     </li>
   
@@ -1294,434 +983,12 @@
   
   
   
-    
-  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#general-settings" class="md-nav__link">
-    <span class="md-ellipsis">
-      General Settings
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="General Settings">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#host" class="md-nav__link">
-    <span class="md-ellipsis">
-      host
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#port" class="md-nav__link">
-    <span class="md-ellipsis">
-      port
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#backlog" class="md-nav__link">
-    <span class="md-ellipsis">
-      backlog
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#max_connections" class="md-nav__link">
-    <span class="md-ellipsis">
-      max_connections
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_mode
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_ca_file" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_ca_file
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_private_key" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_private_key
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_certificate" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_certificate
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tls_rate_limit_per_second" class="md-nav__link">
-    <span class="md-ellipsis">
-      tls_rate_limit_per_second
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#daemon_pid_file" class="md-nav__link">
-    <span class="md-ellipsis">
-      daemon_pid_file
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#syslog_prog_name" class="md-nav__link">
-    <span class="md-ellipsis">
-      syslog_prog_name
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#log_client_connections" class="md-nav__link">
-    <span class="md-ellipsis">
-      log_client_connections
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#log_client_disconnections" class="md-nav__link">
-    <span class="md-ellipsis">
-      log_client_disconnections
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#worker_threads" class="md-nav__link">
-    <span class="md-ellipsis">
-      worker_threads
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#worker_cpu_affinity_pinning" class="md-nav__link">
-    <span class="md-ellipsis">
-      worker_cpu_affinity_pinning
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#virtual_pool_count" class="md-nav__link">
-    <span class="md-ellipsis">
-      virtual_pool_count
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tokio_global_queue_interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      tokio_global_queue_interval
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tokio_event_interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      tokio_event_interval
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#worker_stack_size" class="md-nav__link">
-    <span class="md-ellipsis">
-      worker_stack_size
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#connect_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      connect_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#query_wait_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      query_wait_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#idle_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      idle_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server_lifetime" class="md-nav__link">
-    <span class="md-ellipsis">
-      server_lifetime
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server_round_robin" class="md-nav__link">
-    <span class="md-ellipsis">
-      server_round_robin
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sync_server_parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      sync_server_parameters
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_so_linger" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_so_linger
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_no_delay" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_no_delay
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_keepalives_count" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_keepalives_count
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_keepalives_idle" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_keepalives_idle
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tcp_keepalives_interval" class="md-nav__link">
-    <span class="md-ellipsis">
-      tcp_keepalives_interval
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#unix_socket_buffer_size" class="md-nav__link">
-    <span class="md-ellipsis">
-      unix_socket_buffer_size
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#admin_username" class="md-nav__link">
-    <span class="md-ellipsis">
-      admin_username
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#admin_password" class="md-nav__link">
-    <span class="md-ellipsis">
-      admin_password
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prepared_statements" class="md-nav__link">
-    <span class="md-ellipsis">
-      prepared_statements
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prepared_statements_cache_size" class="md-nav__link">
-    <span class="md-ellipsis">
-      prepared_statements_cache_size
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#message_size_to_be_stream" class="md-nav__link">
-    <span class="md-ellipsis">
-      message_size_to_be_stream
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#max_memory_usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      max_memory_usage
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#shutdown_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      shutdown_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#proxy_copy_data_timeout" class="md-nav__link">
-    <span class="md-ellipsis">
-      proxy_copy_data_timeout
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prometheus_exporter" class="md-nav__link">
-    <span class="md-ellipsis">
-      prometheus_exporter
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prometheus_exporter_enabled" class="md-nav__link">
-    <span class="md-ellipsis">
-      prometheus_exporter_enabled
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#server_tls" class="md-nav__link">
-    <span class="md-ellipsis">
-      server_tls
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#verify_server_certificate" class="md-nav__link">
-    <span class="md-ellipsis">
-      verify_server_certificate
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hba" class="md-nav__link">
-    <span class="md-ellipsis">
-      hba
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#pooler_check_query" class="md-nav__link">
-    <span class="md-ellipsis">
-      pooler_check_query
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
   <a href="#pool-settings" class="md-nav__link">
@@ -1770,7 +1037,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#connect_timeout_1" class="md-nav__link">
+  <a href="#connect_timeout" class="md-nav__link">
     <span class="md-ellipsis">
       connect_timeout
     </span>
@@ -1779,7 +1046,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#idle_timeout_1" class="md-nav__link">
+  <a href="#idle_timeout" class="md-nav__link">
     <span class="md-ellipsis">
       idle_timeout
     </span>
@@ -1788,7 +1055,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#server_lifetime_1" class="md-nav__link">
+  <a href="#server_lifetime" class="md-nav__link">
     <span class="md-ellipsis">
       server_lifetime
     </span>
@@ -1902,7 +1169,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#server_lifetime_2" class="md-nav__link">
+  <a href="#server_lifetime_1" class="md-nav__link">
     <span class="md-ellipsis">
       server_lifetime
     </span>
@@ -1934,165 +1201,8 @@
   
 
 
-<h1 id="settings">Settings</h1>
-<h2 id="general-settings">General Settings</h2>
-<h3 id="host">host</h3>
-<p>Listen host (TCP v4 only).</p>
-<p>Default: <code>"0.0.0.0"</code>.</p>
-<h3 id="port">port</h3>
-<p>Listen port for incoming connections.</p>
-<p>Default: <code>6432</code>.</p>
-<h3 id="backlog">backlog</h3>
-<p>TCP backlog for incoming connections. A value of zero sets the <code>max_connections</code> as value for the TCP backlog.</p>
-<p>Default: <code>0</code>.</p>
-<h3 id="max_connections">max_connections</h3>
-<p>The maximum number of clients that can connect to the pooler simultaneously. When this limit is reached:
-* A client connecting without SSL will receive the expected error (code: <code>53300</code>, message: <code>sorry, too many clients already</code>).
-* A client connecting via SSL will see a message indicating that the server does not support the SSL protocol.</p>
-<p>Default: <code>8192</code>.</p>
-<h3 id="tls_mode">tls_mode</h3>
-<p>The TLS mode for incoming connections. It can be one of the following:</p>
-<ul>
-<li><code>allow</code> - TLS connections are allowed but not required. The pg_doorman will attempt to establish a TLS connection if the client requests it.</li>
-<li><code>disable</code> - TLS connections are not allowed. All connections will be established without TLS encryption.</li>
-<li><code>require</code> - TLS connections are required. The pg_doorman will only accept connections that use TLS encryption.</li>
-<li><code>verify-full</code> - TLS connections are required and the pg_doorman will verify the client certificate. This mode provides the highest level of security.</li>
-</ul>
-<p>Default: <code>"allow"</code>.</p>
-<h3 id="tls_ca_file">tls_ca_file</h3>
-<p>The file containing the CA certificate to verify the client certificate. This is required when <code>tls_mode</code> is set to <code>verify-full</code>.</p>
-<p>Default: <code>None</code>.</p>
-<h3 id="tls_private_key">tls_private_key</h3>
-<p>The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_certificate</code>.</p>
-<p>Default: <code>None</code>.</p>
-<h3 id="tls_certificate">tls_certificate</h3>
-<p>The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_private_key</code>.</p>
-<p>Default: <code>None</code>.</p>
-<h3 id="tls_rate_limit_per_second">tls_rate_limit_per_second</h3>
-<p>Limit the number of simultaneous attempts to create a TLS session.
-Any value other than zero implies that there is a queue through which clients must pass in order to establish a TLS connection.
-In some cases, this is necessary in order to launch an application that opens many connections at startup (the so-called "hot start").</p>
-<p>Default: <code>0</code>.</p>
-<h3 id="daemon_pid_file">daemon_pid_file</h3>
-<p>Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground with <code>-d</code>.</p>
-<p>Default: <code>None</code>.</p>
-<h3 id="syslog_prog_name">syslog_prog_name</h3>
-<p>When specified, pg_doorman starts sending messages to syslog (using /dev/log or /var/run/syslog).
-Comment this out if you want to log to stdout.</p>
-<p>Default: <code>None</code>.</p>
-<h3 id="log_client_connections">log_client_connections</h3>
-<p>Log client connections for monitoring.</p>
-<p>Default: <code>true</code>.</p>
-<h3 id="log_client_disconnections">log_client_disconnections</h3>
-<p>Log client disconnections for monitoring.</p>
-<p>Default: <code>true</code>.</p>
-<h3 id="worker_threads">worker_threads</h3>
-<p>The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
-The more workers there are, the faster the system works, but only up to a certain limit (cpu count).
-If you already have a lot of workers, you should consider increasing the number of virtual pools.</p>
-<p>Default: <code>4</code>.</p>
-<h3 id="worker_cpu_affinity_pinning">worker_cpu_affinity_pinning</h3>
-<p>Automatically assign workers to different CPUs (man 3 cpu_set).</p>
-<p>Default: <code>false</code>.</p>
-<h3 id="virtual_pool_count">virtual_pool_count</h3>
-<p>Increasing the number of virtual pools can help deal with internal latches that occur when processing very large numbers of fast queries.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>1</code>.</p>
-<h3 id="tokio_global_queue_interval">tokio_global_queue_interval</h3>
-<p><a href="https://docs.rs/tokio/latest/tokio/">Tokio runtime settings</a>.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>5</code>.</p>
-<h3 id="tokio_event_interval">tokio_event_interval</h3>
-<p><a href="https://docs.rs/tokio/latest/tokio/">Tokio runtime settings</a>.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>1</code>.</p>
-<h3 id="worker_stack_size">worker_stack_size</h3>
-<p><a href="https://docs.rs/tokio/latest/tokio/">Tokio runtime settings</a>.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>8388608</code>.</p>
-<h3 id="connect_timeout">connect_timeout</h3>
-<p>Connection timeout to server in milliseconds.</p>
-<p>Default: <code>3000</code> (3 sec).</p>
-<h3 id="query_wait_timeout">query_wait_timeout</h3>
-<p>Maximum time to wait for a query to complete, in milliseconds.</p>
-<p>Default: <code>5000</code> (5 sec).</p>
-<h3 id="idle_timeout">idle_timeout</h3>
-<p>Server idle timeout in milliseconds.</p>
-<p>Default: <code>300000000</code> (5000 min).</p>
-<h3 id="server_lifetime">server_lifetime</h3>
-<p>Server lifetime in milliseconds.</p>
-<p>Default: <code>300000</code> (5 min).</p>
-<h3 id="server_round_robin">server_round_robin</h3>
-<p>In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
-By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.</p>
-<p>Default: <code>false</code>.</p>
-<h3 id="sync_server_parameters">sync_server_parameters</h3>
-<p>If enabled, we strive to restore the parameters (via query <code>SET</code>) that were set by the client (and application_name)
-in transaction mode in other server backends. By default, this is disabled (false) due to performance.
-If you need to know <code>application_name</code>, but don't want to experience performance issues due to constant server queries <code>SET</code>,
-you can consider creating a separate pool for each application and using the <code>application_name</code> parameter in the <code>pool</code> settings.</p>
-<p>Default: <code>false</code>.</p>
-<h3 id="tcp_so_linger">tcp_so_linger</h3>
-<p>By default, pg_doorman send <code>RST</code> instead of keeping the connection open for a long time.</p>
-<p>Default: <code>0</code>.</p>
-<h3 id="tcp_no_delay">tcp_no_delay</h3>
-<p>TCP_NODELAY to disable Nagle's algorithm for lower latency.</p>
-<p>Default: <code>true</code>.</p>
-<h3 id="tcp_keepalives_count">tcp_keepalives_count</h3>
-<p>Keepalive enabled by default and overwrite OS defaults.</p>
-<p>Default: <code>5</code>.</p>
-<h3 id="tcp_keepalives_idle">tcp_keepalives_idle</h3>
-<p>Default: <code>5</code>.</p>
-<h3 id="tcp_keepalives_interval">tcp_keepalives_interval</h3>
-<p>Default: <code>1</code>.</p>
-<h3 id="unix_socket_buffer_size">unix_socket_buffer_size</h3>
-<p>Buffer size for read and write operations when connecting to PostgreSQL via a unix socket.</p>
-<p>Default: <code>1048576</code>.</p>
-<h3 id="admin_username">admin_username</h3>
-<p>Access to the virtual admin database is carried out through the administrator's username and password.</p>
-<p>Default: <code>"admin"</code>.</p>
-<h3 id="admin_password">admin_password</h3>
-<p>Access to the virtual admin database is carried out through the administrator's username and password.
-It should be replaced with your secret.</p>
-<p>Default: <code>"admin"</code>.</p>
-<h3 id="prepared_statements">prepared_statements</h3>
-<p>Switcher to enable/disable caching of prepared statements.</p>
-<p>Default: <code>true</code>.</p>
-<h3 id="prepared_statements_cache_size">prepared_statements_cache_size</h3>
-<p>Cache size of prepared requests on the server side.</p>
-<p>Default: <code>8192</code>.</p>
-<h3 id="message_size_to_be_stream">message_size_to_be_stream</h3>
-<p>Data responses from the server (message type 'D') greater than this value will be
-transmitted through the proxy in small chunks (1 MB).</p>
-<p>Default: <code>1048576</code>.</p>
-<h3 id="max_memory_usage">max_memory_usage</h3>
-<p>We calculate the total amount of memory used by the internal buffers for all current queries.
-If the limit is reached, the client will receive an error (256 MB).</p>
-<p>Default: <code>268435456</code>.</p>
-<h3 id="shutdown_timeout">shutdown_timeout</h3>
-<p>With a graceful shutdown, we wait for transactions to be completed within this time limit (10 seconds).</p>
-<p>Default: <code>10000</code>.</p>
-<h3 id="proxy_copy_data_timeout">proxy_copy_data_timeout</h3>
-<p>Maximum time to wait for data copy operations during proxying, in milliseconds.</p>
-<p>Default: <code>15000</code> (15 sec).</p>
-<h3 id="prometheus_exporter">prometheus_exporter</h3>
-<p>The host:port on which the Prometheus metrics exporter will listen.</p>
-<p>Default: <code>"0.0.0.0:9127"</code>.</p>
-<h3 id="prometheus_exporter_enabled">prometheus_exporter_enabled</h3>
-<p>Enable or disable the Prometheus metrics exporter.</p>
-<p>Default: <code>false</code>.</p>
-<h3 id="server_tls">server_tls</h3>
-<p>Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers.</p>
-<p>Default: <code>false</code>.</p>
-<h3 id="verify_server_certificate">verify_server_certificate</h3>
-<p>Verify the PostgreSQL server's TLS certificate when connecting with TLS. This setting is only relevant when <code>server_tls</code> is enabled.</p>
-<p>Default: <code>false</code>.</p>
-<h3 id="hba">hba</h3>
-<p>The list of IP addresses from which it is permitted to connect to the pg-doorman.</p>
-<h3 id="pooler_check_query">pooler_check_query</h3>
-<p>This query will not be sent to the server if it is run as a SimpleQuery.
-It can be used to check the connection at the application level.</p>
-<p>Default: <code>;</code>.</p>
+  <h1>Pool Settings</h1>
+
 <h2 id="pool-settings">Pool Settings</h2>
 <p>Each record in the pool is the name of the virtual database that the pg-doorman client can connect to.</p>
 <div class="language-toml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[pools.exampledb]</span><span class="w"> </span><span class="c1"># Declaring the &#39;exampledb&#39; database</span>
@@ -2109,13 +1219,13 @@ It can be used to check the connection at the application level.</p>
 <h3 id="application_name">application_name</h3>
 <p>Parameter application_name, is sent to the server when opening a connection with PostgreSQL. It may be useful with the sync_server_parameters = false setting.</p>
 <p>Example: <code>"exampledb-pool"</code></p>
-<h3 id="connect_timeout_1">connect_timeout</h3>
+<h3 id="connect_timeout">connect_timeout</h3>
 <p>Maximum time to allow for establishing a new server connection for this pool, in milliseconds. If not specified, the global connect_timeout setting is used.</p>
 <p>Default: <code>None</code> (uses global setting).</p>
-<h3 id="idle_timeout_1">idle_timeout</h3>
+<h3 id="idle_timeout">idle_timeout</h3>
 <p>Close idle connections in this pool that have been opened for longer than this value, in milliseconds. If not specified, the global idle_timeout setting is used.</p>
 <p>Default: <code>None</code> (uses global setting).</p>
-<h3 id="server_lifetime_1">server_lifetime</h3>
+<h3 id="server_lifetime">server_lifetime</h3>
 <p>Close server connections in this pool that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the global server_lifetime setting is used.</p>
 <p>Default: <code>None</code> (uses global setting).</p>
 <h3 id="pool_mode">pool_mode</h3>
@@ -2162,7 +1272,7 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <h3 id="min_pool_size">min_pool_size</h3>
 <p>The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size.</p>
 <p>Default: <code>None</code>.</p>
-<h3 id="server_lifetime_2">server_lifetime</h3>
+<h3 id="server_lifetime_1">server_lifetime</h3>
 <p>Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used.</p>
 <p>Default: <code>None</code> (uses pool setting).</p>
 
@@ -2203,7 +1313,7 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../../changelog/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Changelog">
+          <a href="../general/" class="md-footer__link md-footer__link--prev" aria-label="Previous: General Settings">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -2213,20 +1323,20 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
                 Previous
               </span>
               <div class="md-ellipsis">
-                Changelog
+                General Settings
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../benchmarks/" class="md-footer__link md-footer__link--next" aria-label="Next: Benchmarks">
+          <a href="../prometheus/" class="md-footer__link md-footer__link--next" aria-label="Next: Prometheus Settings">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Benchmarks
+                Prometheus Settings
               </div>
             </div>
             <div class="md-footer__button md-icon">

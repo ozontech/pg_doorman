@@ -271,17 +271,20 @@
   
   
   
-    <li class="md-tabs__item">
-      <a href="../../reference/settings/" class="md-tabs__link">
-        
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/general/" class="md-tabs__link">
+          
   
   
     
   
-  Settings
+  Reference
 
-      </a>
-    </li>
+        </a>
+      </li>
+    
   
 
       
@@ -902,18 +905,123 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
-      <a href="../../reference/settings/" class="md-nav__link">
+      <a href="../../reference/general/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Settings
+    General Settings
     
   </span>
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/pool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Pool Settings
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/prometheus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Prometheus Settings
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -1354,7 +1462,7 @@
 </span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;doorman&quot;</span><span class="w">       </span><span class="c1"># Username for PostgreSQL server</span>
 </span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="n">password</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4=&quot;</span><span class="w">  </span><span class="c1"># Hashed password</span>
 </span></code></pre></div>
-<p>For a complete list of configuration options and their descriptions, see the <a href="../../reference/settings/">Settings Reference Guide</a>.</p>
+<p>For a complete list of configuration options and their descriptions, see the <a href="../../reference/general/">Settings Reference Guide</a>.</p>
 <h3 id="automatic-configuration-generation">Automatic Configuration Generation</h3>
 <p>PgDoorman provides a powerful <code>generate</code> command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># View all available options</span>

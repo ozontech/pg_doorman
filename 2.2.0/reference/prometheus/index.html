@@ -8,26 +8,28 @@
       
       
       
-        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/2.2.0/">
+        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/2.2.0/reference/prometheus/">
       
       
+        <link rel="prev" href="../pool/">
       
-        <link rel="next" href="tutorials/overview/">
+      
+        <link rel="next" href="../../benchmarks/">
       
       
-      <link rel="icon" href="images/favicon.png">
+      <link rel="icon" href="../../images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
     
     
       
-        <title>Home - PgDoorman Documentation</title>
+        <title>Prometheus Settings - PgDoorman Documentation</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.342714a4.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.342714a4.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -46,7 +48,7 @@
       
     
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -72,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#pgdoorman-postgresql-pooler" class="md-skip">
+        <a href="#prometheus-settings" class="md-skip">
           Skip to content
         </a>
       
@@ -92,7 +94,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="PgDoorman Documentation" class="md-header__button md-logo" aria-label="PgDoorman Documentation" data-md-component="logo">
+    <a href="../.." title="PgDoorman Documentation" class="md-header__button md-logo" aria-label="PgDoorman Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M96 0C43 0 0 43 0 96v320c0 53 43 96 96 96h320c17.7 0 32-14.3 32-32s-14.3-32-32-32v-64c17.7 0 32-14.3 32-32V32c0-17.7-14.3-32-32-32H96m0 384h256v64H96c-17.7 0-32-14.3-32-32s14.3-32 32-32m32-240c0-8.8 7.2-16 16-16h192c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16m16 48h192c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16s7.2-16 16-16"/></svg>
@@ -112,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              Prometheus Settings
             
           </span>
         </div>
@@ -225,11 +227,9 @@
   
   
   
-    
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="." class="md-tabs__link">
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -250,7 +250,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="tutorials/overview/" class="md-tabs__link">
+        <a href="../../tutorials/overview/" class="md-tabs__link">
           
   
   
@@ -268,11 +268,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="reference/general/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../general/" class="md-tabs__link">
           
   
   
@@ -292,7 +294,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="benchmarks/" class="md-tabs__link">
+      <a href="../../benchmarks/" class="md-tabs__link">
         
   
   
@@ -322,9 +324,7 @@
           
             
               
-                
-              
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -335,7 +335,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="PgDoorman Documentation" class="md-nav__button md-logo" aria-label="PgDoorman Documentation" data-md-component="logo">
+    <a href="../.." title="PgDoorman Documentation" class="md-nav__button md-logo" aria-label="PgDoorman Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M96 0C43 0 0 43 0 96v320c0 53 43 96 96 96h320c17.7 0 32-14.3 32-32s-14.3-32-32-32v-64c17.7 0 32-14.3 32-32V32c0-17.7-14.3-32-32-32H96m0 384h256v64H96c-17.7 0-32-14.3-32-32s14.3-32 32-32m32-240c0-8.8 7.2-16 16-16h192c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16m16 48h192c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16s7.2-16 16-16"/></svg>
@@ -362,30 +362,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Home
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -396,66 +376,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#pgdoorman-postgresql-pooler" class="md-nav__link">
-    <span class="md-ellipsis">
-      PgDoorman: PostgreSQL Pooler
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="PgDoorman: PostgreSQL Pooler">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-not-multi-pgbouncer" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why not multi-PgBouncer?
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-not-odyssey" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why not Odyssey?
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#differences-from-pgcat" class="md-nav__link">
-    <span class="md-ellipsis">
-      Differences from PgCat
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -524,7 +444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tutorials/overview/" class="md-nav__link">
+      <a href="../../tutorials/overview/" class="md-nav__link">
         
   
   
@@ -547,7 +467,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tutorials/installation/" class="md-nav__link">
+      <a href="../../tutorials/installation/" class="md-nav__link">
         
   
   
@@ -570,7 +490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tutorials/basic-usage/" class="md-nav__link">
+      <a href="../../tutorials/basic-usage/" class="md-nav__link">
         
   
   
@@ -593,7 +513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tutorials/binary-upgrade/" class="md-nav__link">
+      <a href="../../tutorials/binary-upgrade/" class="md-nav__link">
         
   
   
@@ -616,7 +536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="tutorials/contributing/" class="md-nav__link">
+      <a href="../../tutorials/contributing/" class="md-nav__link">
         
   
   
@@ -639,7 +559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="changelog/" class="md-nav__link">
+      <a href="../../changelog/" class="md-nav__link">
         
   
   
@@ -666,8 +586,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -681,19 +603,22 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -706,7 +631,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -720,7 +645,7 @@
   
   
     <li class="md-nav__item">
-      <a href="reference/general/" class="md-nav__link">
+      <a href="../general/" class="md-nav__link">
         
   
   
@@ -743,7 +668,7 @@
   
   
     <li class="md-nav__item">
-      <a href="reference/pool/" class="md-nav__link">
+      <a href="../pool/" class="md-nav__link">
         
   
   
@@ -763,10 +688,32 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="reference/prometheus/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Prometheus Settings
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -777,6 +724,188 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-prometheus-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enabling Prometheus Metrics
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enabling Prometheus Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration Options
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuring Prometheus
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available Metrics
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      System Metrics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connection Metrics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#socket-metrics-linux-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      Socket Metrics (Linux only)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pool Metrics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#query-and-transaction-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Query and Transaction Metrics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Server Metrics
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grafana-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      Grafana Dashboard
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example Queries
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example Queries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection-rate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connection Rate
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-utilization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pool Utilization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slow-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Slow Queries
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#client-wait-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      Client Wait Time
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -796,7 +925,7 @@
   
   
     <li class="md-nav__item">
-      <a href="benchmarks/" class="md-nav__link">
+      <a href="../../benchmarks/" class="md-nav__link">
         
   
   
@@ -819,9 +948,7 @@
             
             
               
-                
-              
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden>
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -829,6 +956,8 @@
 <nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
+  
+    
   
   
     <label class="md-nav__title" for="__toc">
@@ -838,37 +967,157 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#pgdoorman-postgresql-pooler" class="md-nav__link">
+  <a href="#enabling-prometheus-metrics" class="md-nav__link">
     <span class="md-ellipsis">
-      PgDoorman: PostgreSQL Pooler
+      Enabling Prometheus Metrics
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="PgDoorman: PostgreSQL Pooler">
+    <nav class="md-nav" aria-label="Enabling Prometheus Metrics">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#why-not-multi-pgbouncer" class="md-nav__link">
+  <a href="#configuration-options" class="md-nav__link">
     <span class="md-ellipsis">
-      Why not multi-PgBouncer?
+      Configuration Options
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuring Prometheus
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available Metrics
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available Metrics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      System Metrics
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#why-not-odyssey" class="md-nav__link">
+  <a href="#connection-metrics" class="md-nav__link">
     <span class="md-ellipsis">
-      Why not Odyssey?
+      Connection Metrics
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#differences-from-pgcat" class="md-nav__link">
+  <a href="#socket-metrics-linux-only" class="md-nav__link">
     <span class="md-ellipsis">
-      Differences from PgCat
+      Socket Metrics (Linux only)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pool Metrics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#query-and-transaction-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Query and Transaction Metrics
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Server Metrics
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grafana-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      Grafana Dashboard
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example Queries
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example Queries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection-rate" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connection Rate
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-utilization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pool Utilization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slow-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Slow Queries
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#client-wait-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      Client Wait Time
     </span>
   </a>
   
@@ -892,56 +1141,219 @@
               <article class="md-content__inner md-typeset">
                 
                   
-  
-
-
-
-  
-  
-
-
-  <h1>Home</h1>
-
-<h2 id="pgdoorman-postgresql-pooler">PgDoorman: PostgreSQL Pooler</h2>
-<p>PgDoorman is a stable and good alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a> (based on it).
-It has created with the Unix philosophy in mind. Developing was focused on perfomance, efficience and reliability.
-Also, PgDoorman has the improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a class="md-button md-button--primary" href="tutorials/installation/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M288 32c0-17.7-14.3-32-32-32s-32 14.3-32 32v242.7l-73.4-73.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l128 128c12.5 12.5 32.8 12.5 45.3 0l128-128c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L288 274.7zM64 352c-35.3 0-64 28.7-64 64v32c0 35.3 28.7 64 64 64h384c35.3 0 64-28.7 64-64v-32c0-35.3-28.7-64-64-64H346.5l-45.3 45.3c-25 25-65.5 25-90.5 0L165.5 352zm368 56a24 24 0 1 1 0 48 24 24 0 1 1 0-48"/></svg></span> Get PgDoorman 2.2.0</a></p>
-<h3 id="why-not-multi-pgbouncer">Why not multi-PgBouncer?</h3>
-<p>Why do we think that using <a href="https://www.pgbouncer.org/config.html#so_reuseport">multiple instances of PgBouncer</a> is not a suitable solution?
-This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
-Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
-but each client can disconnect at any time, leading to an imbalance after prolonged use.</p>
-<h3 id="why-not-odyssey">Why not Odyssey?</h3>
-<p>We had difficulties using NPGSQL and SCRAM, as well as with <code>prepared_statements</code> support.
-However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.</p>
-<h3 id="differences-from-pgcat">Differences from PgCat</h3>
-<p>While PgDoorman was initially based on the PgCat project, it has since evolved into a standalone solution with its own set of features.
-Some of the key differences include:</p>
-<ul>
-<li>Performance improvements compared to PgCat/PgBouncer/Odyssey.</li>
-<li>Support for extended protocol with popular programming language drivers.</li>
-<li>Enhanced monitoring metrics to improve visibility into database activity..</li>
-<li>Careful resource management to avoid memory issues (<code>max_memory_usage</code>, <code>message_size_to_be_stream</code>).</li>
-<li>SCRAM client/server authentication support.</li>
-<li><a href="tutorials/binary-upgrade/">Gracefully binary upgrade</a>.</li>
-<li>Supporting JWT for service-to-database authentication.</li>
-<li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
-</ul>
-
-
-
-
-
 
 
   
   
 
 
+<h1 id="prometheus-settings">Prometheus Settings</h1>
+<p>pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.</p>
+<h2 id="enabling-prometheus-metrics">Enabling Prometheus Metrics</h2>
+<p>To enable the Prometheus metrics exporter, add the following configuration to your <code>pg_doorman.toml</code> file:</p>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[prometheus]</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.0.0.0&quot;</span><span class="w">  </span><span class="c1"># The host on which the metrics server will listen</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">9127</span><span class="w">       </span><span class="c1"># The port on which the metrics server will listen</span>
+</span></code></pre></div>
+<h3 id="configuration-options">Configuration Options</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>Enable or disable the Prometheus metrics exporter</td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td><code>host</code></td>
+<td>The host on which the Prometheus metrics exporter will listen</td>
+<td><code>"0.0.0.0"</code></td>
+</tr>
+<tr>
+<td><code>port</code></td>
+<td>The port on which the Prometheus metrics exporter will listen</td>
+<td><code>9127</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="configuring-prometheus">Configuring Prometheus</h2>
+<p>Add the following job to your Prometheus configuration to scrape metrics from pg_doorman:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">scrape_configs</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">job_name</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;pg_doorman&#39;</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">static_configs</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">targets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&#39;&lt;pg_doorman_host&gt;:9127&#39;</span><span class="p p-Indicator">]</span>
+</span></code></pre></div>
+<p>Replace <code>&lt;pg_doorman_host&gt;</code> with the hostname or IP address of your pg_doorman instance.</p>
+<h2 id="available-metrics">Available Metrics</h2>
+<p>pg_doorman exposes the following metrics:</p>
+<h3 id="system-metrics">System Metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg_doorman_total_memory</code></td>
+<td>Total memory allocated to the pg_doorman process in bytes. Monitors the memory footprint of the application.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="connection-metrics">Connection Metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg_doorman_connection_count</code></td>
+<td>Counter of new connections by type handled by pg_doorman. Types include: 'plain' (unencrypted connections), 'tls' (encrypted connections), 'cancel' (connection cancellation requests), and 'total' (sum of all connections).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="socket-metrics-linux-only">Socket Metrics (Linux only)</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg_doorman_sockets</code></td>
+<td>Counter of sockets used by pg_doorman by socket type. Types include: 'tcp' (IPv4 TCP sockets), 'tcp6' (IPv6 TCP sockets), 'unix' (Unix domain sockets), and 'unknown' (sockets of unrecognized type). Only available on Linux systems.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pool-metrics">Pool Metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg_doorman_pools_clients</code></td>
+<td>Number of clients in connection pools by status, user, and database. Status values include: 'idle' (connected but not executing queries), 'waiting' (waiting for a server connection), and 'active' (currently executing queries). Helps monitor connection pool utilization and client distribution.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_servers</code></td>
+<td>Number of servers in connection pools by status, user, and database. Status values include: 'active' (actively serving clients) and 'idle' (available for new connections). Helps monitor server availability and load distribution.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_bytes</code></td>
+<td>Total bytes transferred through connection pools by direction, user, and database. Direction values include: 'received' (bytes received from clients) and 'sent' (bytes sent to clients). Useful for monitoring network traffic and identifying high-volume connections.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="query-and-transaction-metrics">Query and Transaction Metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg_doorman_pools_queries_percentile</code></td>
+<td>Query execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps identify slow queries and performance trends across different users and databases.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_transactions_percentile</code></td>
+<td>Transaction execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps monitor transaction performance and identify long-running transactions that might impact database performance.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_transactions_count</code></td>
+<td>Counter of transactions executed in connection pools by user and database. Helps track transaction volume and identify users or databases with high transaction rates.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_transactions_total_time</code></td>
+<td>Total time spent executing transactions in connection pools by user and database. Values are in milliseconds. Helps monitor overall transaction performance and identify users or databases with high transaction execution times.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_queries_count</code></td>
+<td>Counter of queries executed in connection pools by user and database. Helps track query volume and identify users or databases with high query rates.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_queries_total_time</code></td>
+<td>Total time spent executing queries in connection pools by user and database. Values are in milliseconds. Helps monitor overall query performance and identify users or databases with high query execution times.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_pools_avg_wait_time</code></td>
+<td>Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="server-metrics">Server Metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg_doorman_servers_prepared_hits</code></td>
+<td>Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead.</td>
+</tr>
+<tr>
+<td><code>pg_doorman_servers_prepared_misses</code></td>
+<td>Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="grafana-dashboard">Grafana Dashboard</h2>
+<p>You can create a Grafana dashboard to visualize these metrics. Here's a simple example of panels you might want to include:</p>
+<ol>
+<li>Connection counts by type</li>
+<li>Memory usage over time</li>
+<li>Client and server counts by pool</li>
+<li>Query and transaction performance percentiles</li>
+<li>Network traffic by pool</li>
+</ol>
+<h2 id="example-queries">Example Queries</h2>
+<p>Here are some example Prometheus queries that you might find useful:</p>
+<h3 id="connection-rate">Connection Rate</h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>rate(pg_doorman_connection_count{type=&quot;total&quot;}[5m])
+</span></code></pre></div>
+<h3 id="pool-utilization">Pool Utilization</h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sum by (database) (pg_doorman_pools_clients{status=&quot;active&quot;}) / sum by (database) (pg_doorman_pools_servers{status=&quot;active&quot;} + pg_doorman_pools_servers{status=&quot;idle&quot;})
+</span></code></pre></div>
+<h3 id="slow-queries">Slow Queries</h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pg_doorman_pools_queries_percentile{percentile=&quot;99&quot;}
+</span></code></pre></div>
+<h3 id="client-wait-time">Client Wait Time</h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pg_doorman_pools_avg_wait_time
+</span></code></pre></div>
+
+
+
+
+
 
 
   
+  
+
+
+
 
 
 
@@ -965,19 +1377,33 @@ Some of the key differences include:</p>
   
     
       
-        
-      
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../pool/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Pool Settings">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Pool Settings
+              </div>
+            </div>
+          </a>
         
         
           
-          <a href="tutorials/overview/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+          <a href="../../benchmarks/" class="md-footer__link md-footer__link--next" aria-label="Next: Benchmarks">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Overview
+                Benchmarks
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -1039,10 +1465,10 @@ Some of the key differences include:</p>
     
     
       
-      <script id="__config" type="application/json">{"base": ".", "features": ["navigation.footer", "navigation.tabs", "navigation.tabs.sticky", "content.code.copy", "content.code.annotate", "navigation.instant", "navigation.tracking", "navigation.sections", "navigation.indexes", "navigation.top"], "search": "assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tabs.sticky", "content.code.copy", "content.code.annotate", "navigation.instant", "navigation.tracking", "navigation.sections", "navigation.indexes", "navigation.top"], "search": "../../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="assets/javascripts/bundle.13a4f30d.min.js"></script>
+      <script src="../../assets/javascripts/bundle.13a4f30d.min.js"></script>
       
     
   </body>
