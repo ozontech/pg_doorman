@@ -4,6 +4,11 @@ title: Changelog
 
 # Changelog
 
+### 2.2.1 <small>Aug 6, 2025</small> { id="2.2.1" }
+
+**Features:**
+- Improve Prometheus exporter functionality
+
 ### 2.2.0 <small>Aug 5, 2025</small> { id="2.2.0" }
 
 **Features:**
