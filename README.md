@@ -97,7 +97,7 @@ admin_password = "admin"  # Change this in production!
 
 # Example database pool
 [pools.exampledb]
-server_host = "127.0.0.1"  # PostgreSQL server address
+server_host = "127.0.0.1"  # PostgreSQL server address (or unix-domain socket like /var/run/postgresql)
 server_port = 5432         # PostgreSQL server port
 pool_mode = "transaction"  # Connection pooling mode
 
@@ -105,7 +105,10 @@ pool_mode = "transaction"  # Connection pooling mode
 [pools.exampledb.users.0]
 pool_size = 40             # Maximum number of connections in the pool
 username = "doorman"       # Username for PostgreSQL server
-password = "your_password" # Password for PostgreSQL server
+password = "md5xxxxxx"     # Password hash (md5/scram) for authentication (you can use `select * from pg_shadow` or `pg_doorman generate --help` to fetch this value).
+# server_username = "doorman" # Username for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
+# server_password = "your_password" # Plain password for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
+# server_database = "exampledb" # Database for PostgreSQL server (optional)
 ```
 
 ### Automatic Configuration Generation

@@ -106,15 +106,16 @@ The `generate` command supports several options:
 
 | Option | Description |
 |--------|-------------|
-| `--host`, `-h` | PostgreSQL host to connect to (default: localhost) |
+| `--host` | PostgreSQL host to connect to (uses localhost if not specified) |
 | `--port`, `-p` | PostgreSQL port to connect to (default: 5432) |
-| `--user`, `-u` | PostgreSQL user to connect as (requires superuser privileges) |
+| `--user`, `-u` | PostgreSQL user to connect as (requires superuser privileges to read pg_shadow) |
 | `--password` | PostgreSQL password to connect with |
-| `--database`, `-d` | PostgreSQL database to connect to |
-| `--ssl` | Use SSL/TLS for PostgreSQL connection |
+| `--database`, `-d` | PostgreSQL database to connect to (uses same name as user if not specified) |
+| `--ssl` | PostgreSQL connection to server via SSL/TLS |
 | `--pool-size` | Pool size for the generated configuration (default: 40) |
-| `--session-pool-mode`, `-s` | Use session pool mode instead of transaction mode |
-| `--output`, `-o` | Output file for the generated configuration |
+| `--session-pool-mode`, `-s` | Session pool mode for the generated configuration |
+| `--output`, `-o` | Output file for the generated configuration (uses stdout if not specified) |
+| `--server-host` | Override server_host in config (uses the host parameter if not specified) |
 
 The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
 
