@@ -72,7 +72,7 @@ pub fn generate_config_with_client(
 ) -> Result<Config, Box<dyn Error>> {
     // Initialize default configuration
     let mut result = Config::default();
-    result.general.host = config.host.as_deref().unwrap_or("localhost").to_string();
+    result.general.host = "0.0.0.0".to_string();
     result.general.port = 6432; // Default port for pg_doorman
     result.general.server_tls = config.ssl;
 
@@ -128,7 +128,7 @@ pub fn generate_config_with_client(
                     cleanup_server_connections: false,
                     log_client_parameter_status_changes: false,
                     application_name: None,
-                    server_host: config.host.as_deref().unwrap_or("localhost").to_string(),
+                    server_host: config.server_host.as_deref().unwrap_or(config.host.as_deref().unwrap_or("localhost")).to_string(),
                     server_port: config.port,
                     server_database: Some(datname.to_string()),
                     prepared_statements_cache_size: None,
@@ -208,7 +208,7 @@ mod tests {
                             cleanup_server_connections: false,
                             log_client_parameter_status_changes: false,
                             application_name: None,
-                            server_host: config.host.as_deref().unwrap_or("localhost").to_string(),
+                            server_host: config.server_host.as_deref().unwrap_or(config.host.as_deref().unwrap_or("localhost")).to_string(),
                             server_port: config.port,
                             server_database: Some(db_name.to_string()),
                             prepared_statements_cache_size: None,
@@ -237,6 +237,7 @@ mod tests {
             pool_size: 40,
             session_pool_mode: false,
             output: None,
+            server_host: None,
         };
 
         // Create mock data
@@ -295,6 +296,7 @@ mod tests {
             pool_size: 20,
             session_pool_mode: true,
             output: None,
+            server_host: None,
         };
 
         // Create mock data
@@ -349,6 +351,7 @@ mod tests {
             pool_size: 40,
             session_pool_mode: false,
             output: None,
+            server_host: None,
         };
 
         // Create mock data
@@ -387,6 +390,7 @@ mod tests {
             pool_size: 40,
             session_pool_mode: false,
             output: None,
+            server_host: None,
         };
 
         // Create a simple error type for testing

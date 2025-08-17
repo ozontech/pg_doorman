@@ -261,7 +261,7 @@ fn update_socket_metrics() {
         }
         Err(e) => {
             SHOW_SOCKETS.reset();
-            error!("Failed to get socket states count: {}", e);
+            error!("Failed to get socket states count: {e:?}");
         }
     }
 }
@@ -416,7 +416,7 @@ async fn handle_metrics_request(stream: tokio::net::TcpStream) {
     let n = match tokio::io::AsyncReadExt::read(&mut stream_reader, &mut headers).await {
         Ok(n) => n,
         Err(e) => {
-            error!("Failed to read HTTP request: {}", e);
+            error!("Failed to read HTTP request: {e}");
             return;
         }
     };
@@ -424,7 +424,7 @@ async fn handle_metrics_request(stream: tokio::net::TcpStream) {
     let headers_str = match std::str::from_utf8(&headers[..n]) {
         Ok(s) => s,
         Err(e) => {
-            error!("Failed to parse HTTP headers: {}", e);
+            error!("Failed to parse HTTP headers: {e}");
             return;
         }
     };
@@ -442,7 +442,7 @@ async fn handle_metrics_request(stream: tokio::net::TcpStream) {
     let mut buffer = Vec::new();
 
     if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
-        error!("Failed to encode metrics: {}", e);
+        error!("Failed to encode metrics: {e}");
         return;
     }
 
@@ -455,11 +455,11 @@ async fn handle_metrics_request(stream: tokio::net::TcpStream) {
         {
             let mut encoder = GzEncoder::new(&mut compressed, Compression::default());
             if let Err(e) = encoder.write_all(&buffer) {
-                error!("Failed to compress metrics data: {}", e);
+                error!("Failed to compress metrics data: {e}");
                 return;
             }
             if let Err(e) = encoder.finish() {
-                error!("Failed to finish gzip compression: {}", e);
+                error!("Failed to finish gzip compression: {e}");
                 return;
             }
         }
@@ -479,17 +479,17 @@ async fn handle_metrics_request(stream: tokio::net::TcpStream) {
     // Send response
     if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut connection, response.as_bytes()).await
     {
-        error!("Failed to write HTTP response header: {}", e);
+        error!("Failed to write HTTP response header: {e}");
         return;
     }
 
     if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut connection, &response_body).await {
-        error!("Failed to write metrics data: {}", e);
+        error!("Failed to write metrics data: {e}");
         return;
     }
 
     if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut connection).await {
-        error!("Failed to flush connection: {}", e);
+        error!("Failed to flush connection: {e}");
     }
 }
 
@@ -499,38 +499,38 @@ pub async fn start_prometheus_server(host: &str) {
     let addr: SocketAddr = match host.parse() {
         Ok(addr) => addr,
         Err(e) => {
-            panic!("Failed to parse socket address '{}': {}", host, e);
+            panic!("Failed to parse socket address '{host}': {e}");
         }
     };
     let listen_socket = if addr.is_ipv4() {
         match TcpSocket::new_v4() {
             Ok(socket) => socket,
             Err(e) => {
-                panic!("Failed to create IPv4 socket: {}", e);
+                panic!("Failed to create IPv4 socket: {e}");
             }
         }
     } else {
         match TcpSocket::new_v6() {
             Ok(socket) => socket,
             Err(e) => {
-                panic!("Failed to create IPv6 socket: {}", e);
+                panic!("Failed to create IPv6 socket: {e}");
             }
         }
     };
     if let Err(e) = listen_socket.set_reuseaddr(true) {
-        panic!("Failed to set SO_REUSEADDR: {}", e);
+        panic!("Failed to set SO_REUSEADDR: {e}");
     }
 
     if let Err(e) = listen_socket.set_reuseport(true) {
-        panic!("Failed to set SO_REUSEPORT: {}", e);
+        panic!("Failed to set SO_REUSEPORT: {e}");
     }
 
     if let Err(e) = listen_socket.bind(addr) {
-        panic!("Failed to bind to address {}: {}", addr, e);
+        panic!("Failed to bind to address {addr}: {e}");
     }
     match listen_socket.listen(1024) {
         Ok(listener) => {
-            info!("prometheus exporter listening on {}", addr);
+            info!("prometheus exporter listening on {addr}");
 
             loop {
                 match listener.accept().await {
@@ -540,15 +540,14 @@ pub async fn start_prometheus_server(host: &str) {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept connection: {}", e);
+                        error!("Failed to accept connection: {e}");
                     }
                 }
             }
         }
         Err(e) => {
             panic!(
-                "Failed to bind Prometheus metrics server to {}: {}",
-                addr, e
+                "Failed to bind Prometheus metrics server to {addr}: {e}"
             );
         }
     }

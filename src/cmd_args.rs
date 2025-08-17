@@ -81,6 +81,10 @@ pub struct GenerateConfig {
     /// If not specified, uses stdout.
     #[arg(short, long)]
     pub output: Option<String>,
+    /// Override server_host in config
+    /// If not specified, it uses the ` host ` parameter.
+    #[arg(long)]
+    pub(crate) server_host: Option<String>,
 }
 
 pub fn parse() -> Args {

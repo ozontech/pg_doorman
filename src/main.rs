@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let data = toml::to_string_pretty(&pg_doorman_config)?;
             if let Some(output_path) = &config.output {
                 std::fs::write(output_path, &data)?;
-                info!("Config written to file: {}", output_path);
+                info!("Config written to file: {output_path}");
             } else {
                 println!("{data}");
             }

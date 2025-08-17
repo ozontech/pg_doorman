@@ -41,7 +41,7 @@ mod tests {
                 Ok(Ok(stream)) => stream,
                 Ok(Err(e)) => {
                     server_handle.abort();
-                    panic!("Failed to connect to server: {}", e);
+                    panic!("Failed to connect to server: {e}");
                 }
                 Err(_) => {
                     server_handle.abort();
@@ -70,7 +70,7 @@ mod tests {
                         }
                     }
                     Err(e) => {
-                        panic!("Failed to read from socket: {}", e);
+                        panic!("Failed to read from socket: {e}");
                     }
                 }
             }
@@ -138,7 +138,7 @@ mod tests {
                 Ok(Ok(stream)) => stream,
                 Ok(Err(e)) => {
                     server_handle.abort();
-                    panic!("Failed to connect to server: {}", e);
+                    panic!("Failed to connect to server: {e}");
                 }
                 Err(_) => {
                     server_handle.abort();
@@ -167,7 +167,7 @@ mod tests {
                         }
                     }
                     Err(e) => {
-                        panic!("Failed to read from socket: {}", e);
+                        panic!("Failed to read from socket: {e}");
                     }
                 }
             }
