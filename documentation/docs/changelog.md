@@ -4,6 +4,14 @@ title: Changelog
 
 # Changelog
 
+### 2.2.2 <small>Aug 17, 2025</small> { id="2.2.2" }
+
+**Features:**
+- Added new generate feature functionality
+
+**Bug Fixes:**
+- Fixed deallocate issues with PGX5 compatibility
+
 ### 2.2.1 <small>Aug 6, 2025</small> { id="2.2.1" }
 
 **Features:**
