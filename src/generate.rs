@@ -128,7 +128,11 @@ pub fn generate_config_with_client(
                     cleanup_server_connections: false,
                     log_client_parameter_status_changes: false,
                     application_name: None,
-                    server_host: config.server_host.as_deref().unwrap_or(config.host.as_deref().unwrap_or("localhost")).to_string(),
+                    server_host: config
+                        .server_host
+                        .as_deref()
+                        .unwrap_or(config.host.as_deref().unwrap_or("localhost"))
+                        .to_string(),
                     server_port: config.port,
                     server_database: Some(datname.to_string()),
                     prepared_statements_cache_size: None,
@@ -208,7 +212,11 @@ mod tests {
                             cleanup_server_connections: false,
                             log_client_parameter_status_changes: false,
                             application_name: None,
-                            server_host: config.server_host.as_deref().unwrap_or(config.host.as_deref().unwrap_or("localhost")).to_string(),
+                            server_host: config
+                                .server_host
+                                .as_deref()
+                                .unwrap_or(config.host.as_deref().unwrap_or("localhost"))
+                                .to_string(),
                             server_port: config.port,
                             server_database: Some(db_name.to_string()),
                             prepared_statements_cache_size: None,

@@ -10,6 +10,7 @@ pub mod errors;
 pub mod generate;
 pub mod logger;
 pub mod messages;
+pub mod pg_hba;
 pub mod pool;
 pub mod prometheus_exporter;
 #[cfg(test)]

@@ -18,9 +18,10 @@ use tokio::sync::mpsc::Sender;
 use crate::admin::handle_admin;
 use crate::auth::authenticate;
 use crate::auth::talos::{extract_talos_token, talos_role_to_string};
-use crate::config::{addr_in_hba, get_config};
+use crate::config::{get_auth_method_or_password, get_config};
 use crate::constants::*;
 use crate::messages::*;
+use crate::pg_hba::AuthMethod;
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool, CANCELED_PIDS};
 use crate::rate_limit::RateLimiter;
 use crate::server::{Server, ServerParameters};
@@ -571,7 +572,16 @@ where
 
         {
             // talos
-            if username_from_parameters == TALOS_USERNAME && addr_in_hba(addr.ip()) {
+            if username_from_parameters == TALOS_USERNAME
+                && get_auth_method_or_password(
+                    addr.ip(),
+                    username_from_parameters,
+                    pool_name,
+                    use_tls,
+                )
+                .is_err()
+                    == true
+            {
                 plain_password_challenge(&mut write).await?;
                 let talos_token_response = read_password(&mut read).await?;
                 let talos_token_with_nul = match str::from_utf8(&talos_token_response) {
@@ -626,11 +636,26 @@ where
             .await?;
             return Err(Error::ShuttingDown);
         }
-
-        if !addr_in_hba(addr.ip()) {
+        let (hba_pass, hba_method) = match get_auth_method_or_password(
+            addr.ip(),
+            username_from_parameters,
+            pool_name,
+            use_tls,
+        ) {
+            Ok(method) => (!matches!(method, AuthMethod::Reject), method),
+            Err(pass) => (pass, AuthMethod::Password),
+        };
+        if hba_method == AuthMethod::Reject {
+            let ip = addr.clone().ip();
+            let msg = format!("Connection from IP address {ip} for {username_from_parameters}@{pool_name} (tls: {use_tls}) is not allowed by PG_HBA configuration. Please contact your database administrator.");
+            error_response_terminal(&mut write, &msg, "28000").await?;
+            return Err(Error::HbaForbiddenError(msg));
+        }
+        if !hba_pass {
+            let hba_msg = format!("Connection from IP address {} is not allowed by HBA configuration. Please contact your database administrator.", addr.ip());
             error_response_terminal(
                 &mut write,
-                format!("Connection from IP address {} is not allowed by HBA configuration. Please contact your database administrator.", addr.ip()).as_str(),
+                &hba_msg,
                 "28000"
             )
                 .await?;
@@ -653,6 +678,7 @@ where
             &client_identifier,
             pool_name,
             username_from_parameters,
+            hba_method,
         )
         .await?;
 

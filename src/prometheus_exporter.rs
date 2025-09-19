@@ -546,9 +546,7 @@ pub async fn start_prometheus_server(host: &str) {
             }
         }
         Err(e) => {
-            panic!(
-                "Failed to bind Prometheus metrics server to {addr}: {e}"
-            );
+            panic!("Failed to bind Prometheus metrics server to {addr}: {e}");
         }
     }
 }

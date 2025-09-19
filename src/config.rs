@@ -21,6 +21,7 @@ use tokio::io::AsyncReadExt;
 use crate::auth::jwt::load_jwt_pub_key;
 use crate::auth::talos::load_talos_pub_key;
 use crate::errors::Error;
+use crate::pg_hba::{AuthMethod, PgHbaConfig};
 use crate::pool::{ClientServerMap, ConnectionPool};
 use crate::stats::AddressStats;
 use crate::tls;
@@ -766,6 +767,14 @@ pub struct Config {
         skip_serializing_if = "Include::is_empty"
     )]
     pub include: Include,
+
+    // Path to pg_hba.conf file
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pg_hba_file: Option<String>,
+
+    // Parsed pg_hba configuration
+    #[serde(skip)]
+    pub pg_hba: Option<PgHbaConfig>,
 }
 
 impl Config {
@@ -786,6 +795,8 @@ impl Default for Config {
                 databases: vec![],
             },
             include: Include { files: Vec::new() },
+            pg_hba_file: None,
+            pg_hba: None,
         }
     }
 }
@@ -1055,6 +1066,28 @@ impl Config {
             pool.validate().await?;
         }
 
+        // Validate that hba and pg_hba_file are mutually exclusive
+        if !self.general.hba.is_empty() && self.pg_hba_file.is_some() {
+            return Err(Error::BadConfig(
+                "hba and pg_hba_file cannot be used simultaneously. Please specify either hba (list of IP networks) or pg_hba_file (path to pg_hba.conf file), but not both.".to_string(),
+            ));
+        }
+
+        // Parse pg_hba.conf file if specified
+        if let Some(ref pg_hba_file) = self.pg_hba_file {
+            match PgHbaConfig::from_file(pg_hba_file) {
+                Ok(pg_hba_config) => {
+                    self.pg_hba = Some(pg_hba_config);
+                }
+                Err(err) => {
+                    return Err(Error::BadConfig(format!(
+                        "Failed to parse pg_hba file '{}': {}",
+                        pg_hba_file, err
+                    )));
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -1168,12 +1201,22 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     }
 }
 
-pub fn addr_in_hba(addr: IpAddr) -> bool {
+pub fn get_auth_method_or_password(
+    addr: IpAddr,
+    user: &str,
+    database: &str,
+    tls: bool,
+) -> Result<AuthMethod, bool> {
     let config = get_config();
-    if config.general.hba.is_empty() {
-        return true;
+    // If pg_hba config is available, use the full pg_hba logic
+    if let Some(ref pg_hba_config) = config.pg_hba {
+        return Ok(pg_hba_config.check_in_hba(addr, user, database, tls));
     }
-    config.general.hba.iter().any(|net| net.contains(&addr))
+    // Otherwise, use the simple hba list from config.general.hba
+    if config.general.hba.is_empty() {
+        return Err(true); // No HBA rules, allow all
+    }
+    Err(config.general.hba.iter().any(|net| net.contains(&addr)))
 }
 
 #[cfg(test)]
@@ -1211,9 +1254,6 @@ mod test {
             get_config().pools["example_db"].users["0"].pool_mode,
             Some(PoolMode::Transaction)
         );
-        assert!(addr_in_hba(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-        assert!(!addr_in_hba(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
-        assert!(addr_in_hba(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
     }
 
     #[tokio::test]

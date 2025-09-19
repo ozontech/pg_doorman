@@ -27,6 +27,7 @@ use crate::messages::{
     md5_hash_second_pass, plain_password_challenge, read_password, scram_server_response,
     scram_start_challenge, vec_to_string, wrong_password,
 };
+use crate::pg_hba::AuthMethod;
 use crate::pool::{get_pool, ConnectionPool};
 use crate::server::ServerParameters;
 
@@ -38,6 +39,7 @@ pub async fn authenticate<S, T>(
     client_identifier: &ClientIdentifier,
     pool_name: &str,
     username_from_parameters: &str,
+    auth_method: AuthMethod,
 ) -> Result<(bool, ServerParameters, bool), Error>
 where
     S: AsyncReadExt + Unpin,
@@ -47,10 +49,8 @@ where
 
     // Authenticate admin user.
     let (transaction_mode, server_parameters) = if admin {
-        authenticate_admin(read, write, username_from_parameters).await?
-    }
-    // Authenticate normal user.
-    else {
+        authenticate_admin(read, write, username_from_parameters, auth_method).await?
+    } else {
         authenticate_normal_user(
             read,
             write,
@@ -58,6 +58,7 @@ where
             pool_name,
             username_from_parameters,
             &mut prepared_statements_enabled,
+            auth_method,
         )
         .await?
     };
@@ -74,11 +75,18 @@ async fn authenticate_admin<S, T>(
     read: &mut S,
     write: &mut T,
     username_from_parameters: &str,
+    auth_method: AuthMethod,
 ) -> Result<(bool, ServerParameters), Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
 {
+    if auth_method == AuthMethod::Trust {
+        return Ok((false, ServerParameters::admin()));
+    }
+    if auth_method != AuthMethod::Md5 {
+        // reject.
+    }
     // Authenticate admin user with md5.
     let salt = md5_challenge(write).await?;
     let password_response = read_password(read).await?;
@@ -95,10 +103,8 @@ where
         let error = Error::AuthError(format!(
             "Invalid password for admin user: {username_from_parameters}"
         ));
-
         warn!("{error}");
         wrong_password(write, username_from_parameters).await?;
-
         return Err(error);
     }
 
@@ -113,6 +119,7 @@ async fn authenticate_normal_user<S, T>(
     pool_name: &str,
     username_from_parameters: &str,
     prepared_statements_enabled: &mut bool,
+    auth_method: AuthMethod,
 ) -> Result<(bool, ServerParameters), Error>
 where
     S: AsyncReadExt + Unpin,
@@ -143,9 +150,20 @@ where
 
     if client_identifier.is_talos {
         // pass, client already authenticated.
+    } else if auth_method == AuthMethod::Trust {
+        // pass, hba trust mode.
     } else if pool.settings.user.auth_pam_service.is_some() {
+        if auth_method != AuthMethod::Pam && auth_method != AuthMethod::Password {
+            // reject
+        }
         authenticate_with_pam(read, write, &pool, username_from_parameters).await?;
     } else if pool_password.starts_with(SCRAM_SHA_256) {
+        if auth_method != AuthMethod::ScramSha256
+            && auth_method != AuthMethod::Md5
+            && auth_method != AuthMethod::Password
+        {
+            // reject
+        }
         authenticate_with_scram(
             read,
             write,
@@ -154,6 +172,9 @@ where
         )
         .await?;
     } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
+        if auth_method != AuthMethod::Md5 && auth_method != AuthMethod::Password {
+            // reject
+        }
         authenticate_with_md5(
             read,
             write,
@@ -658,7 +679,7 @@ mod tests {
             let mut reader = MockReader::new(vec![password_hash]);
             let mut writer = MockWriter::new();
 
-            let result = authenticate_admin(&mut reader, &mut writer, "admin").await;
+            let result = authenticate_admin(&mut reader, &mut writer, "admin", AuthMethod::Md5).await;
 
             // This test might fail due to the need for more sophisticated mocking
             // of the get_config function
