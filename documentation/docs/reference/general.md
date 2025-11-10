@@ -277,6 +277,56 @@ Default: `false`.
 
 The list of IP addresses from which it is permitted to connect to the pg-doorman.
 
+### pg_hba
+
+New-style client access control in native PostgreSQL `pg_hba.conf` format. This allows you to define fine-grained access rules similar to PostgreSQL, including per-database, per-user, address ranges, and TLS requirements.
+
+You can specify `general.pg_hba` in three ways:
+
+- As a multi-line string with the contents of a `pg_hba.conf` file
+- As an object with `path` that points to a file on disk
+- As an object with `content` containing the rules as a string
+
+Examples:
+
+```toml
+[general]
+# Inline content (triple-quoted TOML string)
+pg_hba = """
+# type   database  user   address         method
+host     all       all    10.0.0.0/8      md5
+hostssl  all       all    0.0.0.0/0       scram-sha-256
+hostnossl all      all    192.168.1.0/24  trust
+"""
+
+# Or load from file
+# pg_hba = { path = "./pg_hba.conf" }
+
+# Or embed as a single-line string
+# pg_hba = { content = "host all all 127.0.0.1/32 trust" }
+```
+
+Supported fields and methods:
+- Connection types: `local`, `host`, `hostssl`, `hostnossl` (TLS-aware matching is honored)
+- Database matcher: a name or `all`
+- User matcher: a name or `all`
+- Address: CIDR form like `1.2.3.4/32` or `::1/128` (required for non-`local` rules)
+- Methods: `trust`, `md5`, `scram-sha-256` (unknown methods are parsed but treated as not-allowed by the checker)
+
+Precedence and compatibility:
+- `general.pg_hba` supersedes the legacy `general.hba` list. You cannot set both at the same time; configuration validation will reject this combination.
+- Rules are evaluated in order; the first matching rule decides the outcome.
+
+Behavior of method = trust:
+- When a matching rule has `trust`, PgDoorman will accept the connection without requesting a password. This mirrors PostgreSQL behavior.
+- Specifically, if `trust` matches, PgDoorman will skip password verification even if the user has an `md5` or `scram-sha-256` password stored. This affects both MD5 and SCRAM flows.
+- TLS constraints from the rule are respected: `hostssl` requires TLS, `hostnossl` forbids TLS.
+
+Notes and limitations:
+- Only a minimal subset of `pg_hba.conf` is supported that is sufficient for most proxy use-cases (type, database, user, address, method). Additional options (like `clientcert`) are currently ignored.
+- For authentication methods other than `trust`, PgDoorman performs the corresponding challenge/response with the client.
+- For Talos/JWT/PAM flows configured at the pool/user level, `trust` still bypasses the client password prompt; however, those modes may be used when `trust` does not match.
+
 ### pooler_check_query
 
 This query will not be sent to the server if it is run as a SimpleQuery.

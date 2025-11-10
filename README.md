@@ -147,6 +147,16 @@ Key features of the `generate` command:
 - Can use standard PostgreSQL environment variables (PGHOST, PGPORT, etc.)
 - Allows customization of pool size and pool mode
 
+### Client access control (pg_hba)
+
+PgDoorman supports PostgreSQL-style `pg_hba.conf` rules via the `general.pg_hba` parameter in `pg_doorman.toml`.
+You can provide rules inline, or via `{ path = "..." }` to a file. See the full reference with examples in
+`documentation/docs/reference/general.md` (section "pg_hba").
+
+Trust behavior: when a matching rule uses `trust`, PgDoorman accepts the connection without asking the client
+for a password, even if the user has an MD5 or SCRAM password configured. TLS constraints from the rule are honored
+(`hostssl` requires TLS, `hostnossl` forbids TLS).
+
 ### Running PgDoorman
 
 After creating your configuration file, you can run PgDoorman from the command line:

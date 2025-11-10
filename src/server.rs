@@ -17,7 +17,6 @@ use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, BufStream};
 use tokio::net::{TcpStream, UnixStream};
 use tokio::time::timeout;
-
 // Internal crate imports
 use crate::auth::jwt::{new_claims, sign_with_jwt_priv_key};
 use crate::config::{get_config, Address, User, VERSION};
@@ -313,6 +312,9 @@ pub struct Server {
     /// Is the server inside a transaction or idle.
     in_transaction: bool,
 
+    /// Is the server inside a transaction and aborted.
+    is_aborted: bool,
+
     /// Is there more data for the client to read.
     data_available: bool,
 
@@ -522,16 +524,20 @@ impl Server {
                     match transaction_state {
                         // In transaction.
                         'T' => {
+                            self.is_aborted = false;
                             self.in_transaction = true;
                         }
 
                         // Idle, transaction over.
                         'I' => {
+                            self.is_aborted = false;
                             self.in_transaction = false;
                         }
 
                         // Some error occurred, the transaction was rolled back.
                         'E' => {
+                            self.is_aborted = true;
+                            self.in_transaction = true;
                             if let Ok(msg) = PgErrorMsg::parse(&message) {
                                 error!(
                                     "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Position: {}]",
@@ -550,7 +556,6 @@ impl Server {
                                     self.address.host, self.address.database, self.address.username
                                 );
                             }
-                            self.in_transaction = true;
                         }
 
                         // Something totally unexpected, this is not a Postgres server we know.
@@ -838,6 +843,11 @@ impl Server {
     #[inline(always)]
     pub fn in_transaction(&self) -> bool {
         self.in_transaction
+    }
+
+    #[inline(always)]
+    pub fn in_aborted(&self) -> bool {
+        self.in_transaction && self.is_aborted
     }
 
     #[inline(always)]
@@ -1568,6 +1578,7 @@ impl Server {
                         process_id,
                         secret_key,
                         in_transaction: false,
+                        is_aborted: false,
                         in_copy_mode: false,
                         data_available: false,
                         bad: false,

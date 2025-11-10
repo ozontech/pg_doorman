@@ -4,6 +4,17 @@ title: Changelog
 
 # Changelog
 
+### 2.4.0 <small>Nov 10, 2025</small> { id="2.4.0" }
+
+**Features:**
+- Added `pg_hba` support to control client access in PostgreSQL format. New `general.pg_hba` setting supports inline content or file path.
+- Clients that enter the `aborted in transaction` state are detached from their server backend; the proxy waits for the client to send `ROLLBACK`.
+
+**Improvements:**
+- Refined admin and metrics counters: separated `cancel` connections and corrected calculation of `error` connections in admin output and Prometheus metrics descriptions.
+- Added configuration validation to prevent simultaneous use of legacy `general.hba` CIDR list with the new `general.pg_hba` rules.
+- Improved validation and error messages for Talos token authentication.
+
 ### 2.2.2 <small>Aug 17, 2025</small> { id="2.2.2" }
 
 **Features:**

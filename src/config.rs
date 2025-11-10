@@ -18,6 +18,7 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
+use crate::auth::hba::{CheckResult, PgHba};
 use crate::auth::jwt::load_jwt_pub_key;
 use crate::auth::talos::load_talos_pub_key;
 use crate::errors::Error;
@@ -331,6 +332,10 @@ pub struct General {
         skip_serializing_if = "<[_]>::is_empty"
     )]
     pub hba: Vec<IpNet>,
+
+    // New pg_hba rules: either inline content or a file path (see `PgHba` deserialization).
+    #[serde(default, skip_serializing)]
+    pub pg_hba: Option<PgHba>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -572,6 +577,7 @@ impl Default for General {
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
             hba: Self::default_hba(),
+            pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),
             syslog_prog_name: None,
             pooler_check_query: Self::default_pooler_check_query(),
@@ -866,7 +872,15 @@ impl Config {
         info!("Backlog: {}", self.general.backlog);
         info!("Max connections: {}", self.general.max_connections);
         info!("Sever round robin: {}", self.general.server_round_robin);
-        info!("HBA config: {:?}", self.general.hba);
+        if self.general.hba.is_empty() {
+            if let Some(pg_hba) = &self.general.pg_hba {
+                info!("HBA config:\n{pg_hba}\n");
+            } else {
+                info!("HBA config: empty");
+            }
+        } else {
+            info!("HBA config: {:?} (legacy mode via hba)", self.general.hba);
+        }
         match self.general.tls_certificate.clone() {
             Some(tls_certificate) => {
                 info!("TLS certificate: {tls_certificate}");
@@ -989,9 +1003,16 @@ impl Config {
                 "tls rate limit should be > 100".to_string(),
             ));
         }
-        if self.general.tls_rate_limit_per_second % 100 != 0 {
+        if !self.general.tls_rate_limit_per_second.is_multiple_of(100) {
             return Err(Error::BadConfig(
                 "tls rate limit should be multiple 100".to_string(),
+            ));
+        }
+
+        // Validate mutual exclusion for HBA settings
+        if self.general.pg_hba.is_some() && !self.general.hba.is_empty() {
+            return Err(Error::BadConfig(
+                "general.hba and general.pg_hba cannot be specified at the same time".to_string(),
             ));
         }
 
@@ -1168,18 +1189,30 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     }
 }
 
-pub fn addr_in_hba(addr: IpAddr) -> bool {
+pub fn check_hba(
+    ip: IpAddr,
+    ssl: bool,
+    type_auth: &str,
+    username: &str,
+    database: &str,
+) -> CheckResult {
     let config = get_config();
-    if config.general.hba.is_empty() {
-        return true;
+    if let Some(ref pg) = config.general.pg_hba {
+        return pg.check_hba(ip, ssl, type_auth, username, database);
     }
-    config.general.hba.iter().any(|net| net.contains(&addr))
+    if config.general.hba.is_empty() {
+        return CheckResult::Allow;
+    }
+    if config.general.hba.iter().any(|net| net.contains(&ip)) {
+        CheckResult::Allow
+    } else {
+        CheckResult::NotMatched
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::net::Ipv4Addr;
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -1192,7 +1225,7 @@ mod test {
         assert_eq!(get_config().general.idle_timeout, 300000000);
         assert_eq!(get_config().pools.len(), 4);
         assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
-        assert_eq!(get_config().pools["example_db"].users.len(), 4);
+        assert_eq!(get_config().pools["example_db"].users.len(), 6);
         assert_eq!(
             get_config().pools["example_db"].users["0"].username,
             "example_user_1"
@@ -1211,9 +1244,6 @@ mod test {
             get_config().pools["example_db"].users["0"].pool_mode,
             Some(PoolMode::Transaction)
         );
-        assert!(addr_in_hba(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-        assert!(!addr_in_hba(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
-        assert!(addr_in_hba(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
     }
 
     #[tokio::test]

@@ -2,6 +2,8 @@
 
 // Standard library imports
 
+use crate::auth::hba::CheckResult;
+
 /// Various errors.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Error {
@@ -46,6 +48,8 @@ pub struct ClientIdentifier {
     pub username: String,
     pub pool_name: String,
     pub is_talos: bool,
+    pub hba_scram: CheckResult,
+    pub hba_md5: CheckResult,
 }
 
 impl ClientIdentifier {
@@ -61,6 +65,8 @@ impl ClientIdentifier {
             username: username.into(),
             pool_name: pool_name.into(),
             is_talos: false,
+            hba_scram: CheckResult::NotMatched,
+            hba_md5: CheckResult::NotMatched,
         }
     }
 }

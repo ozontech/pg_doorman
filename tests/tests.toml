@@ -67,6 +67,20 @@ min_pool_size = 1
 pool_size = 1
 pool_mode = "session"
 
+[pools.example_db.users.4]
+username = "example_user_rollback"
+password = "md58b67c8b2b2370f3b5ee2416999588830"
+pool_size = 40
+min_pool_size = 0
+pool_mode = "session"
+
+[pools.example_db.users.5]
+username = "example_user_nopassword"
+password = ""
+pool_size = 40
+min_pool_size = 0
+pool_mode = "session"
+
 # Client can connect to database example_db_alias,
 # but in reality database on the server will be example_db.
 [pools.example_db_alias]

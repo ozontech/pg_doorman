@@ -11,6 +11,13 @@ set password_encryption to md5;
 create user example_user_1 with password 'test';
 alter user example_user_1 with superuser;
 
+create user example_user_rollback with password 'test';
+alter user example_user_rollback with superuser;
+
+create user example_user_nopassword;
+alter user example_user_nopassword with superuser;
+
+
 create user example_user_auth_md5 with password 'test';
 alter user example_user_auth_md5 with superuser;
 

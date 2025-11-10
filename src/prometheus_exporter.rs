@@ -331,7 +331,7 @@ fn update_pool_avg_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) 
 
     for (metric, value) in &avg_metrics {
         metric
-            .with_label_values(&[&identifier.user, &identifier.db])
+            .with_label_values(&[identifier.user.as_str(), identifier.db.as_str()])
             .set(*value);
     }
 }
@@ -339,10 +339,11 @@ fn update_pool_avg_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) 
 fn update_pool_server_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
     let server_states = [("active", stats.sv_active), ("idle", stats.sv_idle)];
 
-    for (state, value) in &server_states {
+    for (state, value) in server_states {
+        let labels: [&str; 3] = [state, identifier.user.as_str(), identifier.db.as_str()];
         SHOW_POOLS_SERVER
-            .with_label_values(&[state, &identifier.user, &identifier.db])
-            .set(*value as f64);
+            .with_label_values(&labels)
+            .set(value as f64);
     }
 }
 
@@ -367,18 +368,21 @@ fn update_client_state_metrics(identifier: &StatsPoolIdentifier, stats: &PoolSta
     ];
 
     for (state, count) in states {
+        let labels: [&str; 3] = [state, identifier.user.as_str(), identifier.db.as_str()];
         SHOW_POOLS_CLIENT
-            .with_label_values(&[state, &identifier.user, &identifier.db])
+            .with_label_values(&labels)
             .set(count as f64);
     }
 }
 
 fn update_byte_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
+    let labels_recv: [&str; 3] = ["received", identifier.user.as_str(), identifier.db.as_str()];
     SHOW_POOLS_BYTES
-        .with_label_values(&["received", &identifier.user, &identifier.db])
+        .with_label_values(&labels_recv)
         .set(stats.bytes_received as f64);
+    let labels_sent: [&str; 3] = ["sent", identifier.user.as_str(), identifier.db.as_str()];
     SHOW_POOLS_BYTES
-        .with_label_values(&["sent", &identifier.user, &identifier.db])
+        .with_label_values(&labels_sent)
         .set(stats.bytes_sent as f64);
 }
 
@@ -394,12 +398,14 @@ fn update_percentile_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats
             _ => continue,
         };
 
+        let labels_q: [&str; 3] = [percentile, identifier.user.as_str(), identifier.db.as_str()];
         SHOW_POOLS_QUERIES_PERCENTILE
-            .with_label_values(&[percentile, &identifier.user, &identifier.db])
+            .with_label_values(&labels_q)
             .set(query_value as f64 / 1_000f64);
 
+        let labels_x: [&str; 3] = [percentile, identifier.user.as_str(), identifier.db.as_str()];
         SHOW_POOLS_TRANSACTIONS_PERCENTILE
-            .with_label_values(&[percentile, &identifier.user, &identifier.db])
+            .with_label_values(&labels_x)
             .set(xact_value as f64 / 1_000f64);
     }
 }
@@ -546,9 +552,7 @@ pub async fn start_prometheus_server(host: &str) {
             }
         }
         Err(e) => {
-            panic!(
-                "Failed to bind Prometheus metrics server to {addr}: {e}"
-            );
+            panic!("Failed to bind Prometheus metrics server to {addr}: {e}");
         }
     }
 }

@@ -7,11 +7,11 @@ use tracing_subscriber;
 use tracing_subscriber::EnvFilter;
 
 pub fn init(args: &Args, syslog_name: Option<String>) {
-    if syslog_name.is_some() {
+    if let Some(syslog_name) = syslog_name {
         let formatter = Formatter3164 {
             facility: Facility::LOG_USER,
             hostname: None,
-            process: syslog_name.unwrap(),
+            process: syslog_name,
             pid: process::id(),
         };
         let syslog_logger = syslog::unix(formatter).unwrap();

@@ -138,8 +138,8 @@ pub fn parse_client_first_message(password: Cow<str>) -> Result<ClientFirstMessa
         gs2_flag,
         client_first_bare: c1b_parts.join(","),
     };
-    if authzid.is_some() {
-        result.authzid = Option::from(String::from(authzid.unwrap()));
+    if let Some(authzid) = authzid {
+        result.authzid = Option::from(String::from(authzid));
     }
     Ok(result)
 }
