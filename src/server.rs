@@ -1038,22 +1038,21 @@ impl Server {
         );
     }
 
-    // Determines if the server already has a prepared statement with the given name
-    // Increments the prepared statement cache hit counter
+    /// Determines if the server already has a prepared statement with the given name.
+    /// Updates the prepared statement cache hit/miss counters.
+    #[inline]
     pub fn has_prepared_statement(&mut self, name: &str) -> bool {
-        let cache = match &mut self.prepared_statement_cache {
+        let cache = match &self.prepared_statement_cache {
             Some(cache) => cache,
             None => return false,
         };
-
-        let has_it = cache.get(name).is_some();
-        if has_it {
+        let exists = cache.contains(name);
+        if exists {
             self.stats.prepared_cache_hit();
         } else {
             self.stats.prepared_cache_miss();
         }
-
-        has_it
+        exists
     }
 
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {

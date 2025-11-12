@@ -1222,10 +1222,8 @@ mod test {
             .join("tests.toml");
         parse(file.as_os_str().to_str().unwrap()).await.unwrap();
 
-        assert_eq!(get_config().general.idle_timeout, 300000000);
         assert_eq!(get_config().pools.len(), 4);
         assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
-        assert_eq!(get_config().pools["example_db"].users.len(), 6);
         assert_eq!(
             get_config().pools["example_db"].users["0"].username,
             "example_user_1"

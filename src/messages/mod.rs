@@ -12,12 +12,13 @@ pub mod config_socket;
 pub mod error;
 pub mod extended;
 pub mod protocol;
+pub mod reorder;
 pub mod socket;
 pub mod types;
 
 // Re-export public items
 pub use config_socket::{configure_tcp_socket, configure_unix_socket};
-pub use error::{set_messages_right_place, PgErrorMsg};
+pub use error::PgErrorMsg;
 pub use extended::{close_complete, Bind, Close, Describe, ExtendedProtocolData, Parse};
 pub use protocol::{
     check_query_response, command_complete, data_row, data_row_nullable, deallocate_response,
@@ -27,6 +28,7 @@ pub use protocol::{
     ready_for_query, scram_server_response, scram_start_challenge, server_parameter_message,
     simple_query, ssl_request, startup, sync, wrong_password,
 };
+pub use reorder::{needs_message_reordering, reorder_messages_in_place, set_messages_right_place};
 pub use socket::{
     proxy_copy_data, proxy_copy_data_with_timeout, read_message, read_message_data,
     read_message_header, write_all, write_all_flush, write_all_half,
