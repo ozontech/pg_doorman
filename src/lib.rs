@@ -2,6 +2,7 @@ pub mod admin;
 pub mod auth;
 pub mod client;
 pub mod cmd_args;
+pub mod comments;
 pub mod config;
 pub mod constants;
 pub mod core_affinity;

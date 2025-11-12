@@ -1,3 +1,6 @@
+pub mod hba;
+#[cfg(test)]
+mod hba_eval_tests;
 pub mod jwt;
 pub mod pam;
 pub mod scram;
@@ -7,9 +10,9 @@ pub mod talos;
 use std::marker::Unpin;
 
 // External crate imports
+use crate::auth::hba::CheckResult;
 use log::{error, warn};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
 // Internal crate imports
 use crate::auth::jwt::get_user_name_from_jwt;
 use crate::auth::pam::pam_auth;
@@ -106,6 +109,54 @@ where
 }
 
 /// Authenticate a normal user with various methods
+fn eval_hba_for_pool_password(pool_password: &str, ci: &ClientIdentifier) -> CheckResult {
+    // Determine HBA outcome based on stored pool password type and HBA checks attached to client identifier
+    if ci.is_talos {
+        // Already authenticated upstream, allow normal auth flow (not a Trust, but no HBA block)
+        return CheckResult::Allow;
+    }
+
+    // Empty password is allowed only when HBA is trust for either method
+    if pool_password.is_empty()
+        && (ci.hba_md5 == CheckResult::Trust || ci.hba_scram == CheckResult::Trust)
+    {
+        return CheckResult::Trust;
+    }
+
+    if pool_password.starts_with(SCRAM_SHA_256) {
+        // If SCRAM is trusted or MD5 trust is allowed while SCRAM is not matched, treat as trust
+        if ci.hba_scram == CheckResult::Trust
+            || (ci.hba_scram == CheckResult::NotMatched && ci.hba_md5 == CheckResult::Trust)
+        {
+            return CheckResult::Trust;
+        }
+
+        // Explicit rejections or no matching rules result in deny
+        if ci.hba_scram == CheckResult::Deny
+            || (ci.hba_scram == CheckResult::NotMatched
+                && (ci.hba_md5 == CheckResult::Deny || ci.hba_md5 == CheckResult::NotMatched))
+        {
+            return CheckResult::Deny;
+        }
+
+        // Otherwise, a password exchange is allowed
+        return CheckResult::Allow;
+    }
+
+    if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
+        if ci.hba_md5 == CheckResult::Trust {
+            return CheckResult::Trust;
+        }
+        if ci.hba_md5 == CheckResult::NotMatched || ci.hba_md5 == CheckResult::Deny {
+            return CheckResult::Deny;
+        }
+        return CheckResult::Allow;
+    }
+
+    // For other auth kinds (JWT/PAM/unknown), the HBA rules here are not applicable.
+    CheckResult::Allow
+}
+
 async fn authenticate_normal_user<S, T>(
     read: &mut S,
     write: &mut T,
@@ -141,8 +192,27 @@ where
 
     let pool_password = pool.settings.user.password.clone();
 
-    if client_identifier.is_talos {
-        // pass, client already authenticated.
+    // Evaluate HBA once for this connection
+    let hba_decision = eval_hba_for_pool_password(&pool_password, client_identifier);
+    if hba_decision == CheckResult::Deny {
+        error_response_terminal(
+        write,
+        format!(
+            "Connection with scram password from IP address {} to {}@{} is not permitted by HBA configuration. Please contact your database administrator.",
+            client_identifier.addr, username_from_parameters, pool_name
+        )
+            .as_str(),
+        "28000",
+    )
+        .await?;
+        return Err(Error::HbaForbiddenError(format!(
+        "Connection with scram not permitted by HBA configuration for client: {} from address: {:?}",
+        client_identifier, client_identifier.addr,
+    )));
+    }
+
+    if client_identifier.is_talos || hba_decision == CheckResult::Trust {
+        // Pass, client already authenticated (talos) or HBA Trust
     } else if pool.settings.user.auth_pam_service.is_some() {
         authenticate_with_pam(read, write, &pool, username_from_parameters).await?;
     } else if pool_password.starts_with(SCRAM_SHA_256) {
@@ -539,7 +609,7 @@ mod tests {
         }
     }
 
-    // Helper function to run async tests
+    // Helper function to run async hba_eval_tests
     struct MockWaker;
     impl Wake for MockWaker {
         fn wake(self: Arc<Self>) {}

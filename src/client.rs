@@ -17,8 +17,10 @@ use tokio::sync::mpsc::Sender;
 
 use crate::admin::handle_admin;
 use crate::auth::authenticate;
+use crate::auth::hba::CheckResult;
 use crate::auth::talos::{extract_talos_token, talos_role_to_string};
-use crate::config::{addr_in_hba, get_config};
+use crate::comments::SqlCommentParser;
+use crate::config::{check_hba, get_config};
 use crate::constants::*;
 use crate::messages::*;
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool, CANCELED_PIDS};
@@ -209,14 +211,14 @@ pub async fn client_entrypoint(
         // Client requested a TLS connection.
         Ok((ClientConnectionType::Tls, _)) => {
             // TLS settings are configured, will setup TLS now.
-            if tls_acceptor.is_some() {
+            if let Some(tls_acceptor) = tls_acceptor {
                 TLS_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let mut yes = BytesMut::new();
                 yes.put_u8(b'S');
                 write_all(&mut stream, yes).await?;
 
-                if tls_rate_limiter.is_some() {
-                    tls_rate_limiter.unwrap().wait().await;
+                if let Some(tls_rate_limiter) = tls_rate_limiter {
+                    tls_rate_limiter.wait().await;
                 }
 
                 // Negotiate TLS.
@@ -225,7 +227,7 @@ pub async fn client_entrypoint(
                     client_server_map,
                     shutdown,
                     admin_only,
-                    tls_acceptor.unwrap(),
+                    tls_acceptor,
                 )
                 .await
                 {
@@ -528,6 +530,90 @@ where
         self.admin
     }
 
+    /// Wait for a ROLLBACK from client after server entered aborted transaction state.
+    /// For any incoming message except a Simple Query with ROLLBACK, respond with:
+    /// - ErrorResponse (SQLSTATE 25P02) and ReadyForQuery with status 'E' (failed tx)
+    ///   For a Simple Query 'ROLLBACK', respond with:
+    ///   - CommandComplete("ROLLBACK") and ReadyForQuery with status 'I' (idle)
+    pub async fn wait_rollback(&mut self) -> Result<(), Error> {
+        loop {
+            // Read next client message
+            let message = match read_message(&mut self.read, self.max_memory_usage).await {
+                Ok(message) => message,
+                Err(err) => return self.process_error(err).await,
+            };
+
+            let code = message[0] as char;
+            match code {
+                // Terminate
+                'X' => {
+                    self.stats.disconnect();
+                    return Ok(());
+                }
+                // Simple Query
+                'Q' => {
+                    // Parse query string (null-terminated)
+                    let mut sql = String::new();
+                    if message.len() >= 6 {
+                        let payload = &message[5..];
+                        // strip trailing NUL if present
+                        let end = payload
+                            .iter()
+                            .position(|b| *b == 0)
+                            .unwrap_or(payload.len());
+                        if let Ok(s) = std::str::from_utf8(&payload[..end]) {
+                            sql = s.to_string();
+                        }
+                    }
+                    if SqlCommentParser::new(&sql)
+                        .remove_comment_sql()
+                        .trim()
+                        .trim_end_matches(';')
+                        .trim()
+                        .eq_ignore_ascii_case("rollback")
+                    {
+                        // Send CommandComplete + ReadyForQuery(Idle)
+                        let mut res = BytesMut::new();
+                        res.put(command_complete("ROLLBACK"));
+                        res.put(ready_for_query(false)); // Idle
+                        self.stats.idle_write();
+                        write_all_flush(&mut self.write, &res).await?;
+                        return Ok(());
+                    } else {
+                        // Send error 25P02 + ReadyForQuery with state 'E'
+                        let mut buf = error_message(
+                            "current transaction is aborted, commands ignored until end of transaction block",
+                            "25P02",
+                        );
+                        // ReadyForQuery with state 'E'
+                        let mut z = BytesMut::new();
+                        z.put_u8(b'Z');
+                        z.put_i32(5);
+                        z.put_u8(b'E');
+                        buf.put(z);
+                        self.stats.idle_write();
+                        write_all_flush(&mut self.write, &buf).await?;
+                        // Continue waiting for rollback
+                    }
+                }
+                // For any other kind of message, reply with the same error and continue
+                _ => {
+                    let mut buf = error_message(
+                        "current transaction is aborted, commands ignored until end of transaction block",
+                        "25P02",
+                    );
+                    let mut z = BytesMut::new();
+                    z.put_u8(b'Z');
+                    z.put_i32(5);
+                    z.put_u8(b'E');
+                    buf.put(z);
+                    self.stats.idle_write();
+                    write_all_flush(&mut self.write, &buf).await?;
+                }
+            }
+        }
+    }
+
     /// Handle Postgres client startup after TLS negotiation is complete
     /// or over plain text.
     #[allow(clippy::too_many_arguments)]
@@ -568,10 +654,25 @@ where
             pool_name,
             addr.to_string().as_str(),
         );
-
+        client_identifier.hba_md5 = check_hba(
+            addr.ip(),
+            use_tls,
+            "md5",
+            username_from_parameters,
+            pool_name,
+        );
+        client_identifier.hba_scram = check_hba(
+            addr.ip(),
+            use_tls,
+            "scram-sha-256",
+            username_from_parameters,
+            pool_name,
+        );
         {
-            // talos
-            if username_from_parameters == TALOS_USERNAME && addr_in_hba(addr.ip()) {
+            // If md5 or scram is allowed, we can try to authenticate with Talos.
+            let hba_ok = client_identifier.hba_md5 == CheckResult::Allow
+                || client_identifier.hba_scram == CheckResult::Allow;
+            if username_from_parameters == TALOS_USERNAME && hba_ok {
                 plain_password_challenge(&mut write).await?;
                 let talos_token_response = read_password(&mut read).await?;
                 let talos_token_with_nul = match str::from_utf8(&talos_token_response) {
@@ -603,7 +704,18 @@ where
                     }
                 };
                 let talos_databases = get_config().talos.databases;
-                let token = extract_talos_token(talos_token, talos_databases).await?;
+                let token = match extract_talos_token(talos_token, talos_databases).await {
+                    Ok(token) => token,
+                    Err(err) => {
+                        error_response_terminal(
+                            &mut write,
+                            format!("Invalid Talos token: {err:?}").as_str(),
+                            "3D000",
+                        )
+                        .await?;
+                        return Err(Error::AuthError(format!("Invalid Talos token: {err:?}")));
+                    }
+                };
                 client_identifier.application_name = token.client_id;
                 client_identifier.username = talos_role_to_string(token.role);
                 client_identifier.is_talos = true;
@@ -627,15 +739,26 @@ where
             return Err(Error::ShuttingDown);
         }
 
-        if !addr_in_hba(addr.ip()) {
+        // Final HBA decision: if neither md5 nor scram is explicitly allowed or trusted,
+        // the connection is not permitted by HBA. `Deny` indicates explicit `reject` rule,
+        // while `NotMatched` means no rule matched.
+        let hba_ok_final = matches!(
+            client_identifier.hba_scram,
+            CheckResult::Allow | CheckResult::Trust
+        ) || matches!(
+            client_identifier.hba_md5,
+            CheckResult::Allow | CheckResult::Trust
+        );
+        if !hba_ok_final {
             error_response_terminal(
                 &mut write,
-                format!("Connection from IP address {} is not allowed by HBA configuration. Please contact your database administrator.", addr.ip()).as_str(),
+                format!("Connection from IP address {} to {}@{} (TLS: {}) is not permitted by HBA configuration. Please contact your database administrator.",
+                        addr.ip(), username_from_parameters, pool_name, use_tls).as_str(),
                 "28000"
             )
                 .await?;
             return Err(Error::HbaForbiddenError(format!(
-                "Connection rejected by HBA configuration for client: {} from address: {:?}",
+                "Connection not permitted by HBA configuration for client: {} from address: {:?}",
                 client_identifier,
                 addr.ip()
             )));
@@ -806,7 +929,9 @@ where
 
         let mut tx_counter = 0;
         let mut query_start_at: Instant;
+        let mut wait_rollback_from_client: bool;
         loop {
+            wait_rollback_from_client = false;
             // Read a complete message from the client, which normally would be
             // either a `Q` (query) or `P` (prepare, extended protocol).
             self.stats.idle_read();
@@ -1034,6 +1159,10 @@ where
                                 query_start_at.elapsed().as_micros() as u64,
                                 self.server_parameters.get_application_name(),
                             );
+                            if server.in_aborted() {
+                                wait_rollback_from_client = true;
+                                break;
+                            }
 
                             if !server.in_transaction() {
                                 // Report transaction executed statistics.
@@ -1126,7 +1255,6 @@ where
                                 match protocol_data {
                                     ExtendedProtocolData::Parse { data, metadata } => {
                                         async_wait_code = '1';
-                                        debug!("Have parse in extended buffer");
                                         let (parse, hash) = match metadata {
                                             Some(metadata) => metadata,
                                             None => {
@@ -1257,6 +1385,10 @@ where
                                     }
                                     break;
                                 }
+                                if server.in_aborted() {
+                                    wait_rollback_from_client = true;
+                                    break;
+                                }
                             }
 
                             // Send all queued messages to the client
@@ -1376,6 +1508,10 @@ where
                 self.client_last_messages_in_tx.clear();
             }
             self.connected_to_server = false;
+            if wait_rollback_from_client {
+                // release from server and wait rollback from client;
+                self.wait_rollback().await?;
+            }
             // change pool.
             if tx_counter % 10 == 0 && self.transaction_mode {
                 pool = Some(self.get_pool(client_counter).await?);
@@ -1703,7 +1839,7 @@ where
                 }
             };
 
-            if !server.is_data_available() {
+            if !server.is_data_available() || server.in_aborted() {
                 break;
             }
         }

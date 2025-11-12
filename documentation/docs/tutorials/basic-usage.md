@@ -128,6 +128,14 @@ The command connects to your PostgreSQL server, automatically detects all databa
 !!! warning "Superuser Privileges"
     Reading user information from PostgreSQL requires superuser privileges to access the `pg_shadow` table.
 
+### Client access control (pg_hba)
+
+PgDoorman can enforce client access rules using PostgreSQL-style `pg_hba.conf` semantics via the `general.pg_hba` parameter.
+You can embed rules directly in the config or reference a file path. See the [reference section](../reference/general.md#pg_hba) for full examples.
+
+Trust mode: when a matching rule uses `trust`, PgDoorman will accept connections without prompting the client for a password,
+mirroring PostgreSQL behavior. TLS-related rule types are honored: `hostssl` requires TLS, `hostnossl` forbids TLS.
+
 ### Running PgDoorman
 
 After creating your configuration file, you can run PgDoorman from the command line:

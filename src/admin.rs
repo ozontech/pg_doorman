@@ -531,15 +531,14 @@ where
     let total = TOTAL_CONNECTION_COUNTER.load(Ordering::Relaxed);
     let tls = TLS_CONNECTION_COUNTER.load(Ordering::Relaxed);
     let plain = PLAIN_CONNECTION_COUNTER.load(Ordering::Relaxed);
-    let error = total - tls - plain;
+    let cancel = CANCEL_CONNECTION_COUNTER.load(Ordering::Relaxed);
+    let error = total - tls - plain - cancel;
     let row = vec![
         total.to_string(),
         error.to_string(),
         tls.to_string(),
         plain.to_string(),
-        CANCEL_CONNECTION_COUNTER
-            .load(Ordering::Relaxed)
-            .to_string(),
+        cancel.to_string(),
     ];
     res.put(data_row(&row));
 
