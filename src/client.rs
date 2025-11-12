@@ -565,12 +565,14 @@ where
                             sql = s.to_string();
                         }
                     }
-                    if SqlCommentParser::new(&sql)
+                    let command = SqlCommentParser::new(&sql)
                         .remove_comment_sql()
                         .trim()
                         .trim_end_matches(';')
                         .trim()
-                        .eq_ignore_ascii_case("rollback")
+                        .to_string();
+                    if command.eq_ignore_ascii_case("rollback")
+                        || command.eq_ignore_ascii_case("commit")
                     {
                         // Send CommandComplete + ReadyForQuery(Idle)
                         let mut res = BytesMut::new();
@@ -1520,15 +1522,9 @@ where
 
             self.stats.idle_read();
             // capacity растет - вырастает rss у процесса.
-            if self.client_last_messages_in_tx.capacity() > 4 * 8 * 1024 {
-                self.client_last_messages_in_tx = BytesMut::with_capacity(8 * 1024);
-            }
-            if self.buffer.capacity() > 4 * 8 * 1024 {
-                self.buffer = BytesMut::with_capacity(8 * 1024);
-            }
-            if self.response_message_queue_buffer.capacity() > 4 * 8 * 1024 {
-                self.response_message_queue_buffer = BytesMut::with_capacity(8 * 1024);
-            }
+            shrink_buffer_if_needed(&mut self.client_last_messages_in_tx);
+            shrink_buffer_if_needed(&mut self.buffer);
+            shrink_buffer_if_needed(&mut self.response_message_queue_buffer);
         }
     }
     /// Makes sure the checked out server has the prepared statement and sends it to the server if it doesn't
@@ -1792,13 +1788,22 @@ where
         server: &mut Server,
     ) -> Result<(), Error> {
         let message = message.unwrap_or(&self.buffer);
+
+        // Send message with timeout
         server
             .send_and_flush_timeout(message, Duration::from_secs(5))
             .await?;
+
+        // Pre-calculate fast release conditions (avoids repeated checks)
+        let can_fast_release = self.transaction_mode;
+        let has_queue = !self.response_message_queue_buffer.is_empty();
+
+        // Single initial state update
+        self.stats.active_idle();
+
         // Read all data the server has to offer, which can be multiple messages
         // buffered in 8196 bytes chunks.
         loop {
-            self.stats.active_idle();
             let mut response = match server
                 .recv(&mut self.write, Some(&mut self.server_parameters))
                 .await
@@ -1806,39 +1811,61 @@ where
                 Ok(msg) => msg,
                 Err(err) => {
                     server.wait_available().await;
-                    server.mark_bad(format!("loop with client {}: {:?}", self.addr, err).as_str());
+                    let mut msg = String::with_capacity(64);
+                    use std::fmt::Write;
+                    let _ = write!(msg, "loop with client {}: {:?}", self.addr, err);
+                    server.mark_bad(&msg);
                     return Err(err);
                 }
             };
-            // Fast release server back to the pool (only in transaction pool mode).
-            if !server.is_data_available()
+
+            // Fast path: early release check before expensive operations
+            // This is the most common case in transaction mode
+            if can_fast_release
+                && !server.is_data_available()
                 && !server.in_transaction()
                 && !server.in_copy_mode()
-                && self.transaction_mode
                 && !server.is_async()
             {
                 self.client_last_messages_in_tx.put(&response[..]);
                 break;
             }
 
-            if !self.response_message_queue_buffer.is_empty() {
-                response.put(&self.response_message_queue_buffer[..]);
-                response = set_messages_right_place(response.to_vec())?;
-                self.response_message_queue_buffer.clear();
+            // Merge queued messages if needed (optimized path)
+            if has_queue && !self.response_message_queue_buffer.is_empty() {
+                let queue_len = self.response_message_queue_buffer.len();
+
+                // Fast path: if no reordering needed, just concatenate
+                if !needs_message_reordering(&self.response_message_queue_buffer) {
+                    response.put(&self.response_message_queue_buffer[..]);
+                    self.response_message_queue_buffer.clear();
+                } else {
+                    // Slow path: need to reorder
+                    // Reserve exact capacity to avoid reallocation
+                    response.reserve(queue_len);
+                    response.put(&self.response_message_queue_buffer[..]);
+
+                    // Optimize: avoid Vec allocation by reusing buffer
+                    response = reorder_messages_in_place(response)?;
+                    self.response_message_queue_buffer.clear();
+                }
             }
 
+            // Write response to client
             self.stats.active_write();
-            match write_all_flush(&mut self.write, &response).await {
-                Ok(_) => self.stats.active_idle(),
-                Err(err_write) => {
-                    server.wait_available().await;
-                    server.mark_bad(
-                        format!("flush to client {} {:?}", self.addr, err_write).as_str(),
-                    );
-                    return Err(err_write);
-                }
-            };
+            if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
+                server.wait_available().await;
+                // Lazy error formatting
+                let mut msg = String::with_capacity(64);
+                use std::fmt::Write;
+                let _ = write!(msg, "flush to client {} {:?}", self.addr, err_write);
+                server.mark_bad(&msg);
+                return Err(err_write);
+            }
 
+            self.stats.active_idle();
+
+            // Early exit check
             if !server.is_data_available() || server.in_aborted() {
                 break;
             }
@@ -1846,6 +1873,7 @@ where
 
         Ok(())
     }
+
     async fn process_error(&mut self, err: Error) -> Result<(), Error> {
         match err {
             Error::MaxMessageSize => {
@@ -1939,5 +1967,16 @@ impl<S, T> Drop for Client<S, T> {
                 stats.idle(0);
             }
         }
+    }
+}
+
+const INITIAL_BUFFER_SIZE: usize = 8196;
+const BUFFER_SHRINK_THRESHOLD: usize = 4 * INITIAL_BUFFER_SIZE; // 32KB
+
+#[inline]
+fn shrink_buffer_if_needed(buffer: &mut BytesMut) {
+    if buffer.capacity() > BUFFER_SHRINK_THRESHOLD {
+        let new_buffer = BytesMut::with_capacity(INITIAL_BUFFER_SIZE);
+        *buffer = new_buffer;
     }
 }

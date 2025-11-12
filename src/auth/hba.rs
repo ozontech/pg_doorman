@@ -177,7 +177,7 @@ impl std::fmt::Display for PgHba {
             if i > 0 {
                 f.write_str("\n")?;
             }
-            write!(f, "{}", rule)?;
+            write!(f, "{rule}")?;
         }
         Ok(())
     }

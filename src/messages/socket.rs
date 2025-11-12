@@ -115,26 +115,20 @@ where
     }
 }
 
-/// Read a complete message from the stream.
+#[inline]
 pub async fn read_message<S>(stream: &mut S, max_memory_usage: u64) -> Result<BytesMut, Error>
 where
     S: tokio::io::AsyncRead + std::marker::Unpin,
 {
     let (code, len) = read_message_header(stream).await?;
-
-    if CURRENT_MEMORY.load(Ordering::Relaxed) as u64 > max_memory_usage {
+    let prev = CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
+    if (prev + len as i64) as u64 > max_memory_usage {
+        CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
         return Err(Error::CurrentMemoryUsage);
     }
-    CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
-    let bytes = match read_message_data(stream, code, len).await {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            CURRENT_MEMORY.fetch_add(-len as i64, Ordering::Relaxed);
-            return Err(err);
-        }
-    };
-    CURRENT_MEMORY.fetch_add(-len as i64, Ordering::Relaxed);
-    Ok(bytes)
+    let result = read_message_data(stream, code, len).await;
+    CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+    result
 }
 
 /// Copy data from one stream to another with a timeout.

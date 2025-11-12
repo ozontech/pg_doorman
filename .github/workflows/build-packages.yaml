@@ -4,6 +4,9 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: read
+
 jobs:
 
   verify-version:
@@ -34,6 +37,8 @@ jobs:
     name: Release vendor.tar.gz.
     needs: [verify-version]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -143,6 +148,8 @@ jobs:
     name: Release packages.
     needs: ['deb', 'rpm']
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       matrix:
         package:
