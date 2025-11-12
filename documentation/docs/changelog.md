@@ -4,6 +4,15 @@ title: Changelog
 
 # Changelog
 
+### 2.4.1 <small>Nov 12, 2025</small> { id="2.4.1" }
+
+**Improvements:**
+- Performance optimizations in request handling and message processing paths to reduce latency and CPU usage.
+
+**Bug Fixes:**
+- Corrected logic where `COMMIT` could be mishandled similarly to `ROLLBACK` in certain error states; now transactional state handling is aligned with PostgreSQL semantics.
+
+
 ### 2.4.0 <small>Nov 10, 2025</small> { id="2.4.0" }
 
 **Features:**
