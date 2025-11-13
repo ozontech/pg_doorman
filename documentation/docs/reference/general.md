@@ -322,6 +322,13 @@ Behavior of method = trust:
 - Specifically, if `trust` matches, PgDoorman will skip password verification even if the user has an `md5` or `scram-sha-256` password stored. This affects both MD5 and SCRAM flows.
 - TLS constraints from the rule are respected: `hostssl` requires TLS, `hostnossl` forbids TLS.
 
+Admin console access:
+- `general.pg_hba` rules apply to the special admin database `pgdoorman` as well.
+- This means you can allow admin access with the `trust` method when a matching rule is present, for example:
+  ```
+  host  pgdoorman  admin  127.0.0.1/32  trust
+  ```
+
 Notes and limitations:
 - Only a minimal subset of `pg_hba.conf` is supported that is sufficient for most proxy use-cases (type, database, user, address, method). Additional options (like `clientcert`) are currently ignored.
 - For authentication methods other than `trust`, PgDoorman performs the corresponding challenge/response with the client.

@@ -191,3 +191,36 @@ fn md5_not_matched_leads_to_deny_even_if_scram_allowed() {
     let pw = format!("{}hash", MD5_PASSWORD_PREFIX);
     assert_eq!(eval_hba_for_pool_password(&pw, &ci), CheckResult::Deny);
 }
+
+// ---- New tests to ensure `local` rules are ignored for TCP/IP connections ----
+#[test]
+fn local_trust_is_ignored_for_tcp() {
+    // Only a local rule present; for TCP/IP it must be ignored → NotMatched for both methods
+    let hba = "local all all trust";
+
+    // For SCRAM password
+    let ci_scram = ci_from_hba(hba, false);
+    let pw_scram = format!("{}secret", SCRAM_SHA_256);
+    assert_eq!(eval_hba_for_pool_password(&pw_scram, &ci_scram), CheckResult::Deny);
+
+    // For MD5 password
+    let ci_md5 = ci_from_hba(hba, false);
+    let pw_md5 = format!("{}hash", MD5_PASSWORD_PREFIX);
+    assert_eq!(eval_hba_for_pool_password(&pw_md5, &ci_md5), CheckResult::Deny);
+}
+
+#[test]
+fn local_then_host_rule_behaves_like_host_only() {
+    // Local rule should be ignored; the host rule should define the outcome
+    let hba = "local all all trust\nhost all all 127.0.0.1/32 md5";
+
+    // MD5 password should be allowed by the host md5 rule
+    let ci_md5 = ci_from_hba(hba, false);
+    let pw_md5 = format!("{}hash", MD5_PASSWORD_PREFIX);
+    assert_eq!(eval_hba_for_pool_password(&pw_md5, &ci_md5), CheckResult::Allow);
+
+    // SCRAM password should be allowed to proceed (scram NotMatched, md5 Allow → overall Allow)
+    let ci_scram = ci_from_hba(hba, false);
+    let pw_scram = format!("{}secret", SCRAM_SHA_256);
+    assert_eq!(eval_hba_for_pool_password(&pw_scram, &ci_scram), CheckResult::Allow);
+}

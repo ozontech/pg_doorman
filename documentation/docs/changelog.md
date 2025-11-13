@@ -4,10 +4,21 @@ title: Changelog
 
 # Changelog
 
+### 2.4.2 <small>Nov 13, 2025</small> { id="2.4.2" }
+
+**Improvements:**
+- `pg_hba` rules now apply to the admin console as well; the `trust` method can be used for admin connections when a matching rule is present (use with caution; restrict by address/TLS).
+
+**Bug Fixes:**
+- Fixed `pg_hba` evaluation: `local` records were mistakenly considered; PgDoorman only handles TCP connections, so `local` entries are now correctly ignored.
+
+
+
 ### 2.4.1 <small>Nov 12, 2025</small> { id="2.4.1" }
 
 **Improvements:**
 - Performance optimizations in request handling and message processing paths to reduce latency and CPU usage.
+- `pg_hba` rules now apply to the admin console as well; the `trust` method can be used for admin connections when a matching rule is present (use with caution; restrict by address/TLS).
 
 **Bug Fixes:**
 - Corrected logic where `COMMIT` could be mishandled similarly to `ROLLBACK` in certain error states; now transactional state handling is aligned with PostgreSQL semantics.
