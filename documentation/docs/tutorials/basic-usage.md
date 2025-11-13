@@ -192,8 +192,15 @@ DETAIL:
     Some database drivers use the extended query protocol for all commands, making them unsuitable for admin console access. In such cases, use the `psql` command-line client for administration.
 
 !!! warning "Security"
-    Only the user specified by `admin_username` in the configuration file is allowed to log in to the admin console. 
-    Make sure to use a strong password for this account in production environments.
+    Only the user specified by `admin_username` in the configuration file is allowed to log in to the admin console.
+    If your `general.pg_hba` rules allow it, the admin console can also be accessed using the `trust` method (no password prompt), for example:
+
+    ```
+    # Allow only local admin to access the admin DB without a password
+    host  pgdoorman  admin  127.0.0.1/32  trust
+    ```
+
+    Use `trust` with extreme caution. Always restrict it by address and, where possible, require TLS via `hostssl`. In production, prefer password-based methods unless you fully understand the implications.
 
 ### Monitoring PgDoorman
 

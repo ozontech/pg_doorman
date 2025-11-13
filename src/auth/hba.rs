@@ -371,10 +371,13 @@ impl PgHba {
         };
 
         for rule in &self.rules {
+            // Skip local rules; they are intended only for unix-socket connections
+            if matches!(rule.host_type, HostType::Local) {
+                continue;
+            }
             if !rule.host_type.matches_ssl(ssl) {
                 continue;
             }
-            // Local rules do not check IP; host* must match IP if address present.
             if let Some(net) = &rule.address {
                 if !net.contains(&ip) {
                     continue;
