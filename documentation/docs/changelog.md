@@ -4,6 +4,12 @@ title: Changelog
 
 # Changelog
 
+### 2.4.3 <small>Nov 15, 2025</small> { id="2.4.3" }
+
+**Bug Fixes:**
+- Fixed handling of nested transactions via `SAVEPOINT`: auto-rollback now correctly rolls back to the savepoint instead of breaking the outer transaction. This prevents clients from getting stuck in an inconsistent transactional state.
+
+
 ### 2.4.2 <small>Nov 13, 2025</small> { id="2.4.2" }
 
 **Improvements:**
