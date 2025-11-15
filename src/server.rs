@@ -315,6 +315,9 @@ pub struct Server {
     /// Is the server inside a transaction and aborted.
     is_aborted: bool,
 
+    /// Nested transaction level, e.g. if we're in a transaction, then we're in level > 1.
+    nested_transaction_level: i32,
+
     /// Is there more data for the client to read.
     data_available: bool,
 
@@ -524,12 +527,14 @@ impl Server {
                     match transaction_state {
                         // In transaction.
                         'T' => {
+                            self.nested_transaction_level += 1;
                             self.is_aborted = false;
                             self.in_transaction = true;
                         }
 
                         // Idle, transaction over.
                         'I' => {
+                            self.nested_transaction_level -= 1;
                             self.is_aborted = false;
                             self.in_transaction = false;
                         }
@@ -845,9 +850,11 @@ impl Server {
         self.in_transaction
     }
 
+    /// If the server is in a transaction and the transaction was aborted.
+    /// If the client disconnects while the server is in a transaction, we will clean it up.
     #[inline(always)]
     pub fn in_aborted(&self) -> bool {
-        self.in_transaction && self.is_aborted
+        self.in_transaction && self.is_aborted && self.nested_transaction_level == 1
     }
 
     #[inline(always)]
@@ -929,6 +936,9 @@ impl Server {
             }
             self.cleanup_state.reset();
         }
+        self.nested_transaction_level = 0;
+        self.in_transaction = false;
+        self.is_aborted = false;
         Ok(())
     }
 
@@ -1578,6 +1588,7 @@ impl Server {
                         secret_key,
                         in_transaction: false,
                         is_aborted: false,
+                        nested_transaction_level: 0,
                         in_copy_mode: false,
                         data_available: false,
                         bad: false,
