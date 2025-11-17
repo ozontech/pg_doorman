@@ -175,6 +175,20 @@ syslog_prog_name = "pg_doorman"
 # For example, it can be the address mask 10.0.0.0/8. By default, access is allowed from any address.
 hba = []
 
+[prometheus]
+# Prometheus metrics exporter settings. See documentation/docs/reference/prometheus.md
+# Enable or disable the Prometheus exporter.
+# Default: false
+enabled = false
+
+# Host to listen on for the metrics HTTP endpoint.
+# Default: "0.0.0.0"
+host = "0.0.0.0"
+
+# Port for the metrics HTTP endpoint.
+# Default: 9127
+port = 9127
+
 [pools]
 # Each record in the pool is the name of the virtual database that the pg-doorman client can connect to.
 [pools.exampledb]

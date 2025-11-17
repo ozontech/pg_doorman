@@ -11,7 +11,7 @@ use tokio::time::Instant;
 // - ACTIVE: Client is actively processing a query or transaction
 // - WAITING: Client is waiting for a server connection from the pool
 iota! {
-    pub const CLIENT_STATE_IDLE: u8 = 10 << iota;
+    pub const CLIENT_STATE_IDLE: u8 = 1 + iota;
         , CLIENT_STATE_ACTIVE
         , CLIENT_STATE_WAITING
 }
@@ -23,7 +23,7 @@ iota! {
 // - READ: Client is waiting for data to be read from the connection
 // - WRITE: Client is waiting for data to be written to the connection
 iota! {
-    pub const CLIENT_WAIT_IDLE: u8 = 20 << iota;
+    pub const CLIENT_WAIT_IDLE: u8 = 1 + iota;
         , CLIENT_WAIT_READ
         , CLIENT_WAIT_WRITE
 }
@@ -33,7 +33,6 @@ iota! {
 /// This struct tracks various metrics and state information for a client connection
 /// to the PostgreSQL connection pooler. It is used to provide information for the
 /// SHOW CLIENTS command and to track client activity for monitoring and diagnostics.
-#[derive(Clone)]
 pub struct ClientStats {
     /// A random integer assigned to the client and used by stats to track the client
     client_id: i32,
@@ -59,25 +58,22 @@ pub struct ClientStats {
     /// Performance metrics
     /// ------------------------------------------------------------------------------------------
     /// Total time spent waiting for a connection from pool, in microseconds
-    pub total_wait_time: Arc<AtomicU64>,
+    pub total_wait_time: AtomicU64,
     /// Maximum time spent waiting for a connection from pool, in microseconds
-    pub max_wait_time: Arc<AtomicU64>,
+    pub max_wait_time: AtomicU64,
 
-    /// State tracking
+    /// State tracking (packed into single atomic byte: high nibble = state, low nibble = wait)
     /// ------------------------------------------------------------------------------------------
-    /// Current state of the client (IDLE, ACTIVE, WAITING)
-    pub state: Arc<AtomicU8>,
-    /// Current wait status of the client (IDLE, READ, WRITE)
-    pub wait: Arc<AtomicU8>,
+    state_wait: AtomicU8,
 
     /// Activity counters
     /// ------------------------------------------------------------------------------------------
     /// Number of transactions executed by this client
-    pub transaction_count: Arc<AtomicU64>,
+    pub transaction_count: AtomicU64,
     /// Number of queries executed by this client
-    pub query_count: Arc<AtomicU64>,
+    pub query_count: AtomicU64,
     /// Number of errors encountered by this client
-    pub error_count: Arc<AtomicU64>,
+    pub error_count: AtomicU64,
 }
 
 /// Default implementation for ClientStats.
@@ -99,13 +95,12 @@ impl Default for ClientStats {
             username: String::new(),
             pool_name: String::new(),
             ipaddr: String::new(),
-            total_wait_time: Arc::new(AtomicU64::new(0)),
-            max_wait_time: Arc::new(AtomicU64::new(0)),
-            state: Arc::new(AtomicU8::new(CLIENT_STATE_IDLE)),
-            wait: Arc::new(AtomicU8::new(CLIENT_WAIT_IDLE)),
-            transaction_count: Arc::new(AtomicU64::new(0)),
-            query_count: Arc::new(AtomicU64::new(0)),
-            error_count: Arc::new(AtomicU64::new(0)),
+            total_wait_time: AtomicU64::new(0),
+            max_wait_time: AtomicU64::new(0),
+            state_wait: AtomicU8::new(Self::pack(CLIENT_STATE_IDLE, CLIENT_WAIT_IDLE)),
+            transaction_count: AtomicU64::new(0),
+            query_count: AtomicU64::new(0),
+            error_count: AtomicU64::new(0),
             reporter: get_reporter(),
             use_tls: false,
         }
@@ -113,6 +108,41 @@ impl Default for ClientStats {
 }
 
 impl ClientStats {
+    #[inline(always)]
+    fn pack(state: u8, wait: u8) -> u8 {
+        (state << 4) | (wait & 0x0F)
+    }
+
+    #[inline(always)]
+    pub fn state(&self) -> u8 {
+        self.state_wait.load(Ordering::Relaxed) >> 4
+    }
+
+    #[inline(always)]
+    pub fn wait(&self) -> u8 {
+        self.state_wait.load(Ordering::Relaxed) & 0x0F
+    }
+
+    #[inline(always)]
+    pub fn set_state(&self, state: u8) {
+        let cur = self.state_wait.load(Ordering::Relaxed);
+        let wait = cur & 0x0F;
+        let new = Self::pack(state, wait);
+        self.state_wait.store(new, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn set_wait(&self, wait: u8) {
+        let state = self.state_wait.load(Ordering::Relaxed) >> 4;
+        let new = Self::pack(state, wait);
+        self.state_wait.store(new, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn set_state_wait(&self, state: u8, wait: u8) {
+        self.state_wait
+            .store(Self::pack(state, wait), Ordering::Relaxed);
+    }
     /// Creates a new ClientStats instance with the specified parameters.
     ///
     /// This constructor initializes a new client statistics tracker with the provided
@@ -162,7 +192,7 @@ impl ClientStats {
     /// * `stats` - Arc-wrapped ClientStats instance to register
     pub fn register(&self, stats: Arc<ClientStats>) {
         self.reporter.client_register(self.client_id, stats);
-        self.state.store(CLIENT_STATE_IDLE, Ordering::Relaxed);
+        self.set_state(CLIENT_STATE_IDLE);
     }
 
     /// Reports that a client is disconnecting from the pooler.
@@ -184,8 +214,7 @@ impl ClientStats {
     /// a server connection, and we're reading from the client.
     #[inline(always)]
     pub fn idle_read(&self) {
-        self.state.store(CLIENT_STATE_IDLE, Ordering::Relaxed);
-        self.wait.store(CLIENT_WAIT_READ, Ordering::Relaxed);
+        self.set_state_wait(CLIENT_STATE_IDLE, CLIENT_WAIT_READ);
     }
 
     /// Sets the client state to IDLE and wait status to WRITE.
@@ -194,8 +223,7 @@ impl ClientStats {
     /// a server connection, and we're writing to the client.
     #[inline(always)]
     pub fn idle_write(&self) {
-        self.state.store(CLIENT_STATE_IDLE, Ordering::Relaxed);
-        self.wait.store(CLIENT_WAIT_WRITE, Ordering::Relaxed);
+        self.set_state_wait(CLIENT_STATE_IDLE, CLIENT_WAIT_WRITE);
     }
 
     /// Sets the client state to WAITING and wait status to IDLE.
@@ -203,8 +231,7 @@ impl ClientStats {
     /// This indicates the client is waiting for a server connection from the pool.
     #[inline(always)]
     pub fn waiting(&self) {
-        self.state.store(CLIENT_STATE_WAITING, Ordering::Relaxed);
-        self.wait.store(CLIENT_WAIT_IDLE, Ordering::Relaxed);
+        self.set_state_wait(CLIENT_STATE_WAITING, CLIENT_WAIT_IDLE);
     }
 
     /// Sets the client state to ACTIVE and wait status to READ.
@@ -212,8 +239,7 @@ impl ClientStats {
     /// This indicates the client has obtained a server connection and we're reading from it.
     #[inline(always)]
     pub fn active_read(&self) {
-        self.state.store(CLIENT_STATE_ACTIVE, Ordering::Relaxed);
-        self.wait.store(CLIENT_WAIT_READ, Ordering::Relaxed);
+        self.set_state_wait(CLIENT_STATE_ACTIVE, CLIENT_WAIT_READ);
     }
 
     /// Sets the client state to ACTIVE and wait status to WRITE.
@@ -221,8 +247,7 @@ impl ClientStats {
     /// This indicates the client has obtained a server connection and we're writing to it.
     #[inline(always)]
     pub fn active_write(&self) {
-        self.state.store(CLIENT_STATE_ACTIVE, Ordering::Relaxed);
-        self.wait.store(CLIENT_WAIT_WRITE, Ordering::Relaxed);
+        self.set_state_wait(CLIENT_STATE_ACTIVE, CLIENT_WAIT_WRITE);
     }
 
     /// Sets the client state to ACTIVE and wait status to IDLE.
@@ -230,8 +255,7 @@ impl ClientStats {
     /// This indicates the client has obtained a server connection and is waiting for a response.
     #[inline(always)]
     pub fn active_idle(&self) {
-        self.state.store(CLIENT_STATE_ACTIVE, Ordering::Relaxed);
-        self.wait.store(CLIENT_WAIT_IDLE, Ordering::Relaxed);
+        self.set_state_wait(CLIENT_STATE_ACTIVE, CLIENT_WAIT_IDLE);
     }
 
     /// Sets the client state to IDLE and wait status to IDLE.
@@ -239,8 +263,7 @@ impl ClientStats {
     /// This indicates the client has failed to obtain a connection from the pool.
     #[inline(always)]
     pub fn checkout_error(&self) {
-        self.state.store(CLIENT_STATE_IDLE, Ordering::Relaxed);
-        self.wait.store(CLIENT_WAIT_IDLE, Ordering::Relaxed);
+        self.set_state_wait(CLIENT_STATE_IDLE, CLIENT_WAIT_IDLE);
     }
 
     //
@@ -253,7 +276,7 @@ impl ClientStats {
     ///
     /// A string representation of the client state: "waiting", "idle", "active", or "unknown"
     pub fn state_to_string(&self) -> String {
-        match self.state.load(Ordering::Relaxed) {
+        match self.state() {
             CLIENT_STATE_WAITING => "waiting".to_string(),
             CLIENT_STATE_IDLE => "idle".to_string(),
             CLIENT_STATE_ACTIVE => "active".to_string(),
@@ -267,7 +290,7 @@ impl ClientStats {
     ///
     /// A string representation of the wait status: "idle", "write", "read", or "unknown"
     pub fn wait_to_string(&self) -> String {
-        match self.wait.load(Ordering::Relaxed) {
+        match self.wait() {
             CLIENT_WAIT_IDLE => "idle".to_string(),
             CLIENT_WAIT_WRITE => "write".to_string(),
             CLIENT_WAIT_READ => "read".to_string(),
@@ -368,8 +391,8 @@ mod tests {
         assert_eq!(stats.max_wait_time.load(Ordering::Relaxed), 0);
 
         // Check state
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_IDLE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_IDLE);
+        assert_eq!(stats.state(), CLIENT_STATE_IDLE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_IDLE);
 
         // Check activity counters
         assert_eq!(stats.transaction_count.load(Ordering::Relaxed), 0);
@@ -403,8 +426,8 @@ mod tests {
         // Check that other fields are initialized to default values
         assert_eq!(stats.total_wait_time.load(Ordering::Relaxed), 0);
         assert_eq!(stats.max_wait_time.load(Ordering::Relaxed), 0);
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_IDLE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_IDLE);
+        assert_eq!(stats.state(), CLIENT_STATE_IDLE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_IDLE);
         assert_eq!(stats.transaction_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.query_count.load(Ordering::Relaxed), 0);
         assert_eq!(stats.error_count.load(Ordering::Relaxed), 0);
@@ -438,7 +461,7 @@ mod tests {
         assert!(get_client_stats().contains_key(&client_id));
 
         // Check that the state was set to IDLE
-        assert_eq!(stats_arc.state.load(Ordering::Relaxed), CLIENT_STATE_IDLE);
+        assert_eq!(stats_arc.state(), CLIENT_STATE_IDLE);
 
         // Disconnect the client
         stats_arc.disconnect();
@@ -453,38 +476,38 @@ mod tests {
 
         // Test idle_read
         stats.idle_read();
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_IDLE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_READ);
+        assert_eq!(stats.state(), CLIENT_STATE_IDLE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_READ);
 
         // Test idle_write
         stats.idle_write();
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_IDLE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_WRITE);
+        assert_eq!(stats.state(), CLIENT_STATE_IDLE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_WRITE);
 
         // Test waiting
         stats.waiting();
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_WAITING);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_IDLE);
+        assert_eq!(stats.state(), CLIENT_STATE_WAITING);
+        assert_eq!(stats.wait(), CLIENT_WAIT_IDLE);
 
         // Test active_read
         stats.active_read();
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_ACTIVE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_READ);
+        assert_eq!(stats.state(), CLIENT_STATE_ACTIVE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_READ);
 
         // Test active_write
         stats.active_write();
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_ACTIVE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_WRITE);
+        assert_eq!(stats.state(), CLIENT_STATE_ACTIVE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_WRITE);
 
         // Test active_idle
         stats.active_idle();
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_ACTIVE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_IDLE);
+        assert_eq!(stats.state(), CLIENT_STATE_ACTIVE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_IDLE);
 
         // Test checkout_error
         stats.checkout_error();
-        assert_eq!(stats.state.load(Ordering::Relaxed), CLIENT_STATE_IDLE);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), CLIENT_WAIT_IDLE);
+        assert_eq!(stats.state(), CLIENT_STATE_IDLE);
+        assert_eq!(stats.wait(), CLIENT_WAIT_IDLE);
     }
 
     #[test]
@@ -492,29 +515,29 @@ mod tests {
         let stats = ClientStats::default();
 
         // Test state_to_string
-        stats.state.store(CLIENT_STATE_IDLE, Ordering::Relaxed);
+        stats.set_state(CLIENT_STATE_IDLE);
         assert_eq!(stats.state_to_string(), "idle");
 
-        stats.state.store(CLIENT_STATE_ACTIVE, Ordering::Relaxed);
+        stats.set_state(CLIENT_STATE_ACTIVE);
         assert_eq!(stats.state_to_string(), "active");
 
-        stats.state.store(CLIENT_STATE_WAITING, Ordering::Relaxed);
+        stats.set_state(CLIENT_STATE_WAITING);
         assert_eq!(stats.state_to_string(), "waiting");
 
-        stats.state.store(0, Ordering::Relaxed); // Invalid state
+        stats.set_state(0); // Invalid state
         assert_eq!(stats.state_to_string(), "unknown");
 
         // Test wait_to_string
-        stats.wait.store(CLIENT_WAIT_IDLE, Ordering::Relaxed);
+        stats.set_wait(CLIENT_WAIT_IDLE);
         assert_eq!(stats.wait_to_string(), "idle");
 
-        stats.wait.store(CLIENT_WAIT_READ, Ordering::Relaxed);
+        stats.set_wait(CLIENT_WAIT_READ);
         assert_eq!(stats.wait_to_string(), "read");
 
-        stats.wait.store(CLIENT_WAIT_WRITE, Ordering::Relaxed);
+        stats.set_wait(CLIENT_WAIT_WRITE);
         assert_eq!(stats.wait_to_string(), "write");
 
-        stats.wait.store(0, Ordering::Relaxed); // Invalid wait state
+        stats.set_wait(0); // Invalid wait state
         assert_eq!(stats.wait_to_string(), "unknown");
     }
 

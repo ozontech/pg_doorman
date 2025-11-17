@@ -4,6 +4,16 @@ title: Changelog
 
 # Changelog
 
+### 2.5.0 <small>Nov 18, 2025</small> { id="2.5.0" }
+
+**Improvements:**
+- Reworked the statistics collection system, yielding up to 20% performance gain on fast queries.
+- Improved detection of `SAVEPOINT` usage, allowing the auto-rollback feature to be applied in more situations.
+
+**Bug Fixes / Behavior:**
+- Less aggressive behavior on write errors when sending a response to the client: the server connection is no longer immediately marked as "bad" and evicted from the pool. We now read the remaining server response and clean up its state, returning the connection to the pool in a clean state. This improves performance during client reconnections.
+
+
 ### 2.4.3 <small>Nov 15, 2025</small> { id="2.4.3" }
 
 **Bug Fixes:**

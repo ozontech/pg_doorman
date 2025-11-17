@@ -11,7 +11,7 @@ use std::marker::Unpin;
 
 // External crate imports
 use crate::auth::hba::CheckResult;
-use log::{error, warn, info};
+use log::{error, info, warn};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 // Internal crate imports
 use crate::auth::jwt::get_user_name_from_jwt;
@@ -53,7 +53,10 @@ where
         if client_identifier.hba_md5 == CheckResult::Trust
             || client_identifier.hba_scram == CheckResult::Trust
         {
-            info!("HBA trust for admin user: {username_from_parameters} from: {:?}.", client_identifier.addr);
+            info!(
+                "HBA trust for admin user: {username_from_parameters} from: {:?}.",
+                client_identifier.addr
+            );
             return Ok((false, ServerParameters::admin(), false));
         }
         if client_identifier.hba_md5 == CheckResult::Deny

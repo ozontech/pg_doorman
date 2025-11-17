@@ -902,7 +902,7 @@ where
                     Some((process_id, secret_key, address, port)) => {
                         {
                             let mut cancel_guard = CANCELED_PIDS.lock();
-                            cancel_guard.push(*process_id);
+                            cancel_guard.insert(*process_id);
                         }
                         (*process_id, *secret_key, address.clone(), *port)
                     }
@@ -945,20 +945,15 @@ where
                 self.stats.disconnect();
                 return Ok(());
             }
-            tokio::select! {
-                _ = self.shutdown.recv() => {
-                    if !self.admin {
-                        warn!("Dropping client {:?} because connection pooler is shutting down", self.addr);
-                        error_response_terminal(
-                            &mut self.write,
-                            "pooler is shut down now",
-                            "58006"
-                        ).await?;
-                        self.stats.disconnect();
-                        return Ok(());
-                    }
-                },
-                _ = tokio::task::yield_now() => {}
+            if self.shutdown.try_recv().is_ok() && !self.admin {
+                warn!(
+                    "Dropping client {:?} because connection pooler is shutting down",
+                    self.addr
+                );
+                error_response_terminal(&mut self.write, "pooler is shut down now", "58006")
+                    .await?;
+                self.stats.disconnect();
+                return Ok(());
             }
             // Handle admin database queries.
             if self.admin {
@@ -977,7 +972,7 @@ where
 
             match message[0] as char {
                 'Q' => {
-                    if self.pooler_check_query_request_vec.eq(&message.to_vec()) {
+                    if self.pooler_check_query_request_vec.as_slice() == &message[..] {
                         // This is the first message in the transaction, since we are responding with 'IZ',
                         // then we can not expect a server connection and immediately send answer and exit transaction loop.
                         write_all_flush(&mut self.write, &check_query_response()).await?;
@@ -985,8 +980,8 @@ where
                     }
                     if message.len() < 40 && message.len() > QUERY_DEALLOCATE.len() + 5 {
                         // Do not pass simple query with deallocate, as it will run on an unknown server.
-                        let query = message[5..QUERY_DEALLOCATE.len() + 5].to_vec();
-                        if QUERY_DEALLOCATE.eq(&query) {
+                        let query = &message[5..QUERY_DEALLOCATE.len() + 5];
+                        if QUERY_DEALLOCATE == query {
                             write_all_flush(&mut self.write, &deallocate_response()).await?;
                             continue;
                         }
@@ -1046,7 +1041,7 @@ where
                             {
                                 let mut guard = CANCELED_PIDS.lock();
                                 if guard.contains(&conn.get_process_id()) {
-                                    guard.retain(|&id| id != conn.get_process_id());
+                                    guard.remove(&conn.get_process_id());
                                     conn.mark_bad("because was canceled");
                                     continue; // try to find another server.
                                 }
@@ -1855,12 +1850,12 @@ where
             self.stats.active_write();
             if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
                 server.wait_available().await;
-                // Lazy error formatting
-                let mut msg = String::with_capacity(64);
-                use std::fmt::Write;
-                let _ = write!(msg, "flush to client {} {:?}", self.addr, err_write);
-                server.mark_bad(&msg);
-                return Err(err_write);
+                if server.is_async() || server.in_copy_mode() {
+                    server.mark_bad(
+                        format!("flush to client {} {:?}", self.addr, err_write).as_str(),
+                    );
+                    return Err(err_write);
+                }
             }
 
             self.stats.active_idle();

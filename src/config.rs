@@ -13,7 +13,6 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::net::IpAddr;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -51,8 +50,6 @@ pub struct Address {
     pub pool_name: String,
     /// Address stats
     pub stats: Arc<AddressStats>,
-    /// Number of errors encountered since last successful checkout
-    pub error_count: Arc<AtomicU64>,
 }
 
 impl Default for Address {
@@ -66,7 +63,6 @@ impl Default for Address {
             password: String::from("password"),
             pool_name: String::from("pool_name"),
             stats: Arc::new(AddressStats::default()),
-            error_count: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -110,17 +106,6 @@ impl Address {
     /// Address name (aka database) used in `SHOW STATS`, `SHOW DATABASES`, and `SHOW POOLS`.
     pub fn name(&self) -> String {
         self.pool_name.clone() + "-" + &*self.virtual_pool_id.to_string()
-    }
-    pub fn error_count(&self) -> u64 {
-        self.error_count.load(Ordering::Relaxed)
-    }
-
-    pub fn increment_error_count(&self) {
-        self.error_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn reset_error_count(&self) {
-        self.error_count.store(0, Ordering::Relaxed);
     }
 }
 

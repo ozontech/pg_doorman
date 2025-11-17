@@ -577,7 +577,7 @@ impl PoolStats {
                 }) {
                     Some(pool_stats) => {
                         // Update client state counter based on client state
-                        match client.state.load(Ordering::Relaxed) {
+                        match client.state() {
                             CLIENT_STATE_ACTIVE => pool_stats.cl_active += 1,
                             CLIENT_STATE_IDLE => pool_stats.cl_idle += 1,
                             CLIENT_STATE_WAITING => pool_stats.cl_waiting += 1,
@@ -602,7 +602,7 @@ impl PoolStats {
                 }) {
                     Some(pool_stats) => {
                         // Update server state counter based on server state
-                        match server.state.load(Ordering::Relaxed) {
+                        match server.state() {
                             SERVER_STATE_ACTIVE => pool_stats.sv_active += 1,
                             SERVER_STATE_IDLE => pool_stats.sv_idle += 1,
                             SERVER_STATE_LOGIN => pool_stats.sv_login += 1,

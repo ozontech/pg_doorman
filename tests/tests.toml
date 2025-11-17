@@ -1,6 +1,11 @@
 [include]
 files = ["./tests/my_hba.toml"]
 
+[prometheus]
+enabled = true
+host = "0.0.0.0"
+port = 9127
+
 [general]
 host = "0.0.0.0"
 port = 6433
@@ -80,6 +85,20 @@ password = ""
 pool_size = 40
 min_pool_size = 0
 pool_mode = "session"
+
+[pools.example_db.users.6]
+username = "example_user_disconnect"
+password = ""
+pool_size = 40
+min_pool_size = 0
+pool_mode = "transaction"
+
+[pools.example_db.users.7]
+username = "example_user_prometheus"
+password = ""
+pool_size = 40
+min_pool_size = 0
+pool_mode = "transaction"
 
 # Client can connect to database example_db_alias,
 # but in reality database on the server will be example_db.

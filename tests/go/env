@@ -11,3 +11,5 @@ export DATABASE_URL_JWT_AUTH_OK="postgresql://example_user_auth_jwt:test@localho
 export DATABASE_URL_ROLLBACK="postgresql://example_user_rollback:test@localhost:6433/example_db?sslmode=disable"
 export DATABASE_URL_NOTRUST="postgresql://example_user_nopassword@localhost:6433/example_db?sslmode=disable"
 export DATABASE_URL_TRUST="postgresql://example_user_nopassword@localhost:6433/example_db?sslmode=require"
+export DATABASE_URL_DISCONNECT="postgresql://example_user_disconnect@localhost:6433/example_db?sslmode=disable"
+export DATABASE_URL_PROMETHEUS="postgresql://example_user_prometheus@localhost:6433/example_db?sslmode=disable"

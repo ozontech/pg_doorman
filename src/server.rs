@@ -31,6 +31,7 @@ use crate::stats::ServerStats;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
+const COMMAND_SAVEPOINT: &[u8; 10] = b"SAVEPOINT\0";
 const COMMAND_COMPLETE_BY_DEALLOCATE_ALL: &[u8; 15] = b"DEALLOCATE ALL\0";
 const COMMAND_COMPLETE_BY_DISCARD_ALL: &[u8; 12] = b"DISCARD ALL\0";
 
@@ -315,9 +316,6 @@ pub struct Server {
     /// Is the server inside a transaction and aborted.
     is_aborted: bool,
 
-    /// Nested transaction level, e.g. if we're in a transaction, then we're in level > 1.
-    nested_transaction_level: i32,
-
     /// Is there more data for the client to read.
     data_available: bool,
 
@@ -349,6 +347,9 @@ pub struct Server {
 
     /// Should clean up dirty connections?
     cleanup_connections: bool,
+
+    /// Transaction use savepoint?
+    use_savepoint: bool,
 
     /// Log client parameter status changes
     log_client_parameter_status_changes: bool,
@@ -527,14 +528,12 @@ impl Server {
                     match transaction_state {
                         // In transaction.
                         'T' => {
-                            self.nested_transaction_level += 1;
                             self.is_aborted = false;
                             self.in_transaction = true;
                         }
 
                         // Idle, transaction over.
                         'I' => {
-                            self.nested_transaction_level -= 1;
                             self.is_aborted = false;
                             self.in_transaction = false;
                         }
@@ -646,6 +645,9 @@ impl Server {
                     // CommandComplete SET одинаковый для set local и set, чистим.
                     if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
                         self.cleanup_state.needs_cleanup_set = true;
+                    }
+                    if message.len() == 10 && message.to_vec().eq(COMMAND_SAVEPOINT) {
+                        self.use_savepoint = true;
                     }
                     if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DECLARE) {
                         self.cleanup_state.needs_cleanup_declare = true;
@@ -854,7 +856,7 @@ impl Server {
     /// If the client disconnects while the server is in a transaction, we will clean it up.
     #[inline(always)]
     pub fn in_aborted(&self) -> bool {
-        self.in_transaction && self.is_aborted && self.nested_transaction_level == 1
+        self.in_transaction && self.is_aborted && (!self.use_savepoint)
     }
 
     #[inline(always)]
@@ -936,9 +938,10 @@ impl Server {
             }
             self.cleanup_state.reset();
         }
-        self.nested_transaction_level = 0;
         self.in_transaction = false;
         self.is_aborted = false;
+        self.in_copy_mode = false;
+        self.use_savepoint = false;
         Ok(())
     }
 
@@ -1588,7 +1591,6 @@ impl Server {
                         secret_key,
                         in_transaction: false,
                         is_aborted: false,
-                        nested_transaction_level: 0,
                         in_copy_mode: false,
                         data_available: false,
                         bad: false,
@@ -1600,6 +1602,7 @@ impl Server {
                         application_name: application_name.clone(),
                         last_activity: SystemTime::now(),
                         cleanup_connections,
+                        use_savepoint: false,
                         log_client_parameter_status_changes,
                         prepared_statement_cache: match prepared_statement_cache_size {
                             0 => None,
@@ -1638,7 +1641,7 @@ impl Drop for Server {
         self.stats.disconnect();
         {
             let mut guard = CANCELED_PIDS.lock();
-            guard.retain(|&pid| pid != self.process_id);
+            guard.remove(&self.process_id);
         }
         if !self.is_bad() {
             let mut bytes = BytesMut::with_capacity(5);

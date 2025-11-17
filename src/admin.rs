@@ -138,14 +138,7 @@ where
         "free_clients".to_string(),
         client_stats
             .keys()
-            .filter(|client_id| {
-                client_stats
-                    .get(client_id)
-                    .unwrap()
-                    .state
-                    .load(Ordering::Relaxed)
-                    == CLIENT_STATE_IDLE
-            })
+            .filter(|client_id| client_stats.get(client_id).unwrap().state() == CLIENT_STATE_IDLE)
             .count()
             .to_string(),
     ]));
@@ -153,14 +146,7 @@ where
         "used_clients".to_string(),
         client_stats
             .keys()
-            .filter(|client_id| {
-                client_stats
-                    .get(client_id)
-                    .unwrap()
-                    .state
-                    .load(Ordering::Relaxed)
-                    == CLIENT_STATE_ACTIVE
-            })
+            .filter(|client_id| client_stats.get(client_id).unwrap().state() == CLIENT_STATE_ACTIVE)
             .count()
             .to_string(),
     ]));
@@ -172,14 +158,7 @@ where
         "free_servers".to_string(),
         server_stats
             .keys()
-            .filter(|server_id| {
-                server_stats
-                    .get(server_id)
-                    .unwrap()
-                    .state
-                    .load(Ordering::Relaxed)
-                    == SERVER_STATE_IDLE
-            })
+            .filter(|server_id| server_stats.get(server_id).unwrap().state() == SERVER_STATE_IDLE)
             .count()
             .to_string(),
     ]));
@@ -187,14 +166,7 @@ where
         "used_servers".to_string(),
         server_stats
             .keys()
-            .filter(|server_id| {
-                server_stats
-                    .get(server_id)
-                    .unwrap()
-                    .state
-                    .load(Ordering::Relaxed)
-                    == SERVER_STATE_ACTIVE
-            })
+            .filter(|server_id| server_stats.get(server_id).unwrap().state() == SERVER_STATE_ACTIVE)
             .count()
             .to_string(),
     ]));
