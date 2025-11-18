@@ -14,7 +14,7 @@ use tokio::time::Instant;
 // - ACTIVE: Server is actively processing a query or transaction
 // - IDLE: Server is connected but not actively processing a query
 iota! {
-    pub const SERVER_STATE_LOGIN: u8 = 30 << iota;
+    pub const SERVER_STATE_LOGIN: u8 = 1 + iota;
         , SERVER_STATE_ACTIVE
         , SERVER_STATE_IDLE
 }
@@ -26,7 +26,7 @@ iota! {
 // - READ: Server is waiting for data to be read from the connection
 // - WRITE: Server is waiting for data to be written to the connection
 iota! {
-    pub const SERVER_WAIT_IDLE: u8 = 40 << iota;
+    pub const SERVER_WAIT_IDLE: u8 = 1 + iota;
         , SERVER_WAIT_READ
         , SERVER_WAIT_WRITE
 }
@@ -36,12 +36,12 @@ iota! {
 /// This struct tracks various metrics and state information for a server connection
 /// to PostgreSQL. It is used to provide information for the SHOW SERVERS command
 /// and to track server activity for monitoring and diagnostics.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ServerStats {
     /// A random integer assigned to the server and used by stats to track the server
     server_id: i32,
     /// PostgreSQL backend process ID
-    process_id: Arc<AtomicI32>,
+    process_id: AtomicI32,
 
     /// Connection context information
     /// ------------------------------------------------------------------------------------------
@@ -56,36 +56,34 @@ pub struct ServerStats {
     /// Server state and activity data
     /// ------------------------------------------------------------------------------------------
     /// Name of the application using this server connection
-    pub application_name: Arc<RwLock<String>>,
-    /// Current state of the server (LOGIN, ACTIVE, IDLE)
-    pub state: Arc<AtomicU8>,
-    /// Current wait status of the server (IDLE, READ, WRITE)
-    pub wait: Arc<AtomicU8>,
+    pub application_name: RwLock<String>,
+    /// Packed state byte: high nibble = state (LOGIN/ACTIVE/IDLE), low nibble = wait (IDLE/READ/WRITE)
+    state_wait: AtomicU8,
 
     /// Network traffic counters
     /// ------------------------------------------------------------------------------------------
     /// Total bytes sent to the server
-    pub bytes_sent: Arc<AtomicU64>,
+    pub bytes_sent: AtomicU64,
     /// Total bytes received from the server
-    pub bytes_received: Arc<AtomicU64>,
+    pub bytes_received: AtomicU64,
 
     /// Query and transaction counters
     /// ------------------------------------------------------------------------------------------
     /// Number of transactions processed by this server connection
-    pub transaction_count: Arc<AtomicU64>,
+    pub transaction_count: AtomicU64,
     /// Number of queries processed by this server connection
-    pub query_count: Arc<AtomicU64>,
+    pub query_count: AtomicU64,
     /// Number of errors encountered by this server connection
-    pub error_count: Arc<AtomicU64>,
+    pub error_count: AtomicU64,
 
     /// Prepared statement cache metrics
     /// ------------------------------------------------------------------------------------------
     /// Number of prepared statement cache hits
-    pub prepared_hit_count: Arc<AtomicU64>,
+    pub prepared_hit_count: AtomicU64,
     /// Number of prepared statement cache misses
-    pub prepared_miss_count: Arc<AtomicU64>,
+    pub prepared_miss_count: AtomicU64,
     /// Current size of the prepared statement cache
-    pub prepared_cache_size: Arc<AtomicU64>,
+    pub prepared_cache_size: AtomicU64,
 }
 
 /// Default implementation for ServerStats.
@@ -103,26 +101,61 @@ impl Default for ServerStats {
     fn default() -> Self {
         ServerStats {
             server_id: 0,
-            process_id: Arc::new(AtomicI32::new(0)),
-            application_name: Arc::new(RwLock::new(String::new())),
+            process_id: AtomicI32::new(0),
+            application_name: RwLock::new(String::new()),
             address: Address::default(),
             connect_time: Instant::now(),
-            state: Arc::new(AtomicU8::new(SERVER_STATE_LOGIN)),
-            wait: Arc::new(AtomicU8::new(SERVER_WAIT_IDLE)),
-            bytes_sent: Arc::new(AtomicU64::new(0)),
-            bytes_received: Arc::new(AtomicU64::new(0)),
-            transaction_count: Arc::new(AtomicU64::new(0)),
-            query_count: Arc::new(AtomicU64::new(0)),
-            error_count: Arc::new(AtomicU64::new(0)),
+            state_wait: AtomicU8::new(Self::pack(SERVER_STATE_LOGIN, SERVER_WAIT_IDLE)),
+            bytes_sent: AtomicU64::new(0),
+            bytes_received: AtomicU64::new(0),
+            transaction_count: AtomicU64::new(0),
+            query_count: AtomicU64::new(0),
+            error_count: AtomicU64::new(0),
             reporter: get_reporter(),
-            prepared_hit_count: Arc::new(AtomicU64::new(0)),
-            prepared_miss_count: Arc::new(AtomicU64::new(0)),
-            prepared_cache_size: Arc::new(AtomicU64::new(0)),
+            prepared_hit_count: AtomicU64::new(0),
+            prepared_miss_count: AtomicU64::new(0),
+            prepared_cache_size: AtomicU64::new(0),
         }
     }
 }
 
 impl ServerStats {
+    #[inline(always)]
+    fn pack(state: u8, wait: u8) -> u8 {
+        (state << 4) | (wait & 0x0F)
+    }
+
+    #[inline(always)]
+    pub fn state(&self) -> u8 {
+        self.state_wait.load(Ordering::Relaxed) >> 4
+    }
+
+    #[inline(always)]
+    pub fn wait(&self) -> u8 {
+        self.state_wait.load(Ordering::Relaxed) & 0x0F
+    }
+
+    #[inline(always)]
+    pub fn set_state(&self, state: u8) {
+        let cur = self.state_wait.load(Ordering::Relaxed);
+        let wait = cur & 0x0F;
+        let new = Self::pack(state, wait);
+        self.state_wait.store(new, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn set_wait(&self, wait: u8) {
+        let state = self.state_wait.load(Ordering::Relaxed) >> 4;
+        let new = Self::pack(state, wait);
+        self.state_wait.store(new, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn set_state_wait(&self, state: u8, wait: u8) {
+        self.state_wait
+            .store(Self::pack(state, wait), Ordering::Relaxed);
+    }
+
     /// Creates a new ServerStats instance with the specified address and connection time.
     ///
     /// This constructor initializes a new server statistics tracker with the provided
@@ -199,7 +232,7 @@ impl ServerStats {
     ///
     /// This indicates the server is attempting to establish a connection to PostgreSQL.
     pub fn login(&self) {
-        self.state.store(SERVER_STATE_LOGIN, Ordering::Relaxed);
+        self.set_state(SERVER_STATE_LOGIN);
         self.set_undefined_application();
     }
 
@@ -212,7 +245,7 @@ impl ServerStats {
     ///
     /// * `application_name` - Name of the application using this server connection
     pub fn active(&self, application_name: String) {
-        self.state.store(SERVER_STATE_ACTIVE, Ordering::Relaxed);
+        self.set_state(SERVER_STATE_ACTIVE);
         self.set_application(application_name);
     }
 
@@ -227,7 +260,7 @@ impl ServerStats {
     #[inline(always)]
     pub fn idle(&self, microseconds: u64) {
         self.address.stats.xact_time_add(microseconds);
-        self.state.store(SERVER_STATE_IDLE, Ordering::Relaxed);
+        self.set_state(SERVER_STATE_IDLE);
     }
 
     /// Records transaction time and sets the server state to IDLE.
@@ -240,7 +273,7 @@ impl ServerStats {
     /// * `microseconds` - Transaction time in microseconds to record
     #[inline(always)]
     pub fn add_xact_time_and_idle(&self, microseconds: u64) {
-        self.state.store(SERVER_STATE_IDLE, Ordering::Relaxed);
+        self.set_state(SERVER_STATE_IDLE);
         self.address.stats.xact_time_add(microseconds);
     }
 
@@ -253,7 +286,7 @@ impl ServerStats {
     /// This indicates the server is waiting for data to be read from the connection.
     #[inline]
     pub fn wait_reading(&self) {
-        self.wait.store(SERVER_WAIT_READ, Ordering::Relaxed);
+        self.set_wait(SERVER_WAIT_READ);
     }
 
     /// Sets the server wait status to WRITE.
@@ -261,7 +294,7 @@ impl ServerStats {
     /// This indicates the server is waiting for data to be written to the connection.
     #[inline]
     pub fn wait_writing(&self) {
-        self.wait.store(SERVER_WAIT_WRITE, Ordering::Relaxed);
+        self.set_wait(SERVER_WAIT_WRITE);
     }
 
     /// Sets the server wait status to IDLE.
@@ -269,7 +302,7 @@ impl ServerStats {
     /// This indicates the server is not waiting for any I/O operation.
     #[inline]
     pub fn wait_idle(&self) {
-        self.wait.store(SERVER_WAIT_IDLE, Ordering::Relaxed);
+        self.set_wait(SERVER_WAIT_IDLE);
     }
 
     //
@@ -282,7 +315,7 @@ impl ServerStats {
     ///
     /// A string representation of the server state: "active", "idle", "login", or "unknown"
     pub fn state_to_string(&self) -> String {
-        match self.state.load(Ordering::Relaxed) {
+        match self.state() {
             SERVER_STATE_ACTIVE => "active".to_string(),
             SERVER_STATE_IDLE => "idle".to_string(),
             SERVER_STATE_LOGIN => "login".to_string(),
@@ -296,7 +329,7 @@ impl ServerStats {
     ///
     /// A string representation of the wait status: "idle", "read", "write", or "unknown"
     pub fn wait_to_string(&self) -> String {
-        match self.wait.load(Ordering::Relaxed) {
+        match self.wait() {
             SERVER_WAIT_IDLE => "idle".to_string(),
             SERVER_WAIT_READ => "read".to_string(),
             SERVER_WAIT_WRITE => "write".to_string(),
@@ -509,8 +542,8 @@ mod tests {
         assert_eq!(stats.process_id(), 0);
 
         // Check state
-        assert_eq!(stats.state.load(Ordering::Relaxed), SERVER_STATE_LOGIN);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), SERVER_WAIT_IDLE);
+        assert_eq!(stats.state(), SERVER_STATE_LOGIN);
+        assert_eq!(stats.wait(), SERVER_WAIT_IDLE);
 
         // Check application name
         assert_eq!(*stats.application_name.read(), "");
@@ -553,8 +586,8 @@ mod tests {
 
         // Check that other fields are initialized to default values
         assert_eq!(stats.process_id(), 0);
-        assert_eq!(stats.state.load(Ordering::Relaxed), SERVER_STATE_LOGIN);
-        assert_eq!(stats.wait.load(Ordering::Relaxed), SERVER_WAIT_IDLE);
+        assert_eq!(stats.state(), SERVER_STATE_LOGIN);
+        assert_eq!(stats.wait(), SERVER_WAIT_IDLE);
         assert_eq!(*stats.application_name.read(), "");
         assert_eq!(stats.bytes_sent.load(Ordering::Relaxed), 0);
         assert_eq!(stats.bytes_received.load(Ordering::Relaxed), 0);
@@ -578,7 +611,6 @@ mod tests {
             password: "test_password".to_string(),
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
-            error_count: Arc::new(AtomicU64::new(0)),
         };
 
         // Create a ServerStats with a fixed server_id for testing
@@ -615,7 +647,6 @@ mod tests {
             password: "test_password".to_string(),
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
-            error_count: Arc::new(AtomicU64::new(0)),
         };
 
         // Create a ServerStats with a fixed server_id for testing
@@ -639,7 +670,7 @@ mod tests {
         assert!(get_server_stats().contains_key(&server_id));
 
         // Check that the state was set to LOGIN and application name to "Undefined"
-        assert_eq!(stats_arc.state.load(Ordering::Relaxed), SERVER_STATE_LOGIN);
+        assert_eq!(stats_arc.state(), SERVER_STATE_LOGIN);
         assert_eq!(*stats_arc.application_name.read(), "Undefined");
 
         // Disconnect the server
@@ -655,17 +686,17 @@ mod tests {
 
         // Test login
         stats.login();
-        assert_eq!(stats.state.load(Ordering::Relaxed), SERVER_STATE_LOGIN);
+        assert_eq!(stats.state(), SERVER_STATE_LOGIN);
         assert_eq!(*stats.application_name.read(), "Undefined");
 
         // Test active
         stats.active("TestApp".to_string());
-        assert_eq!(stats.state.load(Ordering::Relaxed), SERVER_STATE_ACTIVE);
+        assert_eq!(stats.state(), SERVER_STATE_ACTIVE);
         assert_eq!(*stats.application_name.read(), "TestApp");
 
         // Test idle
         stats.idle(100);
-        assert_eq!(stats.state.load(Ordering::Relaxed), SERVER_STATE_IDLE);
+        assert_eq!(stats.state(), SERVER_STATE_IDLE);
         // Check that xact_time_add was called with 100
         assert_eq!(
             stats
@@ -678,9 +709,9 @@ mod tests {
         );
 
         // Test add_xact_time_and_idle
-        stats.state.store(SERVER_STATE_ACTIVE, Ordering::Relaxed); // Reset state
+        stats.set_state(SERVER_STATE_ACTIVE); // Reset state
         stats.add_xact_time_and_idle(200);
-        assert_eq!(stats.state.load(Ordering::Relaxed), SERVER_STATE_IDLE);
+        assert_eq!(stats.state(), SERVER_STATE_IDLE);
         // Check that xact_time_add was called with 200
         assert_eq!(
             stats
@@ -699,15 +730,15 @@ mod tests {
 
         // Test wait_reading
         stats.wait_reading();
-        assert_eq!(stats.wait.load(Ordering::Relaxed), SERVER_WAIT_READ);
+        assert_eq!(stats.wait(), SERVER_WAIT_READ);
 
         // Test wait_writing
         stats.wait_writing();
-        assert_eq!(stats.wait.load(Ordering::Relaxed), SERVER_WAIT_WRITE);
+        assert_eq!(stats.wait(), SERVER_WAIT_WRITE);
 
         // Test wait_idle
         stats.wait_idle();
-        assert_eq!(stats.wait.load(Ordering::Relaxed), SERVER_WAIT_IDLE);
+        assert_eq!(stats.wait(), SERVER_WAIT_IDLE);
     }
 
     #[test]
@@ -715,29 +746,29 @@ mod tests {
         let stats = create_test_server_stats();
 
         // Test state_to_string
-        stats.state.store(SERVER_STATE_LOGIN, Ordering::Relaxed);
+        stats.set_state(SERVER_STATE_LOGIN);
         assert_eq!(stats.state_to_string(), "login");
 
-        stats.state.store(SERVER_STATE_ACTIVE, Ordering::Relaxed);
+        stats.set_state(SERVER_STATE_ACTIVE);
         assert_eq!(stats.state_to_string(), "active");
 
-        stats.state.store(SERVER_STATE_IDLE, Ordering::Relaxed);
+        stats.set_state(SERVER_STATE_IDLE);
         assert_eq!(stats.state_to_string(), "idle");
 
-        stats.state.store(0, Ordering::Relaxed); // Invalid state
+        stats.set_state(0); // Invalid state
         assert_eq!(stats.state_to_string(), "unknown");
 
         // Test wait_to_string
-        stats.wait.store(SERVER_WAIT_IDLE, Ordering::Relaxed);
+        stats.set_wait(SERVER_WAIT_IDLE);
         assert_eq!(stats.wait_to_string(), "idle");
 
-        stats.wait.store(SERVER_WAIT_READ, Ordering::Relaxed);
+        stats.set_wait(SERVER_WAIT_READ);
         assert_eq!(stats.wait_to_string(), "read");
 
-        stats.wait.store(SERVER_WAIT_WRITE, Ordering::Relaxed);
+        stats.set_wait(SERVER_WAIT_WRITE);
         assert_eq!(stats.wait_to_string(), "write");
 
-        stats.wait.store(0, Ordering::Relaxed); // Invalid wait state
+        stats.set_wait(0); // Invalid wait state
         assert_eq!(stats.wait_to_string(), "unknown");
     }
 

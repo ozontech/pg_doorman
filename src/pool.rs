@@ -4,10 +4,10 @@ use log::{error, info, warn};
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,8 +31,8 @@ pub type PoolMap = HashMap<PoolIdentifierVirtual, ConnectionPool>;
 /// This is atomic and safe and read-optimized.
 /// The pool is recreated dynamically when the config is reloaded.
 pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::default()));
-pub static CANCELED_PIDS: Lazy<Arc<Mutex<Vec<ProcessId>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
+pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
 pub type PreparedStatementCacheType = Arc<Mutex<PreparedStatementCache>>;
 pub type ServerParametersType = Arc<tokio::sync::Mutex<ServerParameters>>;
@@ -247,7 +247,6 @@ impl ConnectionPool {
                         password: user.password.clone(),
                         pool_name: pool_name.clone(),
                         stats: Arc::new(AddressStats::default()),
-                        error_count: Arc::new(AtomicU64::new(0)),
                     };
 
                     let prepared_statements_cache_size = match config.general.prepared_statements {

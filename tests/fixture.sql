@@ -17,6 +17,11 @@ alter user example_user_rollback with superuser;
 create user example_user_nopassword;
 alter user example_user_nopassword with superuser;
 
+create user example_user_disconnect;
+alter user example_user_disconnect with superuser;
+
+create user example_user_prometheus;
+alter user example_user_prometheus with superuser;
 
 create user example_user_auth_md5 with password 'test';
 alter user example_user_auth_md5 with superuser;

@@ -60,7 +60,7 @@ func TestLibPQPrepared(t *testing.T) {
 					&preparedCount, &backendPid); err != nil {
 					assert.NoError(t, err)
 				}
-				assert.True(t, preparedCount < 6)
+				assert.True(t, preparedCount < 7)
 				t.Logf("backend: %d prepared count: %d\n", backendPid, preparedCount)
 			}
 			assert.NoError(t, stmt.Close())

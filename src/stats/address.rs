@@ -1,37 +1,36 @@
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::atomic::*;
-use std::sync::Arc;
 
 /// Fields for tracking various statistics related to PostgreSQL connections by address.
 ///
-/// Each field is an atomic counter wrapped in an Arc to allow safe sharing and updating
-/// across multiple threads.
-#[derive(Debug, Clone, Default)]
+/// Each field is an atomic counter allowing safe sharing and updating
+/// across multiple threads without additional reference counting.
+#[derive(Debug, Default)]
 pub struct AddressStatFields {
     /// Number of transactions processed
-    pub xact_count: Arc<AtomicU64>,
+    pub xact_count: AtomicU64,
 
     /// Number of queries processed
-    pub query_count: Arc<AtomicU64>,
+    pub query_count: AtomicU64,
 
     /// Total bytes received from clients
-    pub bytes_received: Arc<AtomicU64>,
+    pub bytes_received: AtomicU64,
 
     /// Total bytes sent to clients
-    pub bytes_sent: Arc<AtomicU64>,
+    pub bytes_sent: AtomicU64,
 
     /// Total transaction processing time in microseconds
-    pub xact_time_microseconds: Arc<AtomicU64>,
+    pub xact_time_microseconds: AtomicU64,
 
     /// Total query processing time in microseconds
-    pub query_time_microseconds: Arc<AtomicU64>,
+    pub query_time_microseconds: AtomicU64,
 
     /// Total time spent waiting for resources in microseconds
-    pub wait_time: Arc<AtomicU64>,
+    pub wait_time: AtomicU64,
 
     /// Number of errors encountered
-    pub errors: Arc<AtomicU64>,
+    pub errors: AtomicU64,
 }
 
 /// Statistics for PostgreSQL connections grouped by address.
@@ -42,7 +41,7 @@ pub struct AddressStatFields {
 /// - `averages`: Average values calculated from the current period
 ///
 /// It also tracks transaction and query times for more detailed analysis.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct AddressStats {
     /// Cumulative statistics since the start of the server
     pub total: AddressStatFields,
@@ -54,13 +53,13 @@ pub struct AddressStats {
     pub averages: AddressStatFields,
 
     /// Flag indicating if the averages have been updated since the last reporting
-    pub averages_updated: Arc<AtomicBool>,
+    pub averages_updated: AtomicBool,
 
     /// Recent transaction times in microseconds (most recent first)
-    pub xact_times_us: Arc<Mutex<VecDeque<u64>>>,
+    pub xact_times_us: Mutex<VecDeque<u64>>,
 
     /// Recent query times in microseconds (most recent first)
-    pub query_times_us: Arc<Mutex<VecDeque<u64>>>,
+    pub query_times_us: Mutex<VecDeque<u64>>,
 }
 
 /// Expected capacity for query and transaction time history queues
@@ -73,7 +72,7 @@ const QUERY_MAX_TIMES_CAPACITY: usize = 2 * QUERY_EXCEPTED_TIMES_CAPACITY;
 ///
 /// This allows the statistics to be easily formatted for reporting or display purposes.
 /// The values are converted to f64 for consistent representation.
-impl IntoIterator for AddressStats {
+impl IntoIterator for &AddressStats {
     type Item = (String, f64);
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
@@ -428,7 +427,7 @@ impl AddressStats {
     /// * `row` - A mutable reference to a vector of strings that will be populated with statistics
     pub fn populate_row(&self, row: &mut Vec<String>) {
         // Convert all statistics to strings and add them to the row
-        for (_key, value) in self.clone() {
+        for (_key, value) in self {
             row.push(value.to_string());
         }
     }
@@ -438,6 +437,7 @@ impl AddressStats {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
@@ -727,7 +727,7 @@ mod tests {
         stats.averages.errors.store(1, Ordering::Relaxed);
 
         // Convert to iterator and collect into a HashMap for easy lookup
-        let stats_map: HashMap<String, f64> = stats.into_iter().collect();
+        let stats_map: HashMap<String, f64> = (&stats).into_iter().collect();
 
         // Check total values
         assert_eq!(stats_map.get("total_xact_count"), Some(&10.0));
