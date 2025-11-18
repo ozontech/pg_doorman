@@ -40,7 +40,7 @@ const (
 	diagnosticMarker = "/*Test_Disconnect*/"  // marker to find our check query in pg_stat_activity
 )
 
-func Test_Disconnect(t *testing.T) {
+func TestDisconnect(t *testing.T) {
 	// Table-driven subtests for two scenarios: inside a transaction and a single statement
 	tcs := []struct {
 		name   string

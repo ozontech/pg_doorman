@@ -9,6 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestDeallocate verifies that issuing `DEALLOCATE "test"` does not produce an error,
+// even if there is no previously prepared statement named "test". The server should
+// accept deallocating a non-existent prepared statement without complaining.
 func TestDeallocate(t *testing.T) {
 	ctx := context.Background()
 	db, err := pgxpool.Connect(ctx, os.Getenv("DATABASE_URL"))

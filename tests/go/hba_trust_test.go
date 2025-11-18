@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_HbaTrust(t *testing.T) {
+func TestHbaTrust(t *testing.T) {
 	db, errOpen := sql.Open("postgres", os.Getenv("DATABASE_URL_TRUST"))
 	assert.NoError(t, errOpen)
 	defer db.Close()
@@ -16,7 +16,7 @@ func Test_HbaTrust(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func Test_HbaDeny(t *testing.T) {
+func TestHbaDeny(t *testing.T) {
 	db, errOpen := sql.Open("postgres", os.Getenv("DATABASE_URL_NOTRUST"))
 	assert.NoError(t, errOpen)
 	defer db.Close()

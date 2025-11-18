@@ -12,6 +12,28 @@ import (
 
 const poolerAddr = "localhost:6433"
 
+// TestCancelTLSQuery verifies that PostgreSQL CancelRequest (aka PQcancel/PqCancel)
+// works correctly when the cancel request is sent over a TLS-encrypted connection
+// to the pooler.
+//
+// Test outline:
+// 1) Establish a plain TCP connection to the pooler for the main query (connQ),
+//    authenticate via helper login() and start a long-running statement
+//    (`select pg_sleep(10);`) using extended protocol messages.
+// 2) Open a second TCP connection (connC) that will be used only to deliver the
+//    cancel request. First, perform the PostgreSQL SSL negotiation by sending
+//    an SSLRequest (int32 length=8, int32 code=80877103) and expect a single-byte
+//    'S' response, indicating the server accepts TLS.
+// 3) Upgrade connC to TLS using tls.Client and then send a CancelRequest message
+//    (int32 length=16, int32 code=80877102, int32 processID, int32 secretKey)
+//    with the process and secret obtained from the initial login(). Close the
+//    TLS connection after writing the cancel.
+// 4) Read from the original query connection (connQ) and assert that it returns
+//    an error with SQLSTATE 57014 (query_canceled). The message is expected to
+//    mention ProcessInterrupts, confirming the server processed the cancel.
+//
+// In short: this test proves that the pooler correctly handles SSL negotiation
+// for the dedicated cancel connection and forwards the CancelRequest over TLS.
 func TestCancelTLSQuery(t *testing.T) {
 	// login
 	connQ, errConnQ := net.Dial("tcp", poolerAddr)

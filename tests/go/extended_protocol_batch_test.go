@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_SleepBatch(t *testing.T) {
+func TestSleepBatch(t *testing.T) {
 	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 	require.NoError(t, err)
 	defer db.Close()
@@ -21,7 +21,7 @@ from pg_stat_activity where query ~ 'pg_sleep' and not query ~ 'pg_stat_activity
 	sendBatchSleepWithCancel(t, 0, 100, 200)
 }
 
-func Test_ErrorBatch(t *testing.T) {
+func TestErrorBatch(t *testing.T) {
 	sendBatchWithError(t)
 }
 
