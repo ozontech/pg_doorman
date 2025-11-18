@@ -53,7 +53,7 @@ func checkStaledConnections(t *testing.T) {
 	}
 }
 
-func Test_RaceStop(t *testing.T) {
+func TestRaceStop(t *testing.T) {
 	t.Log("start RaceStop")
 	printStaledConnections(t)
 	conn, errConn := net.Dial("tcp", poolerAddr)
@@ -105,7 +105,7 @@ func Test_RaceStop(t *testing.T) {
 	checkStaledConnections(t)
 }
 
-func Test_RaceExtendedProtocol(t *testing.T) {
+func TestRaceExtendedProtocol(t *testing.T) {
 	t.Log("start RaceExtendedProtocol")
 	printStaledConnections(t)
 	conn, errConn := net.Dial("tcp", poolerAddr)
@@ -137,7 +137,7 @@ func Test_RaceExtendedProtocol(t *testing.T) {
 	checkStaledConnections(t)
 }
 
-func Test_ExtendedProtocol(t *testing.T) {
+func TestExtendedProtocol(t *testing.T) {
 	f := func(t *testing.T, conn net.Conn) []*message {
 		processID, secretKey := login(t, conn, "example_user_1", "example_db", "test")
 		t.Logf("processID: %d, secretKey: %d\n", processID, secretKey)

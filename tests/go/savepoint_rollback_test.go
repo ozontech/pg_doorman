@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_RollbackSavePoint(t *testing.T) {
+func TestRollbackSavePoint(t *testing.T) {
 	ctx := context.Background()
 	session, errOpen := pgx.Connect(ctx, os.Getenv("DATABASE_URL_ROLLBACK"))
 	assert.NoError(t, errOpen)

@@ -16,8 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test_Prometheus verifies selected Prometheus metrics are present and non-zero.
-func Test_Prometheus(t *testing.T) {
+func TestPrometheus(t *testing.T) {
 	ctx := context.Background()
 
 	// Create transactional activity so the exporter has data for transaction metrics
