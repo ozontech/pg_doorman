@@ -22,6 +22,7 @@ use crate::auth::talos::{extract_talos_token, talos_role_to_string};
 use crate::comments::SqlCommentParser;
 use crate::config::{check_hba, get_config};
 use crate::constants::*;
+use crate::messages::config_socket::configure_tcp_socket_for_cancel;
 use crate::messages::*;
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool, CANCELED_PIDS};
 use crate::rate_limit::RateLimiter;
@@ -155,6 +156,12 @@ pub async fn client_entrypoint_too_many_clients_already(
             // pass
             ),
         Ok((ClientConnectionType::CancelQuery, bytes)) => {
+            // Important: without configuring the TCP socket for cancel requests,
+            // libpq-based clients (e.g., psycopg2) may emit a noisy stderr warning on cancellation
+            // such as:
+            // "query cancellation failed: cancellation failed: connection to server ..."
+            // We set the appropriate socket options to avoid this spurious message.
+            configure_tcp_socket_for_cancel(&stream);
             let (read, write) = split(stream);
             // Continue with cancel query request.
             return match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
@@ -372,12 +379,18 @@ pub async fn client_entrypoint(
         // Client wants to cancel a query.
         Ok((ClientConnectionType::CancelQuery, bytes)) => {
             CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            // Important: without configuring the TCP socket for cancel requests,
+            // libpq-based clients (e.g., psycopg2) may emit a noisy stderr warning on cancellation
+            // such as:
+            // "query cancellation failed: cancellation failed: connection to server ..."
+            // We set the appropriate socket options to avoid this spurious message.
+            configure_tcp_socket_for_cancel(&stream);
             let (read, write) = split(stream);
 
             // Continue with cancel query request.
             match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await {
                 Ok(mut client) => {
-                    info!("Client {addr:?} issued a cancel query request");
+                    info!("Cancel request received from {addr:?}; forwarding to the backend");
 
                     if !client.is_admin() {
                         let _ = drain.send(1).await;

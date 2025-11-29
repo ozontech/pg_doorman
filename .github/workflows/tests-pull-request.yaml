@@ -183,6 +183,7 @@ jobs:
           echo "Run async" && python ./test_async.py &&
           echo "Run psycopg2" && python ./test_psycopg2.py
           echo "Run session cursors" && python ./test_session_cursors.py
+          echo "Run cancel query" && pytest ./test_cancel_query.py
 
   nodejs-test:
     name: NodeJS (pg).
