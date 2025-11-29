@@ -16,7 +16,8 @@ docker-compose-test-python: docker-compose-up
 		cd /tests && \
 		python ./test_async.py && \
 		python ./test_psycopg2.py && \
-		python ./test_session_cursors.py'
+		python ./test_session_cursors.py && \
+		pytest ./test_cancel_query.py'
 
 docker-compose-test-nodejs: docker-compose-up
 	docker compose exec -T nodejs_test /bin/bash -ec ' \

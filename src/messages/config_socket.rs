@@ -28,6 +28,18 @@ pub fn configure_unix_socket(stream: &UnixStream) {
     }
 }
 
+pub fn configure_tcp_socket_for_cancel(stream: &TcpStream) {
+    let sock_ref = SockRef::from(stream);
+    match sock_ref.set_linger(None) {
+        Ok(_) => {}
+        Err(err) => error!("Could not configure tcp_so_linger (node) for socket: {err}"),
+    }
+    match sock_ref.set_nodelay(false) {
+        Ok(_) => {}
+        Err(err) => error!("Could not configure no delay (false) for socket: {err}"),
+    }
+}
+
 /// Configure TCP socket parameters.
 pub fn configure_tcp_socket(stream: &TcpStream) {
     let sock_ref = SockRef::from(stream);
