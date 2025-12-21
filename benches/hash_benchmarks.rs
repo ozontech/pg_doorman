@@ -7,15 +7,15 @@ use xxhash_rust::xxh3::Xxh3;
 #[derive(Clone)]
 struct Parse {
     pub query: String,
-    pub num_params: u16,
-    pub param_types: Vec<u32>,
+    pub num_params: i16,
+    pub param_types: Vec<i32>,
 }
 
 impl Parse {
     fn hashed_size(&self) -> usize {
         self.query.len()
-            + std::mem::size_of::<u16>()
-            + self.param_types.len() * std::mem::size_of::<u32>()
+            + size_of::<u16>()
+            + self.param_types.len() * size_of::<u32>()
     }
 }
 
@@ -34,7 +34,7 @@ fn xxhash3_structured(data: &Parse) -> u64 {
     let mut h = Xxh3::default();
 
     h.write(data.query.as_bytes());
-    h.write_u16(data.num_params);
+    h.write_i16(data.num_params);
     h.write(data.param_types.as_slice().as_bytes());
 
     h.finish()
@@ -44,7 +44,7 @@ fn default_hasher_structured(data: &Parse) -> u64 {
     let mut h = DefaultHasher::default();
 
     h.write(data.query.as_bytes());
-    h.write_u16(data.num_params);
+    h.write_i16(data.num_params);
     h.write(data.param_types.as_slice().as_bytes());
 
     h.finish()
