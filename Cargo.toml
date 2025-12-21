@@ -57,6 +57,9 @@ pam-client = { version =  "0.5.0", optional = true }
 postgres = "0.19.10"
 postgres-native-tls = "0.5.1"
 flate2 = "1.0.28"
+criterion = "0.8.1"
+zerocopy = "0.8.24"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 [replace]
 'deadpool:0.10.0' = { path = 'patches/deadpool' }

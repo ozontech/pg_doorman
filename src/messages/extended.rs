@@ -1,14 +1,15 @@
 // Standard library imports
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hasher};
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 // External crate imports
 use bytes::{Buf, BufMut, BytesMut};
-
+use xxhash_rust::xxh3::Xxh3;
+use zerocopy::IntoBytes;
 // Internal crate imports
 use crate::client::PREPARED_STATEMENT_COUNTER;
 use crate::errors::Error;
@@ -159,23 +160,23 @@ impl Parse {
 
     /// Hashes the parse statement to be used as a key in the global cache
     pub fn get_hash(&self) -> u64 {
-        // TODO: Take a look at which hashing function is being used
-        let mut hasher = DefaultHasher::new();
+        if self.query.len() >= 64 {
+            let mut hasher = Xxh3::default();
 
-        let concatenated = format!(
-            "{}{}{}",
-            self.query,
-            self.num_params,
-            self.param_types
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
 
-        concatenated.hash(&mut hasher);
+            hasher.finish()
+        } else { // in benchmarks default hasher was better on short strings
+            let mut hasher = DefaultHasher::new();
 
-        hasher.finish()
+            hasher.write(self.query.as_bytes());
+            hasher.write_i16(self.num_params);
+            hasher.write(self.param_types.as_slice().as_bytes());
+
+            hasher.finish()
+        }
     }
 
     pub fn anonymous(&self) -> bool {
