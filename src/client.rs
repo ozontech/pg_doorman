@@ -1737,8 +1737,6 @@ where
             debug!("Anonymous describe message");
             self.extended_protocol_data_buffer
                 .push_back(ExtendedProtocolData::create_new_describe(message, None));
-
-            return Ok(());
         }
 
         match self.prepared_statements.get(&client_given_name) {
