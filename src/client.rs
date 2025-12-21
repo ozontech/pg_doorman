@@ -112,6 +112,9 @@ pub struct Client<S, T> {
     /// Whether prepared statements are enabled for this client
     prepared_statements_enabled: bool,
 
+    /// Whether to cache anonymous queries
+    prepare_anon_queries: bool,
+
     /// Mapping of client named prepared statement to rewritten parse messages
     prepared_statements: HashMap<String, (Arc<Parse>, u64)>,
 
@@ -846,6 +849,7 @@ where
             server_parameters,
             shutdown,
             prepared_statements_enabled,
+            prepare_anon_queries: config.general.prepare_anon_queries,
             prepared_statements: HashMap::new(),
             virtual_pool_count: config.general.virtual_pool_count,
             client_last_messages_in_tx: BytesMut::with_capacity(8196),
@@ -890,6 +894,7 @@ where
             server_parameters: ServerParameters::new(),
             shutdown,
             prepared_statements_enabled: false,
+            prepare_anon_queries: false,
             prepared_statements: HashMap::new(),
             extended_protocol_data_buffer: VecDeque::new(),
             connected_to_server: false,
@@ -1608,8 +1613,17 @@ where
                 .push_back(ExtendedProtocolData::create_new_parse(message, None));
             return Ok(());
         }
-
+        
         let client_given_name = Parse::get_name(&message)?;
+        
+        if !self.prepare_anon_queries
+            && client_given_name.is_empty() {
+            debug!("Anonymous parse message");
+            self.extended_protocol_data_buffer
+                .push_back(ExtendedProtocolData::create_new_parse(message, None));
+            return Ok(());
+        }
+
         let parse: Parse = (&message).try_into()?;
 
         // Compute the hash of the parse statement
@@ -1654,6 +1668,14 @@ where
         }
 
         let client_given_name = Bind::get_name(&message)?;
+        
+        if !self.prepare_anon_queries
+            && client_given_name.is_empty() {
+            debug!("Anonymous bind message");
+            self.extended_protocol_data_buffer
+                .push_back(ExtendedProtocolData::create_new_bind(message, None));
+            return Ok(());
+        }
 
         match self.prepared_statements.get(&client_given_name) {
             Some((rewritten_parse, _)) => {
@@ -1709,6 +1731,13 @@ where
         }
 
         let client_given_name = describe.statement_name.clone();
+        
+        if !self.prepare_anon_queries
+            && client_given_name.is_empty() {
+            debug!("Anonymous describe message");
+            self.extended_protocol_data_buffer
+                .push_back(ExtendedProtocolData::create_new_describe(message, None));
+        }
 
         match self.prepared_statements.get(&client_given_name) {
             Some((rewritten_parse, _)) => {
