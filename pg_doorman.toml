@@ -161,6 +161,10 @@ prepared_statements = true
 # Default: 8192
 prepared_statements_cache_size = 512
 
+# Enable or disable caching of anonymous queries (queries without prepared statement name).
+# Default: true
+prepare_anon_queries = true
+
 # PID file for daemon mode.
 # Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground with `-d`.
 # Default: None

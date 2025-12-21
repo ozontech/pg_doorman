@@ -274,6 +274,7 @@ jobs:
           (./tests/pg_doorman -l debug ./tests/tests.toml &) && mkdir -p ./tests/dotnet/prj && cd ./tests/dotnet/prj &&
           mkdir -p ./pbde && cd ./pbde && dotnet new sln --name PBDE && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/PBDE_PBDE_S.cs ./Program.cs && dotnet run Program.cs &&
           cd .. && mkdir -p ./prepared && cd ./prepared && dotnet new sln --name PREPARED && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/prepared.cs ./Program.cs && dotnet run Program.cs &&
+          cd .. && mkdir -p ./anon_queries && cd ./anon_queries && dotnet new sln --name AnonQueries && dotnet new console --output . && dotnet add package Npgsql && cp -av ../../data/anon_queries_without_prepare_on_server_side.cs ./Program.cs && dotnet run Program.cs &&
           echo "done"
 
   docker-compose-test:

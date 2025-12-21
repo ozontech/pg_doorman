@@ -321,6 +321,9 @@ pub struct General {
     // New pg_hba rules: either inline content or a file path (see `PgHba` deserialization).
     #[serde(default, skip_serializing)]
     pub pg_hba: Option<PgHba>,
+
+    #[serde(default = "General::default_prepare_anon_queries")]
+    pub prepare_anon_queries: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -469,6 +472,9 @@ impl General {
     pub fn default_prepared_statements() -> bool {
         true
     }
+    pub fn default_prepare_anon_queries() -> bool {
+        true
+    }
 
     pub fn default_daemon_pid_file() -> String {
         "/tmp/pg_doorman.pid".to_string()
@@ -561,6 +567,7 @@ impl Default for General {
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
+            prepare_anon_queries: Self::default_prepare_anon_queries(),
             hba: Self::default_hba(),
             pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),

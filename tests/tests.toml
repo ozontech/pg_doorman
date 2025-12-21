@@ -16,6 +16,7 @@ worker_threads = 2
 # enable support of prepared statements.
 prepared_statements = true
 prepared_statements_cache_size = 10000
+prepare_anon_queries = false
 
 # tls settings.
 tls_private_key = "./tests/data/ssl/server.key"
