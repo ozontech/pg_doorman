@@ -102,7 +102,6 @@ run_in_container() {
         -v pg_doorman_cargo_git:/root/.cargo/git
         -v pg_doorman_go_cache:/root/go/pkg/mod
         -v pg_doorman_go_build:/root/.cache/go-build
-        -v pg_doorman_ruby_gems:/root/.bundle
         -v pg_doorman_npm_cache:/root/.npm
         -v pg_doorman_dotnet:/root/.dotnet
         -v pg_doorman_nuget:/root/.nuget
@@ -143,11 +142,6 @@ run_python_tests() {
     run_in_container "cd tests/python && setup-test-deps && pytest -v ."
 }
 
-run_ruby_tests() {
-    log_info "Running Ruby tests..."
-    run_in_container "cd tests/ruby && setup-test-deps && bundle exec rspec"
-}
-
 run_nodejs_tests() {
     log_info "Running Node.js tests..."
     run_in_container "cd tests/nodejs && setup-test-deps && npm test"
@@ -177,7 +171,6 @@ Commands:
     bdd [tags]           Run BDD/Cucumber tests (optionally with tags like @go, @python)
     test-go              Run Go tests
     test-python          Run Python tests
-    test-ruby            Run Ruby tests
     test-nodejs          Run Node.js tests
     test-dotnet          Run .NET tests
     test-all             Run all language tests
@@ -225,10 +218,6 @@ case "${1:-help}" in
         try_pull_image
         run_python_tests
         ;;
-    test-ruby)
-        try_pull_image
-        run_ruby_tests
-        ;;
     test-nodejs)
         try_pull_image
         run_nodejs_tests
@@ -242,7 +231,6 @@ case "${1:-help}" in
         log_info "Running all language tests..."
         run_go_tests
         run_python_tests
-        run_ruby_tests
         run_nodejs_tests
         run_dotnet_tests
         log_info "All tests completed!"

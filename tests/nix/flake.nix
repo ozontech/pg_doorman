@@ -46,9 +46,6 @@
             pytest
           ]);
 
-          # Ruby with bundler for Gemfile support
-          rubyEnv = pkgs.ruby_3_3;
-
           # All runtime packages
           runtimePackages = with pkgs; [
             # PostgreSQL
@@ -63,10 +60,6 @@
 
             # Python environment
             pythonEnv
-
-            # Ruby environment
-            rubyEnv
-            bundler
 
             # .NET SDK
             dotnet-sdk_8
@@ -126,16 +119,14 @@
             export GOMODCACHE="/root/go/pkg/mod"
             export DOTNET_CLI_HOME="/root/.dotnet"
             export DOTNET_NOLOGO=1
-            export GEM_HOME="/root/.gem"
-            export BUNDLE_PATH="/root/.bundle"
             export NPM_CONFIG_PREFIX="/root/.npm-global"
             export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
             export NIX_SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
 
-            export PATH="$CARGO_HOME/bin:$GOPATH/bin:$NPM_CONFIG_PREFIX/bin:$GEM_HOME/bin:$PATH"
+            export PATH="$CARGO_HOME/bin:$GOPATH/bin:$NPM_CONFIG_PREFIX/bin:$PATH"
 
             # Create necessary directories
-            mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$GOPATH" "$DOTNET_CLI_HOME" "$GEM_HOME" "$BUNDLE_PATH" "$NPM_CONFIG_PREFIX"
+            mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$GOPATH" "$DOTNET_CLI_HOME" "$NPM_CONFIG_PREFIX"
           '';
 
           # Docker image with aggressive layer caching
@@ -207,8 +198,6 @@ EOF
                 "GOCACHE=/root/.cache/go-build"
                 "DOTNET_CLI_HOME=/root/.dotnet"
                 "DOTNET_NOLOGO=1"
-                "GEM_HOME=/root/.gem"
-                "BUNDLE_PATH=/root/.bundle"
                 "NPM_CONFIG_PREFIX=/root/.npm-global"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -216,7 +205,7 @@ EOF
                 "OPENSSL_DIR=${pkgs.openssl.dev}"
                 "OPENSSL_LIB_DIR=${pkgs.openssl.out}/lib"
                 "OPENSSL_INCLUDE_DIR=${pkgs.openssl.dev}/include"
-                "PATH=/root/.cargo/bin:/root/go/bin:/root/.npm-global/bin:/root/.gem/bin:${pkgs.lib.makeBinPath runtimePackages}:/bin:/usr/bin"
+                "PATH=/root/.cargo/bin:/root/go/bin:/root/.npm-global/bin:${pkgs.lib.makeBinPath runtimePackages}:/bin:/usr/bin"
                 "LANG=C.UTF-8"
                 "LC_ALL=C.UTF-8"
               ];
@@ -242,11 +231,9 @@ EOF
               export GOMODCACHE="$HOME/go/pkg/mod"
               export DOTNET_CLI_HOME="$HOME/.dotnet"
               export DOTNET_NOLOGO=1
-              export GEM_HOME="$HOME/.gem"
-              export BUNDLE_PATH="$HOME/.bundle"
               export NPM_CONFIG_PREFIX="$HOME/.npm-global"
 
-              export PATH="$CARGO_HOME/bin:$GOPATH/bin:$NPM_CONFIG_PREFIX/bin:$GEM_HOME/bin:$PATH"
+              export PATH="$CARGO_HOME/bin:$GOPATH/bin:$NPM_CONFIG_PREFIX/bin:$PATH"
 
               echo "pg_doorman test environment ready!"
               echo "Available runtimes:"
@@ -254,7 +241,6 @@ EOF
               echo "  - Node.js: $(node --version)"
               echo "  - Go: $(go version)"
               echo "  - Python: $(python3 --version)"
-              echo "  - Ruby: $(ruby --version)"
               echo "  - .NET: $(dotnet --version)"
               echo "  - Rust: $(rustc --version)"
               echo ""

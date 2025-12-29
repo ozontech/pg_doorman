@@ -57,6 +57,9 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
         panic!("initdb failed");
     }
 
+    // Create socket directory inside temp dir (avoids /tmp permission issues in containers)
+    let socket_dir = tmp_dir.path().to_str().unwrap();
+
     // Start and stop to initialize properly (suppress output)
     let _ = pg_command_builder(
         "pg_ctl",
@@ -64,7 +67,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-D",
             db_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k /tmp", port),
+            &format!("-p {} -F -k {}", port, socket_dir),
             "start",
         ],
     )
@@ -89,7 +92,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k /tmp", port),
+            &format!("-p {} -F -k {}", port, socket_dir),
             "start",
         ],
     )
@@ -232,6 +235,9 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
             .expect("Failed to chown pg_hba.conf");
     }
 
+    // Create socket directory inside temp dir (avoids /tmp permission issues in containers)
+    let socket_dir = tmp_dir.path().to_str().unwrap();
+
     let log_path = tmp_dir.path().join("pg.log");
     // pg_ctl start (suppress output, logs go to pg.log)
     let _ = pg_command_builder(
@@ -242,7 +248,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k /tmp", port),
+            &format!("-p {} -F -k {}", port, socket_dir),
             "start",
         ],
     )

@@ -1,5 +1,8 @@
 name: BDD Tests
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches:
@@ -104,13 +107,11 @@ jobs:
 
       - name: Run BDD tests for Go
         run: |
-          set -e
           docker run --rm \
-            --tmpfs /tmp:exec,mode=1777 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            bash -c "cargo test --test bdd -- --tags @go; exit \$?"
+            cargo test --test bdd -- --tags @go
 
   # Job 3: Run BDD tests with Python client
   python-tests:
@@ -127,13 +128,11 @@ jobs:
 
       - name: Run BDD tests for Python
         run: |
-          set -e
           docker run --rm \
-            --tmpfs /tmp:exec,mode=1777 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            bash -c "cargo test --test bdd -- --tags @python; exit \$?"
+            cargo test --test bdd -- --tags @python
 
   # Job 4: Run BDD tests with Node.js client
   nodejs-tests:
@@ -150,13 +149,11 @@ jobs:
 
       - name: Run BDD tests for Node.js
         run: |
-          set -e
           docker run --rm \
-            --tmpfs /tmp:exec,mode=1777 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            bash -c "cargo test --test bdd -- --tags @nodejs; exit \$?"
+            cargo test --test bdd -- --tags @nodejs
 
   # Job 5: Run BDD tests with .NET client
   dotnet-tests:
@@ -173,10 +170,8 @@ jobs:
 
       - name: Run BDD tests for .NET
         run: |
-          set -e
           docker run --rm \
-            --tmpfs /tmp:exec,mode=1777 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            bash -c "cargo test --test bdd -- --tags @dotnet; exit \$?"
+            cargo test --test bdd -- --tags @dotnet
