@@ -53,6 +53,8 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     
     // Run tests with after hook for cleanup
+    // Note: run_and_exit() will call std::process::exit() with appropriate exit code
+    // (non-zero if any tests failed), so cleanup must happen in the after hook
     rt.block_on(async {
         DoormanWorld::cucumber()
             .after(|_feature, _rule, _scenario, _finished, world| {
@@ -68,10 +70,12 @@ fn main() {
                 }
                 Box::pin(async {})
             })
-            .run("tests/bdd/features")
+            // run_and_exit() exits with non-zero code if any tests failed
+            .run_and_exit("tests/bdd/features")
             .await;
     });
     
-    // Cleanup after normal completion
+    // This code is unreachable because run_and_exit() calls std::process::exit()
+    // but we keep it as a safety net in case the behavior changes
     cleanup_pg_doorman_processes();
 }
