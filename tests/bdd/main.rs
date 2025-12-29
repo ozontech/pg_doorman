@@ -59,14 +59,14 @@ fn main() {
             .after(|_feature, _rule, _scenario, _finished, world| {
                 // This hook is called after EVERY scenario, regardless of success/failure
                 // Cleanup pg_doorman process if it exists
+                // NOTE: We only stop the specific process from this scenario, NOT all pg_doorman processes
+                // because the next scenario's Background steps may have already started a new pg_doorman
                 if let Some(w) = world {
                     if let Some(ref mut child) = w.doorman_process {
                         doorman_helper::stop_doorman(child);
                     }
                     w.doorman_process = None;
                 }
-                // Also run global cleanup to catch any orphaned processes
-                cleanup_pg_doorman_processes();
                 Box::pin(async {})
             })
             .run("tests/bdd/features")

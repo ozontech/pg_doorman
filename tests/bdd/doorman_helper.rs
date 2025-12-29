@@ -161,25 +161,12 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
 /// Helper function to wait for pg_doorman to be ready (max 5 seconds)
 async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
     use std::io::Read;
-    #[cfg(unix)]
-    use std::os::unix::process::ExitStatusExt;
     
     let mut success = false;
     for _ in 0..20 {
         // Check if process is still running
         match child.try_wait() {
             Ok(Some(status)) => {
-                // On Unix, check if process was killed by signal 9 (SIGKILL)
-                // This can happen when tests are ending and processes are being cleaned up
-                // In this case, we should not panic as it's expected behavior
-                #[cfg(unix)]
-                if let Some(signal) = status.signal() {
-                    if signal == 9 {
-                        // Process was killed by SIGKILL (likely test cleanup), don't panic
-                        return;
-                    }
-                }
-                
                 // Process exited, capture stdout and stderr
                 let mut stdout_output = String::new();
                 let mut stderr_output = String::new();

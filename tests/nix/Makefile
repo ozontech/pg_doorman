@@ -90,6 +90,12 @@ test-bdd-go-extended: ## Run BDD Go extended protocol tests
 test-bdd-go-special: ## Run BDD Go special functionality tests
 	@./run-tests.sh bdd @go-special
 
+test-bdd-hba: ## Run BDD Go HBA authentication tests
+	@./run-tests.sh bdd @hba
+
+test-bdd-prometheus: ## Run BDD Go Prometheus metrics tests
+	@./run-tests.sh bdd @prometheus
+
 test-bdd-python: ## Run BDD tests for Python clients
 	@./run-tests.sh bdd @python
 

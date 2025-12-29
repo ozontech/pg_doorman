@@ -131,29 +131,3 @@ Feature: Go special functionality tests
     Then the command should succeed
     And the command output should contain "PASS: Test_RollbackSavePoint"
 
-  Scenario: Test Prometheus metrics endpoint
-    When I run shell command:
-      """
-      export DATABASE_URL_PROMETHEUS="postgresql://example_user_prometheus@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run Test_Prometheus
-      """
-    Then the command should succeed
-    And the command output should contain "PASS: Test_Prometheus"
-
-  Scenario: Test HBA trust authentication
-    When I run shell command:
-      """
-      export DATABASE_URL_TRUST="postgresql://example_user_nopassword@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=require"
-      cd tests/go && go test -v -run Test_HbaTrust
-      """
-    Then the command should succeed
-    And the command output should contain "PASS: Test_HbaTrust"
-
-  Scenario: Test HBA deny rules
-    When I run shell command:
-      """
-      export DATABASE_URL_NOTRUST="postgresql://example_user_nopassword@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run Test_HbaDeny
-      """
-    Then the command should succeed
-    And the command output should contain "PASS: Test_HbaDeny"
