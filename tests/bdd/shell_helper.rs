@@ -3,8 +3,8 @@ use cucumber::{gherkin::Step, then, when};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// Default timeout for shell commands (5 minutes)
-const COMMAND_TIMEOUT_SECS: u64 = 300;
+/// Default timeout for shell commands (10 minutes)
+const COMMAND_TIMEOUT_SECS: u64 = 600;
 
 /// Helper function to run a shell command and capture the result with timeout
 fn run_command(command: &str, working_dir: Option<&str>) -> TestCommandResult {

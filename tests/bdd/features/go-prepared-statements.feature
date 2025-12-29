@@ -12,26 +12,13 @@ Feature: Go prepared statements tests
     And fixtures from "tests/fixture.sql" applied
     And pg_doorman hba file contains:
       """
-      hostnossl all example_user_nopassword 127.0.0.1/32 reject
-      hostssl all example_user_nopassword 127.0.0.1/32 trust
-      host all example_user_disconnect 127.0.0.1/32 trust
-      host all example_user_prometheus 127.0.0.1/32 trust
       host all all 127.0.0.1/32 md5
-      host all all 10.0.0.0/8 md5
-      host all all 192.168.0.0/16 md5
-      host all all 172.0.0.0/8 md5
       """
     And pg_doorman started with config:
       """
-      [prometheus]
-      enabled = true
-      host = "0.0.0.0"
-      port = 9127
-
       [general]
       host = "127.0.0.1"
       port = ${DOORMAN_PORT}
-      connect_timeout = 5000
       admin_username = "admin"
       admin_password = "admin"
       pg_hba = {path = "${DOORMAN_HBA_FILE}"}

@@ -3,6 +3,7 @@ package doorman_test
 import (
 	"database/sql"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -10,7 +11,33 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const directPgDSN = `user=postgres host=localhost port=5432 sslmode=disable`
+var directPgDSN = getDirectPgDSN()
+var directPgAddr = getDirectPgAddr()
+
+func getDirectPgDSN() string {
+	dsn := os.Getenv("DIRECT_PG_DSN")
+	if dsn != "" {
+		return dsn
+	}
+	// Build DSN from PG_PORT if available
+	port := os.Getenv("PG_PORT")
+	if port == "" {
+		port = "5432"
+	}
+	return "user=postgres host=localhost port=" + port + " sslmode=disable"
+}
+
+func getDirectPgAddr() string {
+	addr := os.Getenv("DIRECT_PG_ADDR")
+	if addr != "" {
+		return addr
+	}
+	port := os.Getenv("PG_PORT")
+	if port == "" {
+		port = "5432"
+	}
+	return "localhost:" + port
+}
 
 func printStaledConnections(t *testing.T) {
 	db, err := sql.Open("postgres", directPgDSN)
@@ -158,7 +185,7 @@ func Test_ExtendedProtocol(t *testing.T) {
 		return messages
 	}
 	doorman := getMessages(t, poolerAddr, f)
-	pg := getMessages(t, "localhost:5432", f)
+	pg := getMessages(t, directPgAddr, f)
 	if len(pg) != len(doorman) {
 		t.Fatalf("got %d messages from pg, expected %d messages from doorman", len(pg), len(doorman))
 	}

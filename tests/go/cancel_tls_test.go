@@ -3,6 +3,8 @@ package doorman_test
 import (
 	"crypto/tls"
 	"net"
+	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -10,7 +12,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const poolerAddr = "localhost:6433"
+var poolerAddr = getPoolerAddr()
+
+func getPoolerAddr() string {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		return "localhost:6433" // fallback for local testing
+	}
+	u, err := url.Parse(dbURL)
+	if err != nil {
+		return "localhost:6433"
+	}
+	return u.Host
+}
 
 func TestCancelTLSQuery(t *testing.T) {
 	// login
