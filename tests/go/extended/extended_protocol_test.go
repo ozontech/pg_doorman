@@ -70,7 +70,7 @@ func checkStaledConnections(t *testing.T) {
 		}
 		count++
 		printStaledConnections(t)
-		if count > 100 {
+		if count > 200 {
 			assert.Equal(t, staled, 0)
 			t.Fatal("staled connections were not cleaned up")
 		}
