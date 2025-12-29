@@ -43,7 +43,7 @@ Feature: Prometheus metrics tests
     When I run shell command:
       """
       export DATABASE_URL_PROMETHEUS="postgresql://example_user_prometheus@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run Test_Prometheus
+      cd tests/go/prometheus && go test -v -run Test_Prometheus
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_Prometheus"

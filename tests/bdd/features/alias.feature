@@ -49,6 +49,6 @@ Feature: Database alias functionality tests
     When I run shell command:
       """
       export DATABASE_URL_ALIAS="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db_alias?sslmode=disable"
-      cd tests/go && go test -v -run "^TestAlias$"
+      cd tests/go/alias && go test -v -run "^TestAlias$"
       """
     Then the command should succeed

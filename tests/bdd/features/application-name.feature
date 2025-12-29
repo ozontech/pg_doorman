@@ -1,6 +1,6 @@
-@ruby
-Feature: Ruby client tests
-  Test pg_doorman with Ruby PostgreSQL client (pg gem)
+@go @application-name
+Feature: Application name tests
+  Test pg_doorman application name functionality
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -10,6 +10,10 @@ Feature: Ruby client tests
       host    all             all             ::1/128                 trust
       """
     And fixtures from "tests/fixture.sql" applied
+    And pg_doorman hba file contains:
+      """
+      host all all 127.0.0.1/32 md5
+      """
     And pg_doorman started with config:
       """
       [general]
@@ -18,6 +22,8 @@ Feature: Ruby client tests
       connect_timeout = 5000
       admin_username = "admin"
       admin_password = "admin"
+      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      application_name_add_user = true
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -30,22 +36,11 @@ Feature: Ruby client tests
       pool_size = 10
       """
 
-  Scenario: Run Ruby basic tests
+  Scenario: Test application name functionality
     When I run shell command:
       """
-      cd tests/ruby && \
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      bundle install && \
-      bundle exec ruby test.rb
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable&application_name=doorman"
+      cd tests/go/application-name && go test -v -run Test_ApplicationName
       """
     Then the command should succeed
-
-  Scenario: Run Ruby RSpec tests
-    When I run shell command:
-      """
-      cd tests/ruby && \
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      bundle install && \
-      bundle exec rspec *_spec.rb
-      """
-    Then the command should succeed
+    And the command output should contain "PASS: Test_ApplicationName"

@@ -1,4 +1,4 @@
-.PHONY: help local-build pull shell build test-all test-bdd test-go test-python test-ruby test-nodejs test-dotnet clean
+.PHONY: help local-build pull shell build test-all test-bdd test-go test-python test-nodejs test-dotnet clean
 
 REGISTRY ?= ghcr.io
 IMAGE_TAG ?= latest
@@ -51,9 +51,6 @@ test-go: ## Run Go client tests
 test-python: ## Run Python client tests
 	@./run-tests.sh test-python
 
-test-ruby: ## Run Ruby client tests
-	@./run-tests.sh test-ruby
-
 test-nodejs: ## Run Node.js client tests
 	@./run-tests.sh test-nodejs
 
@@ -67,8 +64,7 @@ clean: ## Remove cached Docker volumes
 	@echo "Removing cached Docker volumes..."
 	@docker volume rm pg_doorman_cargo_cache pg_doorman_cargo_git \
 		pg_doorman_go_cache pg_doorman_go_build \
-		pg_doorman_ruby_gems pg_doorman_npm_cache \
-		pg_doorman_dotnet pg_doorman_nuget 2>/dev/null || true
+		pg_doorman_npm_cache pg_doorman_dotnet pg_doorman_nuget 2>/dev/null || true
 	@echo "Cache cleaned!"
 
 # Quick test targets with BDD tags
@@ -107,9 +103,6 @@ test-bdd-deallocate: ## Run BDD deallocate statements tests
 
 test-bdd-python: ## Run BDD tests for Python clients
 	@./run-tests.sh bdd @python
-
-test-bdd-ruby: ## Run BDD tests for Ruby clients
-	@./run-tests.sh bdd @ruby
 
 test-bdd-nodejs: ## Run BDD tests for Node.js clients
 	@./run-tests.sh bdd @nodejs
