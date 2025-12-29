@@ -1,10 +1,7 @@
 use cucumber::World;
 use std::path::PathBuf;
 use std::process::Child;
-use std::sync::Arc;
 use tempfile::{NamedTempFile, TempDir};
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 /// Result of a test command execution
 #[derive(Default, Clone)]
@@ -40,12 +37,6 @@ pub struct DoormanWorld {
     pub ssl_key_file: Option<NamedTempFile>,
     /// Temporary SSL certificate file for pg_doorman
     pub ssl_cert_file: Option<NamedTempFile>,
-    /// Background query task handle
-    pub background_query_handle: Option<JoinHandle<()>>,
-    /// Background query client (wrapped in Arc<Mutex> for cancellation)
-    pub background_query_client: Option<Arc<Mutex<Option<tokio_postgres::Client>>>>,
-    /// Backend PID from PostgreSQL (server connection pid)
-    pub backend_pid: Option<i32>,
     /// Result of the last test command execution
     pub last_test_result: Option<TestCommandResult>,
 }

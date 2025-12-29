@@ -87,8 +87,8 @@ test-bdd-go-copy: ## Run BDD Go COPY operations tests
 test-bdd-go-extended: ## Run BDD Go extended protocol tests
 	@./run-tests.sh bdd @go-extended
 
-test-bdd-go-special: ## Run BDD Go special functionality tests
-	@./run-tests.sh bdd @go-special
+test-bdd-rollback: ## Run BDD rollback functionality tests
+	@./run-tests.sh bdd @rollback
 
 test-bdd-hba: ## Run BDD Go HBA authentication tests
 	@./run-tests.sh bdd @hba
@@ -101,6 +101,9 @@ test-bdd-alias: ## Run BDD database alias functionality tests
 
 test-bdd-check-query: ## Run BDD check query functionality tests
 	@./run-tests.sh bdd @check_query
+
+test-bdd-deallocate: ## Run BDD deallocate statements tests
+	@./run-tests.sh bdd @deallocate
 
 test-bdd-python: ## Run BDD tests for Python clients
 	@./run-tests.sh bdd @python

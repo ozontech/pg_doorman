@@ -1,6 +1,6 @@
-@go @go-copy
-Feature: Go COPY operations tests
-  Test pg_doorman COPY FROM/TO operations with Go clients
+@go @go-basic
+Feature: Go basic client tests
+  Test pg_doorman with Go PostgreSQL clients - basic functionality
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -12,14 +12,7 @@ Feature: Go COPY operations tests
     And fixtures from "tests/fixture.sql" applied
     And pg_doorman hba file contains:
       """
-      hostnossl all example_user_nopassword 127.0.0.1/32 reject
-      hostssl all example_user_nopassword 127.0.0.1/32 trust
-      host all example_user_disconnect 127.0.0.1/32 trust
-      host all example_user_prometheus 127.0.0.1/32 trust
       host all all 127.0.0.1/32 md5
-      host all all 10.0.0.0/8 md5
-      host all all 192.168.0.0/16 md5
-      host all all 172.0.0.0/8 md5
       """
     And pg_doorman started with config:
       """
@@ -42,18 +35,19 @@ Feature: Go COPY operations tests
       pool_size = 40
       """
 
-  Scenario: Test COPY FROM operation
+  Scenario: Test lib/pq basic operations
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^Test_CopyFrom$"
+      cd tests/go && go test -v -run "^TestLibPQ$"
       """
     Then the command should succeed
 
-  Scenario: Test COPY operation
+  Scenario: Test pgx v4 basic operations
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^Test_Copy$"
+      cd tests/go && go test -v -run "^TestPGXV4$"
       """
     Then the command should succeed
+

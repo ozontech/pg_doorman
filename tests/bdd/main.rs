@@ -1,4 +1,3 @@
-mod admin_helper;
 mod doorman_helper;
 mod postgres_helper;
 mod shell_helper;

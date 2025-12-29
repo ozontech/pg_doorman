@@ -1,6 +1,6 @@
-@go @go-basic
-Feature: Go basic client tests
-  Test pg_doorman with Go PostgreSQL clients - basic functionality
+@go
+Feature: Go client tests
+  Test pg_doorman with Go PostgreSQL clients (pgx, lib/pq)
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -32,29 +32,15 @@ Feature: Go basic client tests
       [pools.example_db.users.0]
       username = "example_user_1"
       password = "md58a67a0c805a5ee0384ea28e0dea557b6"
-      pool_size = 40
+      pool_size = 10
       """
 
-  Scenario: Test lib/pq basic operations
+  Scenario: Run Go client tests
     When I run shell command:
       """
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^TestLibPQ$"
+      cd tests/go && \
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable" && \
+      go test -v .
       """
     Then the command should succeed
-
-  Scenario: Test pgx v4 basic operations
-    When I run shell command:
-      """
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^TestPGXV4$"
-      """
-    Then the command should succeed
-
-  Scenario: Test deallocate statements
-    When I run shell command:
-      """
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^TestDeallocate$"
-      """
-    Then the command should succeed
+    And the command output should contain "PASS"

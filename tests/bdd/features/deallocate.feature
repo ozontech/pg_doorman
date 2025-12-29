@@ -1,10 +1,11 @@
-@go @alias
-Feature: Database alias functionality tests
-  Test pg_doorman database alias functionality
+@go @deallocate
+Feature: Deallocate statements tests
+  Test pg_doorman deallocate statements functionality
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
       """
+      local   all             all                                     trust
       host    all             all             127.0.0.1/32            trust
       host    all             all             ::1/128                 trust
       """
@@ -32,23 +33,12 @@ Feature: Database alias functionality tests
       username = "example_user_1"
       password = "md58a67a0c805a5ee0384ea28e0dea557b6"
       pool_size = 40
-
-      [pools.example_db_alias]
-      server_host = "127.0.0.1"
-      server_port = ${PG_PORT}
-      server_database = "example_db"
-      pool_mode = "transaction"
-
-      [pools.example_db_alias.users.0]
-      username = "example_user_1"
-      password = "md58a67a0c805a5ee0384ea28e0dea557b6"
-      pool_size = 40
       """
 
-  Scenario: Test database alias functionality
+  Scenario: Test deallocate statements
     When I run shell command:
       """
-      export DATABASE_URL_ALIAS="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db_alias?sslmode=disable"
-      cd tests/go && go test -v -run "^TestAlias$"
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
+      cd tests/go && go test -v -run "^TestDeallocate$"
       """
     Then the command should succeed
