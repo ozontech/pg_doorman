@@ -104,27 +104,31 @@ func testDisconnectWithCustomFunc(t *testing.T, fnBefore func(context.Context, *
 // deadlineConn wraps a net.Conn and allows setting a deadline on demand
 type deadlineConn struct {
 	net.Conn
-	deadlineSet chan struct{}
-	deadline    time.Duration
+	deadlineSet     chan struct{}
+	deadline        time.Duration
+	deadlineApplied bool
+}
+
+func (c *deadlineConn) maybeSetDeadline() {
+	if c.deadlineApplied {
+		return
+	}
+	select {
+	case <-c.deadlineSet:
+		// Deadline was triggered, set it now (only once)
+		_ = c.Conn.SetDeadline(time.Now().Add(c.deadline))
+		c.deadlineApplied = true
+	default:
+	}
 }
 
 func (c *deadlineConn) Read(b []byte) (n int, err error) {
-	select {
-	case <-c.deadlineSet:
-		// Deadline was triggered, set it now
-		_ = c.Conn.SetDeadline(time.Now().Add(c.deadline))
-	default:
-	}
+	c.maybeSetDeadline()
 	return c.Conn.Read(b)
 }
 
 func (c *deadlineConn) Write(b []byte) (n int, err error) {
-	select {
-	case <-c.deadlineSet:
-		// Deadline was triggered, set it now
-		_ = c.Conn.SetDeadline(time.Now().Add(c.deadline))
-	default:
-	}
+	c.maybeSetDeadline()
 	return c.Conn.Write(b)
 }
 
