@@ -1,6 +1,6 @@
-@go @go-basic
-Feature: Go basic client tests
-  Test pg_doorman with Go PostgreSQL clients - basic functionality
+@go @check_query
+Feature: Check query functionality tests
+  Test pg_doorman check query functionality
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -35,26 +35,10 @@ Feature: Go basic client tests
       pool_size = 40
       """
 
-  Scenario: Test lib/pq basic operations
+  Scenario: Test check query functionality
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^TestLibPQ$"
-      """
-    Then the command should succeed
-
-  Scenario: Test pgx v4 basic operations
-    When I run shell command:
-      """
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^TestPGXV4$"
-      """
-    Then the command should succeed
-
-  Scenario: Test deallocate statements
-    When I run shell command:
-      """
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go && go test -v -run "^TestDeallocate$"
+      cd tests/go && go test -v -run "^TestCheckQuery$"
       """
     Then the command should succeed

@@ -96,6 +96,12 @@ test-bdd-hba: ## Run BDD Go HBA authentication tests
 test-bdd-prometheus: ## Run BDD Go Prometheus metrics tests
 	@./run-tests.sh bdd @prometheus
 
+test-bdd-alias: ## Run BDD database alias functionality tests
+	@./run-tests.sh bdd @alias
+
+test-bdd-check-query: ## Run BDD check query functionality tests
+	@./run-tests.sh bdd @check_query
+
 test-bdd-python: ## Run BDD tests for Python clients
 	@./run-tests.sh bdd @python
 
