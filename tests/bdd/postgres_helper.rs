@@ -81,7 +81,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
 
     let log_path = tmp_dir.path().join("pg.log");
     // pg_ctl start (suppress output, logs go to pg.log)
-    let _child = pg_command_builder(
+    let _ = pg_command_builder(
         "pg_ctl",
         &[
             "-D",
@@ -95,7 +95,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
     )
     .stdout(Stdio::null())
     .stderr(Stdio::null())
-    .spawn()
+    .status()
     .expect("Failed to start pg_ctl");
 
     // Wait for PG to be ready
@@ -234,7 +234,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
 
     let log_path = tmp_dir.path().join("pg.log");
     // pg_ctl start (suppress output, logs go to pg.log)
-    let _child = pg_command_builder(
+    let _ = pg_command_builder(
         "pg_ctl",
         &[
             "-D",
@@ -248,7 +248,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
     )
     .stdout(Stdio::null())
     .stderr(Stdio::null())
-    .spawn()
+    .status()
     .expect("Failed to start pg_ctl");
 
     // Wait for PG to be ready

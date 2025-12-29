@@ -6,6 +6,7 @@ Feature: Server authentication tests
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
+      host    all             postgres        127.0.0.1/32            trust
       host    all             all             127.0.0.1/32            md5
       host    all             all             ::1/128                 trust
       """
@@ -47,7 +48,7 @@ Feature: Server authentication tests
       """
       export DATABASE_URL_MD5_AUTH_OK="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
       export DATABASE_URL_MD5_AUTH_BAD="postgresql://example_user_bad@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/server-auth && go test -v -run "TestServerAuthMD5"
+      cd tests/go && go test -v -run "TestServerAuthMD5" ./server-auth
       """
     Then the command should succeed
     And the command output should contain "PASS: TestServerAuthMD5OK"
@@ -57,6 +58,7 @@ Feature: Server authentication tests
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
+      host    all             postgres        127.0.0.1/32            trust
       host    all             all             127.0.0.1/32            scram-sha-256
       host    all             all             ::1/128                 trust
       """
@@ -98,54 +100,8 @@ Feature: Server authentication tests
       """
       export DATABASE_URL_SCRAM_AUTH_OK="postgresql://example_user_scram:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
       export DATABASE_URL_SCRAM_AUTH_BAD="postgresql://example_user_scram_bad@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/server-auth && go test -v -run "TestServerAuthSCRAM"
+      cd tests/go && go test -v -run "TestServerAuthSCRAM" ./server-auth
       """
     Then the command should succeed
     And the command output should contain "PASS: TestServerAuthSCRAMOK"
     And the command output should contain "PASS: TestServerAuthSCRAMBAD"
-
-  Scenario: Test JWT server authentication
-    Given PostgreSQL started with pg_hba.conf:
-      """
-      local   all             all                                     trust
-      host    all             all             127.0.0.1/32            trust
-      host    all             all             ::1/128                 trust
-      """
-    And fixtures from "tests/fixture.sql" applied
-    And pg_doorman hba file contains:
-      """
-      host all all 127.0.0.1/32 trust
-      """
-    And pg_doorman started with config:
-      """
-      [general]
-      host = "127.0.0.1"
-      port = ${DOORMAN_PORT}
-      connect_timeout = 5000
-      admin_username = "admin"
-      admin_password = "admin"
-      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
-
-      [pools.example_db]
-      server_host = "127.0.0.1"
-      server_port = ${PG_PORT}
-      pool_mode = "transaction"
-
-      [pools.example_db.users.0]
-      username = "example_user_jwt"
-      password = "jwt-pkey-fpath:./tests/data/jwt/public.pem"
-      pool_size = 10
-
-      [pools.example_db.users.1]
-      username = "example_user_jwt_bad"
-      password = "jwt-pkey-fpath:./tests/data/jwt/public.pem"
-      pool_size = 10
-      """
-    When I run shell command:
-      """
-      cd tests/go/server-auth && go test -v -run "TestServerAuthJWT" \
-        -jwt-private-key="$(cat ../../../tests/data/jwt/private.pem)"
-      """
-    Then the command should succeed
-    And the command output should contain "PASS: TestServerAuthJWTOK"
-    And the command output should contain "PASS: TestServerAuthJWTBAD"

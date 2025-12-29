@@ -5,6 +5,7 @@ Feature: Database alias functionality tests
   Background:
     Given PostgreSQL started with pg_hba.conf:
       """
+      local   all             all                                     trust
       host    all             all             127.0.0.1/32            trust
       host    all             all             ::1/128                 trust
       """
@@ -49,6 +50,6 @@ Feature: Database alias functionality tests
     When I run shell command:
       """
       export DATABASE_URL_ALIAS="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db_alias?sslmode=disable"
-      cd tests/go/alias && go test -v -run "^TestAlias$"
+      cd tests/go && go test -v -run "^TestAlias$" ./alias
       """
     Then the command should succeed

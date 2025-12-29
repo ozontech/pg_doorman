@@ -47,7 +47,7 @@ Feature: Go extended protocol tests
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
       export PG_PORT="${PG_PORT}"
-      cd tests/go/extended && go test -v -run Test_ExtendedProtocol$
+      cd tests/go && go test -v -run Test_ExtendedProtocol$ ./extended
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_ExtendedProtocol"
@@ -56,7 +56,7 @@ Feature: Go extended protocol tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/extended && go test -v -run Test_SleepBatch
+      cd tests/go && go test -v -run Test_SleepBatch ./extended
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_SleepBatch"
@@ -65,7 +65,7 @@ Feature: Go extended protocol tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/extended && go test -v -run Test_ErrorBatch
+      cd tests/go && go test -v -run Test_ErrorBatch ./extended
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_ErrorBatch"
@@ -75,7 +75,7 @@ Feature: Go extended protocol tests
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
       export PG_PORT="${PG_PORT}"
-      cd tests/go/extended && go test -v -run Test_RaceExtendedProtocol
+      cd tests/go && go test -v -run Test_RaceExtendedProtocol ./extended
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_RaceExtendedProtocol"
@@ -84,7 +84,7 @@ Feature: Go extended protocol tests
     When I run shell command:
       """
       export DATABASE_URL_DISCONNECT="postgresql://example_user_disconnect@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/extended && go test -v -run Test_Disconnect
+      cd tests/go && go test -v -run Test_Disconnect ./extended
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_Disconnect"

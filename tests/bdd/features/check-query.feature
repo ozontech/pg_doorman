@@ -1,10 +1,11 @@
-@go @check_query
+@go @check-query
 Feature: Check query functionality tests
   Test pg_doorman check query functionality
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
       """
+      local   all             all                                     trust
       host    all             all             127.0.0.1/32            trust
       host    all             all             ::1/128                 trust
       """
@@ -38,6 +39,6 @@ Feature: Check query functionality tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/check-query && go test -v -run "^TestCheckQuery$"
+      cd tests/go && go test -v -run "^TestCheckQuery$" ./check-query
       """
     Then the command should succeed

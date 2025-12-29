@@ -40,7 +40,7 @@ Feature: Go prepared statements tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/prepared && go test -v -run TestLibPQPrepared
+      cd tests/go && go test -v -run TestLibPQPrepared ./prepared
       """
     Then the command should succeed
     And the command output should contain "PASS: TestLibPQPrepared"
@@ -49,7 +49,7 @@ Feature: Go prepared statements tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/prepared && go test -v -run TestLibPQOnePrepared
+      cd tests/go && go test -v -run TestLibPQOnePrepared ./prepared
       """
     Then the command should succeed
     And the command output should contain "PASS: TestLibPQOnePrepared"
@@ -58,7 +58,7 @@ Feature: Go prepared statements tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/prepared && go test -v -run TestPgxV4Prepared
+      cd tests/go && go test -v -run TestPgxV4Prepared ./prepared
       """
     Then the command should succeed
     And the command output should contain "PASS: TestPgxV4Prepared"

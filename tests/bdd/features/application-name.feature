@@ -23,12 +23,12 @@ Feature: Application name tests
       admin_username = "admin"
       admin_password = "admin"
       pg_hba = {path = "${DOORMAN_HBA_FILE}"}
-      application_name_add_user = true
 
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
       pool_mode = "transaction"
+      application_name = "doorman_example_user_1"
 
       [pools.example_db.users.0]
       username = "example_user_1"
@@ -40,7 +40,7 @@ Feature: Application name tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable&application_name=doorman"
-      cd tests/go/application-name && go test -v -run Test_ApplicationName
+      cd tests/go && go test -v -run Test_ApplicationName ./application-name
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_ApplicationName"

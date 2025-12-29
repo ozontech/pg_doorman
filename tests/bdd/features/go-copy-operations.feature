@@ -39,7 +39,7 @@ Feature: Go COPY operations tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/copy && go test -v -run "^Test_CopyFrom$"
+      cd tests/go && go test -v -run "^Test_CopyFrom$" ./copy
       """
     Then the command should succeed
 
@@ -47,6 +47,6 @@ Feature: Go COPY operations tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/copy && go test -v -run "^Test_Copy$"
+      cd tests/go && go test -v -run "^Test_Copy$" ./copy
       """
     Then the command should succeed

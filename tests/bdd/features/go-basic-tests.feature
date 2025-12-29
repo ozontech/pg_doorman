@@ -39,7 +39,7 @@ Feature: Go basic client tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/basic && go test -v -run "^TestLibPQ$"
+      cd tests/go && go test -v -run "^TestLibPQ$" ./basic
       """
     Then the command should succeed
 
@@ -47,7 +47,7 @@ Feature: Go basic client tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/basic && go test -v -run "^TestPGXV4$"
+      cd tests/go && go test -v -run "^TestPGXV4$" ./basic
       """
     Then the command should succeed
 

@@ -39,6 +39,6 @@ Feature: Deallocate statements tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
-      cd tests/go/deallocate && go test -v -run "^TestDeallocate$"
+      cd tests/go && go test -v -run "^TestDeallocate$" ./deallocate
       """
     Then the command should succeed

@@ -142,7 +142,7 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
     // Use null for stdout/stderr to prevent hanging on pipe reads
     // When tests fail, the pipes would block indefinitely waiting for EOF
     // Log files can be used for debugging if needed
-    let child = Command::new(&doorman_binary)
+    let child = Command::new(doorman_binary)
         .arg(&config_path)
         .arg("-l")
         .arg("debug")
@@ -185,7 +185,7 @@ async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
             }
             Ok(None) => {
                 // Process still running, try to connect
-                if let Ok(_) = std::net::TcpStream::connect(format!("127.0.0.1:{}", port)) {
+                if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
                     success = true;
                     break;
                 }
