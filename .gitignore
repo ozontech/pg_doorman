@@ -8,6 +8,7 @@ result
 /vendor
 /vendor-licenses.json
 /vendor-licenses.txt
+.output.txt
 
 # Python-generated files
 __pycache__/

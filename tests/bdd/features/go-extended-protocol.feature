@@ -15,6 +15,7 @@ Feature: Go extended protocol tests
       host all example_user_disconnect 127.0.0.1/32 trust
       host all all 127.0.0.1/32 md5
       """
+    And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
       [general]
@@ -25,6 +26,8 @@ Feature: Go extended protocol tests
       prepared_statements_cache_size = 10000
       admin_username = "admin"
       admin_password = "admin"
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
 
       [pools.example_db]
       server_host = "127.0.0.1"

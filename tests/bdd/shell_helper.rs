@@ -2,9 +2,15 @@ use crate::world::{DoormanWorld, TestCommandResult};
 use cucumber::{gherkin::Step, then, when};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use std::io::{BufRead, BufReader};
+use std::sync::mpsc;
+use std::thread;
 
 /// Default timeout for shell commands (10 minutes)
 const COMMAND_TIMEOUT_SECS: u64 = 600;
+
+/// Threshold after which we start streaming output (30 seconds)
+const STREAMING_THRESHOLD_SECS: u64 = 30;
 
 /// Helper function to run a shell command and capture the result with timeout
 fn run_command(command: &str, working_dir: Option<&str>) -> TestCommandResult {
@@ -12,6 +18,7 @@ fn run_command(command: &str, working_dir: Option<&str>) -> TestCommandResult {
 }
 
 /// Helper function to run a shell command with a specific timeout
+/// If execution takes longer than STREAMING_THRESHOLD_SECS, stdout/stderr will be streamed to console
 fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: Duration) -> TestCommandResult {
     let shell = if cfg!(target_os = "windows") {
         "cmd"
@@ -43,28 +50,73 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
 
     match cmd.spawn() {
         Ok(mut child) => {
-            // Wait for the command with timeout
             let start = std::time::Instant::now();
+            let streaming_threshold = Duration::from_secs(STREAMING_THRESHOLD_SECS);
+            
+            // Take stdout and stderr handles
+            let stdout_handle = child.stdout.take();
+            let stderr_handle = child.stderr.take();
+            
+            // Create channels for collecting output from threads
+            let (stdout_tx, stdout_rx) = mpsc::channel::<String>();
+            let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
+            
+            // Flag to signal when streaming should start (shared via atomic)
+            let streaming_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let streaming_started_stdout = streaming_started.clone();
+            let streaming_started_stderr = streaming_started.clone();
+            
+            // Spawn thread to read stdout
+            let stdout_thread = stdout_handle.map(|stdout| {
+                thread::spawn(move || {
+                    let reader = BufReader::new(stdout);
+                    let mut collected = String::new();
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            if streaming_started_stdout.load(std::sync::atomic::Ordering::Relaxed) {
+                                eprintln!("[STDOUT] {}", line);
+                            }
+                            collected.push_str(&line);
+                            collected.push('\n');
+                        }
+                    }
+                    let _ = stdout_tx.send(collected);
+                })
+            });
+            
+            // Spawn thread to read stderr
+            let stderr_thread = stderr_handle.map(|stderr| {
+                thread::spawn(move || {
+                    let reader = BufReader::new(stderr);
+                    let mut collected = String::new();
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            if streaming_started_stderr.load(std::sync::atomic::Ordering::Relaxed) {
+                                eprintln!("[STDERR] {}", line);
+                            }
+                            collected.push_str(&line);
+                            collected.push('\n');
+                        }
+                    }
+                    let _ = stderr_tx.send(collected);
+                })
+            });
+            
+            // Wait for the command with timeout
             loop {
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        // Process finished, capture output
-                        let stdout = child.stdout.take()
-                            .map(|mut s| {
-                                use std::io::Read;
-                                let mut buf = String::new();
-                                let _ = s.read_to_string(&mut buf);
-                                buf
-                            })
-                            .unwrap_or_default();
-                        let stderr = child.stderr.take()
-                            .map(|mut s| {
-                                use std::io::Read;
-                                let mut buf = String::new();
-                                let _ = s.read_to_string(&mut buf);
-                                buf
-                            })
-                            .unwrap_or_default();
+                        // Process finished, wait for output threads to complete
+                        if let Some(t) = stdout_thread {
+                            let _ = t.join();
+                        }
+                        if let Some(t) = stderr_thread {
+                            let _ = t.join();
+                        }
+                        
+                        // Collect output from channels
+                        let stdout = stdout_rx.recv().unwrap_or_default();
+                        let stderr = stderr_rx.recv().unwrap_or_default();
                         
                         return TestCommandResult {
                             exit_code: status.code(),
@@ -74,17 +126,39 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                         };
                     }
                     Ok(None) => {
-                        // Process still running, check timeout
-                        if start.elapsed() > timeout {
+                        let elapsed = start.elapsed();
+                        
+                        // Check if we should start streaming
+                        if elapsed > streaming_threshold && 
+                           !streaming_started.load(std::sync::atomic::Ordering::Relaxed) {
+                            streaming_started.store(true, std::sync::atomic::Ordering::Relaxed);
+                            eprintln!("\n=== Command running for more than {} seconds, streaming output ===", 
+                                     STREAMING_THRESHOLD_SECS);
+                        }
+                        
+                        // Check timeout
+                        if elapsed > timeout {
                             // Timeout reached, kill the process
                             let _ = child.kill();
                             let _ = child.wait();
                             
+                            // Wait for output threads
+                            if let Some(t) = stdout_thread {
+                                let _ = t.join();
+                            }
+                            if let Some(t) = stderr_thread {
+                                let _ = t.join();
+                            }
+                            
+                            let stdout = stdout_rx.recv().unwrap_or_default();
+                            let stderr_collected = stderr_rx.recv().unwrap_or_default();
+                            
                             return TestCommandResult {
                                 exit_code: None,
-                                stdout: String::new(),
+                                stdout,
                                 stderr: format!(
-                                    "Command timed out after {} seconds and was killed",
+                                    "{}\nCommand timed out after {} seconds and was killed",
+                                    stderr_collected,
                                     timeout.as_secs()
                                 ),
                                 success: false,

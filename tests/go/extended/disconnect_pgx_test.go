@@ -101,6 +101,33 @@ func testDisconnectWithCustomFunc(t *testing.T, fnBefore func(context.Context, *
 	}
 }
 
+// deadlineConn wraps a net.Conn and allows setting a deadline on demand
+type deadlineConn struct {
+	net.Conn
+	deadlineSet chan struct{}
+	deadline    time.Duration
+}
+
+func (c *deadlineConn) Read(b []byte) (n int, err error) {
+	select {
+	case <-c.deadlineSet:
+		// Deadline was triggered, set it now
+		_ = c.Conn.SetDeadline(time.Now().Add(c.deadline))
+	default:
+	}
+	return c.Conn.Read(b)
+}
+
+func (c *deadlineConn) Write(b []byte) (n int, err error) {
+	select {
+	case <-c.deadlineSet:
+		// Deadline was triggered, set it now
+		_ = c.Conn.SetDeadline(time.Now().Add(c.deadline))
+	default:
+	}
+	return c.Conn.Write(b)
+}
+
 func runDisconnectWithCustomFunc(t *testing.T, fnBefore func(context.Context, *pgx.Conn) error) int32 {
 	t.Helper()
 	ctx := context.Background()
@@ -108,6 +135,9 @@ func runDisconnectWithCustomFunc(t *testing.T, fnBefore func(context.Context, *p
 	require.NoError(t, parseConfig)
 
 	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+
+	// Channel to signal when to set the deadline
+	triggerDeadline := make(chan struct{})
 
 	// Allow only the first dial to succeed; subsequent dials (e.g., cancel) should fail to simulate a vanished client.
 	onlyFirst := true
@@ -120,9 +150,9 @@ func runDisconnectWithCustomFunc(t *testing.T, fnBefore func(context.Context, *p
 		if err != nil {
 			return nil, err
 		}
-		assert.NoError(t, c.SetDeadline(time.Now().Add(clientDeadline)))
 		onlyFirst = false
-		return c, nil
+		// Wrap the connection to delay setting the deadline
+		return &deadlineConn{Conn: c, deadlineSet: triggerDeadline, deadline: clientDeadline}, nil
 	}
 
 	session, errOpen := pgx.ConnectConfig(ctx, config)
@@ -131,6 +161,9 @@ func runDisconnectWithCustomFunc(t *testing.T, fnBefore func(context.Context, *p
 
 	require.NoError(t, fnBefore(ctx, session))
 	pidBefore := getBackendPid(ctx, session, t)
+
+	// Trigger the deadline now, before the long-running query
+	close(triggerDeadline)
 
 	// This pair guarantees the client-side deadline will hit during execution.
 	_, err := session.Exec(ctx, "select pg_sleep(0.2); select generate_series(1, 10000);")
