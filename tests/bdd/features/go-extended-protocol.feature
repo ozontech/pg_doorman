@@ -88,3 +88,22 @@ Feature: Go extended protocol tests
       """
     Then the command should succeed
     And the command output should contain "PASS: Test_Disconnect"
+
+  Scenario: Test cancel query via TLS
+    When I run shell command:
+      """
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
+      cd tests/go && go test -v -run TestCancelTLSQuery ./extended
+      """
+    Then the command should succeed
+    And the command output should contain "PASS: TestCancelTLSQuery"
+
+  Scenario: Test race stop handling
+    When I run shell command:
+      """
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
+      export PG_PORT="${PG_PORT}"
+      cd tests/go && go test -v -run Test_RaceStop ./extended
+      """
+    Then the command should succeed
+    And the command output should contain "PASS: Test_RaceStop"
