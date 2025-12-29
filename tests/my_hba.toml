@@ -1,4 +1,0 @@
-[general]
-# also supported:
-# pg_hba.content = "...."
-pg_hba = { path = "./tests/pg_hba.conf" }

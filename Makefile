@@ -20,6 +20,9 @@ install: build
 test:
 	cargo test
 
+bdd-test:
+	cargo test --test bdd
+
 clippy:
 	cargo clippy -- --deny "warnings"
 
