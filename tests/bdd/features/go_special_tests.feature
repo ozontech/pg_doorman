@@ -11,6 +11,7 @@ Feature: Go special functionality tests
       hostssl all             all             127.0.0.1/32            trust
       """
     And fixtures from "tests/fixture.sql" applied
+    And self-signed SSL certificates are generated
     And pg_doorman hba file contains:
       """
       hostnossl all example_user_nopassword 127.0.0.1/32 reject
@@ -33,6 +34,8 @@ Feature: Go special functionality tests
       host = "127.0.0.1"
       port = ${DOORMAN_PORT}
       pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
       virtual_pool_count = 1
       worker_threads = 2
       prepared_statements = true
@@ -122,6 +125,7 @@ Feature: Go special functionality tests
     When I run shell command:
       """
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
+      export DATABASE_URL_ROLLBACK="postgresql://example_user_rollback:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
       cd tests/go && go test -v -run Test_RollbackSavePoint
       """
     Then the command should succeed

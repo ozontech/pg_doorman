@@ -36,6 +36,10 @@ pub struct DoormanWorld {
     pub doorman_config_file: Option<NamedTempFile>,
     /// Temporary pg_hba file for pg_doorman (kept alive while process runs)
     pub doorman_hba_file: Option<NamedTempFile>,
+    /// Temporary SSL private key file for pg_doorman
+    pub ssl_key_file: Option<NamedTempFile>,
+    /// Temporary SSL certificate file for pg_doorman
+    pub ssl_cert_file: Option<NamedTempFile>,
     /// Background query task handle
     pub background_query_handle: Option<JoinHandle<()>>,
     /// Background query client (wrapped in Arc<Mutex> for cancellation)

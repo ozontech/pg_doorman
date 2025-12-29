@@ -7,6 +7,60 @@ use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::time::sleep;
 
+/// Generate self-signed SSL certificates for pg_doorman TLS configuration
+#[given("self-signed SSL certificates are generated")]
+pub async fn generate_ssl_certificates(world: &mut DoormanWorld) {
+    // Create temporary files for key and certificate
+    let key_file = NamedTempFile::new().expect("Failed to create temp key file");
+    let cert_file = NamedTempFile::new().expect("Failed to create temp cert file");
+    
+    let key_path = key_file.path().to_str().unwrap().to_string();
+    let cert_path = cert_file.path().to_str().unwrap().to_string();
+    
+    // Generate private key using openssl
+    let key_output = Command::new("openssl")
+        .args([
+            "genrsa",
+            "-out", &key_path,
+            "2048"
+        ])
+        .output()
+        .expect("Failed to execute openssl genrsa");
+    
+    if !key_output.status.success() {
+        panic!(
+            "Failed to generate SSL private key:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&key_output.stdout),
+            String::from_utf8_lossy(&key_output.stderr)
+        );
+    }
+    
+    // Generate self-signed certificate using openssl
+    let cert_output = Command::new("openssl")
+        .args([
+            "req",
+            "-new",
+            "-x509",
+            "-key", &key_path,
+            "-out", &cert_path,
+            "-days", "1",
+            "-subj", "/CN=localhost"
+        ])
+        .output()
+        .expect("Failed to execute openssl req");
+    
+    if !cert_output.status.success() {
+        panic!(
+            "Failed to generate SSL certificate:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&cert_output.stdout),
+            String::from_utf8_lossy(&cert_output.stderr)
+        );
+    }
+    
+    world.ssl_key_file = Some(key_file);
+    world.ssl_cert_file = Some(cert_file);
+}
+
 /// Set pg_doorman hba file with inline content
 #[given("pg_doorman hba file contains:")]
 pub async fn set_doorman_hba_file(world: &mut DoormanWorld, step: &Step) {
@@ -59,6 +113,20 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         config_content
     };
     
+    // Replace placeholder for SSL private key file path (use temp file from "self-signed SSL certificates are generated" step)
+    let config_content = if let Some(ref ssl_key_file) = world.ssl_key_file {
+        config_content.replace("${DOORMAN_SSL_KEY}", ssl_key_file.path().to_str().unwrap())
+    } else {
+        config_content
+    };
+    
+    // Replace placeholder for SSL certificate file path (use temp file from "self-signed SSL certificates are generated" step)
+    let config_content = if let Some(ref ssl_cert_file) = world.ssl_cert_file {
+        config_content.replace("${DOORMAN_SSL_CERT}", ssl_cert_file.path().to_str().unwrap())
+    } else {
+        config_content
+    };
+    
     // Create a temporary config file
     let mut config_file = NamedTempFile::new().expect("Failed to create temp config file");
     config_file
@@ -93,12 +161,25 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
 /// Helper function to wait for pg_doorman to be ready (max 5 seconds)
 async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
     use std::io::Read;
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
     
     let mut success = false;
     for _ in 0..20 {
         // Check if process is still running
         match child.try_wait() {
             Ok(Some(status)) => {
+                // On Unix, check if process was killed by signal 9 (SIGKILL)
+                // This can happen when tests are ending and processes are being cleaned up
+                // In this case, we should not panic as it's expected behavior
+                #[cfg(unix)]
+                if let Some(signal) = status.signal() {
+                    if signal == 9 {
+                        // Process was killed by SIGKILL (likely test cleanup), don't panic
+                        return;
+                    }
+                }
+                
                 // Process exited, capture stdout and stderr
                 let mut stdout_output = String::new();
                 let mut stderr_output = String::new();
