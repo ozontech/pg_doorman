@@ -14,6 +14,7 @@ Feature: Rollback functionality tests
       """
       host all all 127.0.0.1/32 md5
       """
+    And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
       [general]
@@ -22,6 +23,8 @@ Feature: Rollback functionality tests
       pg_hba = {path = "${DOORMAN_HBA_FILE}"}
       admin_username = "admin"
       admin_password = "admin"
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
 
       [pools.example_db]
       server_host = "127.0.0.1"

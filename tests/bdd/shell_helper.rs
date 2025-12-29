@@ -293,6 +293,8 @@ pub async fn command_should_fail(world: &mut DoormanWorld) {
         .expect("No command has been run");
 
     if result.success {
+        let doorman_logs = capture_doorman_logs(world);
+        
         // IMPORTANT: Stop pg_doorman BEFORE panic to prevent hanging
         if let Some(ref mut child) = world.doorman_process {
             crate::doorman_helper::stop_doorman(child);
@@ -300,8 +302,8 @@ pub async fn command_should_fail(world: &mut DoormanWorld) {
         world.doorman_process = None;
         
         panic!(
-            "Command succeeded but was expected to fail\nstdout:\n{}\nstderr:\n{}",
-            result.stdout, result.stderr
+            "Command succeeded but was expected to fail\nstdout:\n{}\nstderr:\n{}{}",
+            result.stdout, result.stderr, doorman_logs
         );
     }
 }
@@ -317,6 +319,8 @@ pub async fn command_output_should_contain(world: &mut DoormanWorld, text: Strin
     let combined_output = format!("{}{}", result.stdout, result.stderr);
 
     if !combined_output.contains(&text) {
+        let doorman_logs = capture_doorman_logs(world);
+        
         // IMPORTANT: Stop pg_doorman BEFORE panic to prevent hanging
         if let Some(ref mut child) = world.doorman_process {
             crate::doorman_helper::stop_doorman(child);
@@ -324,8 +328,8 @@ pub async fn command_output_should_contain(world: &mut DoormanWorld, text: Strin
         world.doorman_process = None;
         
         panic!(
-            "Command output does not contain '{}'\nstdout:\n{}\nstderr:\n{}",
-            text, result.stdout, result.stderr
+            "Command output does not contain '{}'\nstdout:\n{}\nstderr:\n{}{}",
+            text, result.stdout, result.stderr, doorman_logs
         );
     }
 }
@@ -341,6 +345,8 @@ pub async fn command_output_should_not_contain(world: &mut DoormanWorld, text: S
     let combined_output = format!("{}{}", result.stdout, result.stderr);
 
     if combined_output.contains(&text) {
+        let doorman_logs = capture_doorman_logs(world);
+        
         // IMPORTANT: Stop pg_doorman BEFORE panic to prevent hanging
         if let Some(ref mut child) = world.doorman_process {
             crate::doorman_helper::stop_doorman(child);
@@ -348,8 +354,8 @@ pub async fn command_output_should_not_contain(world: &mut DoormanWorld, text: S
         world.doorman_process = None;
         
         panic!(
-            "Command output contains '{}' but should not\nstdout:\n{}\nstderr:\n{}",
-            text, result.stdout, result.stderr
+            "Command output contains '{}' but should not\nstdout:\n{}\nstderr:\n{}{}",
+            text, result.stdout, result.stderr, doorman_logs
         );
     }
 }

@@ -10,6 +10,7 @@ Feature: .NET client tests
       host    all             all             ::1/128                 trust
       """
     And fixtures from "tests/fixture.sql" applied
+    And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
       [general]
@@ -20,6 +21,8 @@ Feature: .NET client tests
       admin_password = "admin"
       prepared_statements = true
       prepared_statements_cache_size = 10000
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
 
       [pools.example_db]
       server_host = "127.0.0.1"

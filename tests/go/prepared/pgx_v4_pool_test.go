@@ -3,6 +3,7 @@ package doorman_test
 import (
 	"context"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,14 +35,17 @@ func TestPgxV4Prepared(t *testing.T) {
 	assert.NoError(t, err)
 	concurrency := make(chan struct{}, 100)
 	var count uint32
+	var wg sync.WaitGroup
 	for {
 		concurrency <- struct{}{}
 		if atomic.LoadUint32(&count) >= 20000 {
-			return
+			break
 		}
+		wg.Add(1)
 		go func() {
 			defer func() {
 				<-concurrency
+				wg.Done()
 			}()
 			tx, err := db.Begin(ctx)
 			assert.NoError(t, err)
@@ -66,4 +70,5 @@ func TestPgxV4Prepared(t *testing.T) {
 			assert.NoError(t, tx.Commit(ctx))
 		}()
 	}
+	wg.Wait()
 }

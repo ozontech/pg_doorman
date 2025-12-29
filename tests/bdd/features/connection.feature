@@ -9,6 +9,7 @@ Feature: Connection through pg_doorman
       host    all             all             ::1/128                 trust
       """
     And fixtures from "tests/fixture.sql" applied
+    And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
       [general]
@@ -17,6 +18,8 @@ Feature: Connection through pg_doorman
       connect_timeout = 5000
       admin_username = "admin"
       admin_password = "admin"
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
 
       [pools.postgres]
       server_host = "127.0.0.1"

@@ -14,6 +14,7 @@ Feature: Go prepared statements tests
       """
       host all all 127.0.0.1/32 md5
       """
+    And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
       [general]
@@ -24,6 +25,8 @@ Feature: Go prepared statements tests
       pg_hba = {path = "${DOORMAN_HBA_FILE}"}
       prepared_statements = true
       prepared_statements_cache_size = 10000
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
 
       [pools.example_db]
       server_host = "127.0.0.1"

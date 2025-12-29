@@ -10,6 +10,7 @@ Feature: Node.js client tests
       host    all             all             ::1/128                 trust
       """
     And fixtures from "tests/fixture.sql" applied
+    And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
       [general]
@@ -18,6 +19,8 @@ Feature: Node.js client tests
       connect_timeout = 5000
       admin_username = "admin"
       admin_password = "admin"
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
 
       [pools.example_db]
       server_host = "127.0.0.1"
