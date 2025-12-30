@@ -1,0 +1,20 @@
+name: check licenses.
+
+on:
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+jobs:
+
+  licenses:
+    name: Check licenses
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Check licenses
+        run: |
+          make vendor-licenses.txt
