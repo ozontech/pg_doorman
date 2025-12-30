@@ -20,6 +20,7 @@ use crate::messages::{
 };
 
 // Mock implementation for AsyncReadExt
+#[allow(dead_code)]
 struct MockReader {
     data: Vec<Vec<u8>>,
     current_index: usize,
@@ -45,6 +46,7 @@ impl AsyncRead for MockReader {
 }
 
 // Mock implementation for AsyncWriteExt
+#[allow(dead_code)]
 struct MockWriter {
     written: Arc<Mutex<Vec<Vec<u8>>>>,
 }
@@ -69,6 +71,7 @@ impl AsyncWrite for MockWriter {
 }
 
 // Helper function to run async tests
+#[allow(dead_code)]
 struct MockWaker;
 impl Wake for MockWaker {
     fn wake(self: Arc<Self>) {}

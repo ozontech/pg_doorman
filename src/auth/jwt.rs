@@ -132,13 +132,37 @@ pub async fn get_user_name_from_jwt(
 mod tests {
     use super::*;
     use jwt::{AlgorithmType, SignWithKey};
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Helper function to generate temporary RSA key pair
+    fn generate_temp_rsa_keys() -> (NamedTempFile, NamedTempFile) {
+        // Generate RSA key pair
+        let rsa = Rsa::generate(2048).unwrap();
+
+        // Create private key PEM
+        let private_pem = rsa.private_key_to_pem().unwrap();
+        let mut private_file = NamedTempFile::new().unwrap();
+        private_file.write_all(&private_pem).unwrap();
+        private_file.flush().unwrap();
+
+        // Create public key PEM
+        let public_pem = rsa.public_key_to_pem().unwrap();
+        let mut public_file = NamedTempFile::new().unwrap();
+        public_file.write_all(&public_pem).unwrap();
+        public_file.flush().unwrap();
+
+        (private_file, public_file)
+    }
 
     #[tokio::test]
     async fn test_token() {
-        load_jwt_pub_key("./tests/data/jwt/public.pem".to_string())
-            .await
-            .unwrap();
-        let private_pem = fs::read_to_string("./tests/data/jwt/private.pem").unwrap();
+        let (private_file, public_file) = generate_temp_rsa_keys();
+        let private_path = private_file.path().to_str().unwrap().to_string();
+        let public_path = public_file.path().to_str().unwrap().to_string();
+
+        load_jwt_pub_key(public_path.clone()).await.unwrap();
+        let private_pem = fs::read_to_string(&private_path).unwrap();
         let rs256_private_key = PKeyWithDigest {
             digest: MessageDigest::sha256(),
             key: PKey::private_key_from_pem(private_pem.as_ref()).unwrap(),
@@ -160,15 +184,17 @@ mod tests {
             .sign_with_key(&rs256_private_key)
             .unwrap();
         let token_str = signed_token.as_str();
-        get_user_name_from_jwt(
-            "./tests/data/jwt/public.pem".to_string(),
-            token_str.to_string(),
-        )
-        .await
-        .unwrap();
+        get_user_name_from_jwt(public_path, token_str.to_string())
+            .await
+            .unwrap();
     }
+
     #[tokio::test]
     async fn test_generate_and_validate() {
+        let (private_file, public_file) = generate_temp_rsa_keys();
+        let private_path = private_file.path().to_str().unwrap().to_string();
+        let public_path = public_file.path().to_str().unwrap().to_string();
+
         let username = "test";
         let mut claims = PreferredUsernameClaims {
             default_claims: Default::default(),
@@ -179,20 +205,15 @@ mod tests {
             .unwrap()
             .as_secs();
         claims.default_claims.expiration = Some(now + 2);
-        let token = match sign_with_jwt_priv_key(claims, "./tests/data/jwt/private.pem".to_string())
-            .await
-        {
+        let token = match sign_with_jwt_priv_key(claims, private_path).await {
             Ok(token) => token,
             Err(err) => panic!("{err:?}"),
         };
-        load_jwt_pub_key("./tests/data/jwt/public.pem".to_string())
-            .await
-            .unwrap();
-        let token_username =
-            match get_user_name_from_jwt("./tests/data/jwt/public.pem".to_string(), token).await {
-                Ok(username) => username,
-                Err(err) => panic!("{err:?}"),
-            };
+        load_jwt_pub_key(public_path.clone()).await.unwrap();
+        let token_username = match get_user_name_from_jwt(public_path, token).await {
+            Ok(username) => username,
+            Err(err) => panic!("{err:?}"),
+        };
         assert_eq!(username, token_username);
     }
 }

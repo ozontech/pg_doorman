@@ -1,10 +1,10 @@
 use crate::world::{DoormanWorld, TestCommandResult};
 use cucumber::{gherkin::Step, then, when};
-use std::process::{Command, Stdio};
-use std::time::Duration;
 use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 /// Default timeout for shell commands (10 minutes)
 const COMMAND_TIMEOUT_SECS: u64 = 600;
@@ -14,12 +14,20 @@ const STREAMING_THRESHOLD_SECS: u64 = 30;
 
 /// Helper function to run a shell command and capture the result with timeout
 fn run_command(command: &str, working_dir: Option<&str>) -> TestCommandResult {
-    run_command_with_timeout(command, working_dir, Duration::from_secs(COMMAND_TIMEOUT_SECS))
+    run_command_with_timeout(
+        command,
+        working_dir,
+        Duration::from_secs(COMMAND_TIMEOUT_SECS),
+    )
 }
 
 /// Helper function to run a shell command with a specific timeout
 /// If execution takes longer than STREAMING_THRESHOLD_SECS, stdout/stderr will be streamed to console
-fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: Duration) -> TestCommandResult {
+fn run_command_with_timeout(
+    command: &str,
+    working_dir: Option<&str>,
+    timeout: Duration,
+) -> TestCommandResult {
     let shell = if cfg!(target_os = "windows") {
         "cmd"
     } else {
@@ -52,20 +60,20 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
         Ok(mut child) => {
             let start = std::time::Instant::now();
             let streaming_threshold = Duration::from_secs(STREAMING_THRESHOLD_SECS);
-            
+
             // Take stdout and stderr handles
             let stdout_handle = child.stdout.take();
             let stderr_handle = child.stderr.take();
-            
+
             // Create channels for collecting output from threads
             let (stdout_tx, stdout_rx) = mpsc::channel::<String>();
             let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
-            
+
             // Flag to signal when streaming should start (shared via atomic)
             let streaming_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let streaming_started_stdout = streaming_started.clone();
             let streaming_started_stderr = streaming_started.clone();
-            
+
             // Spawn thread to read stdout
             let stdout_thread = stdout_handle.map(|stdout| {
                 thread::spawn(move || {
@@ -81,7 +89,7 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                     let _ = stdout_tx.send(collected);
                 })
             });
-            
+
             // Spawn thread to read stderr
             let stderr_thread = stderr_handle.map(|stderr| {
                 thread::spawn(move || {
@@ -97,7 +105,7 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                     let _ = stderr_tx.send(collected);
                 })
             });
-            
+
             // Wait for the command with timeout
             loop {
                 match child.try_wait() {
@@ -109,11 +117,11 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                         if let Some(t) = stderr_thread {
                             let _ = t.join();
                         }
-                        
+
                         // Collect output from channels
                         let stdout = stdout_rx.recv().unwrap_or_default();
                         let stderr = stderr_rx.recv().unwrap_or_default();
-                        
+
                         return TestCommandResult {
                             exit_code: status.code(),
                             stdout,
@@ -123,21 +131,22 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                     }
                     Ok(None) => {
                         let elapsed = start.elapsed();
-                        
+
                         // Check if we should start streaming
-                        if elapsed > streaming_threshold && 
-                           !streaming_started.load(std::sync::atomic::Ordering::Relaxed) {
+                        if elapsed > streaming_threshold
+                            && !streaming_started.load(std::sync::atomic::Ordering::Relaxed)
+                        {
                             streaming_started.store(true, std::sync::atomic::Ordering::Relaxed);
                             eprintln!("\n=== Command running for more than {} seconds, streaming output ===", 
                                      STREAMING_THRESHOLD_SECS);
                         }
-                        
+
                         // Check timeout
                         if elapsed > timeout {
                             // Timeout reached, kill the process
                             let _ = child.kill();
                             let _ = child.wait();
-                            
+
                             // Wait for output threads
                             if let Some(t) = stdout_thread {
                                 let _ = t.join();
@@ -145,10 +154,10 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                             if let Some(t) = stderr_thread {
                                 let _ = t.join();
                             }
-                            
+
                             let stdout = stdout_rx.recv().unwrap_or_default();
                             let stderr_collected = stderr_rx.recv().unwrap_or_default();
-                            
+
                             return TestCommandResult {
                                 exit_code: None,
                                 stdout,
@@ -229,7 +238,7 @@ fn capture_doorman_logs(world: &mut DoormanWorld) -> String {
     if let Some(ref mut child) = world.doorman_process {
         use std::io::Read;
         let mut result = String::new();
-        
+
         // Capture stdout
         if let Some(ref mut stdout) = child.stdout.take() {
             let mut stdout_logs = String::new();
@@ -238,7 +247,7 @@ fn capture_doorman_logs(world: &mut DoormanWorld) -> String {
                 result.push_str(&format!("\n=== pg_doorman stdout ===\n{}\n", stdout_logs));
             }
         }
-        
+
         // Capture stderr
         if let Some(ref mut stderr) = child.stderr.take() {
             let mut stderr_logs = String::new();
@@ -247,7 +256,7 @@ fn capture_doorman_logs(world: &mut DoormanWorld) -> String {
                 result.push_str(&format!("\n=== pg_doorman stderr ===\n{}\n", stderr_logs));
             }
         }
-        
+
         if !result.is_empty() {
             return result;
         }
@@ -265,14 +274,14 @@ pub async fn command_should_succeed(world: &mut DoormanWorld) {
 
     if !result.success {
         let doorman_logs = capture_doorman_logs(world);
-        
+
         // IMPORTANT: Stop pg_doorman BEFORE panic to prevent hanging
         // The after hook may not be called properly when panic occurs
         if let Some(ref mut child) = world.doorman_process {
             crate::doorman_helper::stop_doorman(child);
         }
         world.doorman_process = None;
-        
+
         panic!(
             "Command failed with exit code {:?}\nstdout:\n{}\nstderr:\n{}{}",
             result.exit_code, result.stdout, result.stderr, doorman_logs
@@ -290,13 +299,13 @@ pub async fn command_should_fail(world: &mut DoormanWorld) {
 
     if result.success {
         let doorman_logs = capture_doorman_logs(world);
-        
+
         // IMPORTANT: Stop pg_doorman BEFORE panic to prevent hanging
         if let Some(ref mut child) = world.doorman_process {
             crate::doorman_helper::stop_doorman(child);
         }
         world.doorman_process = None;
-        
+
         panic!(
             "Command succeeded but was expected to fail\nstdout:\n{}\nstderr:\n{}{}",
             result.stdout, result.stderr, doorman_logs
@@ -316,13 +325,13 @@ pub async fn command_output_should_contain(world: &mut DoormanWorld, text: Strin
 
     if !combined_output.contains(&text) {
         let doorman_logs = capture_doorman_logs(world);
-        
+
         // IMPORTANT: Stop pg_doorman BEFORE panic to prevent hanging
         if let Some(ref mut child) = world.doorman_process {
             crate::doorman_helper::stop_doorman(child);
         }
         world.doorman_process = None;
-        
+
         panic!(
             "Command output does not contain '{}'\nstdout:\n{}\nstderr:\n{}{}",
             text, result.stdout, result.stderr, doorman_logs
@@ -342,13 +351,13 @@ pub async fn command_output_should_not_contain(world: &mut DoormanWorld, text: S
 
     if combined_output.contains(&text) {
         let doorman_logs = capture_doorman_logs(world);
-        
+
         // IMPORTANT: Stop pg_doorman BEFORE panic to prevent hanging
         if let Some(ref mut child) = world.doorman_process {
             crate::doorman_helper::stop_doorman(child);
         }
         world.doorman_process = None;
-        
+
         panic!(
             "Command output contains '{}' but should not\nstdout:\n{}\nstderr:\n{}{}",
             text, result.stdout, result.stderr, doorman_logs
