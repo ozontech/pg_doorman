@@ -5,10 +5,13 @@
 
 REGISTRY ?= ghcr.io
 IMAGE_TAG ?= $(shell shasum -a 256 $(TESTS_DIR)nix/flake.lock | cut -c1-16)
-IMAGE_FULL_TAG := flake-$(IMAGE_TAG)
+IMAGE_FULL_TAG := test-runner-flake-$(IMAGE_TAG)
 
 # Directory where this Makefile is located (works when included from parent)
 TESTS_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
+
+# Get repository path for tagging
+REPO_PATH := $(shell git config --get remote.origin.url | sed 's/.*[:\/]\(.*\/\(.*\)\)\.git$$/\1/; s/.*[:\/]\(.*\/\(.*\)\)$/\1/' | tr '[:upper:]' '[:lower:]')
 
 help: ## Show this help message
 	@echo "pg_doorman Test Environment - Make targets"
@@ -31,8 +34,8 @@ local-build: ## Build Docker image locally using Docker (no Nix installation req
 	@echo "[INFO] Loading image into Docker..."
 	@docker load < $(TESTS_DIR)nix/docker-image.tar.gz
 	@rm -f $(TESTS_DIR)nix/docker-image.tar.gz
-	@echo "[INFO] Tagging image as $(REGISTRY)/$(shell git config --get remote.origin.url | sed 's/.*[:/]\(.*\)\/.*$$/\1/' | tr '[:upper:]' '[:lower:]')/pg_doorman-test-runner:flake-$(shell shasum -a 256 $(TESTS_DIR)nix/flake.lock | cut -c1-16)"
-	@docker tag pg_doorman-test-env:latest $(REGISTRY)/$(shell git config --get remote.origin.url | sed 's/.*[:/]\(.*\)\/.*$$/\1/' | tr '[:upper:]' '[:lower:]')/pg_doorman-test-runner:flake-$(shell shasum -a 256 $(TESTS_DIR)nix/flake.lock | cut -c1-16)
+	@echo "[INFO] Tagging image as $(REGISTRY)/$(REPO_PATH):$(IMAGE_FULL_TAG)"
+	@docker tag pg_doorman-test-env:latest $(REGISTRY)/$(REPO_PATH):$(IMAGE_FULL_TAG)
 	@echo "[SUCCESS] Image built and tagged successfully!"
 	@echo "[INFO] You can now run: make build"
 

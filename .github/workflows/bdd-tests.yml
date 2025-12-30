@@ -11,7 +11,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: pg_doorman-test-runner
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # Job 0: Check if image needs to be rebuilt
@@ -32,7 +32,7 @@ jobs:
       - name: Set lower case image name
         id: set-image-name
         run: |
-          IMAGE_NAME_LOWER=$(echo "${{ github.repository_owner }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "image_name=${IMAGE_NAME_LOWER}" >> $GITHUB_OUTPUT
           echo "Full image name: ${IMAGE_NAME_LOWER}"
 
@@ -41,9 +41,9 @@ jobs:
         run: |
           # Create a hash based on flake.lock content
           FLAKE_HASH=$(sha256sum tests/nix/flake.lock | cut -c1-16)
-          echo "tag=flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
+          echo "tag=test-runner-flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
           echo "Computed FLAKE_HASH: ${FLAKE_HASH}"
-          echo "Computed image tag: flake-${FLAKE_HASH}"
+          echo "Computed image tag: test-runner-flake-${FLAKE_HASH}"
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3

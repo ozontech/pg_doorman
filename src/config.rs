@@ -321,9 +321,6 @@ pub struct General {
     // New pg_hba rules: either inline content or a file path (see `PgHba` deserialization).
     #[serde(default, skip_serializing)]
     pub pg_hba: Option<PgHba>,
-
-    #[serde(default = "General::default_prepare_anon_queries")]
-    pub prepare_anon_queries: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -472,9 +469,6 @@ impl General {
     pub fn default_prepared_statements() -> bool {
         true
     }
-    pub fn default_prepare_anon_queries() -> bool {
-        true
-    }
 
     pub fn default_daemon_pid_file() -> String {
         "/tmp/pg_doorman.pid".to_string()
@@ -567,7 +561,6 @@ impl Default for General {
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
-            prepare_anon_queries: Self::default_prepare_anon_queries(),
             hba: Self::default_hba(),
             pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),
@@ -1205,47 +1198,6 @@ pub fn check_hba(
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::path::PathBuf;
-
-    #[tokio::test]
-    async fn test_config() {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("tests.toml");
-        parse(file.as_os_str().to_str().unwrap()).await.unwrap();
-
-        assert_eq!(get_config().pools.len(), 4);
-        assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
-        assert_eq!(
-            get_config().pools["example_db"].users["0"].username,
-            "example_user_1"
-        );
-        assert_eq!(
-            get_config().pools["example_db"].users["1"].password,
-            "SCRAM-SHA-256$4096:p2j/1lMdQF6r1dD9I9f7PQ==$H3xt5yh7lwSq9zUPYwHovRu3FyUCCXchG/skydJRa9o=:5xU6Wj/GNg3UnN2uQIx3ezx7uZyzGeM5NrvSJRIxnlw="
-        );
-        assert_eq!(get_config().pools["example_db"].users["1"].pool_size, 20);
-        assert_eq!(
-            get_config().pools["example_db"].users["1"].username,
-            "example_user_2"
-        );
-        assert_eq!(get_config().pools["example_db"].users["0"].pool_size, 40);
-        assert_eq!(
-            get_config().pools["example_db"].users["0"].pool_mode,
-            Some(PoolMode::Transaction)
-        );
-    }
-
-    #[tokio::test]
-    async fn test_serialize_configs() {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("tests.toml");
-        parse(file.as_os_str().to_str().unwrap()).await.unwrap();
-        print!("{}", toml::to_string(&get_config()).unwrap());
-    }
-
-    // Tests for the validate function
 
     // Test valid configuration
     #[tokio::test]

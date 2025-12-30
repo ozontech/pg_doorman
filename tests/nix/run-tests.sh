@@ -9,16 +9,19 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 compute_flake_tag() {
     local flake_hash
     flake_hash=$(shasum -a 256 "${SCRIPT_DIR}/flake.lock" | cut -c1-16)
-    echo "flake-${flake_hash}"
+    echo "test-runner-flake-${flake_hash}"
 }
 
 # Configuration
 REGISTRY="${REGISTRY:-ghcr.io}"
 # For local testing, we need the owner and the image name
-# Matches CI: ghcr.io/OWNER/pg_doorman-test-runner
-REPO_URL="${REPO:-$(git config --get remote.origin.url | sed 's/.*[:/]//; s/\.git$//')}"
-REPO_OWNER="${OWNER:-$(git config --get remote.origin.url | sed 's/.*[:/]\(.*\)\/.*$/\1/')}"
-IMAGE_NAME="${REGISTRY}/${REPO_OWNER,,}/pg_doorman-test-runner"
+# Matches CI: ghcr.io/OWNER/REPO
+REPO_PATH="${REPO:-$(git config --get remote.origin.url | sed 's/.*[:/]\(.*\/\(.*\)\)\.git$/\1/; s/.*[:/]\(.*\/\(.*\)\)$/\1/')}"
+# Fallback if the sed above is too complex for some git URLs
+if [ -z "$REPO_PATH" ]; then
+    REPO_PATH="$(git config --get remote.origin.url | sed 's/.*[:/]//; s/\.git$//')"
+fi
+IMAGE_NAME="${REGISTRY}/${REPO_PATH,,}"
 # Use flake-based tag by default (matches GitHub workflow), can be overridden with IMAGE_TAG env var
 IMAGE_TAG="${IMAGE_TAG:-$(compute_flake_tag)}"
 FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
