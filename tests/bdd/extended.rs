@@ -147,6 +147,104 @@ impl PgConnection {
         Ok(())
     }
 
+    pub async fn send_parse(&mut self, name: &str, query: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(name.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(query.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(&0i16.to_be_bytes()); // number of parameter data types (0)
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'P');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_bind(
+        &mut self,
+        portal: &str,
+        statement: &str,
+        params: Vec<Option<Vec<u8>>>,
+    ) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(portal.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(statement.as_bytes());
+        msg.push(0);
+
+        msg.extend_from_slice(&0i16.to_be_bytes()); // parameter format codes (0 for all strings)
+
+        msg.extend_from_slice(&(params.len() as i16).to_be_bytes());
+        for param in params {
+            match param {
+                Some(p) => {
+                    msg.extend_from_slice(&(p.len() as i32).to_be_bytes());
+                    msg.extend(p);
+                }
+                None => {
+                    msg.extend_from_slice(&(-1i32).to_be_bytes());
+                }
+            }
+        }
+
+        msg.extend_from_slice(&0i16.to_be_bytes()); // result-column format codes (0 for all strings)
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'B');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_describe(&mut self, target_type: char, name: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.push(target_type as u8);
+        msg.extend_from_slice(name.as_bytes());
+        msg.push(0);
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'D');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_execute(&mut self, portal: &str, max_rows: i32) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(portal.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(&max_rows.to_be_bytes());
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'E');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_sync(&mut self) -> tokio::io::Result<()> {
+        let mut full_msg = Vec::new();
+        full_msg.push(b'S');
+        full_msg.extend_from_slice(&4i32.to_be_bytes());
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
     pub async fn read_all_messages_until_ready(
         &mut self,
     ) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {
@@ -212,14 +310,62 @@ async fn send_query_to_both(world: &mut DoormanWorld, query: String) {
     let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
     let doorman_conn = world.doorman_conn.as_mut().expect("No Doorman connection");
 
-    pg_conn
-        .send_simple_query(&query)
-        .await
-        .expect("Failed to send query to PG");
-    doorman_conn
-        .send_simple_query(&query)
-        .await
-        .expect("Failed to send query to Doorman");
+    pg_conn.send_simple_query(&query).await.expect("Failed to send query to PG");
+    doorman_conn.send_simple_query(&query).await.expect("Failed to send query to Doorman");
+}
+
+#[when(expr = "we send Parse {string} with query {string} to both")]
+async fn send_parse_to_both(world: &mut DoormanWorld, name: String, query: String) {
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+    let doorman_conn = world.doorman_conn.as_mut().expect("No Doorman connection");
+
+    pg_conn.send_parse(&name, &query).await.expect("Failed to send Parse to PG");
+    doorman_conn.send_parse(&name, &query).await.expect("Failed to send Parse to Doorman");
+}
+
+#[when(expr = "we send Bind {string} to {string} with params {string} to both")]
+async fn send_bind_to_both(world: &mut DoormanWorld, portal: String, statement: String, params_str: String) {
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+    let doorman_conn = world.doorman_conn.as_mut().expect("No Doorman connection");
+
+    // Very simple params parser for now: comma separated strings
+    let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str.split(',').map(|s| Some(s.as_bytes().to_vec())).collect()
+    };
+
+    pg_conn.send_bind(&portal, &statement, params.clone()).await.expect("Failed to send Bind to PG");
+    doorman_conn.send_bind(&portal, &statement, params).await.expect("Failed to send Bind to Doorman");
+}
+
+#[when(expr = "we send Describe {string} {string} to both")]
+async fn send_describe_to_both(world: &mut DoormanWorld, target_type_str: String, name: String) {
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+    let doorman_conn = world.doorman_conn.as_mut().expect("No Doorman connection");
+
+    let target_type = target_type_str.chars().next().expect("Empty target type");
+
+    pg_conn.send_describe(target_type, &name).await.expect("Failed to send Describe to PG");
+    doorman_conn.send_describe(target_type, &name).await.expect("Failed to send Describe to Doorman");
+}
+
+#[when(expr = "we send Execute {string} to both")]
+async fn send_execute_to_both(world: &mut DoormanWorld, portal: String) {
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+    let doorman_conn = world.doorman_conn.as_mut().expect("No Doorman connection");
+
+    pg_conn.send_execute(&portal, 0).await.expect("Failed to send Execute to PG");
+    doorman_conn.send_execute(&portal, 0).await.expect("Failed to send Execute to Doorman");
+}
+
+#[when("we send Sync to both")]
+async fn send_sync_to_both(world: &mut DoormanWorld) {
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+    let doorman_conn = world.doorman_conn.as_mut().expect("No Doorman connection");
+
+    pg_conn.send_sync().await.expect("Failed to send Sync to PG");
+    doorman_conn.send_sync().await.expect("Failed to send Sync to Doorman");
 }
 
 #[then("we should receive identical messages from both")]

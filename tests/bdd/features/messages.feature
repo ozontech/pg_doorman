@@ -1,3 +1,4 @@
+@rust @messages
 Feature: Message comparison
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -14,6 +15,8 @@ Feature: Message comparison
       admin_username = "admin"
       admin_password = "admin"
       pg_hba.content = "host all all 127.0.0.1/32 trust"
+      prepared_statements = true
+      prepared_statements_cache_size = 10000
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -28,4 +31,13 @@ Feature: Message comparison
   Scenario: SimpleQuery select 1; gives identical results
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "select 1;" to both
+    Then we should receive identical messages from both
+
+  Scenario: Extended query protocol (Prepared Statement) gives identical results
+    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "" with query "select $1::int" to both
+    And we send Bind "" to "" with params "1" to both
+    And we send Describe "P" "" to both
+    And we send Execute "" to both
+    And we send Sync to both
     Then we should receive identical messages from both
