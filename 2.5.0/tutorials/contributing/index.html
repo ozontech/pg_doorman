@@ -633,6 +633,72 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#integration-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Integration Testing
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Integration Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test Environment
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writing-new-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Writing New Tests
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing New Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adding Dependencies
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#contribution-guidelines" class="md-nav__link">
     <span class="md-ellipsis">
       Contribution Guidelines
@@ -940,6 +1006,72 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#integration-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Integration Testing
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Integration Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test Environment
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writing-new-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Writing New Tests
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing New Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adding Dependencies
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#contribution-guidelines" class="md-nav__link">
     <span class="md-ellipsis">
       Contribution Guidelines
@@ -1056,16 +1188,102 @@
 </span></code></pre></div></p>
 </li>
 <li>
-<p><strong>Run tests</strong>:
+<p><strong>Run unit tests</strong>:
    <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cargo<span class="w"> </span><span class="nb">test</span>
 </span></code></pre></div></p>
 </li>
+</ol>
+<h2 id="integration-testing">Integration Testing</h2>
+<p>PgDoorman uses BDD (Behavior-Driven Development) tests with a Docker-based test environment. <strong>Nix installation is NOT required</strong> — everything runs inside Docker containers.</p>
+<h3 id="test-environment">Test Environment</h3>
+<p>The test Docker image (built with Nix) includes:
+- PostgreSQL 16
+- Go 1.24
+- Python 3 with asyncpg, psycopg2, aiopg, pytest
+- Node.js 22
+- .NET SDK 8
+- Rust 1.87.0</p>
+<h3 id="running-tests">Running Tests</h3>
+<p>Navigate to the <code>tests</code> directory and use Make:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>tests
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="c1"># Pull the test image from registry</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>make<span class="w"> </span>pull
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="c1"># Or build locally (takes 10-15 minutes on first run)</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>make<span class="w"> </span>local-build
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="c1"># Run all BDD tests</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>make<span class="w"> </span>test-bdd
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="c1"># Run tests for specific language</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>make<span class="w"> </span>test-bdd-go<span class="w">          </span><span class="c1"># Go client tests</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>make<span class="w"> </span>test-bdd-python<span class="w">      </span><span class="c1"># Python client tests</span>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>make<span class="w"> </span>test-bdd-nodejs<span class="w">      </span><span class="c1"># Node.js client tests</span>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>make<span class="w"> </span>test-bdd-dotnet<span class="w">      </span><span class="c1"># .NET client tests</span>
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="c1"># Run tests for specific feature</span>
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>make<span class="w"> </span>test-bdd-hba<span class="w">         </span><span class="c1"># HBA authentication tests</span>
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>make<span class="w"> </span>test-bdd-prometheus<span class="w">  </span><span class="c1"># Prometheus metrics tests</span>
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>make<span class="w"> </span>test-bdd-rollback<span class="w">    </span><span class="c1"># Rollback functionality tests</span>
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a><span class="c1"># Open interactive shell in test container</span>
+</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>make<span class="w"> </span>shell
+</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>
+</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="c1"># Build pg_doorman inside container</span>
+</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>make<span class="w"> </span>tests-build
+</span></code></pre></div>
+<p>You can also use <code>tests/nix/run-tests.sh</code> directly:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>./tests/nix/run-tests.sh<span class="w"> </span>bdd<span class="w">              </span><span class="c1"># Run all BDD tests</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>./tests/nix/run-tests.sh<span class="w"> </span>bdd<span class="w"> </span>@go<span class="w">          </span><span class="c1"># Run tests tagged with @go</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>./tests/nix/run-tests.sh<span class="w"> </span>bdd<span class="w"> </span>@python<span class="w">      </span><span class="c1"># Run tests tagged with @python</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>./tests/nix/run-tests.sh<span class="w"> </span>shell<span class="w">            </span><span class="c1"># Interactive shell</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>./tests/nix/run-tests.sh<span class="w"> </span><span class="nb">help</span><span class="w">             </span><span class="c1"># Show all available commands</span>
+</span></code></pre></div>
+<h3 id="writing-new-tests">Writing New Tests</h3>
+<p>Tests are organized as BDD feature files in <code>tests/bdd/features/</code>. Each feature file describes test scenarios using Gherkin syntax.</p>
+<h4 id="structure">Structure</h4>
+<ol>
 <li>
-<p><strong>Run integration tests with Docker</strong>:
-   <div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>make<span class="w"> </span>docker-compose-test-all
+<p><strong>Feature file</strong> (<code>tests/bdd/features/my-feature.feature</code>):
+   <div class="language-gherkin highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">@mytag</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">Feature:</span><span class="nf"> My feature description</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="nf">  </span><span class="k">Background:</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">    Given </span><span class="nf">PostgreSQL started with pg_hba.conf:</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="s">      host all all 127.0.0.1/32 trust</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="nf">    </span><span class="k">And </span><span class="nf">pg_doorman started with config:</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="s">      [general]</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="s">      host = &quot;127.0.0.1&quot;</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="s">      port = ${DOORMAN_PORT}</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="s">      ...</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="nf">  </span><span class="k">Scenario:</span><span class="nf"> Test something</span>
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="k">    When </span><span class="nf">I run shell command:</span>
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="s">      cd tests/go &amp;&amp; go test -v -run TestMyTest ./mypackage</span>
+</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="nf">    </span><span class="k">Then </span><span class="nf">the command should succeed</span>
+</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="nf">    </span><span class="k">And </span><span class="nf">the command output should contain &quot;</span><span class="s">PASS</span><span class="nf">&quot;</span>
 </span></code></pre></div></p>
 </li>
+<li>
+<p><strong>Test implementation</strong> (in your preferred language):</p>
+</li>
+<li>Go: <code>tests/go/mypackage/my_test.go</code></li>
+<li>Python: <code>tests/python/test_my.py</code></li>
+<li>Node.js: <code>tests/nodejs/my.test.js</code></li>
+<li>.NET: <code>tests/dotnet/MyTest.cs</code></li>
 </ol>
+<h4 id="adding-dependencies">Adding Dependencies</h4>
+<p>If you need additional packages in the test environment, modify <code>tests/nix/flake.nix</code>:
+- Add Python packages to <code>pythonEnv</code>
+- Add system packages to <code>runtimePackages</code></p>
+<p>After modifying <code>flake.nix</code>, rebuild the image with <code>make local-build</code>.</p>
 <h2 id="contribution-guidelines">Contribution Guidelines</h2>
 <h3 id="code-style">Code Style</h3>
 <ul>
