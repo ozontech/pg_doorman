@@ -14,10 +14,11 @@ compute_flake_tag() {
 
 # Configuration
 REGISTRY="${REGISTRY:-ghcr.io}"
-REPO_NAME="${REPO:-$(git config --get remote.origin.url | sed 's/.*://;s/.git$//')}"
-# Convert REPO_NAME to lowercase for GHCR compatibility
-REPO_LOWER=$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')
-IMAGE_NAME="${REGISTRY}/${REPO_LOWER}/test-runner"
+REPO_URL="${REPO:-$(git config --get remote.origin.url | sed 's/.*://;s/.git$//')}"
+# Extract owner and repo name, then format as owner/pg_doorman-test-runner
+# This matches the new workflow naming convention: ghcr.io/OWNER/pg_doorman-test-runner
+OWNER=$(echo "${REPO_URL}" | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')
+IMAGE_NAME="${REGISTRY}/${OWNER}/pg_doorman-test-runner"
 # Use flake-based tag by default (matches GitHub workflow), can be overridden with IMAGE_TAG env var
 IMAGE_TAG="${IMAGE_TAG:-$(compute_flake_tag)}"
 FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
