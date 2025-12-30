@@ -168,7 +168,7 @@ impl Parse {
             hasher.write(self.param_types.as_slice().as_bytes());
 
             hasher.finish()
-        } else { // in benchmarks default hasher was better on short strings
+        } else { // in benchmarks default hasher was better on short strings.
             let mut hasher = DefaultHasher::new();
 
             hasher.write(self.query.as_bytes());
