@@ -182,14 +182,13 @@ jobs:
   prepare-tests:
     name: Prepare Test Image
     needs: [ check-image, create-manifest ]
-    # Run if: check-image succeeded AND (image already exists OR build completed successfully)
-    # When image exists, create-manifest is skipped, so we need to handle that case
-    if: |
-      always() && 
+    # Run when check-image succeeded AND either:
+    #   - image already exists in registry (create-manifest was skipped), OR
+    #   - image was just built (create-manifest succeeded)
+    if: >-
+      always() &&
       needs.check-image.result == 'success' &&
-      (needs.check-image.outputs.image-exists == 'true' || 
-       needs.create-manifest.result == 'success' ||
-       (needs.build-and-push-image.result == 'skipped' && needs.create-manifest.result == 'skipped'))
+      (needs.check-image.outputs.image-exists == 'true' || needs.create-manifest.result == 'success')
     runs-on: ubuntu-latest
     outputs:
       image-tag: ${{ needs.check-image.outputs.image-tag }}
