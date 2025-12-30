@@ -63,6 +63,17 @@ flate2 = "1.0.28"
 'deadpool-runtime:0.1.3' = { path = 'patches/deadpool/runtime' }
 'native-tls:0.2.14' = {path = 'patches/rust-native-tls'}
 
+[dev-dependencies]
+cucumber = "0.21"
+tempfile = "3"
+portpicker = "0.1"
+tokio-postgres = "0.7"
+
+[[test]]
+name = "bdd"
+harness = false
+path = "tests/bdd/main.rs"
+
 [features]
 default = []
 pam = ["dep:pam-client"]

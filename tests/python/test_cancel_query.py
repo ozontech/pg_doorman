@@ -2,6 +2,7 @@ import sys
 import time
 import threading
 import subprocess
+import os
 from textwrap import dedent
 
 
@@ -12,20 +13,31 @@ def _run_cancel_scenario():
     libpq messages written directly to stderr (C-level) are captured by the
     parent process for assertions.
     """
+    # Get DATABASE_URL from environment or use default
+    db_url = os.getenv('DATABASE_URL', 'postgresql://example_user_1:test@localhost:6433/example_db')
+    
     script = dedent(
-        r'''
+        rf'''
         import time
         import threading
         import psycopg2
+        import os
 
-        conn = psycopg2.connect(
-        host="localhost",
-        port=6433,
-        dbname="example_db",
-        user="example_user_1",
-        password="test",
-        sslmode="disable",
-        )
+        # Use DATABASE_URL from environment
+        db_url = os.getenv('DATABASE_URL', '{db_url}')
+        
+        # Parse URL manually for psycopg2
+        if db_url:
+            conn = psycopg2.connect(db_url, sslmode="disable")
+        else:
+            conn = psycopg2.connect(
+                host="localhost",
+                port=6433,
+                dbname="example_db",
+                user="example_user_1",
+                password="test",
+                sslmode="disable",
+            )
 
         cur = conn.cursor()
 
@@ -55,11 +67,17 @@ def _run_cancel_scenario():
     )
 
     # Run the scenario in a fresh Python interpreter to capture real stderr.
+    # Pass DATABASE_URL to subprocess
+    env = os.environ.copy()
+    if 'DATABASE_URL' in env:
+        pass  # Already in environment
+    
     completed = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     return completed.returncode, completed.stdout, completed.stderr
 

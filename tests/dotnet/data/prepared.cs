@@ -1,7 +1,9 @@
 using Npgsql;
 using NpgsqlTypes;
 
-string connectionString = "Host=127.0.0.1;Port=6433;Database=example_db;User Id=example_user_1;Password=test;";
+// Use DATABASE_URL environment variable if set, otherwise use default
+string connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
+    ?? "Host=127.0.0.1;Port=6433;Database=example_db;User Id=example_user_1;Password=test;";
 using NpgsqlConnection connection = new NpgsqlConnection(connectionString);
 connection.Open();
 
