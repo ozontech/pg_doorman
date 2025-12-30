@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # Function to compute image tag from flake files (same logic as in GitHub workflow)
 compute_flake_tag() {
     local flake_hash
-    flake_hash=$(cat "${SCRIPT_DIR}/flake.nix" "${SCRIPT_DIR}/flake.lock" | shasum -a 256 | cut -c1-16)
+    flake_hash=$(shasum -a 256 "${SCRIPT_DIR}/flake.lock" | cut -c1-16)
     echo "flake-${flake_hash}"
 }
 
@@ -47,7 +47,7 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Function to pull the latest image
+# Function to pull the test image
 pull_image() {
     log_info "Pulling test image: ${FULL_IMAGE}"
     if docker pull "${FULL_IMAGE}"; then
@@ -178,7 +178,7 @@ usage() {
 Usage: $0 <command> [options]
 
 Commands:
-    pull                  Pull the latest test image from registry
+    pull                  Pull the test image from registry
     shell                 Open interactive bash shell in container
     build                 Build pg_doorman inside container
 
@@ -204,10 +204,10 @@ Debugging with tcpdump:
 Environment variables:
     REGISTRY             Container registry (default: ghcr.io)
     REPO                 Repository name (auto-detected from git)
-    IMAGE_TAG            Image tag to use (default: latest)
+    IMAGE_TAG            Image tag to use (default: flake-<hash>)
 
 Examples:
-    $0 pull                    # Pull latest image
+    $0 pull                    # Pull current image
     $0 shell                   # Interactive shell
     $0 build                   # Build pg_doorman
     $0 bdd @go                 # Run BDD tests tagged with @go
