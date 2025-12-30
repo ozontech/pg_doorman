@@ -1,4 +1,5 @@
 use crate::world::DoormanWorld;
+use crate::log_helper::truncate_log;
 use cucumber::{gherkin::Step, given, then};
 use portpicker::pick_unused_port;
 use std::io::Write;
@@ -54,11 +55,11 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
     if !output.status.success() {
         eprintln!(
             "initdb stdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
+            truncate_log(&String::from_utf8_lossy(&output.stdout))
         );
         eprintln!(
             "initdb stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
+            truncate_log(&String::from_utf8_lossy(&output.stderr))
         );
         panic!("initdb failed");
     }
@@ -128,7 +129,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
 
     if !success {
         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-            eprintln!("Postgres log:\n{}", log_content);
+            eprintln!("Postgres log:\n{}", truncate_log(&log_content));
         }
         // Try one more time with psql just to be sure
         let check_psql = pg_command_builder(
@@ -180,8 +181,8 @@ pub async fn apply_fixtures(world: &mut DoormanWorld, file_path: String) {
     .output()
     .expect("Failed to run psql");
     if !output.status.success() {
-        eprintln!("psql stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("psql stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!("psql stdout:\n{}", truncate_log(&String::from_utf8_lossy(&output.stdout)));
+        eprintln!("psql stderr:\n{}", truncate_log(&String::from_utf8_lossy(&output.stderr)));
         panic!("Failed to apply fixtures from {}", file_path);
     }
 }
@@ -229,11 +230,11 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
     if !output.status.success() {
         eprintln!(
             "initdb stdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
+            truncate_log(&String::from_utf8_lossy(&output.stdout))
         );
         eprintln!(
             "initdb stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
+            truncate_log(&String::from_utf8_lossy(&output.stderr))
         );
         panic!("initdb failed");
     }
@@ -308,7 +309,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
 
     if !success {
         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-            eprintln!("Postgres log:\n{}", log_content);
+            eprintln!("Postgres log:\n{}", truncate_log(&log_content));
         }
         // Try one more time with psql just to be sure
         let check_psql = pg_command_builder(

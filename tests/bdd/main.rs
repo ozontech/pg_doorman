@@ -1,5 +1,6 @@
 mod doorman_helper;
 mod extended;
+mod log_helper;
 mod postgres_helper;
 mod shell_helper;
 mod world;

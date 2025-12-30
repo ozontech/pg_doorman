@@ -1,4 +1,5 @@
 use crate::world::DoormanWorld;
+use crate::log_helper::truncate_log;
 use cucumber::{gherkin::Step, given};
 use portpicker::pick_unused_port;
 use std::io::Write;
@@ -183,7 +184,7 @@ async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
 
                 panic!(
                     "pg_doorman exited with status: {:?}\n\n=== pg_doorman stdout ===\n{}\n=== pg_doorman stderr ===\n{}",
-                    status, stdout_output, stderr_output
+                    status, truncate_log(&stdout_output), truncate_log(&stderr_output)
                 );
             }
             Ok(None) => {
@@ -218,7 +219,7 @@ async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
 
         panic!(
             "pg_doorman failed to start on port {} (timeout 5s)\n\n=== pg_doorman stdout ===\n{}\n=== pg_doorman stderr ===\n{}",
-            port, stdout_output, stderr_output
+            port, truncate_log(&stdout_output), truncate_log(&stderr_output)
         );
     }
 }
