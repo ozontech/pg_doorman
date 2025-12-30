@@ -39,6 +39,14 @@ pub struct DoormanWorld {
     pub ssl_cert_file: Option<NamedTempFile>,
     /// Result of the last test command execution
     pub last_test_result: Option<TestCommandResult>,
+    /// PostgreSQL connection
+    pub pg_conn: Option<crate::pg_connection::PgConnection>,
+    /// pg_doorman connection
+    pub doorman_conn: Option<crate::pg_connection::PgConnection>,
+    /// Accumulated messages from PG
+    pub pg_accumulated_messages: Vec<(char, Vec<u8>)>,
+    /// Accumulated messages from Doorman
+    pub doorman_accumulated_messages: Vec<(char, Vec<u8>)>,
 }
 
 impl std::fmt::Debug for DoormanWorld {

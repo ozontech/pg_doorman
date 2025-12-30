@@ -1,0 +1,253 @@
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+
+pub struct PgConnection {
+    stream: TcpStream,
+}
+
+impl PgConnection {
+    pub async fn connect(addr: &str) -> tokio::io::Result<Self> {
+        let stream = TcpStream::connect(addr).await?;
+        Ok(Self { stream })
+    }
+
+    pub async fn send_startup(&mut self, user: &str, database: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&196608i32.to_be_bytes()); // protocol version 3.0
+        msg.extend_from_slice(b"user\0");
+        msg.extend_from_slice(user.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(b"database\0");
+        msg.extend_from_slice(database.as_bytes());
+        msg.push(0);
+        msg.push(0);
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn read_message(&mut self) -> tokio::io::Result<(char, Vec<u8>)> {
+        let mut header = [0u8; 5];
+        if let Err(e) = self.stream.read_exact(&mut header).await {
+            eprintln!("Failed to read message header: {}", e);
+            return Err(e);
+        }
+        let msg_type = header[0] as char;
+        let len = i32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        if len < 4 {
+            panic!("Invalid message length: {}", len);
+        }
+        let mut data = vec![0u8; len - 4];
+        self.stream.read_exact(&mut data).await?;
+        Ok((msg_type, data))
+    }
+
+    pub async fn authenticate(&mut self, user: &str, password: &str) -> tokio::io::Result<()> {
+        loop {
+            let (msg_type, data) = self.read_message().await?;
+            match msg_type {
+                'R' => {
+                    let auth_type = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                    match auth_type {
+                        0 => {
+                            // AuthenticationOk
+                            continue;
+                        }
+                        3 => {
+                            // AuthenticationCleartextPassword
+                            self.send_password(password).await?;
+                        }
+                        5 => {
+                            // AuthenticationMD5Password
+                            let salt = &data[4..8];
+                            let hash = self.compute_md5_hash(user, password, salt);
+                            self.send_password(&hash).await?;
+                        }
+                        _ => panic!("Unsupported auth type: {}", auth_type),
+                    }
+                }
+                'S' => continue, // ParameterStatus
+                'K' => continue, // BackendKeyData
+                'Z' => {
+                    // ReadyForQuery
+                    if data[0] == b'I' {
+                        return Ok(());
+                    }
+                }
+                'E' => {
+                    panic!("Error during auth: {:?}", String::from_utf8_lossy(&data));
+                }
+                _ => {
+                    println!("Received message during auth: {} {:?}", msg_type, data);
+                }
+            }
+        }
+    }
+
+    async fn send_password(&mut self, password: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(password.as_bytes());
+        msg.push(0);
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'p');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    fn compute_md5_hash(&self, user: &str, password: &str, salt: &[u8]) -> String {
+        use md5::Digest;
+        let mut hasher = md5::Md5::new();
+        hasher.update(password.as_bytes());
+        hasher.update(user.as_bytes());
+        let res1 = hasher.finalize();
+        let hex1 = format!("{:x}", res1);
+
+        let mut hasher = md5::Md5::new();
+        hasher.update(hex1.as_bytes());
+        hasher.update(salt);
+        let res2 = hasher.finalize();
+        format!("md5{:x}", res2)
+    }
+
+    pub async fn send_simple_query(&mut self, query: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(query.as_bytes());
+        msg.push(0);
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'Q');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_parse(&mut self, name: &str, query: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(name.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(query.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(&0i16.to_be_bytes()); // number of parameter data types (0)
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'P');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_bind(
+        &mut self,
+        portal: &str,
+        statement: &str,
+        params: Vec<Option<Vec<u8>>>,
+    ) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(portal.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(statement.as_bytes());
+        msg.push(0);
+
+        msg.extend_from_slice(&0i16.to_be_bytes()); // parameter format codes (0 for all strings)
+
+        msg.extend_from_slice(&(params.len() as i16).to_be_bytes());
+        for param in params {
+            match param {
+                Some(p) => {
+                    msg.extend_from_slice(&(p.len() as i32).to_be_bytes());
+                    msg.extend(p);
+                }
+                None => {
+                    msg.extend_from_slice(&(-1i32).to_be_bytes());
+                }
+            }
+        }
+
+        msg.extend_from_slice(&0i16.to_be_bytes()); // result-column format codes (0 for all strings)
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'B');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_describe(&mut self, target_type: char, name: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.push(target_type as u8);
+        msg.extend_from_slice(name.as_bytes());
+        msg.push(0);
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'D');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_execute(&mut self, portal: &str, max_rows: i32) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(portal.as_bytes());
+        msg.push(0);
+        msg.extend_from_slice(&max_rows.to_be_bytes());
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'E');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_sync(&mut self) -> tokio::io::Result<()> {
+        let mut full_msg = Vec::new();
+        full_msg.push(b'S');
+        full_msg.extend_from_slice(&4i32.to_be_bytes());
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn read_all_messages_until_ready(
+        &mut self,
+    ) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {
+        let mut messages = Vec::new();
+        loop {
+            let (msg_type, data) = self.read_message().await?;
+            if msg_type == 'Z' {
+                messages.push((msg_type, data));
+                break;
+            }
+            // For simple query comparison, we might want to ignore ParameterStatus (S)
+            // as they can be different or in different order
+            if msg_type != 'S' && msg_type != 'K' {
+                messages.push((msg_type, data));
+            }
+        }
+        Ok(messages)
+    }
+}
