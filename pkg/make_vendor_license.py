@@ -9,7 +9,8 @@ white_list = ["(MIT OR Apache-2.0) AND Unicode-3.0", "0BSD OR Apache-2.0 OR MIT"
     "Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT", "Apache-2.0 OR BSD-2-Clause OR MIT",
     "Apache-2.0 OR BSL-1.0", "Apache-2.0 OR LGPL-2.1-or-later OR MIT", "Apache-2.0 OR MIT",
     "Apache-2.0 OR MIT OR Zlib", "BSD-3-Clause", "MIT", "MIT OR Unlicense", "Zlib",
-    "(Apache-2.0 OR MIT) AND Unicode-3.0", "Apache-2.0 OR BSL-1.0 OR MIT", "BSL-1.0"]
+    "(Apache-2.0 OR MIT) AND Unicode-3.0", "Apache-2.0 OR BSL-1.0 OR MIT", "BSL-1.0", "BlueOak-1.0.0",
+    "Unlicense"]
 
 bad_license_count = 0
 with open(sys.argv[1]) as r:
