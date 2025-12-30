@@ -9,16 +9,15 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 compute_flake_tag() {
     local flake_hash
     flake_hash=$(cat "${SCRIPT_DIR}/flake.nix" "${SCRIPT_DIR}/flake.lock" | shasum -a 256 | cut -c1-16)
-    echo "flake-${flake_hash}"
+    echo "test-runner-flake-${flake_hash}"
 }
 
 # Configuration
 REGISTRY="${REGISTRY:-ghcr.io}"
 REPO_URL="${REPO:-$(git config --get remote.origin.url | sed 's/.*://;s/.git$//')}"
-# Extract owner and repo name, then format as owner/pg_doorman-test-runner
-# This matches the new workflow naming convention: ghcr.io/OWNER/pg_doorman-test-runner
-OWNER=$(echo "${REPO_URL}" | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')
-IMAGE_NAME="${REGISTRY}/${OWNER}/pg_doorman-test-runner"
+# Extract owner and repo name, then format as owner/repo
+# This matches the new workflow naming convention: ghcr.io/OWNER/REPO
+IMAGE_NAME="${REGISTRY}/${REPO_URL,,}"
 # Use flake-based tag by default (matches GitHub workflow), can be overridden with IMAGE_TAG env var
 IMAGE_TAG="${IMAGE_TAG:-$(compute_flake_tag)}"
 FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
