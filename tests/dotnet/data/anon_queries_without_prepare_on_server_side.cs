@@ -1,6 +1,8 @@
 ﻿using Npgsql;
 
-const string connectionString = "Host=127.0.0.1;Port=6433;Database=example_db;User Id=example_user_1;Password=test;SSLMode=Disable";
+// Use DATABASE_URL environment variable if set, otherwise use default
+string connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
+    ?? "Host=127.0.0.1;Port=6433;Database=example_db;User Id=example_user_1;Password=test;SSLMode=Disable";
 
 await using var connection = new NpgsqlConnection(connectionString);
 await using var batch = connection.CreateBatch();

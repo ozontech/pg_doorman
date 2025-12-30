@@ -23,6 +23,7 @@ Feature: .NET anonymous queries without prepare on server side
       prepared_statements_cache_size = 10000
       tls_private_key = "${DOORMAN_SSL_KEY}"
       tls_certificate = "${DOORMAN_SSL_CERT}"
+      prepare_anon_queries = true
 
       [pools.example_db]
       server_host = "127.0.0.1"
