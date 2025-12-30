@@ -123,7 +123,7 @@ run_in_container() {
 # Function to build pg_doorman inside container
 build_doorman() {
     log_info "Building pg_doorman..."
-    run_in_container "setup-test-deps && cargo build --release"
+    run_in_container "cargo build --release"
     log_info "pg_doorman built successfully"
 }
 
@@ -132,33 +132,12 @@ run_bdd_tests() {
     local tags="${1:-}"
     log_info "Running BDD tests${tags:+ with tags: ${tags}}"
 
-    local cmd="setup-test-deps && cargo test --test bdd"
+    local cmd="cargo test --test bdd"
     if [ -n "$tags" ]; then
         cmd="${cmd} -- --tags ${tags}"
     fi
 
     run_in_container "$cmd"
-}
-
-# Function to run language-specific tests
-run_go_tests() {
-    log_info "Running Go tests..."
-    run_in_container "cd tests/go && setup-test-deps && go test -v ."
-}
-
-run_python_tests() {
-    log_info "Running Python tests..."
-    run_in_container "cd tests/python && setup-test-deps && pytest -v ."
-}
-
-run_nodejs_tests() {
-    log_info "Running Node.js tests..."
-    run_in_container "cd tests/nodejs && setup-test-deps && npm test"
-}
-
-run_dotnet_tests() {
-    log_info "Running .NET tests..."
-    run_in_container "cd tests/dotnet && setup-test-deps && dotnet test"
 }
 
 # Function to open interactive shell
@@ -178,11 +157,6 @@ Commands:
     build                 Build pg_doorman inside container
 
     bdd [tags]           Run BDD/Cucumber tests (optionally with tags like @go, @python)
-    test-go              Run Go tests
-    test-python          Run Python tests
-    test-nodejs          Run Node.js tests
-    test-dotnet          Run .NET tests
-    test-all             Run all language tests
 
     help                 Show this help message
 
@@ -196,8 +170,6 @@ Examples:
     $0 shell                   # Interactive shell
     $0 build                   # Build pg_doorman
     $0 bdd @go                 # Run BDD tests tagged with @go
-    $0 test-python             # Run Python tests
-    $0 test-all                # Run all tests
 
 EOF
 }
@@ -218,31 +190,6 @@ case "${1:-help}" in
     bdd)
         try_pull_image
         run_bdd_tests "${2:-}"
-        ;;
-    test-go)
-        try_pull_image
-        run_go_tests
-        ;;
-    test-python)
-        try_pull_image
-        run_python_tests
-        ;;
-    test-nodejs)
-        try_pull_image
-        run_nodejs_tests
-        ;;
-    test-dotnet)
-        try_pull_image
-        run_dotnet_tests
-        ;;
-    test-all)
-        try_pull_image
-        log_info "Running all language tests..."
-        run_go_tests
-        run_python_tests
-        run_nodejs_tests
-        run_dotnet_tests
-        log_info "All tests completed!"
         ;;
     help|--help|-h)
         usage
