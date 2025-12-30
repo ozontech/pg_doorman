@@ -111,7 +111,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            cargo test --test bdd -- --tags @go
+            cargo test --release --test bdd -- --tags @go
 
   # Job 3: Run BDD tests with Python client
   python-tests:
@@ -132,7 +132,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            cargo test --test bdd -- --tags @python
+            cargo test --release --test bdd -- --tags @python
 
   # Job 4: Run BDD tests with Node.js client
   nodejs-tests:
@@ -153,7 +153,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            cargo test --test bdd -- --tags @nodejs
+            cargo test --release --test bdd -- --tags @nodejs
 
   # Job 5: Run BDD tests with .NET client
   dotnet-tests:
@@ -174,4 +174,4 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            cargo test --test bdd -- --tags @dotnet
+            cargo test --release --test bdd -- --tags @dotnet
