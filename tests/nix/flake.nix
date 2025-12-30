@@ -98,6 +98,7 @@
             wget
             less
             vim
+            tcpdump
 
             # For native extensions
             libiconv

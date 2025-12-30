@@ -2,6 +2,7 @@ name: BDD Tests
 
 permissions:
   contents: read
+  packages: write
 
 on:
   pull_request:
@@ -10,7 +11,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/test-runner
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # Job 0: Check if image needs to be rebuilt
@@ -23,29 +24,38 @@ jobs:
     outputs:
       image-tag: ${{ steps.compute-tag.outputs.tag }}
       image-exists: ${{ steps.check-exists.outputs.exists }}
+      image-name: ${{ steps.set-image-name.outputs.image_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set lower case image name
+        id: set-image-name
+        run: |
+          IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=${IMAGE_NAME_LOWER}" >> $GITHUB_OUTPUT
+          echo "Full image name: ${IMAGE_NAME_LOWER}"
+
       - name: Compute image tag from flake files
         id: compute-tag
         run: |
-          # Create a hash based on flake.nix and flake.lock content
-          FLAKE_HASH=$(cat tests/nix/flake.nix tests/nix/flake.lock | sha256sum | cut -c1-16)
-          echo "tag=flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
-          echo "Computed image tag: flake-${FLAKE_HASH}"
+          # Create a hash based on flake.lock content
+          FLAKE_HASH=$(sha256sum tests/nix/flake.lock | cut -c1-16)
+          echo "tag=test-runner-flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
+          echo "Computed FLAKE_HASH: ${FLAKE_HASH}"
+          echo "Computed image tag: test-runner-flake-${FLAKE_HASH}"
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check if image exists in registry
         id: check-exists
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.compute-tag.outputs.tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ steps.set-image-name.outputs.image_name }}:${{ steps.compute-tag.outputs.tag }}"
           echo "Checking for image: ${IMAGE}"
           # Try to pull the manifest (without downloading the image)
           if docker manifest inspect "${IMAGE}" > /dev/null 2>&1; then
@@ -124,16 +134,21 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Load and push arch-specific image
         run: |
+          echo "Loading image from tests/nix/result..."
           docker load < tests/nix/result
           ARCH_TAG="${{ needs.check-image.outputs.image-tag }}-${{ matrix.arch }}"
-          docker tag pg_doorman-test-env:latest ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${ARCH_TAG}
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${ARCH_TAG}
-          echo "Pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${ARCH_TAG}"
+          IMAGE_NAME="${{ needs.check-image.outputs.image-name }}"
+          FULL_IMAGE="${{ env.REGISTRY }}/${IMAGE_NAME}:${ARCH_TAG}"
+          echo "Tagging image: pg_doorman-test-env:latest -> ${FULL_IMAGE}"
+          docker tag pg_doorman-test-env:latest ${FULL_IMAGE}
+          echo "Pushing image to ${{ env.REGISTRY }}..."
+          docker push ${FULL_IMAGE}
+          echo "✅ Pushed: ${FULL_IMAGE}"
 
   # Job 2: Create multi-arch manifest
   create-manifest:
@@ -149,31 +164,27 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest
         run: |
           IMAGE_TAG="${{ needs.check-image.outputs.image-tag }}"
-          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          BASE_IMAGE="${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}"
+          echo "Creating manifest for ${BASE_IMAGE}:${IMAGE_TAG}"
+          echo "Architectures: x86_64-linux, aarch64-linux"
           # Create manifest combining both architectures
           docker manifest create ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux \
             ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux
+          echo "Annotating manifest for amd64..."
           docker manifest annotate ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux --os linux --arch amd64
+          echo "Annotating manifest for arm64..."
           docker manifest annotate ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux --os linux --arch arm64
+          echo "Pushing manifest..."
           docker manifest push ${BASE_IMAGE}:${IMAGE_TAG}
-          # Also tag as latest
-          docker manifest create ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux \
-            ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux
-          docker manifest annotate ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux --os linux --arch amd64
-          docker manifest annotate ${BASE_IMAGE}:latest \
-            ${BASE_IMAGE}:${IMAGE_TAG}-aarch64-linux --os linux --arch arm64
-          docker manifest push ${BASE_IMAGE}:latest
           echo "✅ Multi-arch manifest created and pushed"
           echo "Image: ${BASE_IMAGE}:${IMAGE_TAG}" >> $GITHUB_STEP_SUMMARY
           echo "Architectures: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
@@ -204,7 +215,7 @@ jobs:
   # Job 4: Run BDD tests with Go client
   go-tests:
     name: Go BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -213,20 +224,22 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Go
         run: |
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}"
+          echo "Running BDD tests for Go using image: ${FULL_IMAGE}"
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${FULL_IMAGE} \
             cargo test --test bdd -- --tags @go
 
   # Job 5: Run BDD tests with Python client
   python-tests:
     name: Python BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -235,20 +248,22 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Python
         run: |
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}"
+          echo "Running BDD tests for Python using image: ${FULL_IMAGE}"
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${FULL_IMAGE} \
             cargo test --test bdd -- --tags @python
 
   # Job 6: Run BDD tests with Node.js client
   nodejs-tests:
     name: Node.js BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -257,20 +272,22 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Node.js
         run: |
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}"
+          echo "Running BDD tests for Node.js using image: ${FULL_IMAGE}"
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${FULL_IMAGE} \
             cargo test --test bdd -- --tags @nodejs
 
   # Job 7: Run BDD tests with .NET client
   dotnet-tests:
     name: .NET BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -279,12 +296,14 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for .NET
         run: |
+          FULL_IMAGE="${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}"
+          echo "Running BDD tests for .NET using image: ${FULL_IMAGE}"
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${FULL_IMAGE} \
             cargo test --test bdd -- --tags @dotnet

@@ -8,14 +8,20 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # Function to compute image tag from flake files (same logic as in GitHub workflow)
 compute_flake_tag() {
     local flake_hash
-    flake_hash=$(cat "${SCRIPT_DIR}/flake.nix" "${SCRIPT_DIR}/flake.lock" | shasum -a 256 | cut -c1-16)
-    echo "flake-${flake_hash}"
+    flake_hash=$(shasum -a 256 "${SCRIPT_DIR}/flake.lock" | cut -c1-16)
+    echo "test-runner-flake-${flake_hash}"
 }
 
 # Configuration
 REGISTRY="${REGISTRY:-ghcr.io}"
-REPO="${REPO:-$(git config --get remote.origin.url | sed 's/.*://;s/.git$//')}"
-IMAGE_NAME="${REGISTRY}/${REPO}/test-runner"
+# For local testing, we need the owner and the image name
+# Matches CI: ghcr.io/OWNER/REPO
+REPO_PATH="${REPO:-$(git config --get remote.origin.url | sed 's/.*[:/]\(.*\/\(.*\)\)\.git$/\1/; s/.*[:/]\(.*\/\(.*\)\)$/\1/')}"
+# Fallback if the sed above is too complex for some git URLs
+if [ -z "$REPO_PATH" ]; then
+    REPO_PATH="$(git config --get remote.origin.url | sed 's/.*[:/]//; s/\.git$//')"
+fi
+IMAGE_NAME="${REGISTRY}/${REPO_PATH,,}"
 # Use flake-based tag by default (matches GitHub workflow), can be overridden with IMAGE_TAG env var
 IMAGE_TAG="${IMAGE_TAG:-$(compute_flake_tag)}"
 FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
@@ -44,7 +50,7 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Function to pull the latest image
+# Function to pull the test image
 pull_image() {
     log_info "Pulling test image: ${FULL_IMAGE}"
     if docker pull "${FULL_IMAGE}"; then
@@ -96,6 +102,8 @@ run_in_container() {
         -v "${PROJECT_ROOT}:/workspace"
         -w /workspace
         --network host
+        --cap-add=NET_ADMIN
+        --device /dev/net/tun:/dev/net/tun
         --tmpfs /tmp:exec,mode=1777
         -e "POSTGRES_HOST=127.0.0.1"
         -e "POSTGRES_PORT=5432"
@@ -173,7 +181,7 @@ usage() {
 Usage: $0 <command> [options]
 
 Commands:
-    pull                  Pull the latest test image from registry
+    pull                  Pull the test image from registry
     shell                 Open interactive bash shell in container
     build                 Build pg_doorman inside container
 
@@ -186,13 +194,23 @@ Commands:
 
     help                 Show this help message
 
+Debugging with tcpdump:
+    To debug with tcpdump, open an interactive shell and run tcpdump in background:
+    1. $0 shell
+    2. (inside container) sudo tcpdump -i lo -w /workspace/dump.pcap &
+    3. (inside container) cargo test --test bdd -- --tags @your-tag
+       OR
+       (inside container) ./tests/dotnet/run_test.sh <name> <file>
+    4. (inside container) kill %1
+    5. PCAP file will be available at your project root as dump.pcap
+
 Environment variables:
     REGISTRY             Container registry (default: ghcr.io)
     REPO                 Repository name (auto-detected from git)
-    IMAGE_TAG            Image tag to use (default: latest)
+    IMAGE_TAG            Image tag to use (default: flake-<hash>)
 
 Examples:
-    $0 pull                    # Pull latest image
+    $0 pull                    # Pull current image
     $0 shell                   # Interactive shell
     $0 build                   # Build pg_doorman
     $0 bdd @go                 # Run BDD tests tagged with @go

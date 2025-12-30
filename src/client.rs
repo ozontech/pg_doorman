@@ -1608,8 +1608,16 @@ where
                 .push_back(ExtendedProtocolData::create_new_parse(message, None));
             return Ok(());
         }
-
+        
         let client_given_name = Parse::get_name(&message)?;
+        
+        if client_given_name.is_empty() {
+            debug!("Anonymous parse message");
+            self.extended_protocol_data_buffer
+                .push_back(ExtendedProtocolData::create_new_parse(message, None));
+            return Ok(());
+        }
+
         let parse: Parse = (&message).try_into()?;
 
         // Compute the hash of the parse statement
@@ -1654,6 +1662,13 @@ where
         }
 
         let client_given_name = Bind::get_name(&message)?;
+        
+        if client_given_name.is_empty() {
+            debug!("Anonymous bind message");
+            self.extended_protocol_data_buffer
+                .push_back(ExtendedProtocolData::create_new_bind(message, None));
+            return Ok(());
+        }
 
         match self.prepared_statements.get(&client_given_name) {
             Some((rewritten_parse, _)) => {
@@ -1709,6 +1724,13 @@ where
         }
 
         let client_given_name = describe.statement_name.clone();
+        
+        if client_given_name.is_empty() {
+            debug!("Anonymous describe message");
+            self.extended_protocol_data_buffer
+                .push_back(ExtendedProtocolData::create_new_describe(message, None));
+            return Ok(());
+        }
 
         match self.prepared_statements.get(&client_given_name) {
             Some((rewritten_parse, _)) => {
