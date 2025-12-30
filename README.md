@@ -228,8 +228,10 @@ Before you begin, make sure you have the following installed:
 
 - [Rust](https://www.rust-lang.org/tools/install) (latest stable version)
 - [Git](https://git-scm.com/downloads)
-- [Docker](https://docs.docker.com/get-docker/) (optional, for running tests)
+- [Docker](https://docs.docker.com/get-docker/) (required for running integration tests)
 - [Make](https://www.gnu.org/software/make/) (optional, for running test scripts)
+
+**Note:** Nix installation is NOT required — all tests run inside Docker containers.
 
 ### Local Development
 
@@ -237,10 +239,46 @@ Before you begin, make sure you have the following installed:
 2. **Build the project**: `cargo build`
 3. **Configure PgDoorman**: Copy and modify the example configuration
 4. **Run PgDoorman**: `cargo run --release`
-5. **Run tests**: `make test`
-6. **Run integration tests**: `make docker-compose-test-all`
+5. **Run unit tests**: `cargo test`
 
-For more detailed information on contributing, please see the [Contributing Guide](https://ozontech.github.io/pg_doorman/latest/tutorials/contributing/).
+### Integration Testing
+
+PgDoorman uses BDD (Behavior-Driven Development) tests with a Docker-based test environment. The test environment includes PostgreSQL, Go, Python, Node.js, .NET, and Rust — everything needed to run multi-language integration tests.
+
+#### Quick Start
+
+```bash
+# Navigate to tests directory
+cd tests
+
+# Pull the test image (or build locally with `make local-build`)
+make pull
+
+# Run all BDD tests
+make test-bdd
+
+# Run tests for specific language/feature
+make test-bdd-go          # Go client tests
+make test-bdd-python      # Python client tests
+make test-bdd-nodejs      # Node.js client tests
+make test-bdd-dotnet      # .NET client tests
+
+# Open interactive shell in test container
+make shell
+```
+
+#### Using run-tests.sh directly
+
+You can also use the `tests/nix/run-tests.sh` script:
+
+```bash
+./tests/nix/run-tests.sh bdd              # Run all BDD tests
+./tests/nix/run-tests.sh bdd @go          # Run tests tagged with @go
+./tests/nix/run-tests.sh shell            # Interactive shell
+./tests/nix/run-tests.sh help             # Show all commands
+```
+
+For more detailed information on contributing and writing tests, please see the [Contributing Guide](https://ozontech.github.io/pg_doorman/latest/tutorials/contributing/).
 
 ## Documentation
 

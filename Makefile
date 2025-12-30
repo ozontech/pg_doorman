@@ -1,5 +1,7 @@
 .DEFAULT_GOAL := build
 
+include tests/Makefile
+
 vendor.tar.gz:
 	cargo vendor ./vendor
 	tar czf vendor.tar.gz ./vendor
@@ -22,5 +24,3 @@ test:
 
 clippy:
 	cargo clippy -- --deny "warnings"
-
-include docker-compose-tests.mk
