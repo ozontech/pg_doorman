@@ -1,6 +1,6 @@
-@python
-Feature: Python client tests
-  Test pg_doorman with Python PostgreSQL clients (psycopg2, asyncpg)
+@python @session-cursors
+Feature: Python session cursors tests
+  Test pg_doorman session cursors functionality with Python client
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -38,20 +38,11 @@ Feature: Python client tests
       pool_size = 10
       """
 
-  Scenario: Run Python async tests
+  Scenario: Run Python session cursors tests
     When I run shell command:
       """
       cd tests/python && \
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      python3 ./test_async.py
-      """
-    Then the command should succeed
-
-  Scenario: Run Python psycopg2 tests
-    When I run shell command:
-      """
-      cd tests/python && \
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      python3 ./test_psycopg2.py
+      python3 ./test_session_cursors.py
       """
     Then the command should succeed

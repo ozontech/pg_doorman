@@ -1,6 +1,6 @@
-@python
-Feature: Python client tests
-  Test pg_doorman with Python PostgreSQL clients (psycopg2, asyncpg)
+@python @cancel-query
+Feature: Python cancel query tests (libpq noise)
+  Test pg_doorman cancel query functionality with Python client
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -38,20 +38,11 @@ Feature: Python client tests
       pool_size = 10
       """
 
-  Scenario: Run Python async tests
+  Scenario: Run Python cancel query tests
     When I run shell command:
       """
       cd tests/python && \
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      python3 ./test_async.py
-      """
-    Then the command should succeed
-
-  Scenario: Run Python psycopg2 tests
-    When I run shell command:
-      """
-      cd tests/python && \
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      python3 ./test_psycopg2.py
+      pytest ./test_cancel_query.py
       """
     Then the command should succeed
