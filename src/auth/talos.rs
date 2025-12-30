@@ -271,6 +271,28 @@ async fn sign_with_jwt_priv_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Helper function to generate temporary RSA key pair
+    fn generate_temp_rsa_keys() -> (NamedTempFile, NamedTempFile) {
+        // Generate RSA key pair
+        let rsa = Rsa::generate(2048).unwrap();
+
+        // Create private key PEM
+        let private_pem = rsa.private_key_to_pem().unwrap();
+        let mut private_file = NamedTempFile::new().unwrap();
+        private_file.write_all(&private_pem).unwrap();
+        private_file.flush().unwrap();
+
+        // Create public key PEM
+        let public_pem = rsa.public_key_to_pem().unwrap();
+        let mut public_file = NamedTempFile::new().unwrap();
+        public_file.write_all(&public_pem).unwrap();
+        public_file.flush().unwrap();
+
+        (private_file, public_file)
+    }
 
     #[tokio::test]
     async fn test_key() {
@@ -382,6 +404,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_talos_pub_key() {
+        let (_private_file, public_file) = generate_temp_rsa_keys();
+        let public_path = public_file.path().to_str().unwrap().to_string();
+        let key_name = public_file
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
         // Clear any existing keys
         {
             let mut guard_write = TALOS_KEYS.write().await;
@@ -389,13 +421,13 @@ mod tests {
         }
 
         // Test loading a valid public key
-        let result = load_talos_pub_key("./tests/data/jwt/public.pem".to_string()).await;
+        let result = load_talos_pub_key(public_path.clone()).await;
         assert!(result.is_ok());
 
         // Verify the key was loaded correctly
         {
             let guard_read = TALOS_KEYS.read().await;
-            assert!(guard_read.contains_key("public"));
+            assert!(guard_read.contains_key(&key_name));
             assert_eq!(guard_read.len(), 1);
         }
 
@@ -406,6 +438,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_and_validate() {
+        let (private_file, public_file) = generate_temp_rsa_keys();
+        let private_path = private_file.path().to_str().unwrap().to_string();
+        let public_path = public_file.path().to_str().unwrap().to_string();
+        let key_name = public_file
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
         let mut claims = TalosClaims {
             default_claims: Default::default(),
             client_id: "client-id".to_string(),
@@ -428,18 +471,14 @@ mod tests {
             .unwrap()
             .as_secs();
         claims.default_claims.expiration = Some(now + 2);
-        let token = match sign_with_jwt_priv_key(claims, "./tests/data/jwt/private.pem".to_string())
-            .await
-        {
+        let token = match sign_with_jwt_priv_key(claims, private_path).await {
             Ok(token) => token,
             Err(err) => panic!("{err:?}"),
         };
-        load_talos_pub_key("./tests/data/jwt/public.pem".to_string())
-            .await
-            .unwrap();
+        load_talos_pub_key(public_path).await.unwrap();
         let result = extract_talos_token_with_key(
             vec!["database".to_string(), "database-1".to_string()],
-            "public".to_string(),
+            key_name,
             token,
         )
         .await

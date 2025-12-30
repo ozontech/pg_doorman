@@ -1198,14 +1198,59 @@ pub fn check_hba(
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::path::PathBuf;
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
+
+    // Helper function to create a temporary config file for testing
+    fn create_temp_config() -> NamedTempFile {
+        let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+idle_timeout = 40000
+
+[pools.example_db.users.0]
+username = "example_user_1"
+password = "password1"
+pool_size = 40
+pool_mode = "transaction"
+
+[pools.example_db.users.1]
+username = "example_user_2"
+password = "SCRAM-SHA-256$4096:p2j/1lMdQF6r1dD9I9f7PQ==$H3xt5yh7lwSq9zUPYwHovRu3FyUCCXchG/skydJRa9o=:5xU6Wj/GNg3UnN2uQIx3ezx7uZyzGeM5NrvSJRIxnlw="
+pool_size = 20
+
+[pools.test_db1]
+server_host = "localhost"
+server_port = 5432
+
+[pools.test_db2]
+server_host = "localhost"
+server_port = 5432
+
+[pools.test_db3]
+server_host = "localhost"
+server_port = 5432
+"#;
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(config_content.as_bytes()).unwrap();
+        temp_file.flush().unwrap();
+        temp_file
+    }
 
     #[tokio::test]
     async fn test_config() {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("tests.toml");
-        parse(file.as_os_str().to_str().unwrap()).await.unwrap();
+        let temp_file = create_temp_config();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        parse(file_path).await.unwrap();
 
         assert_eq!(get_config().pools.len(), 4);
         assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
@@ -1231,10 +1276,10 @@ mod test {
 
     #[tokio::test]
     async fn test_serialize_configs() {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("tests.toml");
-        parse(file.as_os_str().to_str().unwrap()).await.unwrap();
+        let temp_file = create_temp_config();
+        let file_path = temp_file.path().to_str().unwrap();
+
+        parse(file_path).await.unwrap();
         print!("{}", toml::to_string(&get_config()).unwrap());
     }
 

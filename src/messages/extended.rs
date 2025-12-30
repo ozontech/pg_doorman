@@ -1,7 +1,7 @@
 // Standard library imports
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
-use std::hash::{Hasher};
+use std::hash::Hasher;
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -168,7 +168,8 @@ impl Parse {
             hasher.write(self.param_types.as_slice().as_bytes());
 
             hasher.finish()
-        } else { // in benchmarks default hasher was better on short strings.
+        } else {
+            // in benchmarks default hasher was better on short strings.
             let mut hasher = DefaultHasher::new();
 
             hasher.write(self.query.as_bytes());
