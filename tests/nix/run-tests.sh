@@ -96,6 +96,8 @@ run_in_container() {
         -v "${PROJECT_ROOT}:/workspace"
         -w /workspace
         --network host
+        --cap-add=NET_ADMIN
+        --device /dev/net/tun:/dev/net/tun
         --tmpfs /tmp:exec,mode=1777
         -e "POSTGRES_HOST=127.0.0.1"
         -e "POSTGRES_PORT=5432"
@@ -185,6 +187,16 @@ Commands:
     test-all             Run all language tests
 
     help                 Show this help message
+
+Debugging with tcpdump:
+    To debug with tcpdump, open an interactive shell and run tcpdump in background:
+    1. $0 shell
+    2. (inside container) sudo tcpdump -i lo -w /workspace/dump.pcap &
+    3. (inside container) cargo test --test bdd -- --tags @your-tag
+       OR
+       (inside container) ./tests/dotnet/run_test.sh <name> <file>
+    4. (inside container) kill %1
+    5. PCAP file will be available at your project root as dump.pcap
 
 Environment variables:
     REGISTRY             Container registry (default: ghcr.io)
