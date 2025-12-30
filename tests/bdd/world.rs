@@ -39,6 +39,10 @@ pub struct DoormanWorld {
     pub ssl_cert_file: Option<NamedTempFile>,
     /// Result of the last test command execution
     pub last_test_result: Option<TestCommandResult>,
+    /// PostgreSQL connection
+    pub pg_conn: Option<crate::extended::PgConnection>,
+    /// pg_doorman connection
+    pub doorman_conn: Option<crate::extended::PgConnection>,
 }
 
 impl std::fmt::Debug for DoormanWorld {
@@ -47,9 +51,15 @@ impl std::fmt::Debug for DoormanWorld {
             .field("pg_tmp_dir", &self.pg_tmp_dir)
             .field("pg_port", &self.pg_port)
             .field("pg_db_path", &self.pg_db_path)
-            .field("doorman_process", &self.doorman_process.as_ref().map(|p| p.id()))
+            .field(
+                "doorman_process",
+                &self.doorman_process.as_ref().map(|p| p.id()),
+            )
             .field("doorman_port", &self.doorman_port)
-            .field("doorman_config_file", &self.doorman_config_file.as_ref().map(|f| f.path()))
+            .field(
+                "doorman_config_file",
+                &self.doorman_config_file.as_ref().map(|f| f.path()),
+            )
             .finish()
     }
 }

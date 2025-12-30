@@ -1,4 +1,5 @@
 mod doorman_helper;
+mod extended;
 mod postgres_helper;
 mod shell_helper;
 mod world;
@@ -11,10 +12,10 @@ use world::DoormanWorld;
 /// no zombie pg_doorman processes remain running
 fn cleanup_pg_doorman_processes() {
     use std::process::Command;
-    
+
     // Get the path to pg_doorman binary
     let doorman_binary = env!("CARGO_BIN_EXE_pg_doorman");
-    
+
     // Find and kill any pg_doorman processes started by this test run
     // Use pkill with the full path to be more specific
     #[cfg(unix)]
@@ -25,12 +26,9 @@ fn cleanup_pg_doorman_processes() {
             .arg("-f")
             .arg(doorman_binary)
             .status();
-        
+
         // Also kill any pg_doorman processes by name as fallback
-        let _ = Command::new("pkill")
-            .arg("-9")
-            .arg("pg_doorman")
-            .status();
+        let _ = Command::new("pkill").arg("-9").arg("pg_doorman").status();
     }
 }
 
@@ -48,10 +46,10 @@ fn setup_panic_hook() {
 fn main() {
     // Setup panic hook to ensure cleanup on panic
     setup_panic_hook();
-    
+
     // Create tokio runtime manually so we can control cleanup
     let rt = tokio::runtime::Runtime::new().unwrap();
-    
+
     // Run tests with after hook for cleanup
     // Note: run_and_exit() will call std::process::exit() with appropriate exit code
     // (non-zero if any tests failed), so cleanup must happen in the after hook
@@ -74,7 +72,7 @@ fn main() {
             .run_and_exit("tests/bdd/features")
             .await;
     });
-    
+
     // This code is unreachable because run_and_exit() calls std::process::exit()
     // but we keep it as a safety net in case the behavior changes
     cleanup_pg_doorman_processes();

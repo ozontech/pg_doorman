@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
-use zerocopy::IntoBytes;
 use xxhash_rust::xxh3::Xxh3;
+use zerocopy::IntoBytes;
 
 #[derive(Clone)]
 struct Parse {
