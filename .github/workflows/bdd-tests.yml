@@ -144,8 +144,8 @@ jobs:
           ARCH_TAG="${{ needs.check-image.outputs.image-tag }}-${{ matrix.arch }}"
           IMAGE_NAME="${{ needs.check-image.outputs.image-name }}"
           FULL_IMAGE="${{ env.REGISTRY }}/${IMAGE_NAME}:${ARCH_TAG}"
-          echo "Tagging image: pg_doorman-test-env:current -> ${FULL_IMAGE}"
-          docker tag pg_doorman-test-env:current ${FULL_IMAGE}
+          echo "Tagging image: pg_doorman-test-env:latest -> ${FULL_IMAGE}"
+          docker tag pg_doorman-test-env:latest ${FULL_IMAGE}
           echo "Pushing image to ${env.REGISTRY}..."
           docker push ${FULL_IMAGE}
           echo "✅ Pushed: ${FULL_IMAGE}"

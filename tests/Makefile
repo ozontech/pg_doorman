@@ -32,7 +32,7 @@ local-build: ## Build Docker image locally using Docker (no Nix installation req
 	@docker load < $(TESTS_DIR)nix/docker-image.tar.gz
 	@rm -f $(TESTS_DIR)nix/docker-image.tar.gz
 	@echo "[INFO] Tagging image as $(REGISTRY)/$(shell git config --get remote.origin.url | sed 's/.*[:/]\(.*\)\/.*$$/\1/' | tr '[:upper:]' '[:lower:]')/pg_doorman-test-runner:flake-$(shell shasum -a 256 $(TESTS_DIR)nix/flake.lock | cut -c1-16)"
-	@docker tag pg_doorman-test-env:current $(REGISTRY)/$(shell git config --get remote.origin.url | sed 's/.*[:/]\(.*\)\/.*$$/\1/' | tr '[:upper:]' '[:lower:]')/pg_doorman-test-runner:flake-$(shell shasum -a 256 $(TESTS_DIR)nix/flake.lock | cut -c1-16)
+	@docker tag pg_doorman-test-env:latest $(REGISTRY)/$(shell git config --get remote.origin.url | sed 's/.*[:/]\(.*\)\/.*$$/\1/' | tr '[:upper:]' '[:lower:]')/pg_doorman-test-runner:flake-$(shell shasum -a 256 $(TESTS_DIR)nix/flake.lock | cut -c1-16)
 	@echo "[SUCCESS] Image built and tagged successfully!"
 	@echo "[INFO] You can now run: make build"
 
