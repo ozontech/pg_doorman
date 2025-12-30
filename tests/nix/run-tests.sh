@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 set -e
 
+# Get project root (two levels up from tests/nix)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Function to compute image tag from flake files (same logic as in GitHub workflow)
+compute_flake_tag() {
+    local flake_hash
+    flake_hash=$(cat "${SCRIPT_DIR}/flake.nix" "${SCRIPT_DIR}/flake.lock" | shasum -a 256 | cut -c1-16)
+    echo "flake-${flake_hash}"
+}
+
 # Configuration
 REGISTRY="${REGISTRY:-ghcr.io}"
 REPO="${REPO:-$(git config --get remote.origin.url | sed 's/.*://;s/.git$//')}"
 IMAGE_NAME="${REGISTRY}/${REPO}/test-runner"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+# Use flake-based tag by default (matches GitHub workflow), can be overridden with IMAGE_TAG env var
+IMAGE_TAG="${IMAGE_TAG:-$(compute_flake_tag)}"
 FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 
 # Colors for output
@@ -25,9 +37,6 @@ log_warn() {
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
-
-# Get project root (two levels up from tests/nix)
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # Check if Docker is available
 if ! command -v docker &> /dev/null; then
