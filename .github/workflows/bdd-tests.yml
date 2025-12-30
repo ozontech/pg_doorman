@@ -24,9 +24,16 @@ jobs:
     outputs:
       image-tag: ${{ steps.compute-tag.outputs.tag }}
       image-exists: ${{ steps.check-exists.outputs.exists }}
+      image-name: ${{ steps.set-image-name.outputs.image_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set lower case image name
+        id: set-image-name
+        run: |
+          IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=${IMAGE_NAME_LOWER}" >> $GITHUB_OUTPUT
 
       - name: Compute image tag from flake files
         id: compute-tag
@@ -46,7 +53,7 @@ jobs:
       - name: Check if image exists in registry
         id: check-exists
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.compute-tag.outputs.tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ steps.set-image-name.outputs.image_name }}:${{ steps.compute-tag.outputs.tag }}"
           echo "Checking for image: ${IMAGE}"
           # Try to pull the manifest (without downloading the image)
           if docker manifest inspect "${IMAGE}" > /dev/null 2>&1; then
@@ -132,9 +139,10 @@ jobs:
         run: |
           docker load < tests/nix/result
           ARCH_TAG="${{ needs.check-image.outputs.image-tag }}-${{ matrix.arch }}"
-          docker tag pg_doorman-test-env:latest ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${ARCH_TAG}
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${ARCH_TAG}
-          echo "Pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${ARCH_TAG}"
+          IMAGE_NAME="${{ needs.check-image.outputs.image-name }}"
+          docker tag pg_doorman-test-env:latest ${{ env.REGISTRY }}/${IMAGE_NAME}:${ARCH_TAG}
+          docker push ${{ env.REGISTRY }}/${IMAGE_NAME}:${ARCH_TAG}
+          echo "Pushed: ${{ env.REGISTRY }}/${IMAGE_NAME}:${ARCH_TAG}"
 
   # Job 2: Create multi-arch manifest
   create-manifest:
@@ -156,7 +164,7 @@ jobs:
       - name: Create and push multi-arch manifest
         run: |
           IMAGE_TAG="${{ needs.check-image.outputs.image-tag }}"
-          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          BASE_IMAGE="${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}"
           # Create manifest combining both architectures
           docker manifest create ${BASE_IMAGE}:${IMAGE_TAG} \
             ${BASE_IMAGE}:${IMAGE_TAG}-x86_64-linux \
@@ -205,7 +213,7 @@ jobs:
   # Job 4: Run BDD tests with Go client
   go-tests:
     name: Go BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -214,20 +222,20 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Go
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --test bdd -- --tags @go
 
   # Job 5: Run BDD tests with Python client
   python-tests:
     name: Python BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -236,20 +244,20 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Python
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --test bdd -- --tags @python
 
   # Job 6: Run BDD tests with Node.js client
   nodejs-tests:
     name: Node.js BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -258,20 +266,20 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Node.js
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --test bdd -- --tags @nodejs
 
   # Job 7: Run BDD tests with .NET client
   dotnet-tests:
     name: .NET BDD Tests
-    needs: prepare-tests
+    needs: [check-image, prepare-tests]
     if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -280,12 +288,12 @@ jobs:
 
       - name: Pull test image from GHCR
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+          docker pull ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for .NET
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            ${{ env.REGISTRY }}/${{ needs.check-image.outputs.image-name }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --test bdd -- --tags @dotnet
