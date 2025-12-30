@@ -71,14 +71,12 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                 thread::spawn(move || {
                     let reader = BufReader::new(stdout);
                     let mut collected = String::new();
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            if streaming_started_stdout.load(std::sync::atomic::Ordering::Relaxed) {
-                                eprintln!("[STDOUT] {}", line);
-                            }
-                            collected.push_str(&line);
-                            collected.push('\n');
+                    for line in reader.lines().map_while(Result::ok) {
+                        if streaming_started_stdout.load(std::sync::atomic::Ordering::Relaxed) {
+                            eprintln!("[STDOUT] {}", line);
                         }
+                        collected.push_str(&line);
+                        collected.push('\n');
                     }
                     let _ = stdout_tx.send(collected);
                 })
@@ -89,14 +87,12 @@ fn run_command_with_timeout(command: &str, working_dir: Option<&str>, timeout: D
                 thread::spawn(move || {
                     let reader = BufReader::new(stderr);
                     let mut collected = String::new();
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            if streaming_started_stderr.load(std::sync::atomic::Ordering::Relaxed) {
-                                eprintln!("[STDERR] {}", line);
-                            }
-                            collected.push_str(&line);
-                            collected.push('\n');
+                    for line in reader.lines().map_while(Result::ok) {
+                        if streaming_started_stderr.load(std::sync::atomic::Ordering::Relaxed) {
+                            eprintln!("[STDERR] {}", line);
                         }
+                        collected.push_str(&line);
+                        collected.push('\n');
                     }
                     let _ = stderr_tx.send(collected);
                 })
