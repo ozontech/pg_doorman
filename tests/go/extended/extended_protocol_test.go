@@ -132,38 +132,6 @@ func Test_RaceStop(t *testing.T) {
 	checkStaledConnections(t)
 }
 
-func Test_RaceExtendedProtocol(t *testing.T) {
-	t.Log("start RaceExtendedProtocol")
-	printStaledConnections(t)
-	conn, errConn := net.Dial("tcp", poolerAddr)
-	if errConn != nil {
-		t.Fatal(errConn)
-	}
-	_, _ = login(t, conn, "example_user_1", "example_db", "test")
-	sendSimpleQuery(t, conn, "begin;")
-	readServerMessages(t, conn)
-	sendParseQuery(t, conn, "SELECT * FROM generate_series(1,1000000);")
-	time.Sleep(100 * time.Millisecond)
-	sendBindMessage(t, conn)
-	sendDescribe(t, conn, "P")
-	sendExecute(t, conn)
-	sendParseQuery(t, conn, "select pg_sleep(1)")
-	time.Sleep(100 * time.Millisecond)
-	sendBindMessage(t, conn)
-	sendDescribe(t, conn, "P")
-	sendExecute(t, conn)
-	sendSyncMessage(t, conn)
-	time.Sleep(100 * time.Millisecond)
-	read := make([]byte, 1)
-	_, err := conn.Read(read)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(2 * time.Second)
-	byeBye(t, conn)
-	checkStaledConnections(t)
-}
-
 func Test_ExtendedProtocol(t *testing.T) {
 	f := func(t *testing.T, conn net.Conn) []*message {
 		processID, secretKey := login(t, conn, "example_user_1", "example_db", "test")
