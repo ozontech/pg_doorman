@@ -24,6 +24,18 @@ pub async fn extract_talos_token(
 pub static TALOS_KEYS: Lazy<RwLock<HashMap<String, PKeyWithDigest<Public>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+pub async fn load_talos_pub_key_data(key_id: String, pub_key_data: String) -> Result<(), Error> {
+    let pub_key = PKey::public_key_from_pem(pub_key_data.as_ref())
+        .map_err(|err| Error::JWTPubKey(err.to_string()))?;
+    let rs256_public_key = PKeyWithDigest {
+        digest: MessageDigest::sha256(),
+        key: pub_key,
+    };
+    let mut guard_write = TALOS_KEYS.write().await;
+    guard_write.insert(key_id, rs256_public_key);
+    Ok(())
+}
+
 pub async fn load_talos_pub_key(key_filename: String) -> Result<(), Error> {
     let key = Path::new(&key_filename)
         .file_stem()
@@ -36,15 +48,7 @@ pub async fn load_talos_pub_key(key_filename: String) -> Result<(), Error> {
     let pub_key_data =
         fs::read_to_string(&key_filename).map_err(|err| Error::JWTPubKey(err.to_string()))?;
 
-    let pub_key = PKey::public_key_from_pem(pub_key_data.as_ref())
-        .map_err(|err| Error::JWTPubKey(err.to_string()))?;
-    let rs256_public_key = PKeyWithDigest {
-        digest: MessageDigest::sha256(),
-        key: pub_key,
-    };
-    let mut guard_write = TALOS_KEYS.write().await;
-    guard_write.insert(key.to_string(), rs256_public_key);
-    Ok(())
+    load_talos_pub_key_data(key.to_string(), pub_key_data).await
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
@@ -245,13 +249,10 @@ async fn extract_talos_token_with_key(
 }
 
 #[allow(dead_code)]
-async fn sign_with_jwt_priv_key(
+async fn sign_with_jwt_priv_key_data(
     claims: TalosClaims,
-    key_filename: String,
+    priv_key_data: String,
 ) -> Result<String, Error> {
-    let priv_key_data =
-        fs::read_to_string(&key_filename).map_err(|err| Error::JWTPrivKey(err.to_string()))?;
-
     let priv_key_rsa = Rsa::private_key_from_pem(priv_key_data.as_bytes())
         .map_err(|err| Error::JWTPrivKey(err.to_string()))?;
 
@@ -266,6 +267,17 @@ async fn sign_with_jwt_priv_key(
     claims
         .sign_with_key(&rs256_priv_key)
         .map_err(|err| Error::JWTPrivKey(err.to_string()))
+}
+
+#[allow(dead_code)]
+async fn sign_with_jwt_priv_key(
+    claims: TalosClaims,
+    key_filename: String,
+) -> Result<String, Error> {
+    let priv_key_data =
+        fs::read_to_string(&key_filename).map_err(|err| Error::JWTPrivKey(err.to_string()))?;
+
+    sign_with_jwt_priv_key_data(claims, priv_key_data).await
 }
 
 #[cfg(test)]
@@ -380,6 +392,20 @@ mod tests {
         assert!(missing_expiration_claims.validate().is_err());
     }
 
+    fn generate_keys() -> (String, String) {
+        let rsa = Rsa::generate(2048).unwrap();
+        let priv_key = PKey::from_rsa(rsa.clone()).unwrap();
+        let pub_key = PKey::from_rsa(rsa).unwrap();
+
+        let priv_pem = priv_key.private_key_to_pem_pkcs8().unwrap();
+        let pub_pem = pub_key.public_key_to_pem().unwrap();
+
+        (
+            String::from_utf8(priv_pem).unwrap(),
+            String::from_utf8(pub_pem).unwrap(),
+        )
+    }
+
     #[tokio::test]
     async fn test_load_talos_pub_key() {
         // Clear any existing keys
@@ -388,14 +414,17 @@ mod tests {
             guard_write.clear();
         }
 
-        // Test loading a valid public key
-        let result = load_talos_pub_key("./tests/data/jwt/public.pem".to_string()).await;
+        let (_, pub_pem) = generate_keys();
+        let key_id = "public".to_string();
+
+        // Test loading valid public key data
+        let result = load_talos_pub_key_data(key_id.clone(), pub_pem).await;
         assert!(result.is_ok());
 
         // Verify the key was loaded correctly
         {
             let guard_read = TALOS_KEYS.read().await;
-            assert!(guard_read.contains_key("public"));
+            assert!(guard_read.contains_key(&key_id));
             assert_eq!(guard_read.len(), 1);
         }
 
@@ -406,6 +435,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_and_validate() {
+        let (priv_pem, pub_pem) = generate_keys();
+        let key_id = "public".to_string();
+
         let mut claims = TalosClaims {
             default_claims: Default::default(),
             client_id: "client-id".to_string(),
@@ -428,18 +460,19 @@ mod tests {
             .unwrap()
             .as_secs();
         claims.default_claims.expiration = Some(now + 2);
-        let token = match sign_with_jwt_priv_key(claims, "./tests/data/jwt/private.pem".to_string())
-            .await
-        {
+
+        let token = match sign_with_jwt_priv_key_data(claims, priv_pem).await {
             Ok(token) => token,
             Err(err) => panic!("{err:?}"),
         };
-        load_talos_pub_key("./tests/data/jwt/public.pem".to_string())
+
+        load_talos_pub_key_data(key_id.clone(), pub_pem)
             .await
             .unwrap();
+
         let result = extract_talos_token_with_key(
             vec!["database".to_string(), "database-1".to_string()],
-            "public".to_string(),
+            key_id,
             token,
         )
         .await

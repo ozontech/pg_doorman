@@ -1,7 +1,7 @@
 // Standard library imports
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
-use std::hash::{Hasher};
+use std::hash::Hasher;
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -23,11 +23,11 @@ pub enum ExtendedProtocolData {
     },
     Bind {
         data: BytesMut,
-        metadata: Option<String>,
+        hash: Option<u64>,
     },
     Describe {
         data: BytesMut,
-        metadata: Option<String>,
+        hash: Option<u64>,
     },
     Execute {
         data: BytesMut,
@@ -43,12 +43,12 @@ impl ExtendedProtocolData {
         Self::Parse { data, metadata }
     }
 
-    pub fn create_new_bind(data: BytesMut, metadata: Option<String>) -> Self {
-        Self::Bind { data, metadata }
+    pub fn create_new_bind(data: BytesMut, hash: Option<u64>) -> Self {
+        Self::Bind { data, hash }
     }
 
-    pub fn create_new_describe(data: BytesMut, metadata: Option<String>) -> Self {
-        Self::Describe { data, metadata }
+    pub fn create_new_describe(data: BytesMut, hash: Option<u64>) -> Self {
+        Self::Describe { data, hash }
     }
 
     pub fn create_new_execute(data: BytesMut) -> Self {
@@ -168,7 +168,8 @@ impl Parse {
             hasher.write(self.param_types.as_slice().as_bytes());
 
             hasher.finish()
-        } else { // in benchmarks default hasher was better on short strings.
+        } else {
+            // in benchmarks default hasher was better on short strings.
             let mut hasher = DefaultHasher::new();
 
             hasher.write(self.query.as_bytes());

@@ -1307,12 +1307,12 @@ where
                                             self.buffer.put(&data[..]);
                                         }
                                     }
-                                    ExtendedProtocolData::Bind { data, metadata } => {
+                                    ExtendedProtocolData::Bind { data, hash } => {
                                         async_wait_code = '2';
                                         // This is using a prepared statement
-                                        if let Some(client_given_name) = metadata {
+                                        if let Some(hash) = hash {
                                             self.ensure_prepared_statement_is_on_server(
-                                                client_given_name,
+                                                hash,
                                                 current_pool,
                                                 server,
                                             )
@@ -1321,12 +1321,12 @@ where
 
                                         self.buffer.put(&data[..]);
                                     }
-                                    ExtendedProtocolData::Describe { data, metadata } => {
+                                    ExtendedProtocolData::Describe { data, hash } => {
                                         async_wait_code = 'T';
                                         // This is using a prepared statement
-                                        if let Some(client_given_name) = metadata {
+                                        if let Some(hash) = hash {
                                             self.ensure_prepared_statement_is_on_server(
-                                                client_given_name,
+                                                hash,
                                                 current_pool,
                                                 server,
                                             )
@@ -1538,39 +1538,39 @@ where
     /// Makes sure the checked out server has the prepared statement and sends it to the server if it doesn't
     async fn ensure_prepared_statement_is_on_server(
         &mut self,
-        client_name: String,
+        hash: u64,
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
-        match self.prepared_statements.get(&client_name) {
-            Some((parse, hash)) => {
-                debug!("Prepared statement `{client_name}` found in cache");
-                // In this case we want to send the parse message to the server
-                // since pgcat is initiating the prepared statement on this specific server
-                match self
-                    .register_parse_to_server_cache(true, hash, parse, pool, server)
-                    .await
-                {
-                    Ok(_) => (),
-                    Err(err) => match err {
-                        Error::PreparedStatementError => {
-                            debug!("Removed {client_name} from client cache");
-                            self.prepared_statements.remove(&client_name);
-                        }
-
-                        _ => {
-                            return Err(err);
-                        }
-                    },
-                }
-            }
-
+        let (parse, hash) = match pool.get_prepared_statement_by_hash(&hash) {
+            Some(parse) => (parse.clone(), hash),
             None => {
                 return Err(Error::ClientError(format!(
-                    "prepared statement `{client_name}` not found"
+                    "prepared statement with hash `{hash}` not found"
                 )))
             }
         };
+
+        debug!("Prepared statement with hash `{hash}` found in cache");
+        // In this case we want to send the parse message to the server
+        // since pg_doorman is initiating the prepared statement on this specific server
+        match self
+            .register_parse_to_server_cache(true, &hash, &parse, pool, server)
+            .await
+        {
+            Ok(_) => (),
+            Err(err) => match err {
+                Error::PreparedStatementError => {
+                    // We don't remove it from client cache because we don't have the client name here
+                    // and it's already not in the pool cache if we're here (actually it IS in pool cache)
+                    // This error means the SERVER rejected it.
+                }
+
+                _ => {
+                    return Err(err);
+                }
+            },
+        }
 
         Ok(())
     }
@@ -1656,7 +1656,7 @@ where
         let client_given_name = Bind::get_name(&message)?;
 
         match self.prepared_statements.get(&client_given_name) {
-            Some((rewritten_parse, _)) => {
+            Some((rewritten_parse, hash)) => {
                 let message = Bind::rename(message, &rewritten_parse.name)?;
 
                 debug!(
@@ -1665,7 +1665,7 @@ where
                 );
 
                 self.extended_protocol_data_buffer.push_back(
-                    ExtendedProtocolData::create_new_bind(message, Some(client_given_name)),
+                    ExtendedProtocolData::create_new_bind(message, Some(*hash)),
                 );
 
                 Ok(())
@@ -1711,7 +1711,7 @@ where
         let client_given_name = describe.statement_name.clone();
 
         match self.prepared_statements.get(&client_given_name) {
-            Some((rewritten_parse, _)) => {
+            Some((rewritten_parse, hash)) => {
                 let describe = describe.rename(&rewritten_parse.name);
 
                 debug!(
@@ -1722,7 +1722,7 @@ where
                 self.extended_protocol_data_buffer.push_back(
                     ExtendedProtocolData::create_new_describe(
                         describe.try_into()?,
-                        Some(client_given_name),
+                        Some(*hash),
                     ),
                 );
 
@@ -1797,10 +1797,18 @@ where
     ) -> Result<(), Error> {
         let message = message.unwrap_or(&self.buffer);
 
+        let mut all_messages = server.send_buffer.split();
+        all_messages.extend_from_slice(message);
+
         // Send message with timeout
         server
-            .send_and_flush_timeout(message, Duration::from_secs(5))
+            .send_and_flush_timeout(&all_messages, Duration::from_secs(5))
             .await?;
+
+        // Clear local buffer if we were using it
+        if message == &self.buffer {
+            self.buffer.clear();
+        }
 
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;

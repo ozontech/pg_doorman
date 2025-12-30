@@ -1,4 +1,5 @@
 use crate::world::DoormanWorld;
+use crate::log_helper::truncate_log;
 use cucumber::{gherkin::Step, given, then};
 use portpicker::pick_unused_port;
 use std::io::Write;
@@ -52,8 +53,14 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
         .output()
         .expect("Failed to run initdb");
     if !output.status.success() {
-        eprintln!("initdb stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("initdb stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "initdb stdout:\n{}",
+            truncate_log(&String::from_utf8_lossy(&output.stdout))
+        );
+        eprintln!(
+            "initdb stderr:\n{}",
+            truncate_log(&String::from_utf8_lossy(&output.stderr))
+        );
         panic!("initdb failed");
     }
 
@@ -67,7 +74,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-D",
             db_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {} -F -k {} -c shared_memory_type=mmap -c max_connections=20", port, socket_dir),
             "start",
         ],
     )
@@ -92,7 +99,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {} -F -k {} -c shared_memory_type=mmap -c max_connections=20", port, socket_dir),
             "start",
         ],
     )
@@ -122,7 +129,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
 
     if !success {
         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-            eprintln!("Postgres log:\n{}", log_content);
+            eprintln!("Postgres log:\n{}", truncate_log(&log_content));
         }
         // Try one more time with psql just to be sure
         let check_psql = pg_command_builder(
@@ -174,8 +181,8 @@ pub async fn apply_fixtures(world: &mut DoormanWorld, file_path: String) {
     .output()
     .expect("Failed to run psql");
     if !output.status.success() {
-        eprintln!("psql stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("psql stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!("psql stdout:\n{}", truncate_log(&String::from_utf8_lossy(&output.stdout)));
+        eprintln!("psql stderr:\n{}", truncate_log(&String::from_utf8_lossy(&output.stderr)));
         panic!("Failed to apply fixtures from {}", file_path);
     }
 }
@@ -206,14 +213,29 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
     }
 
     // initdb with postgres user (suppress output, show only on error)
-    let output = pg_command_builder("initdb", &["-D", db_path.to_str().unwrap(), "-U", "postgres", "--no-sync"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to run initdb");
+    let output = pg_command_builder(
+        "initdb",
+        &[
+            "-D",
+            db_path.to_str().unwrap(),
+            "-U",
+            "postgres",
+            "--no-sync",
+        ],
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .output()
+    .expect("Failed to run initdb");
     if !output.status.success() {
-        eprintln!("initdb stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("initdb stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "initdb stdout:\n{}",
+            truncate_log(&String::from_utf8_lossy(&output.stdout))
+        );
+        eprintln!(
+            "initdb stderr:\n{}",
+            truncate_log(&String::from_utf8_lossy(&output.stderr))
+        );
         panic!("initdb failed");
     }
 
@@ -248,7 +270,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {} -F -k {} -c shared_memory_type=mmap -c max_connections=20", port, socket_dir),
             "start",
         ],
     )
@@ -262,7 +284,16 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
     for _ in 0..20 {
         let check = pg_command_builder(
             "pg_isready",
-            &["-p", &port.to_string(), "-h", "127.0.0.1", "-U", "postgres", "-t", "1"],
+            &[
+                "-p",
+                &port.to_string(),
+                "-h",
+                "127.0.0.1",
+                "-U",
+                "postgres",
+                "-t",
+                "1",
+            ],
         )
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -278,7 +309,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
 
     if !success {
         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-            eprintln!("Postgres log:\n{}", log_content);
+            eprintln!("Postgres log:\n{}", truncate_log(&log_content));
         }
         // Try one more time with psql just to be sure
         let check_psql = pg_command_builder(
@@ -310,10 +341,17 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
 }
 
 /// Check that psql connection to pg_doorman succeeds
-#[then(expr = "psql connection to pg_doorman as user {string} to database {string} with password {string} succeeds")]
-pub async fn psql_connection_succeeds(world: &mut DoormanWorld, user: String, database: String, password: String) {
+#[then(
+    expr = "psql connection to pg_doorman as user {string} to database {string} with password {string} succeeds"
+)]
+pub async fn psql_connection_succeeds(
+    world: &mut DoormanWorld,
+    user: String,
+    database: String,
+    password: String,
+) {
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
-    
+
     let status = Command::new("psql")
         .arg("-h")
         .arg("127.0.0.1")
@@ -328,7 +366,7 @@ pub async fn psql_connection_succeeds(world: &mut DoormanWorld, user: String, da
         .env("PGPASSWORD", &password)
         .status()
         .expect("Failed to run psql");
-    
+
     assert!(status.success(), "psql connection to pg_doorman failed");
 }
 

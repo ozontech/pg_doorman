@@ -1,4 +1,5 @@
 use crate::world::{DoormanWorld, TestCommandResult};
+use crate::log_helper::truncate_log;
 use cucumber::{gherkin::Step, then, when};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -235,7 +236,7 @@ fn capture_doorman_logs(world: &mut DoormanWorld) -> String {
             let mut stdout_logs = String::new();
             let _ = stdout.read_to_string(&mut stdout_logs);
             if !stdout_logs.is_empty() {
-                result.push_str(&format!("\n=== pg_doorman stdout ===\n{}\n", stdout_logs));
+                result.push_str(&format!("\n=== pg_doorman stdout ===\n{}\n", truncate_log(&stdout_logs)));
             }
         }
         
@@ -244,7 +245,7 @@ fn capture_doorman_logs(world: &mut DoormanWorld) -> String {
             let mut stderr_logs = String::new();
             let _ = stderr.read_to_string(&mut stderr_logs);
             if !stderr_logs.is_empty() {
-                result.push_str(&format!("\n=== pg_doorman stderr ===\n{}\n", stderr_logs));
+                result.push_str(&format!("\n=== pg_doorman stderr ===\n{}\n", truncate_log(&stderr_logs)));
             }
         }
         
@@ -275,7 +276,7 @@ pub async fn command_should_succeed(world: &mut DoormanWorld) {
         
         panic!(
             "Command failed with exit code {:?}\nstdout:\n{}\nstderr:\n{}{}",
-            result.exit_code, result.stdout, result.stderr, doorman_logs
+            result.exit_code, truncate_log(&result.stdout), truncate_log(&result.stderr), doorman_logs
         );
     }
 }
@@ -299,7 +300,7 @@ pub async fn command_should_fail(world: &mut DoormanWorld) {
         
         panic!(
             "Command succeeded but was expected to fail\nstdout:\n{}\nstderr:\n{}{}",
-            result.stdout, result.stderr, doorman_logs
+            truncate_log(&result.stdout), truncate_log(&result.stderr), doorman_logs
         );
     }
 }
@@ -325,7 +326,7 @@ pub async fn command_output_should_contain(world: &mut DoormanWorld, text: Strin
         
         panic!(
             "Command output does not contain '{}'\nstdout:\n{}\nstderr:\n{}{}",
-            text, result.stdout, result.stderr, doorman_logs
+            text, truncate_log(&result.stdout), truncate_log(&result.stderr), doorman_logs
         );
     }
 }

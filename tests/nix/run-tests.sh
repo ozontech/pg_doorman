@@ -101,6 +101,13 @@ run_in_container() {
         -e "POSTGRES_PORT=5432"
     )
 
+    if [ "$TCPDUMP" = "true" ]; then
+        docker_args+=(
+            --cap-add=NET_RAW
+            --cap-add=NET_ADMIN
+        )
+    fi
+
     if [ "$interactive" = "true" ]; then
         docker_args+=(-i)
     fi
@@ -161,9 +168,23 @@ run_dotnet_tests() {
     run_in_container "cd tests/dotnet && setup-test-deps && dotnet test"
 }
 
+run_rust_tests() {
+    log_info "Running Rust tests (Extended Protocol)..."
+    run_bdd_tests "@rust"
+}
+
 # Function to open interactive shell
 open_shell() {
     log_info "Opening interactive shell in test environment..."
+    if [ "$TCPDUMP" = "true" ]; then
+        log_info "Tcpdump support enabled (capabilities added)"
+    fi
+    log_info "--------------------------------------------------------"
+    log_info "Inside the container you can:"
+    log_info "  - Run 'setup-test-deps' to install dependencies"
+    log_info "  - Run 'cargo test' to run tests"
+    log_info "  - Run 'tcpdump -i any port 5432 -vvvv -X' for packet capture"
+    log_info "--------------------------------------------------------"
     run_in_container "bash" true
 }
 
@@ -179,6 +200,7 @@ Commands:
 
     bdd [tags]           Run BDD/Cucumber tests (optionally with tags like @go, @python)
     test-go              Run Go tests
+    test-rust            Run Rust tests (Extended Protocol)
     test-python          Run Python tests
     test-nodejs          Run Node.js tests
     test-dotnet          Run .NET tests
@@ -190,10 +212,22 @@ Environment variables:
     REGISTRY             Container registry (default: ghcr.io)
     REPO                 Repository name (auto-detected from git)
     IMAGE_TAG            Image tag to use (default: latest)
+    TCPDUMP              Set to 'true' to enable tcpdump capabilities (default: false)
+
+Inside the container:
+    To run tests manually:
+      1. setup-test-deps      # Install dependencies (only once)
+      2. cargo test           # Run all tests
+      3. cargo test --test bdd -- --tags @go  # Run specific BDD tests
+      4. cd tests/go && go test -v .          # Run specific language tests
+
+    To use tcpdump:
+      tcpdump -i any port 5432 -vvvv -X
 
 Examples:
     $0 pull                    # Pull latest image
     $0 shell                   # Interactive shell
+    TCPDUMP=true $0 shell      # Interactive shell with tcpdump support
     $0 build                   # Build pg_doorman
     $0 bdd @go                 # Run BDD tests tagged with @go
     $0 test-python             # Run Python tests
@@ -223,6 +257,10 @@ case "${1:-help}" in
         try_pull_image
         run_go_tests
         ;;
+    test-rust)
+        try_pull_image
+        run_rust_tests
+        ;;
     test-python)
         try_pull_image
         run_python_tests
@@ -239,6 +277,7 @@ case "${1:-help}" in
         try_pull_image
         log_info "Running all language tests..."
         run_go_tests
+        run_rust_tests
         run_python_tests
         run_nodejs_tests
         run_dotnet_tests

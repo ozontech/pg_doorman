@@ -96,6 +96,8 @@
             nettools
             curl
             wget
+            tcpdump
+            tmux
             less
             vim
 
