@@ -291,3 +291,25 @@ jobs:
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --test bdd -- --tags @dotnet
+
+  # Job 8: Run BDD tests with Rust client
+  rust-tests:
+    name: Rust BDD Tests
+    needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull test image from GHCR
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+
+      - name: Run BDD tests for Rust
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            cargo test --test bdd -- --tags @rust
