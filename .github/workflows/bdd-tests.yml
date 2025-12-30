@@ -146,7 +146,7 @@ jobs:
           FULL_IMAGE="${{ env.REGISTRY }}/${IMAGE_NAME}:${ARCH_TAG}"
           echo "Tagging image: pg_doorman-test-env:latest -> ${FULL_IMAGE}"
           docker tag pg_doorman-test-env:latest ${FULL_IMAGE}
-          echo "Pushing image to ${env.REGISTRY}..."
+          echo "Pushing image to ${{ env.REGISTRY }}..."
           docker push ${FULL_IMAGE}
           echo "✅ Pushed: ${FULL_IMAGE}"
 
