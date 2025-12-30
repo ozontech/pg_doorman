@@ -56,6 +56,12 @@ fn main() {
     // (non-zero if any tests failed), so cleanup must happen in the after hook
     rt.block_on(async {
         DoormanWorld::cucumber()
+            .max_concurrent_scenarios(1)
+            .before(|_feature, _rule, _scenario, world| {
+                Box::pin(async {
+                    world.scenario_start = Some(std::time::Instant::now());
+                })
+            })
             .after(|_feature, _rule, _scenario, _finished, world| {
                 // This hook is called after EVERY scenario, regardless of success/failure
                 // Cleanup pg_doorman process if it exists

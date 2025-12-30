@@ -368,6 +368,189 @@ async fn send_sync_to_both(world: &mut DoormanWorld) {
     doorman_conn.send_sync().await.expect("Failed to send Sync to Doorman");
 }
 
+#[when(
+    expr = "we repeat {int} times: Parse {string} with query {string}, Bind {string} to {string} with params {string}, Describe {string} {string}, Execute {string} to both"
+)]
+async fn repeat_extended_to_both(
+    world: &mut DoormanWorld,
+    count: i32,
+    parse_name: String,
+    query: String,
+    portal: String,
+    statement: String,
+    params_str: String,
+    target_type_str: String,
+    describe_name: String,
+    execute_portal: String,
+) {
+    if let Some(start) = world.scenario_start {
+        if start.elapsed() > std::time::Duration::from_secs(600) {
+            panic!("Scenario timeout exceeded (10 minutes)");
+        }
+    }
+
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+    let doorman_conn = world.doorman_conn.as_mut().expect("No Doorman connection");
+
+    let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| Some(s.as_bytes().to_vec()))
+            .collect()
+    };
+    let target_type = target_type_str.chars().next().expect("Empty target type");
+
+    let chunk_size = 100;
+    for i in 0..count {
+        if i > 0 && i % 100 == 0 {
+            println!("  ... sent {}/{} iterations to both", i, count);
+        }
+
+        pg_conn
+            .send_parse(&parse_name, &query)
+            .await
+            .expect("Failed to send Parse to PG");
+        doorman_conn
+            .send_parse(&parse_name, &query)
+            .await
+            .expect("Failed to send Parse to Doorman");
+
+        pg_conn
+            .send_bind(&portal, &statement, params.clone())
+            .await
+            .expect("Failed to send Bind to PG");
+        doorman_conn
+            .send_bind(&portal, &statement, params.clone())
+            .await
+            .expect("Failed to send Bind to Doorman");
+
+        pg_conn
+            .send_describe(target_type, &describe_name)
+            .await
+            .expect("Failed to send Describe to PG");
+        doorman_conn
+            .send_describe(target_type, &describe_name)
+            .await
+            .expect("Failed to send Describe to Doorman");
+
+        pg_conn
+            .send_execute(&execute_portal, 0)
+            .await
+            .expect("Failed to send Execute to PG");
+        doorman_conn
+            .send_execute(&execute_portal, 0)
+            .await
+            .expect("Failed to send Execute to Doorman");
+
+        // Every chunk_size iterations, we try to read what's available to clear the buffers
+        if (i + 1) % 50 == 0 {
+            // Send Sync and read everything to clear buffers
+            pg_conn.send_sync().await.expect("Failed to send Sync to PG");
+            doorman_conn.send_sync().await.expect("Failed to send Sync to Doorman");
+            
+            let pg_msgs = pg_conn.read_all_messages_until_ready().await.expect("Failed to read from PG");
+            let dm_msgs = doorman_conn.read_all_messages_until_ready().await.expect("Failed to read from Doorman");
+            
+            if pg_msgs.len() != dm_msgs.len() {
+                panic!("Different number of messages: pg={}, doorman={}", pg_msgs.len(), dm_msgs.len());
+            }
+        }
+    }
+}
+
+#[when(
+    expr = "we repeat {int} times: Parse {string} with query {string}, Bind {string} to {string} with params {string}, Describe {string} {string}, Execute {string} to postgres"
+)]
+async fn repeat_extended_to_pg(
+    world: &mut DoormanWorld,
+    count: i32,
+    parse_name: String,
+    query: String,
+    portal: String,
+    statement: String,
+    params_str: String,
+    target_type_str: String,
+    describe_name: String,
+    execute_portal: String,
+) {
+    if let Some(start) = world.scenario_start {
+        if start.elapsed() > std::time::Duration::from_secs(600) {
+            panic!("Scenario timeout exceeded (10 minutes)");
+        }
+    }
+
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+
+    let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| Some(s.as_bytes().to_vec()))
+            .collect()
+    };
+    let target_type = target_type_str.chars().next().expect("Empty target type");
+
+    let chunk_size = 100;
+    for i in 0..count {
+        if i > 0 && i % 100 == 0 {
+            println!("  ... sent {}/{} iterations to postgres", i, count);
+        }
+        if let Some(start) = world.scenario_start {
+            if start.elapsed() > std::time::Duration::from_secs(600) {
+                panic!("Scenario timeout exceeded (10 minutes) during loop");
+            }
+        }
+
+        pg_conn
+            .send_parse(&parse_name, &query)
+            .await
+            .expect("Failed to send Parse to PG");
+
+        pg_conn
+            .send_bind(&portal, &statement, params.clone())
+            .await
+            .expect("Failed to send Bind to PG");
+
+        pg_conn
+            .send_describe(target_type, &describe_name)
+            .await
+            .expect("Failed to send Describe to PG");
+
+        pg_conn
+            .send_execute(&execute_portal, 0)
+            .await
+            .expect("Failed to send Execute to PG");
+
+        // Every chunk_size iterations, we try to read what's available to clear the buffers
+        if (i + 1) % 50 == 0 {
+            // Send Sync and read everything to clear buffers
+            pg_conn.send_sync().await.expect("Failed to send Sync to PG");
+            let pg_msgs = pg_conn.read_all_messages_until_ready().await.expect("Failed to read from PG");
+            world.messages_count += pg_msgs.len();
+        }
+    }
+}
+
+#[when("we send Sync to postgres")]
+async fn send_sync_to_pg(world: &mut DoormanWorld) {
+    let pg_conn = world.pg_conn.as_mut().expect("No PG connection");
+    pg_conn.send_sync().await.expect("Failed to send Sync to PG");
+}
+
+#[then(expr = "we should receive {int} messages from postgres")]
+async fn receive_count_messages_from_pg(world: &mut DoormanWorld, expected_count: i32) {
+    if world.messages_count != expected_count as usize {
+        panic!(
+            "Expected {} messages, but received accumulated {}",
+            expected_count,
+            world.messages_count
+        );
+    }
+}
+
 #[then("we should receive identical messages from both")]
 async fn receive_identical_messages(world: &mut DoormanWorld) {
     let pg_conn = world.pg_conn.as_mut().expect("No PG connection");

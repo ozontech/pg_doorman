@@ -43,6 +43,10 @@ pub struct DoormanWorld {
     pub pg_conn: Option<crate::extended::PgConnection>,
     /// pg_doorman connection
     pub doorman_conn: Option<crate::extended::PgConnection>,
+    /// Time when the scenario started
+    pub scenario_start: Option<std::time::Instant>,
+    /// Accumulated messages count
+    pub messages_count: usize,
 }
 
 impl std::fmt::Debug for DoormanWorld {

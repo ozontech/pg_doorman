@@ -74,7 +74,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-D",
             db_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {} -F -k {} -c shared_memory_type=mmap -c max_connections=20", port, socket_dir),
             "start",
         ],
     )
@@ -99,7 +99,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {} -F -k {} -c shared_memory_type=mmap -c max_connections=20", port, socket_dir),
             "start",
         ],
     )
@@ -270,7 +270,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {} -F -k {} -c shared_memory_type=mmap -c max_connections=20", port, socket_dir),
             "start",
         ],
     )
