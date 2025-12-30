@@ -205,6 +205,7 @@ jobs:
   go-tests:
     name: Go BDD Tests
     needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -226,6 +227,7 @@ jobs:
   python-tests:
     name: Python BDD Tests
     needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -247,6 +249,7 @@ jobs:
   nodejs-tests:
     name: Node.js BDD Tests
     needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -268,6 +271,7 @@ jobs:
   dotnet-tests:
     name: .NET BDD Tests
     needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
