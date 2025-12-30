@@ -11,7 +11,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: pg_doorman-test-runner
 
 jobs:
   # Job 0: Check if image needs to be rebuilt
@@ -32,7 +32,7 @@ jobs:
       - name: Set lower case image name
         id: set-image-name
         run: |
-          IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME_LOWER=$(echo "${{ github.repository_owner }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "image_name=${IMAGE_NAME_LOWER}" >> $GITHUB_OUTPUT
 
       - name: Compute image tag from flake files
@@ -40,14 +40,14 @@ jobs:
         run: |
           # Create a hash based on flake.nix and flake.lock content
           FLAKE_HASH=$(cat tests/nix/flake.nix tests/nix/flake.lock | sha256sum | cut -c1-16)
-          echo "tag=test-runner-flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
-          echo "Computed image tag: test-runner-flake-${FLAKE_HASH}"
+          echo "tag=flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
+          echo "Computed image tag: flake-${FLAKE_HASH}"
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check if image exists in registry
@@ -132,7 +132,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Load and push arch-specific image
@@ -158,7 +158,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest
