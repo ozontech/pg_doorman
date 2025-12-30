@@ -301,7 +301,10 @@ pub struct Server {
     stream: BufStream<StreamInner>,
 
     /// Our server response buffer. We buffer data before we give it to the client.
-    buffer: BytesMut,
+    recv_buffer: BytesMut,
+
+    /// Messages we need to send to the server (e.g. Parse/Close for prepared statements)
+    pub send_buffer: BytesMut,
 
     /// Server information the server sent us over on startup.
     server_parameters: ServerParameters,
@@ -433,11 +436,11 @@ impl Server {
                 && code_u8 as char == 'D'
             {
                 // send current buffer + header.
-                self.buffer.put_u8(code_u8);
-                self.buffer.put_i32(message_len);
+                self.recv_buffer.put_u8(code_u8);
+                self.recv_buffer.put_i32(message_len);
                 let prev_bad = self.bad;
                 self.bad = true;
-                write_all_flush(&mut client_stream, &self.buffer).await?;
+                write_all_flush(&mut client_stream, &self.recv_buffer).await?;
                 match proxy_copy_data_with_timeout(
                     Duration::from_millis(get_config().general.proxy_copy_data_timeout),
                     &mut self.stream,
@@ -456,12 +459,12 @@ impl Server {
                     self.bad = false;
                 }
                 self.stats
-                    .data_received(self.buffer.len() + message_len as usize);
+                    .data_received(self.recv_buffer.len() + message_len as usize);
                 self.last_activity = SystemTime::now();
                 self.data_available = true;
-                self.buffer.clear();
+                self.recv_buffer.clear();
                 self.stats.wait_idle();
-                return Ok(self.buffer.clone());
+                return Ok(self.recv_buffer.clone());
             }
             // COPY protocol, 'd'
             if self.max_message_size > 0
@@ -469,11 +472,11 @@ impl Server {
                 && code_u8 as char == 'd'
             {
                 // send current buffer + header.
-                self.buffer.put_u8(code_u8);
-                self.buffer.put_i32(message_len);
+                self.recv_buffer.put_u8(code_u8);
+                self.recv_buffer.put_i32(message_len);
                 let prev_bad = self.bad;
                 self.bad = true;
-                write_all_flush(&mut client_stream, &self.buffer).await?;
+                write_all_flush(&mut client_stream, &self.recv_buffer).await?;
                 proxy_copy_data(
                     &mut self.stream,
                     &mut client_stream,
@@ -482,11 +485,11 @@ impl Server {
                 .await?;
                 self.bad = prev_bad;
                 self.stats
-                    .data_received(self.buffer.len() + message_len as usize);
+                    .data_received(self.recv_buffer.len() + message_len as usize);
                 self.last_activity = SystemTime::now();
-                self.buffer.clear();
+                self.recv_buffer.clear();
                 self.stats.wait_idle();
-                return Ok(self.buffer.clone());
+                return Ok(self.recv_buffer.clone());
             }
 
             if message_len > MAX_MESSAGE_SIZE {
@@ -515,7 +518,7 @@ impl Server {
             };
 
             // Buffer the message we'll forward to the client later.
-            self.buffer.put(&message[..]);
+            self.recv_buffer.put(&message[..]);
 
             let code = message.get_u8() as char;
             let _len = message.get_i32();
@@ -696,7 +699,7 @@ impl Server {
                     self.data_available = true;
 
                     // Don't flush yet, the more we buffer, the faster this goes...up to a limit.
-                    if self.buffer.len() >= 8196 {
+                    if self.recv_buffer.len() >= 8196 {
                         break;
                     }
                 }
@@ -717,7 +720,7 @@ impl Server {
                 // CopyData
                 'd' => {
                     // Don't flush yet, buffer until we reach limit
-                    if self.buffer.len() >= 8196 {
+                    if self.recv_buffer.len() >= 8196 {
                         break;
                     }
                 }
@@ -745,17 +748,17 @@ impl Server {
             }
         }
 
-        let bytes = self.buffer.clone();
+        let bytes = self.recv_buffer.clone();
 
         // Keep track of how much data we got from the server for stats.
         self.stats.data_received(bytes.len());
 
         // Clear the buffer for next query.
-        self.buffer.clear();
+        self.recv_buffer.clear();
 
         // Clean server rss.
-        if self.buffer.len() > 8196 {
-            self.buffer = BytesMut::with_capacity(8196);
+        if self.recv_buffer.len() > 8196 {
+            self.recv_buffer = BytesMut::with_capacity(8196);
         }
 
         // Successfully received data from server
@@ -888,7 +891,7 @@ impl Server {
                 self.address.host, self.address.database, self.address.username
             )));
         }
-        if !self.buffer.is_empty() {
+        if !self.recv_buffer.is_empty() {
             warn!("Server {self} returned while buffer is not empty");
             self.mark_bad("returned with not-empty buffer");
             return Err(Error::ProtocolSyncError(format!(
@@ -996,11 +999,9 @@ impl Server {
             self.registering_prepared_statement
                 .push_back(parse.name.clone());
 
-            let mut bytes = BytesMut::new();
-
             if should_send_parse_to_server {
                 let parse_bytes: BytesMut = parse.try_into()?;
-                bytes.extend_from_slice(&parse_bytes);
+                self.send_buffer.extend_from_slice(&parse_bytes);
             }
 
             // If we evict something, we need to close it on the server
@@ -1008,24 +1009,8 @@ impl Server {
             if let Some(evicted_name) = self.add_prepared_statement_to_cache(&parse.name) {
                 self.remove_prepared_statement_from_cache(&evicted_name);
                 let close_bytes: BytesMut = Close::new(&evicted_name).try_into()?;
-                bytes.extend_from_slice(&close_bytes);
+                self.send_buffer.extend_from_slice(&close_bytes);
             };
-
-            // If we have a parse or close we need to send to the server, send them and sync
-            if !bytes.is_empty() {
-                bytes.extend_from_slice(&sync());
-
-                self.send_and_flush(&bytes).await?;
-
-                let mut noop = tokio::io::sink();
-                loop {
-                    self.recv(&mut noop, None).await?;
-
-                    if !self.is_data_available() {
-                        break;
-                    }
-                }
-            }
         };
 
         // If it's not there, something went bad, I'm guessing bad syntax or permissions error
@@ -1585,7 +1570,8 @@ impl Server {
                     let server = Server {
                         address: address.clone(),
                         stream: BufStream::new(stream),
-                        buffer: BytesMut::with_capacity(8196),
+                        recv_buffer: BytesMut::with_capacity(8196),
+                        send_buffer: BytesMut::with_capacity(8196),
                         server_parameters,
                         process_id,
                         secret_key,

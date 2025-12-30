@@ -385,6 +385,18 @@ impl ConnectionPool {
         }
     }
 
+    /// Get a prepared statement from the pool's cache by its hash
+    #[inline(always)]
+    pub fn get_prepared_statement_by_hash(&self, hash: &u64) -> Option<Arc<Parse>> {
+        match self.prepared_statement_cache {
+            Some(ref prepared_statement_cache) => {
+                let mut cache = prepared_statement_cache.lock();
+                cache.cache.get(hash).cloned()
+            }
+            None => None,
+        }
+    }
+
     /// Promote a prepared statement hash in the LRU
     #[inline(always)]
     pub fn promote_prepared_statement_hash(&self, hash: &u64) {

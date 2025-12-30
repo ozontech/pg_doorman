@@ -23,11 +23,11 @@ pub enum ExtendedProtocolData {
     },
     Bind {
         data: BytesMut,
-        metadata: Option<String>,
+        hash: Option<u64>,
     },
     Describe {
         data: BytesMut,
-        metadata: Option<String>,
+        hash: Option<u64>,
     },
     Execute {
         data: BytesMut,
@@ -43,12 +43,12 @@ impl ExtendedProtocolData {
         Self::Parse { data, metadata }
     }
 
-    pub fn create_new_bind(data: BytesMut, metadata: Option<String>) -> Self {
-        Self::Bind { data, metadata }
+    pub fn create_new_bind(data: BytesMut, hash: Option<u64>) -> Self {
+        Self::Bind { data, hash }
     }
 
-    pub fn create_new_describe(data: BytesMut, metadata: Option<String>) -> Self {
-        Self::Describe { data, metadata }
+    pub fn create_new_describe(data: BytesMut, hash: Option<u64>) -> Self {
+        Self::Describe { data, hash }
     }
 
     pub fn create_new_execute(data: BytesMut) -> Self {
