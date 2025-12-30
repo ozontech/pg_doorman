@@ -132,7 +132,7 @@ run_bdd_tests() {
     local tags="${1:-}"
     log_info "Running BDD tests${tags:+ with tags: ${tags}}"
 
-    local cmd="setup-test-deps && cargo test --release --test bdd"
+    local cmd="setup-test-deps && cargo test --test bdd"
     if [ -n "$tags" ]; then
         cmd="${cmd} -- --tags ${tags}"
     fi
