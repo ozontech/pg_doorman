@@ -51,15 +51,115 @@ Before you begin, make sure you have the following installed:
    cargo run --release
    ```
 
-5. **Run tests**:
+5. **Run unit tests**:
    ```bash
    cargo test
    ```
 
-6. **Run integration tests with Docker**:
-   ```bash
-   make docker-compose-test-all
+## Integration Testing
+
+PgDoorman uses BDD (Behavior-Driven Development) tests with a Docker-based test environment. **Nix installation is NOT required** — everything runs inside Docker containers.
+
+### Test Environment
+
+The test Docker image (built with Nix) includes:
+- PostgreSQL 16
+- Go 1.24
+- Python 3 with asyncpg, psycopg2, aiopg, pytest
+- Node.js 22
+- .NET SDK 8
+- Rust 1.87.0
+
+### Running Tests
+
+Navigate to the `tests` directory and use Make:
+
+```bash
+cd tests
+
+# Pull the test image from registry
+make pull
+
+# Or build locally (takes 10-15 minutes on first run)
+make local-build
+
+# Run all BDD tests
+make test-bdd
+
+# Run tests for specific language
+make test-bdd-go          # Go client tests
+make test-bdd-python      # Python client tests
+make test-bdd-nodejs      # Node.js client tests
+make test-bdd-dotnet      # .NET client tests
+
+# Run tests for specific feature
+make test-bdd-hba         # HBA authentication tests
+make test-bdd-prometheus  # Prometheus metrics tests
+make test-bdd-rollback    # Rollback functionality tests
+
+# Open interactive shell in test container
+make shell
+
+# Build pg_doorman inside container
+make tests-build
+```
+
+You can also use `tests/nix/run-tests.sh` directly:
+
+```bash
+./tests/nix/run-tests.sh bdd              # Run all BDD tests
+./tests/nix/run-tests.sh bdd @go          # Run tests tagged with @go
+./tests/nix/run-tests.sh bdd @python      # Run tests tagged with @python
+./tests/nix/run-tests.sh shell            # Interactive shell
+./tests/nix/run-tests.sh help             # Show all available commands
+```
+
+### Writing New Tests
+
+Tests are organized as BDD feature files in `tests/bdd/features/`. Each feature file describes test scenarios using Gherkin syntax.
+
+#### Structure
+
+1. **Feature file** (`tests/bdd/features/my-feature.feature`):
+   ```gherkin
+   @mytag
+   Feature: My feature description
+   
+     Background:
+       Given PostgreSQL started with pg_hba.conf:
+         """
+         host all all 127.0.0.1/32 trust
+         """
+       And pg_doorman started with config:
+         """
+         [general]
+         host = "127.0.0.1"
+         port = ${DOORMAN_PORT}
+         ...
+         """
+   
+     Scenario: Test something
+       When I run shell command:
+         """
+         cd tests/go && go test -v -run TestMyTest ./mypackage
+         """
+       Then the command should succeed
+       And the command output should contain "PASS"
    ```
+
+2. **Test implementation** (in your preferred language):
+   - Go: `tests/go/mypackage/my_test.go`
+   - Python: `tests/python/test_my.py`
+   - Node.js: `tests/nodejs/my.test.js`
+   - .NET: `tests/dotnet/MyTest.cs`
+
+#### Adding Dependencies
+
+If you need additional packages in the test environment, modify `tests/nix/flake.nix`:
+- Add Python packages to `pythonEnv`
+- Add system packages to `runtimePackages`
+
+After modifying `flake.nix`, rebuild the image with `make local-build`.
 
 ## Contribution Guidelines
 

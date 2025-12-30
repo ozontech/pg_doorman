@@ -1,9 +1,12 @@
 import asyncio
 import asyncpg
 import datetime
+import os
 
 async def main():
-    conn = await asyncpg.connect('postgresql://example_user_1:test@localhost:6433/example_db')
+    # Use DATABASE_URL environment variable if set, otherwise use default
+    db_url = os.getenv('DATABASE_URL', 'postgresql://example_user_1:test@localhost:6433/example_db')
+    conn = await asyncpg.connect(db_url)
 
     print("bad tx")
     tr = conn.transaction()
