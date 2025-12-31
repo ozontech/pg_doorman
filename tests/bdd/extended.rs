@@ -2,6 +2,155 @@ use crate::pg_connection::PgConnection;
 use crate::world::DoormanWorld;
 use cucumber::{then, when};
 
+// Helper function to format message details for debugging
+fn format_message_details(msg_type: char, data: &[u8]) -> String {
+    let mut details = format!("type='{}' len={}", msg_type, data.len());
+    
+    match msg_type {
+        'R' => {
+            // Authentication request
+            if data.len() >= 4 {
+                let auth_type = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                details.push_str(&format!(" [AuthenticationRequest type={}]", auth_type));
+            }
+        }
+        'S' => {
+            // ParameterStatus: name\0value\0
+            if let Some(null_pos) = data.iter().position(|&b| b == 0) {
+                let name = String::from_utf8_lossy(&data[..null_pos]);
+                let value = String::from_utf8_lossy(&data[null_pos + 1..].split(|&b| b == 0).next().unwrap_or(&[]));
+                details.push_str(&format!(" [ParameterStatus {}={}]", name, value));
+            }
+        }
+        'K' => {
+            // BackendKeyData: process_id(4) + secret_key(4)
+            if data.len() >= 8 {
+                let pid = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                let key = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                details.push_str(&format!(" [BackendKeyData pid={} key={}]", pid, key));
+            }
+        }
+        'Z' => {
+            // ReadyForQuery: status(1)
+            if !data.is_empty() {
+                let status = match data[0] {
+                    b'I' => "Idle",
+                    b'T' => "InTransaction",
+                    b'E' => "FailedTransaction",
+                    _ => "Unknown",
+                };
+                details.push_str(&format!(" [ReadyForQuery status={}]", status));
+            }
+        }
+        'T' => {
+            // RowDescription
+            if data.len() >= 2 {
+                let field_count = i16::from_be_bytes([data[0], data[1]]);
+                details.push_str(&format!(" [RowDescription fields={}]", field_count));
+            }
+        }
+        'D' => {
+            // DataRow
+            if data.len() >= 2 {
+                let field_count = i16::from_be_bytes([data[0], data[1]]);
+                details.push_str(&format!(" [DataRow fields={}]", field_count));
+            }
+        }
+        'C' => {
+            // CommandComplete: tag\0
+            if let Some(null_pos) = data.iter().position(|&b| b == 0) {
+                let tag = String::from_utf8_lossy(&data[..null_pos]);
+                details.push_str(&format!(" [CommandComplete tag='{}']", tag));
+            }
+        }
+        'E' => {
+            // ErrorResponse: parse fields
+            details.push_str(" [ErrorResponse");
+            let mut pos = 0;
+            while pos < data.len() {
+                let field_type = data[pos] as char;
+                if field_type == '\0' {
+                    break;
+                }
+                pos += 1;
+                if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
+                    let value = String::from_utf8_lossy(&data[pos..pos + null_pos]);
+                    match field_type {
+                        'S' => details.push_str(&format!(" severity={}", value)),
+                        'C' => details.push_str(&format!(" code={}", value)),
+                        'M' => details.push_str(&format!(" message={}", value)),
+                        _ => {}
+                    }
+                    pos += null_pos + 1;
+                } else {
+                    break;
+                }
+            }
+            details.push(']');
+        }
+        'N' => {
+            // NoticeResponse: similar to ErrorResponse
+            details.push_str(" [NoticeResponse");
+            let mut pos = 0;
+            while pos < data.len() {
+                let field_type = data[pos] as char;
+                if field_type == '\0' {
+                    break;
+                }
+                pos += 1;
+                if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
+                    let value = String::from_utf8_lossy(&data[pos..pos + null_pos]);
+                    match field_type {
+                        'S' => details.push_str(&format!(" severity={}", value)),
+                        'C' => details.push_str(&format!(" code={}", value)),
+                        'M' => details.push_str(&format!(" message={}", value)),
+                        _ => {}
+                    }
+                    pos += null_pos + 1;
+                } else {
+                    break;
+                }
+            }
+            details.push(']');
+        }
+        '1' => {
+            // ParseComplete
+            details.push_str(" [ParseComplete]");
+        }
+        '2' => {
+            // BindComplete
+            details.push_str(" [BindComplete]");
+        }
+        't' => {
+            // ParameterDescription
+            if data.len() >= 2 {
+                let param_count = i16::from_be_bytes([data[0], data[1]]);
+                details.push_str(&format!(" [ParameterDescription params={}]", param_count));
+            }
+        }
+        'n' => {
+            // NoData
+            details.push_str(" [NoData]");
+        }
+        's' => {
+            // PortalSuspended
+            details.push_str(" [PortalSuspended]");
+        }
+        _ => {
+            // Unknown message type, show first 32 bytes as hex
+            let preview_len = data.len().min(32);
+            let hex_preview: String = data[..preview_len]
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+            details.push_str(&format!(" [data: {}{}]", hex_preview, if data.len() > 32 { "..." } else { "" }));
+        }
+    }
+    
+    details
+}
+
 // BDD step implementations
 
 #[when(
@@ -201,15 +350,20 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
     let pg_messages = &world.pg_accumulated_messages;
     let doorman_messages = &world.doorman_accumulated_messages;
 
-    // Debug output
+    // Debug output with detailed message information
     if pg_messages.len() != doorman_messages.len() {
-        eprintln!("\n=== PostgreSQL messages ({}) ===", pg_messages.len());
+        eprintln!("\n=== MESSAGE COUNT MISMATCH ===");
+        eprintln!("PostgreSQL: {} messages", pg_messages.len());
+        eprintln!("pg_doorman: {} messages", doorman_messages.len());
+        
+        eprintln!("\n=== PostgreSQL messages ===");
         for (i, (msg_type, data)) in pg_messages.iter().enumerate() {
-            eprintln!("  {}: type='{}', len={}", i, msg_type, data.len());
+            eprintln!("  [{}] {}", i, format_message_details(*msg_type, data));
         }
-        eprintln!("\n=== pg_doorman messages ({}) ===", doorman_messages.len());
+        
+        eprintln!("\n=== pg_doorman messages ===");
         for (i, (msg_type, data)) in doorman_messages.iter().enumerate() {
-            eprintln!("  {}: type='{}', len={}", i, msg_type, data.len());
+            eprintln!("  [{}] {}", i, format_message_details(*msg_type, data));
         }
         eprintln!();
     }
@@ -226,32 +380,80 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         let (pg_type, pg_data) = pg_msg;
         let (doorman_type, doorman_data) = doorman_msg;
 
-        assert_eq!(
-            pg_type, doorman_type,
-            "Message {} type differs: PostgreSQL='{}', pg_doorman='{}'",
-            i, pg_type, doorman_type
-        );
+        // Check message type
+        if pg_type != doorman_type {
+            eprintln!("\n=== MESSAGE TYPE MISMATCH at position {} ===", i);
+            eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
+            eprintln!("pg_doorman: {}", format_message_details(*doorman_type, doorman_data));
+            panic!(
+                "Message {} type differs: PostgreSQL='{}', pg_doorman='{}'",
+                i, pg_type, doorman_type
+            );
+        }
 
-        assert_eq!(
-            pg_data.len(),
-            doorman_data.len(),
-            "Message {} length differs: PostgreSQL={}, pg_doorman={}",
-            i,
-            pg_data.len(),
-            doorman_data.len()
-        );
+        // Check message length
+        if pg_data.len() != doorman_data.len() {
+            eprintln!("\n=== MESSAGE LENGTH MISMATCH at position {} ===", i);
+            eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
+            eprintln!("pg_doorman: {}", format_message_details(*doorman_type, doorman_data));
+            
+            // Show hex diff for first 64 bytes
+            let max_len = pg_data.len().max(doorman_data.len()).min(64);
+            eprintln!("\n--- Hex comparison (first {} bytes) ---", max_len);
+            eprintln!("PostgreSQL: {}", 
+                pg_data.iter().take(max_len)
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join(" "));
+            eprintln!("pg_doorman: {}", 
+                doorman_data.iter().take(max_len)
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join(" "));
+            
+            panic!(
+                "Message {} length differs: PostgreSQL={}, pg_doorman={}",
+                i, pg_data.len(), doorman_data.len()
+            );
+        }
 
-        assert_eq!(
-            pg_data, doorman_data,
-            "Message {} data differs: PostgreSQL={:?}, pg_doorman={:?}",
-            i, pg_data, doorman_data
-        );
+        // Check message data
+        if pg_data != doorman_data {
+            eprintln!("\n=== MESSAGE DATA MISMATCH at position {} ===", i);
+            eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
+            eprintln!("pg_doorman: {}", format_message_details(*doorman_type, doorman_data));
+            
+            // Find first difference
+            for (pos, (pg_byte, doorman_byte)) in pg_data.iter().zip(doorman_data.iter()).enumerate() {
+                if pg_byte != doorman_byte {
+                    eprintln!("\nFirst difference at byte {}: PostgreSQL=0x{:02x} pg_doorman=0x{:02x}", 
+                        pos, pg_byte, doorman_byte);
+                    
+                    // Show context around the difference
+                    let start = pos.saturating_sub(8);
+                    let end = (pos + 8).min(pg_data.len());
+                    eprintln!("Context (bytes {}-{}):", start, end);
+                    eprintln!("  PostgreSQL: {}", 
+                        pg_data[start..end].iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join(" "));
+                    eprintln!("  pg_doorman: {}", 
+                        doorman_data[start..end].iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join(" "));
+                    break;
+                }
+            }
+            
+            panic!("Message {} data differs", i);
+        }
 
         println!(
-            "Message {} is identical: type='{}', length={}",
+            "Message {} is identical: {}",
             i,
-            pg_type,
-            pg_data.len()
+            format_message_details(*pg_type, pg_data)
         );
     }
 

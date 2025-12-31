@@ -32,5 +32,11 @@ alter user example_user_jwt with superuser;
 set password_encryption to "scram-sha-256";
 create user example_user_2 with password 'test';
 
+alter system set log_min_duration_statement to 0;
+alter system set log_connections to on;
+alter system set log_disconnections to on;
+alter system set log_min_messages to debug5;
+
+select pg_reload_conf();
 -- unix socket.
 -- alter system set unix_socket_directories to '/tmp';

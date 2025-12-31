@@ -9,6 +9,15 @@ use cucumber::World;
 use world::DoormanWorld;
 
 fn main() {
+    // Initialize tracing subscriber for debug logging when DEBUG env var is set
+    if std::env::var("DEBUG").is_ok() {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_line_number(true)
+            .init();
+    }
 
     // Create tokio runtime manually so we can control cleanup
     let rt = tokio::runtime::Runtime::new().unwrap();
