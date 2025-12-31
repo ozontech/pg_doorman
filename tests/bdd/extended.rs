@@ -201,6 +201,19 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
     let pg_messages = &world.pg_accumulated_messages;
     let doorman_messages = &world.doorman_accumulated_messages;
 
+    // Debug output
+    if pg_messages.len() != doorman_messages.len() {
+        eprintln!("\n=== PostgreSQL messages ({}) ===", pg_messages.len());
+        for (i, (msg_type, data)) in pg_messages.iter().enumerate() {
+            eprintln!("  {}: type='{}', len={}", i, msg_type, data.len());
+        }
+        eprintln!("\n=== pg_doorman messages ({}) ===", doorman_messages.len());
+        for (i, (msg_type, data)) in doorman_messages.iter().enumerate() {
+            eprintln!("  {}: type='{}', len={}", i, msg_type, data.len());
+        }
+        eprintln!();
+    }
+
     assert_eq!(
         pg_messages.len(),
         doorman_messages.len(),
