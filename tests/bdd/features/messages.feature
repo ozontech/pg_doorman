@@ -55,6 +55,7 @@ Feature: Message comparison
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @debug
   Scenario: Extended query protocol with error in second Parse
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "" with query "select $1::int" to both

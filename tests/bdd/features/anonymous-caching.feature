@@ -39,7 +39,7 @@ Feature: .NET anonymous queries without prepare on server side
     When I run shell command:
       """
       export DATABASE_URL="Host=127.0.0.1;Port=${DOORMAN_PORT};Database=example_db;Username=example_user_1;Password=test"
-      tests/dotnet/run_test.sh anon_queries avoid-anonymous-caching.cs
+      tests/dotnet/run_test.sh anon_queries anonymous-caching.cs
       """
     Then the command should succeed
     And the command output should contain "anonymous-caching complete"
