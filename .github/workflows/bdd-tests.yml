@@ -14,6 +14,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}/test-runner
+  DEBUG: true
 
 jobs:
   # Job 0: Check if image needs to be rebuilt
