@@ -84,7 +84,7 @@ func sendBatchWithError(t *testing.T) {
 		sendDescribe(t, conn, "P")
 		sendExecute(t, conn)
 		sendSyncMessage(t, conn)
-		assert.Equal(t, 1006, len(readServerMessages(t, conn)))
+		assert.Equal(t, 1005, len(readServerMessages(t, conn)))
 	}
 	byeBye(t, conn)
 }

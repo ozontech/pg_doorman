@@ -314,6 +314,104 @@ pub async fn send_execute_to_both(world: &mut DoormanWorld, portal: String) {
         .expect("Failed to send Execute to pg_doorman");
 }
 
+/// Helper step to repeat a sequence of Parse, Bind, Describe, Execute messages multiple times
+/// Format: we repeat <N> times: Parse "<name>" with query "<query>", Bind "<portal>" to "<statement>" with params "<params>", Describe "<type>" "<name>", Execute "<portal>" to both
+#[when(
+    regex = r#"^we repeat (\d+) times: Parse "([^"]*)" with query "([^"]+)", Bind "([^"]*)" to "([^"]*)" with params "([^"]+)", Describe "([^"])" "([^"]*)", Execute "([^"]*)" to both$"#
+)]
+pub async fn repeat_extended_protocol_to_both(
+    world: &mut DoormanWorld,
+    times: usize,
+    parse_name: String,
+    query: String,
+    bind_portal: String,
+    bind_statement: String,
+    params_str: String,
+    describe_type: String,
+    describe_name: String,
+    execute_portal: String,
+) {
+    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
+    let doorman_conn = world
+        .doorman_conn
+        .as_mut()
+        .expect("Not connected to pg_doorman");
+
+    // Parse params - simple implementation for comma-separated values
+    let params: Vec<Option<Vec<u8>>> = params_str
+        .split(',')
+        .map(|s| Some(s.trim().as_bytes().to_vec()))
+        .collect();
+
+    let describe_char = describe_type.chars().next().expect("Empty describe type");
+
+    // Send all messages N times
+    for _ in 0..times {
+        // Parse
+        pg_conn
+            .send_parse(&parse_name, &query)
+            .await
+            .expect("Failed to send Parse to PostgreSQL");
+        doorman_conn
+            .send_parse(&parse_name, &query)
+            .await
+            .expect("Failed to send Parse to pg_doorman");
+
+        // Bind
+        pg_conn
+            .send_bind(&bind_portal, &bind_statement, params.clone())
+            .await
+            .expect("Failed to send Bind to PostgreSQL");
+        doorman_conn
+            .send_bind(&bind_portal, &bind_statement, params.clone())
+            .await
+            .expect("Failed to send Bind to pg_doorman");
+
+        // Describe
+        pg_conn
+            .send_describe(describe_char, &describe_name)
+            .await
+            .expect("Failed to send Describe to PostgreSQL");
+        doorman_conn
+            .send_describe(describe_char, &describe_name)
+            .await
+            .expect("Failed to send Describe to pg_doorman");
+
+        // Execute
+        pg_conn
+            .send_execute(&execute_portal, 0)
+            .await
+            .expect("Failed to send Execute to PostgreSQL");
+        doorman_conn
+            .send_execute(&execute_portal, 0)
+            .await
+            .expect("Failed to send Execute to pg_doorman");
+    }
+
+    // Send Sync to both
+    pg_conn
+        .send_sync()
+        .await
+        .expect("Failed to send Sync to PostgreSQL");
+    doorman_conn
+        .send_sync()
+        .await
+        .expect("Failed to send Sync to pg_doorman");
+
+    // Read messages from both
+    let pg_messages = pg_conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages from PostgreSQL");
+    let doorman_messages = doorman_conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages from pg_doorman");
+
+    world.pg_accumulated_messages.extend(pg_messages);
+    world.doorman_accumulated_messages.extend(doorman_messages);
+}
+
 #[when(regex = r#"^we send Sync to both$"#)]
 pub async fn send_sync_to_both(world: &mut DoormanWorld) {
     let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
