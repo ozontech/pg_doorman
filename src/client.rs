@@ -1209,8 +1209,8 @@ where
                             self.buffer.put(&message[..]);
 
                             if code == 'H' {
-                                // For Flush, we don't track async wait code anymore since messages are sent immediately
-                                server.set_flush_wait_code(' ');
+                                // For Flush, wait for CommandComplete to stop reading
+                                server.set_flush_wait_code('C');
                                 debug!("Client requested flush, going async");
                             } else {
                                 server.set_flush_wait_code(' ')
@@ -1508,7 +1508,10 @@ where
                 let rewritten_name = rewritten_parse.name.clone();
                 let message = Bind::rename(message, &rewritten_name)?;
 
-                debug!("Rewrote bind `{}` to `{}`", client_given_name, rewritten_name);
+                debug!(
+                    "Rewrote bind `{}` to `{}`",
+                    client_given_name, rewritten_name
+                );
 
                 // Ensure prepared statement is on server
                 self.ensure_prepared_statement_is_on_server(client_given_name, pool, server)
@@ -1697,22 +1700,43 @@ where
             };
 
             // Insert pending ParseComplete messages before BindComplete
+            // If no BindComplete found, insert at the beginning of response
             if self.pending_parse_complete > 0 {
                 let (new_response, inserted) = insert_parse_complete_before_bind_complete(
                     response,
                     self.pending_parse_complete,
                 );
-                response = new_response;
-                self.pending_parse_complete -= inserted;
+
+                // If no BindComplete was found (inserted == 0), insert at the beginning
+                if inserted == 0 && self.pending_parse_complete > 0 {
+                    let mut prefixed_response = BytesMut::with_capacity(
+                        new_response.len() + (self.pending_parse_complete as usize * 5),
+                    );
+
+                    // Insert ParseComplete messages at the beginning
+                    for _ in 0..self.pending_parse_complete {
+                        prefixed_response.extend_from_slice(&parse_complete());
+                    }
+
+                    // Append the original response
+                    prefixed_response.extend_from_slice(&new_response);
+
+                    response = prefixed_response;
+                    self.pending_parse_complete = 0;
+                } else {
+                    response = new_response;
+                    self.pending_parse_complete -= inserted;
+                }
             }
 
-            // Insert pending CloseComplete messages before ReadyForQuery
+            // Insert pending CloseComplete messages after last CloseComplete from server
             if self.pending_close_complete > 0 {
-                response = insert_close_complete_before_ready_for_query(
+                let (new_response, inserted) = insert_close_complete_after_last_close_complete(
                     response,
                     self.pending_close_complete,
                 );
-                self.pending_close_complete = 0;
+                response = new_response;
+                self.pending_close_complete -= inserted;
             }
 
             // Fast path: early release check before expensive operations

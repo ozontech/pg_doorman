@@ -101,6 +101,11 @@ run_in_container() {
         -e "POSTGRES_PORT=5432"
     )
 
+    # Pass DEBUG environment variable if set
+    if [ -n "${DEBUG:-}" ]; then
+        docker_args+=(-e "DEBUG=${DEBUG}")
+    fi
+
     if [ "$interactive" = "true" ]; then
         docker_args+=(-i)
     fi

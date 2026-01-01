@@ -72,7 +72,8 @@ fn run_command_with_timeout(
             // Flag to signal when streaming should start (shared via atomic)
             // If DEBUG environment variable is set, start streaming immediately
             let debug_mode = std::env::var("DEBUG").is_ok();
-            let streaming_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(debug_mode));
+            let streaming_started =
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(debug_mode));
             let streaming_started_stdout = streaming_started.clone();
             let streaming_started_stderr = streaming_started.clone();
 

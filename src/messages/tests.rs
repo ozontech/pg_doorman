@@ -15,8 +15,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use crate::errors::Error;
 use crate::messages::protocol::row_description;
 use crate::messages::{
-    data_row, data_row_nullable, error_message, parse_startup, ready_for_query,
-    set_messages_right_place, DataType, PgErrorMsg,
+    data_row, data_row_nullable, error_message, parse_startup, ready_for_query, DataType,
+    PgErrorMsg,
 };
 
 // Mock implementation for AsyncReadExt
@@ -261,45 +261,6 @@ fn test_ready_for_query_states() {
 
     // Check transaction status is 'T' (In Transaction)
     assert_eq!(result_transaction[5], b'T');
-}
-
-// Tests for set_messages_right_place function
-#[test]
-fn test_set_messages_right_place_simple() {
-    // Create a simple message
-    let mut message = BytesMut::new();
-    message.put_u8(b'T'); // Row Description
-    message.put_i32(4); // Length
-
-    // Call the function being tested
-    let result = set_messages_right_place(message.to_vec());
-
-    // Verify the result
-    assert!(result.is_ok());
-    let bytes = result.unwrap();
-
-    // Check the message is preserved
-    assert_eq!(bytes.len(), 5);
-    assert_eq!(bytes[0], b'T');
-
-    // Test with multiple messages
-    let mut messages = BytesMut::new();
-    messages.put_u8(b'T'); // Row Description
-    messages.put_i32(4); // Length
-    messages.put_u8(b'D'); // Data Row
-    messages.put_i32(4); // Length
-
-    // Call the function being tested
-    let result = set_messages_right_place(messages.to_vec());
-
-    // Verify the result
-    assert!(result.is_ok());
-    let bytes = result.unwrap();
-
-    // Check both messages are preserved
-    assert_eq!(bytes.len(), 10);
-    assert_eq!(bytes[0], b'T');
-    assert_eq!(bytes[5], b'D');
 }
 
 // Helper function for PgErrorMsg tests

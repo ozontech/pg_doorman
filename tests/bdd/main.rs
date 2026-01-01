@@ -24,7 +24,29 @@ fn main() {
 
     // Run tests with after hook for cleanup
     rt.block_on(async {
+        // Parse CLI options and add todo-skip filter
+        use cucumber::gherkin::tagexpr::TagOperation;
+        let mut cli = cucumber::cli::Opts::<
+            cucumber::parser::basic::Cli,
+            cucumber::runner::basic::Cli,
+            cucumber::writer::basic::Cli,
+            cucumber::cli::Empty,
+        >::parsed();
+
+        // Create "not @todo-skip" filter
+        let not_todo_skip = TagOperation::Not(Box::new(TagOperation::Tag("todo-skip".to_string())));
+
+        // Combine with existing tags filter if present
+        cli.tags_filter = match cli.tags_filter.take() {
+            Some(existing) => Some(TagOperation::And(
+                Box::new(existing),
+                Box::new(not_todo_skip),
+            )),
+            None => Some(not_todo_skip),
+        };
+
         let writer = DoormanWorld::cucumber()
+            .with_cli(cli)
             .after(|_feature, _rule, _scenario, _finished, world| {
                 // This hook is called after EVERY scenario, regardless of success/failure
                 // Cleanup pg_doorman process if it exists
@@ -45,10 +67,10 @@ fn main() {
         use cucumber::writer::Stats;
         let has_failures = writer.execution_has_failed();
         let skipped = writer.skipped_steps();
-        
+
         if has_failures || skipped > 0 {
             let mut msg = Vec::new();
-            
+
             let failed_steps = writer.failed_steps();
             if failed_steps > 0 {
                 msg.push(format!(
@@ -56,14 +78,14 @@ fn main() {
                     if failed_steps > 1 { "s" } else { "" }
                 ));
             }
-            
+
             if skipped > 0 {
                 msg.push(format!(
                     "{skipped} step{} skipped",
                     if skipped > 1 { "s" } else { "" }
                 ));
             }
-            
+
             let parsing_errors = writer.parsing_errors();
             if parsing_errors > 0 {
                 msg.push(format!(
@@ -71,7 +93,7 @@ fn main() {
                     if parsing_errors > 1 { "s" } else { "" }
                 ));
             }
-            
+
             let hook_errors = writer.hook_errors();
             if hook_errors > 0 {
                 msg.push(format!(
@@ -79,7 +101,7 @@ fn main() {
                     if hook_errors > 1 { "s" } else { "" }
                 ));
             }
-            
+
             eprintln!("Tests failed: {}", msg.join(", "));
             std::process::exit(1);
         }

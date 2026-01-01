@@ -629,98 +629,718 @@ pub fn insert_parse_complete_before_bind_complete(buffer: BytesMut, count: u32) 
         return (buffer, 0);
     }
 
+    const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
+    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+
     let bytes = buffer.as_ref();
     let len = bytes.len();
-    const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
 
-    // Find BindComplete messages that need ParseComplete inserted before them
-    // (i.e., BindComplete not preceded by ParseComplete)
-    let mut bind_positions_needing_parse: Vec<usize> = Vec::new();
+    // Fast path: count=1, find first position without Vec allocation
+    if count == 1 {
+        let mut pos = 0;
+        let mut prev_msg_type: u8 = 0;
+
+        while pos < len {
+            if pos + 5 > len {
+                break;
+            }
+            let msg_type = bytes[pos];
+            let msg_len = i32::from_be_bytes([
+                bytes[pos + 1],
+                bytes[pos + 2],
+                bytes[pos + 3],
+                bytes[pos + 4],
+            ]) as usize;
+
+            if msg_type == b'2' && prev_msg_type != b'1' {
+                // Found position for insertion
+                let mut result = BytesMut::with_capacity(len + PARSE_COMPLETE_SIZE);
+                result.extend_from_slice(&bytes[..pos]);
+                result.extend_from_slice(&PARSE_COMPLETE_MSG);
+                result.extend_from_slice(&bytes[pos..]);
+                return (result, 1);
+            }
+
+            prev_msg_type = msg_type;
+            pos += 1 + msg_len;
+        }
+        return (buffer, 0);
+    }
+
+    // Slow path: multiple insertions
+    // Use stack-allocated array for small counts to avoid heap allocation
+    let mut bind_positions_stack: [usize; 8] = [0; 8];
+    let mut bind_positions_heap: Vec<usize> = Vec::new();
+    let mut num_positions = 0;
     let mut pos = 0;
     let mut prev_msg_type: u8 = 0;
-    
-    while pos < len {
-        let msg_type = bytes[pos];
+
+    // Lazy parsing: stop after finding 'count' positions
+    while pos < len && num_positions < count as usize {
         if pos + 5 > len {
             break;
         }
-        let msg_len = i32::from_be_bytes([bytes[pos + 1], bytes[pos + 2], bytes[pos + 3], bytes[pos + 4]]) as usize;
-        
+        let msg_type = bytes[pos];
+        let msg_len = i32::from_be_bytes([
+            bytes[pos + 1],
+            bytes[pos + 2],
+            bytes[pos + 3],
+            bytes[pos + 4],
+        ]) as usize;
+
         if msg_type == b'2' && prev_msg_type != b'1' {
             // BindComplete without preceding ParseComplete
-            bind_positions_needing_parse.push(pos);
+            if num_positions < 8 {
+                bind_positions_stack[num_positions] = pos;
+            } else {
+                if bind_positions_heap.is_empty() {
+                    bind_positions_heap.reserve(count as usize - 8);
+                }
+                bind_positions_heap.push(pos);
+            }
+            num_positions += 1;
         }
-        
+
         prev_msg_type = msg_type;
         pos += 1 + msg_len;
     }
 
-    // Insert ParseComplete before each BindComplete that needs it (up to count)
-    let inserts = std::cmp::min(count as usize, bind_positions_needing_parse.len());
-    if inserts == 0 {
+    if num_positions == 0 {
         return (buffer, 0);
     }
 
-    let mut result = BytesMut::with_capacity(len + (PARSE_COMPLETE_SIZE * inserts));
+    // Single allocation with exact size
+    let mut result = BytesMut::with_capacity(len + PARSE_COMPLETE_SIZE * num_positions);
     let mut last_pos = 0;
 
-    for i in 0..inserts {
-        let bind_pos = bind_positions_needing_parse[i];
-        // Copy everything before this BindComplete
-        result.put(&bytes[last_pos..bind_pos]);
-        // Insert ParseComplete
-        result.put_u8(b'1'); // ParseComplete
-        result.put_i32(4);   // length
+    for i in 0..num_positions {
+        let bind_pos = if i < 8 {
+            bind_positions_stack[i]
+        } else {
+            bind_positions_heap[i - 8]
+        };
+
+        result.extend_from_slice(&bytes[last_pos..bind_pos]);
+        result.extend_from_slice(&PARSE_COMPLETE_MSG);
         last_pos = bind_pos;
     }
+    result.extend_from_slice(&bytes[last_pos..]);
 
-    // Copy the rest
-    result.put(&bytes[last_pos..]);
+    (result, num_positions as u32)
+}
 
-    (result, inserts as u32)
+/// Insert CloseComplete messages after the last CloseComplete from server.
+/// If no CloseComplete found, insert before ReadyForQuery.
+/// Returns (modified_buffer, inserted_count).
+pub fn insert_close_complete_after_last_close_complete(
+    buffer: BytesMut,
+    count: u32,
+) -> (BytesMut, u32) {
+    if count == 0 {
+        return (buffer, 0);
+    }
+
+    const CLOSE_COMPLETE_SIZE: usize = 5; // '3' (1) + length (4)
+    const CLOSE_COMPLETE_MSG: [u8; 5] = [b'3', 0, 0, 0, 4];
+    const READY_FOR_QUERY_SIZE: usize = 6; // 'Z' (1) + length (4) + status (1)
+
+    let bytes = buffer.as_ref();
+    let mut pos = 0;
+    let mut last_close_complete_pos: Option<usize> = None;
+
+    // Find the last CloseComplete ('3') message
+    while pos < bytes.len() {
+        if pos + 5 > bytes.len() {
+            break;
+        }
+
+        let msg_type = bytes[pos];
+        let msg_len = i32::from_be_bytes([
+            bytes[pos + 1],
+            bytes[pos + 2],
+            bytes[pos + 3],
+            bytes[pos + 4],
+        ]) as usize;
+
+        if msg_type == b'3' {
+            last_close_complete_pos = Some(pos + 1 + 4 + (msg_len - 4));
+        }
+
+        pos += 1 + 4 + (msg_len - 4);
+    }
+
+    let insert_size = CLOSE_COMPLETE_SIZE * count as usize;
+    let mut result = BytesMut::with_capacity(buffer.len() + insert_size);
+
+    if let Some(insert_pos) = last_close_complete_pos {
+        // Insert after last CloseComplete
+        result.extend_from_slice(&bytes[..insert_pos]);
+        for _ in 0..count {
+            result.extend_from_slice(&CLOSE_COMPLETE_MSG);
+        }
+        result.extend_from_slice(&bytes[insert_pos..]);
+        (result, count)
+    } else {
+        // No CloseComplete found, insert before ReadyForQuery if present
+        let len = bytes.len();
+        if len >= READY_FOR_QUERY_SIZE && bytes[len - READY_FOR_QUERY_SIZE] == b'Z' {
+            result.extend_from_slice(&bytes[..len - READY_FOR_QUERY_SIZE]);
+            for _ in 0..count {
+                result.extend_from_slice(&CLOSE_COMPLETE_MSG);
+            }
+            result.extend_from_slice(&bytes[len - READY_FOR_QUERY_SIZE..]);
+            (result, count)
+        } else {
+            // No ReadyForQuery either, return unchanged
+            (buffer, 0)
+        }
+    }
 }
 
 /// Insert CloseComplete messages before ReadyForQuery in the response buffer.
 /// This ensures proper message ordering in the PostgreSQL extended protocol.
-pub fn insert_close_complete_before_ready_for_query(buffer: BytesMut, count: u32) -> BytesMut {
+pub fn insert_close_complete_before_ready_for_query(mut buffer: BytesMut, count: u32) -> BytesMut {
     if count == 0 {
         return buffer;
     }
 
-    let bytes = buffer.as_ref();
-    let len = bytes.len();
-
-    // ReadyForQuery is 6 bytes: 'Z' (1) + length (4) + status (1)
-    const READY_FOR_QUERY_SIZE: usize = 6;
+    const READY_FOR_QUERY_SIZE: usize = 6; // 'Z' (1) + length (4) + status (1)
     const CLOSE_COMPLETE_SIZE: usize = 5; // '3' (1) + length (4)
+    const CLOSE_COMPLETE_MSG: [u8; 5] = [b'3', 0, 0, 0, 4];
 
-    // Find ReadyForQuery at the end of buffer
-    if len >= READY_FOR_QUERY_SIZE && bytes[len - READY_FOR_QUERY_SIZE] == b'Z' {
-        let mut result = BytesMut::with_capacity(len + (CLOSE_COMPLETE_SIZE * count as usize));
+    let insert_size = CLOSE_COMPLETE_SIZE * count as usize;
+    let len = buffer.len();
 
-        // Copy everything before ReadyForQuery
-        result.put(&bytes[..len - READY_FOR_QUERY_SIZE]);
+    // Check if ReadyForQuery is at the end
+    if len >= READY_FOR_QUERY_SIZE && buffer[len - READY_FOR_QUERY_SIZE] == b'Z' {
+        // Try in-place modification if we have enough capacity
+        if buffer.capacity() - len >= insert_size {
+            // SAFETY: We have verified that:
+            // 1. buffer has enough capacity for the insertion
+            // 2. We're moving non-overlapping memory regions (ReadyForQuery moves right)
+            // 3. We update the length after all writes are complete
+            unsafe {
+                let ptr = buffer.as_mut_ptr();
+                let rfq_start = len - READY_FOR_QUERY_SIZE;
+
+                // Move ReadyForQuery to the right to make space for CloseComplete messages
+                std::ptr::copy(
+                    ptr.add(rfq_start),
+                    ptr.add(rfq_start + insert_size),
+                    READY_FOR_QUERY_SIZE,
+                );
+
+                // Write CloseComplete messages in the gap
+                let mut offset = rfq_start;
+                for _ in 0..count {
+                    std::ptr::copy_nonoverlapping(
+                        CLOSE_COMPLETE_MSG.as_ptr(),
+                        ptr.add(offset),
+                        CLOSE_COMPLETE_SIZE,
+                    );
+                    offset += CLOSE_COMPLETE_SIZE;
+                }
+
+                // Update buffer length
+                buffer.set_len(len + insert_size);
+            }
+            return buffer;
+        }
+
+        // Fallback: copy with optimization
+        let mut result = BytesMut::with_capacity(len + insert_size);
+        result.extend_from_slice(&buffer[..len - READY_FOR_QUERY_SIZE]);
 
         // Insert CloseComplete messages
         for _ in 0..count {
-            result.put_u8(b'3'); // CloseComplete
-            result.put_i32(4);   // length
+            result.extend_from_slice(&CLOSE_COMPLETE_MSG);
         }
 
-        // Copy ReadyForQuery
-        result.put(&bytes[len - READY_FOR_QUERY_SIZE..]);
-
+        result.extend_from_slice(&buffer[len - READY_FOR_QUERY_SIZE..]);
         result
     } else {
-        // No ReadyForQuery found, just append CloseComplete at the end
-        let mut result = BytesMut::with_capacity(len + (CLOSE_COMPLETE_SIZE * count as usize));
-        result.put(&bytes[..]);
-
+        // No ReadyForQuery found, append CloseComplete at the end
+        buffer.reserve(insert_size);
         for _ in 0..count {
-            result.put_u8(b'3');
-            result.put_i32(4);
+            buffer.extend_from_slice(&CLOSE_COMPLETE_MSG);
         }
+        buffer
+    }
+}
 
-        result
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to create ParseComplete message
+    fn parse_complete_msg() -> Vec<u8> {
+        vec![b'1', 0, 0, 0, 4]
+    }
+
+    // Helper to create BindComplete message
+    fn bind_complete_msg() -> Vec<u8> {
+        vec![b'2', 0, 0, 0, 4]
+    }
+
+    // Helper to create CloseComplete message
+    fn close_complete_msg() -> Vec<u8> {
+        vec![b'3', 0, 0, 0, 4]
+    }
+
+    // Helper to create ReadyForQuery message
+    fn ready_for_query_msg(status: u8) -> Vec<u8> {
+        vec![b'Z', 0, 0, 0, 5, status]
+    }
+
+    // Helper to create CommandComplete message
+    fn command_complete_msg(tag: &str) -> Vec<u8> {
+        let mut msg = Vec::new();
+        msg.push(b'C');
+        msg.extend_from_slice(&((4 + tag.len() + 1) as i32).to_be_bytes());
+        msg.extend_from_slice(tag.as_bytes());
+        msg.push(0);
+        msg
+    }
+
+    #[test]
+    fn test_insert_parse_complete_count_zero() {
+        let buffer = BytesMut::from(&bind_complete_msg()[..]);
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer.clone(), 0);
+
+        assert_eq!(inserted, 0);
+        assert_eq!(result.as_ref(), buffer.as_ref());
+    }
+
+    #[test]
+    fn test_insert_parse_complete_single_bind_without_parse() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&bind_complete_msg());
+
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 1);
+
+        assert_eq!(inserted, 1);
+        let expected = [parse_complete_msg(), bind_complete_msg()].concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_parse_complete_single_bind_with_parse() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&parse_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg());
+
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer.clone(), 1);
+
+        // ParseComplete already present, no insertion needed
+        assert_eq!(inserted, 0);
+        assert_eq!(result.as_ref(), buffer.as_ref());
+    }
+
+    #[test]
+    fn test_insert_parse_complete_multiple_binds_without_parse() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg());
+
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 2);
+
+        assert_eq!(inserted, 2);
+        let expected = [
+            parse_complete_msg(),
+            bind_complete_msg(),
+            parse_complete_msg(),
+            bind_complete_msg(),
+            bind_complete_msg(),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_parse_complete_mixed_messages() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&parse_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg()); // This needs ParseComplete
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 1);
+
+        assert_eq!(inserted, 1);
+        let expected = [
+            parse_complete_msg(),
+            bind_complete_msg(),
+            parse_complete_msg(),
+            bind_complete_msg(),
+            command_complete_msg("SELECT 1"),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_parse_complete_count_exceeds_available() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg());
+
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 10);
+
+        // Only 2 BindComplete messages, so only 2 insertions
+        assert_eq!(inserted, 2);
+        let expected = [
+            parse_complete_msg(),
+            bind_complete_msg(),
+            parse_complete_msg(),
+            bind_complete_msg(),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_parse_complete_empty_buffer() {
+        let buffer = BytesMut::new();
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 1);
+
+        assert_eq!(inserted, 0);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_insert_parse_complete_no_bind_complete() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer.clone(), 1);
+
+        assert_eq!(inserted, 0);
+        assert_eq!(result.as_ref(), buffer.as_ref());
+    }
+
+    #[test]
+    fn test_insert_close_complete_count_zero() {
+        let buffer = BytesMut::from(&ready_for_query_msg(b'I')[..]);
+        let result = insert_close_complete_before_ready_for_query(buffer.clone(), 0);
+
+        assert_eq!(result.as_ref(), buffer.as_ref());
+    }
+
+    #[test]
+    fn test_insert_close_complete_single_before_ready() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let result = insert_close_complete_before_ready_for_query(buffer, 1);
+
+        let expected = [
+            command_complete_msg("SELECT 1"),
+            close_complete_msg(),
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_multiple_before_ready() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let result = insert_close_complete_before_ready_for_query(buffer, 3);
+
+        let expected = [
+            command_complete_msg("SELECT 1"),
+            close_complete_msg(),
+            close_complete_msg(),
+            close_complete_msg(),
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_no_ready_for_query() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+
+        let result = insert_close_complete_before_ready_for_query(buffer, 2);
+
+        let expected = [
+            command_complete_msg("SELECT 1"),
+            close_complete_msg(),
+            close_complete_msg(),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_empty_buffer() {
+        let buffer = BytesMut::new();
+        let result = insert_close_complete_before_ready_for_query(buffer, 1);
+
+        let expected = close_complete_msg();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_only_ready_for_query() {
+        let buffer = BytesMut::from(&ready_for_query_msg(b'T')[..]);
+        let result = insert_close_complete_before_ready_for_query(buffer, 1);
+
+        let expected = [close_complete_msg(), ready_for_query_msg(b'T')].concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_different_ready_statuses() {
+        for status in [b'I', b'T', b'E'] {
+            let buffer = BytesMut::from(&ready_for_query_msg(status)[..]);
+            let result = insert_close_complete_before_ready_for_query(buffer, 1);
+
+            let expected = [close_complete_msg(), ready_for_query_msg(status)].concat();
+            assert_eq!(result.as_ref(), &expected[..]);
+        }
+    }
+
+    #[test]
+    fn test_insert_parse_complete_complex_scenario() {
+        // Simulate a batch of Parse/Bind operations
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&parse_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg()); // Needs ParseComplete (1st)
+        buffer.extend_from_slice(&parse_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&bind_complete_msg()); // Needs ParseComplete (2nd)
+        buffer.extend_from_slice(&bind_complete_msg()); // Needs ParseComplete (3rd)
+
+        let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 3);
+
+        assert_eq!(inserted, 3);
+        // Only first 3 BindComplete without preceding ParseComplete get it inserted
+        let expected = [
+            parse_complete_msg(),
+            bind_complete_msg(),
+            parse_complete_msg(), // Inserted before 2nd BindComplete
+            bind_complete_msg(),
+            parse_complete_msg(),
+            bind_complete_msg(),
+            parse_complete_msg(), // Inserted before 4th BindComplete
+            bind_complete_msg(),
+            parse_complete_msg(), // Inserted before 5th BindComplete
+            bind_complete_msg(),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_with_multiple_messages() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&command_complete_msg("DELETE 5"));
+        buffer.extend_from_slice(&close_complete_msg());
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let result = insert_close_complete_before_ready_for_query(buffer, 2);
+
+        let expected = [
+            bind_complete_msg(),
+            command_complete_msg("DELETE 5"),
+            close_complete_msg(),
+            close_complete_msg(),
+            close_complete_msg(),
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    // Tests for insert_close_complete_after_last_close_complete
+
+    #[test]
+    fn test_insert_close_complete_after_last_count_zero() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&close_complete_msg());
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer.clone(), 0);
+
+        assert_eq!(inserted, 0);
+        assert_eq!(result.as_ref(), buffer.as_ref());
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_single() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&close_complete_msg());
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 1);
+
+        assert_eq!(inserted, 1);
+        let expected = [
+            close_complete_msg(),
+            close_complete_msg(), // Inserted after last CloseComplete
+            command_complete_msg("SELECT 1"),
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_multiple() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&close_complete_msg());
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 3);
+
+        assert_eq!(inserted, 3);
+        let expected = [
+            close_complete_msg(),
+            close_complete_msg(), // Inserted 1
+            close_complete_msg(), // Inserted 2
+            close_complete_msg(), // Inserted 3
+            command_complete_msg("SELECT 1"),
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_no_close_complete() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 2);
+
+        assert_eq!(inserted, 2);
+        // No CloseComplete found, insert before ReadyForQuery
+        let expected = [
+            command_complete_msg("SELECT 1"),
+            close_complete_msg(), // Inserted 1
+            close_complete_msg(), // Inserted 2
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_empty_buffer() {
+        let buffer = BytesMut::new();
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 1);
+
+        assert_eq!(inserted, 0);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_no_ready_for_query() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer.clone(), 2);
+
+        assert_eq!(inserted, 0);
+        // No CloseComplete and no ReadyForQuery, return unchanged
+        assert_eq!(result.as_ref(), buffer.as_ref());
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_multiple_close_complete() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&close_complete_msg());
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&close_complete_msg()); // Last CloseComplete
+        buffer.extend_from_slice(&command_complete_msg("SELECT 2"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 2);
+
+        assert_eq!(inserted, 2);
+        let expected = [
+            close_complete_msg(),
+            command_complete_msg("SELECT 1"),
+            close_complete_msg(), // Last CloseComplete from server
+            close_complete_msg(), // Inserted 1
+            close_complete_msg(), // Inserted 2
+            command_complete_msg("SELECT 2"),
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_close_complete_at_end() {
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&close_complete_msg());
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 1);
+
+        assert_eq!(inserted, 1);
+        let expected = [
+            command_complete_msg("SELECT 1"),
+            close_complete_msg(), // Last CloseComplete from server
+            close_complete_msg(), // Inserted
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_complex_scenario() {
+        // Simulate pipeline with interleaved operations
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+        buffer.extend_from_slice(&bind_complete_msg());
+        buffer.extend_from_slice(&command_complete_msg("SELECT 2"));
+        buffer.extend_from_slice(&close_complete_msg()); // CloseComplete for portal1
+        buffer.extend_from_slice(&command_complete_msg("SELECT 3"));
+        buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 1);
+
+        assert_eq!(inserted, 1);
+        let expected = [
+            bind_complete_msg(),
+            command_complete_msg("SELECT 1"),
+            bind_complete_msg(),
+            command_complete_msg("SELECT 2"),
+            close_complete_msg(), // CloseComplete for portal1 from server
+            close_complete_msg(), // Inserted CloseComplete for stmt1
+            command_complete_msg("SELECT 3"),
+            ready_for_query_msg(b'I'),
+        ]
+        .concat();
+        assert_eq!(result.as_ref(), &expected[..]);
+    }
+
+    #[test]
+    fn test_insert_close_complete_after_last_only_ready_for_query() {
+        let buffer = BytesMut::from(&ready_for_query_msg(b'I')[..]);
+        let (result, inserted) = insert_close_complete_after_last_close_complete(buffer, 1);
+
+        assert_eq!(inserted, 1);
+        let expected = [close_complete_msg(), ready_for_query_msg(b'I')].concat();
+        assert_eq!(result.as_ref(), &expected[..]);
     }
 }

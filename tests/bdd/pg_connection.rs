@@ -232,6 +232,31 @@ impl PgConnection {
         Ok(())
     }
 
+    pub async fn send_flush(&mut self) -> tokio::io::Result<()> {
+        let mut full_msg = Vec::new();
+        full_msg.push(b'H');
+        full_msg.extend_from_slice(&4i32.to_be_bytes());
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    pub async fn send_close(&mut self, target_type: char, name: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.push(target_type as u8);
+        msg.extend_from_slice(name.as_bytes());
+        msg.push(0);
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'C');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
     pub async fn read_all_messages_until_ready(
         &mut self,
     ) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {
@@ -246,6 +271,35 @@ impl PgConnection {
             // as they can be different or in different order
             if msg_type != 'S' && msg_type != 'K' {
                 messages.push((msg_type, data));
+            }
+        }
+        Ok(messages)
+    }
+
+    pub async fn read_partial_messages(&mut self) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {
+        let mut messages = Vec::new();
+        // Read messages until we get at least one, but don't wait for ReadyForQuery
+        loop {
+            // Check if there's data available without blocking
+            match tokio::time::timeout(std::time::Duration::from_millis(100), self.read_message())
+                .await
+            {
+                Ok(Ok((msg_type, data))) => {
+                    if msg_type == 'Z' {
+                        messages.push((msg_type, data));
+                        break;
+                    }
+                    if msg_type != 'S' && msg_type != 'K' {
+                        messages.push((msg_type, data));
+                    }
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    // Timeout - no more messages available
+                    if !messages.is_empty() {
+                        break;
+                    }
+                }
             }
         }
         Ok(messages)

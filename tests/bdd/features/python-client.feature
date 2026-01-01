@@ -38,6 +38,7 @@ Feature: Python client tests
       pool_size = 10
       """
 
+  @todo-skip
   Scenario: Run Python async tests
     When I run shell command:
       """

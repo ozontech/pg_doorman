@@ -5,8 +5,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::sleep;
@@ -34,16 +34,16 @@ fn pg_command_builder(cmd: &str, args: &[&str]) -> Command {
 fn stream_log_file(log_path: PathBuf) -> Arc<AtomicBool> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_clone = stop_flag.clone();
-    
+
     std::thread::spawn(move || {
         use std::fs::File;
-        
+
         // Wait for log file to be created
         let file = loop {
             if stop_flag_clone.load(Ordering::Relaxed) {
                 return;
             }
-            
+
             match File::open(&log_path) {
                 Ok(f) => break f,
                 Err(_) => {
@@ -52,28 +52,27 @@ fn stream_log_file(log_path: PathBuf) -> Arc<AtomicBool> {
                 }
             }
         };
-        
+
         let mut reader = BufReader::new(file);
         let mut line = String::new();
-        
+
         loop {
             if stop_flag_clone.load(Ordering::Relaxed) {
                 break;
             }
-            
+
             line.clear();
             match reader.read_line(&mut line) {
                 Ok(0) => {
                     // EOF reached, wait a bit and try again (tail -f behavior)
                     std::thread::sleep(Duration::from_millis(100));
-                    
+
                     // Try to reopen file in case it was rotated
                     if let Ok(new_file) = File::open(&log_path) {
                         // Check if file size decreased (rotation)
-                        if let (Ok(old_meta), Ok(new_meta)) = (
-                            reader.get_ref().metadata(),
-                            new_file.metadata()
-                        ) {
+                        if let (Ok(old_meta), Ok(new_meta)) =
+                            (reader.get_ref().metadata(), new_file.metadata())
+                        {
                             if new_meta.len() < old_meta.len() {
                                 reader = BufReader::new(new_file);
                                 continue;
@@ -90,7 +89,7 @@ fn stream_log_file(log_path: PathBuf) -> Arc<AtomicBool> {
             }
         }
     });
-    
+
     stop_flag
 }
 
