@@ -112,8 +112,9 @@ fn process_message_reordering_single_pass(buffer: &[u8]) -> Result<BytesMut, Err
         // Handle special message types
         match current_message_type {
             PARSE_COMPLETE => {
-                if parse_complete_count == 0 || prev_message_type == PARSE_COMPLETE {
-                    // Skip redundant ParseComplete
+                // Only skip if we've already consumed all expected ParseComplete messages
+                if parse_complete_count == 0 {
+                    // Skip extra ParseComplete
                     if position + MESSAGE_HEADER_SIZE > buffer_len {
                         return Err(Error::ServerMessageParserError(
                             ERROR_MESSAGE_TOO_LONG.to_string(),
