@@ -60,8 +60,11 @@ pub struct Client<S, T> {
     /// them to the backend.
     buffer: BytesMut,
 
-    /// Used to buffer response messages to the client
-    response_message_queue_buffer: BytesMut,
+    /// Counter for pending CloseComplete messages to send before ReadyForQuery
+    pending_close_complete: u32,
+
+    /// Counter for pending ParseComplete messages (for cached prepared statements)
+    pending_parse_complete: u32,
 
     /// Address
     addr: std::net::SocketAddr,
@@ -827,7 +830,8 @@ where
             write,
             addr,
             buffer: BytesMut::with_capacity(8196),
-            response_message_queue_buffer: BytesMut::with_capacity(8196),
+            pending_close_complete: 0,
+            pending_parse_complete: 0,
             cancel_mode: false,
             transaction_mode,
             process_id,
@@ -871,7 +875,8 @@ where
             write,
             addr,
             buffer: BytesMut::with_capacity(8196),
-            response_message_queue_buffer: BytesMut::with_capacity(8196),
+            pending_close_complete: 0,
+            pending_parse_complete: 0,
             cancel_mode: true,
             transaction_mode: false,
             process_id,
@@ -1229,41 +1234,12 @@ where
                                 // Release server back to the pool if we are in transaction mode.
                                 // If we are in session mode, we keep the server until the client disconnects.
                                 if self.transaction_mode && !server.in_copy_mode() {
-                                    if !self.response_message_queue_buffer.is_empty() {
-                                        self.client_last_messages_in_tx
-                                            .put(&self.response_message_queue_buffer[..]);
-                                        self.client_last_messages_in_tx = set_messages_right_place(
-                                            self.client_last_messages_in_tx.to_vec(),
-                                        )?;
-                                        self.response_message_queue_buffer.clear();
-                                    }
                                     break;
                                 }
                                 if server.in_aborted() {
                                     wait_rollback_from_client = true;
                                     break;
                                 }
-                            }
-
-                            // Send all queued messages to the client
-                            // NOTE: it's possible we don't perfectly send things back in the same order as postgres would,
-                            //       however clients should be able to handle this
-                            if !self.response_message_queue_buffer.is_empty() {
-                                if let Err(err) = write_all_flush(
-                                    &mut self.write,
-                                    &self.response_message_queue_buffer,
-                                )
-                                .await
-                                {
-                                    // We might be in some kind of error/in between protocol state
-                                    server.mark_bad(
-                                        format!("write to client {}: {:?}", self.addr, err)
-                                            .as_str(),
-                                    );
-                                    return Err(err);
-                                }
-
-                                self.response_message_queue_buffer.clear();
                             }
                         }
 
@@ -1376,7 +1352,6 @@ where
             // capacity растет - вырастает rss у процесса.
             shrink_buffer_if_needed(&mut self.client_last_messages_in_tx);
             shrink_buffer_if_needed(&mut self.buffer);
-            shrink_buffer_if_needed(&mut self.response_message_queue_buffer);
         }
     }
     /// Makes sure the checked out server has the prepared statement and sends it to the server if it doesn't
@@ -1491,8 +1466,8 @@ where
         // Check if server already has this prepared statement
         if server.has_prepared_statement(&new_parse.name) {
             // We don't want to send the parse message to the server
-            // Instead queue up a parse complete message to send to the client
-            self.response_message_queue_buffer.put(parse_complete());
+            // Increment counter - ParseComplete will be inserted before BindComplete in response
+            self.pending_parse_complete += 1;
         } else {
             debug!(
                 "Prepared statement `{}` not found in server cache",
@@ -1623,7 +1598,7 @@ where
     }
 
     /// Process Close message immediately without buffering.
-    /// For prepared statements: removes from cache and adds close_complete to response queue.
+    /// For prepared statements: removes from cache and increments pending_close_complete counter.
     /// For others: adds data directly to self.buffer.
     fn process_close_immediate(&mut self, message: BytesMut) -> Result<(), Error> {
         let close: Close = (&message).try_into()?;
@@ -1632,8 +1607,8 @@ where
         // and it's a close with a prepared statement name provided
         if self.prepared_statements_enabled && close.is_prepared_statement() && !close.anonymous() {
             self.prepared_statements.remove(&close.name);
-            // Queue up a close complete message to send to the client
-            self.response_message_queue_buffer.put(close_complete());
+            // Increment counter - CloseComplete will be sent before ReadyForQuery
+            self.pending_close_complete += 1;
         } else {
             self.buffer.put(&message[..]);
         }
@@ -1643,7 +1618,8 @@ where
 
     fn reset_buffered_state(&mut self) {
         self.buffer.clear();
-        self.response_message_queue_buffer.clear();
+        self.pending_close_complete = 0;
+        self.pending_parse_complete = 0;
     }
 
     fn get_virtual_pool_id(&mut self, client_counter: usize) -> u16 {
@@ -1698,7 +1674,6 @@ where
 
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
-        let has_queue = !self.response_message_queue_buffer.is_empty();
 
         // Single initial state update
         self.stats.active_idle();
@@ -1721,6 +1696,25 @@ where
                 }
             };
 
+            // Insert pending ParseComplete messages before BindComplete
+            if self.pending_parse_complete > 0 {
+                let (new_response, inserted) = insert_parse_complete_before_bind_complete(
+                    response,
+                    self.pending_parse_complete,
+                );
+                response = new_response;
+                self.pending_parse_complete -= inserted;
+            }
+
+            // Insert pending CloseComplete messages before ReadyForQuery
+            if self.pending_close_complete > 0 {
+                response = insert_close_complete_before_ready_for_query(
+                    response,
+                    self.pending_close_complete,
+                );
+                self.pending_close_complete = 0;
+            }
+
             // Fast path: early release check before expensive operations
             // This is the most common case in transaction mode
             if can_fast_release
@@ -1731,26 +1725,6 @@ where
             {
                 self.client_last_messages_in_tx.put(&response[..]);
                 break;
-            }
-
-            // Merge queued messages if needed (optimized path)
-            if has_queue && !self.response_message_queue_buffer.is_empty() {
-                let queue_len = self.response_message_queue_buffer.len();
-
-                // Fast path: if no reordering needed, just concatenate
-                if !needs_message_reordering(&self.response_message_queue_buffer) {
-                    response.put(&self.response_message_queue_buffer[..]);
-                    self.response_message_queue_buffer.clear();
-                } else {
-                    // Slow path: need to reorder
-                    // Reserve exact capacity to avoid reallocation
-                    response.reserve(queue_len);
-                    response.put(&self.response_message_queue_buffer[..]);
-
-                    // Optimize: avoid Vec allocation by reusing buffer
-                    response = reorder_messages_in_place(response)?;
-                    self.response_message_queue_buffer.clear();
-                }
             }
 
             // Write response to client

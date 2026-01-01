@@ -620,3 +620,107 @@ pub fn server_parameter_message(key: &str, value: &str) -> BytesMut {
 
     server_info
 }
+
+/// Insert ParseComplete messages before BindComplete messages that don't already have one.
+/// This ensures proper message ordering in the PostgreSQL extended protocol.
+/// Returns (modified buffer, number of ParseComplete messages inserted).
+pub fn insert_parse_complete_before_bind_complete(buffer: BytesMut, count: u32) -> (BytesMut, u32) {
+    if count == 0 {
+        return (buffer, 0);
+    }
+
+    let bytes = buffer.as_ref();
+    let len = bytes.len();
+    const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
+
+    // Find BindComplete messages that need ParseComplete inserted before them
+    // (i.e., BindComplete not preceded by ParseComplete)
+    let mut bind_positions_needing_parse: Vec<usize> = Vec::new();
+    let mut pos = 0;
+    let mut prev_msg_type: u8 = 0;
+    
+    while pos < len {
+        let msg_type = bytes[pos];
+        if pos + 5 > len {
+            break;
+        }
+        let msg_len = i32::from_be_bytes([bytes[pos + 1], bytes[pos + 2], bytes[pos + 3], bytes[pos + 4]]) as usize;
+        
+        if msg_type == b'2' && prev_msg_type != b'1' {
+            // BindComplete without preceding ParseComplete
+            bind_positions_needing_parse.push(pos);
+        }
+        
+        prev_msg_type = msg_type;
+        pos += 1 + msg_len;
+    }
+
+    // Insert ParseComplete before each BindComplete that needs it (up to count)
+    let inserts = std::cmp::min(count as usize, bind_positions_needing_parse.len());
+    if inserts == 0 {
+        return (buffer, 0);
+    }
+
+    let mut result = BytesMut::with_capacity(len + (PARSE_COMPLETE_SIZE * inserts));
+    let mut last_pos = 0;
+
+    for i in 0..inserts {
+        let bind_pos = bind_positions_needing_parse[i];
+        // Copy everything before this BindComplete
+        result.put(&bytes[last_pos..bind_pos]);
+        // Insert ParseComplete
+        result.put_u8(b'1'); // ParseComplete
+        result.put_i32(4);   // length
+        last_pos = bind_pos;
+    }
+
+    // Copy the rest
+    result.put(&bytes[last_pos..]);
+
+    (result, inserts as u32)
+}
+
+/// Insert CloseComplete messages before ReadyForQuery in the response buffer.
+/// This ensures proper message ordering in the PostgreSQL extended protocol.
+pub fn insert_close_complete_before_ready_for_query(buffer: BytesMut, count: u32) -> BytesMut {
+    if count == 0 {
+        return buffer;
+    }
+
+    let bytes = buffer.as_ref();
+    let len = bytes.len();
+
+    // ReadyForQuery is 6 bytes: 'Z' (1) + length (4) + status (1)
+    const READY_FOR_QUERY_SIZE: usize = 6;
+    const CLOSE_COMPLETE_SIZE: usize = 5; // '3' (1) + length (4)
+
+    // Find ReadyForQuery at the end of buffer
+    if len >= READY_FOR_QUERY_SIZE && bytes[len - READY_FOR_QUERY_SIZE] == b'Z' {
+        let mut result = BytesMut::with_capacity(len + (CLOSE_COMPLETE_SIZE * count as usize));
+
+        // Copy everything before ReadyForQuery
+        result.put(&bytes[..len - READY_FOR_QUERY_SIZE]);
+
+        // Insert CloseComplete messages
+        for _ in 0..count {
+            result.put_u8(b'3'); // CloseComplete
+            result.put_i32(4);   // length
+        }
+
+        // Copy ReadyForQuery
+        result.put(&bytes[len - READY_FOR_QUERY_SIZE..]);
+
+        result
+    } else {
+        // No ReadyForQuery found, just append CloseComplete at the end
+        let mut result = BytesMut::with_capacity(len + (CLOSE_COMPLETE_SIZE * count as usize));
+        result.put(&bytes[..]);
+
+        for _ in 0..count {
+            result.put_u8(b'3');
+            result.put_i32(4);
+        }
+
+        result
+    }
+}
