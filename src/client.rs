@@ -115,8 +115,15 @@ pub struct Client<S, T> {
     /// Whether prepared statements are enabled for this client
     prepared_statements_enabled: bool,
 
+    /// Whether this client has ever used async protocol (Flush command)
+    /// Once set to true, prepared statements caching is disabled for this client
+    async_client: bool,
+
     /// Mapping of client named prepared statement to rewritten parse messages
     prepared_statements: HashMap<String, (Arc<Parse>, u64)>,
+
+    /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
+    last_anonymous_prepared_hash: Option<u64>,
 
     max_memory_usage: u64,
 
@@ -847,7 +854,9 @@ where
             server_parameters,
             shutdown,
             prepared_statements_enabled,
+            async_client: false,
             prepared_statements: HashMap::new(),
+            last_anonymous_prepared_hash: None,
             virtual_pool_count: config.general.virtual_pool_count,
             client_last_messages_in_tx: BytesMut::with_capacity(8196),
             created_at: Instant::now(),
@@ -891,7 +900,9 @@ where
             server_parameters: ServerParameters::new(),
             shutdown,
             prepared_statements_enabled: false,
+            async_client: false,
             prepared_statements: HashMap::new(),
+            last_anonymous_prepared_hash: None,
             connected_to_server: false,
             client_last_messages_in_tx: BytesMut::with_capacity(8196),
             virtual_pool_count: get_config().general.virtual_pool_count,
@@ -1211,6 +1222,8 @@ where
                             if code == 'H' {
                                 // For Flush, enter async mode
                                 server.set_async_mode(true);
+                                // Mark this client as async client forever
+                                self.async_client = true;
                                 debug!("Client requested flush, going async");
                             } else {
                                 // For Sync, exit async mode
@@ -1218,14 +1231,7 @@ where
                             }
 
                             self.send_and_receive_loop(None, server).await?;
-                            
-                            // Reset async mode after processing Flush
-                            // Each Flush is independent and should not affect subsequent commands
-                            if code == 'H' {
-                                server.set_async_mode(false);
-                                debug!("Flush completed, exiting async mode");
-                            }
-                            
+
                             self.stats.query();
                             server.stats.query(
                                 query_start_at.elapsed().as_micros() as u64,
@@ -1454,13 +1460,24 @@ where
         // Compute the hash of the parse statement
         let hash = parse.get_hash();
 
-        // Add the statement to the cache or check if we already have it
-        let new_parse = match pool.register_parse_to_cache(hash, &parse) {
-            Some(parse) => parse,
-            None => {
-                return Err(Error::ClientError(format!(
-                    "Could not store Prepared statement `{client_given_name}`"
-                )))
+        // For async clients, create a new Parse with unique name instead of using pool cache
+        // This avoids "prepared statement already exists" errors
+        let new_parse = if self.async_client {
+            // Create new Parse with unique name using counter
+            let counter = PREPARED_STATEMENT_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let new_name = format!("DOORMAN_{}", counter);
+            let mut new_parse = parse.clone();
+            new_parse.name = new_name;
+            Arc::new(new_parse)
+        } else {
+            // Use pool cache for non-async clients
+            match pool.register_parse_to_cache(hash, &parse) {
+                Some(parse) => parse,
+                None => {
+                    return Err(Error::ClientError(format!(
+                        "Could not store Prepared statement `{client_given_name}`"
+                    )))
+                }
             }
         };
 
@@ -1469,14 +1486,35 @@ where
             client_given_name, new_parse.name
         );
 
+        // For anonymous prepared statements, use hash as key to avoid collisions
+        let cache_key = if client_given_name.is_empty() {
+            // Save hash for anonymous prepared statement
+            self.last_anonymous_prepared_hash = Some(hash);
+            format!("__hash_{}", hash)
+        } else {
+            client_given_name.clone()
+        };
+
         self.prepared_statements
-            .insert(client_given_name, (new_parse.clone(), hash));
+            .insert(cache_key, (new_parse.clone(), hash));
 
         // Check if server already has this prepared statement
         if server.has_prepared_statement(&new_parse.name) {
-            // We don't want to send the parse message to the server
-            // Increment counter - ParseComplete will be inserted before BindComplete in response
-            self.pending_parse_complete += 1;
+            // For async clients, always send Parse to get real ParseComplete from server
+            if self.async_client {
+                debug!(
+                    "Async client: sending Parse `{}` to server even though cached",
+                    new_parse.name
+                );
+
+                // Add parse message to buffer
+                let parse_bytes: BytesMut = new_parse.as_ref().try_into()?;
+                self.buffer.put(&parse_bytes[..]);
+            } else {
+                // We don't want to send the parse message to the server
+                // Increment counter - ParseComplete will be inserted before BindComplete in response
+                self.pending_parse_complete += 1;
+            }
         } else {
             debug!(
                 "Prepared statement `{}` not found in server cache",
@@ -1512,7 +1550,28 @@ where
 
         let client_given_name = Bind::get_name(&message)?;
 
-        match self.prepared_statements.get(&client_given_name) {
+        // For anonymous Bind, use last anonymous prepared statement hash
+        let lookup_key = if client_given_name.is_empty() {
+            match self.last_anonymous_prepared_hash {
+                Some(hash) => format!("__hash_{}", hash),
+                None => {
+                    debug!("Got anonymous bind but no anonymous prepared statement exists");
+                    error_response(
+                        &mut self.write,
+                        "prepared statement \"\" does not exist",
+                        "58000",
+                    )
+                    .await?;
+                    return Err(Error::ClientError(
+                        "Anonymous prepared statement doesn't exist".to_string(),
+                    ));
+                }
+            }
+        } else {
+            client_given_name.clone()
+        };
+
+        match self.prepared_statements.get(&lookup_key) {
             Some((rewritten_parse, _)) => {
                 let rewritten_name = rewritten_parse.name.clone();
                 let message = Bind::rename(message, &rewritten_name)?;
@@ -1523,7 +1582,7 @@ where
                 );
 
                 // Ensure prepared statement is on server
-                self.ensure_prepared_statement_is_on_server(client_given_name, pool, server)
+                self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
                     .await?;
 
                 // Add directly to buffer
@@ -1572,7 +1631,28 @@ where
 
         let client_given_name = describe.statement_name.clone();
 
-        match self.prepared_statements.get(&client_given_name) {
+        // For anonymous Describe, use last anonymous prepared statement hash
+        let lookup_key = if client_given_name.is_empty() {
+            match self.last_anonymous_prepared_hash {
+                Some(hash) => format!("__hash_{}", hash),
+                None => {
+                    debug!("Got anonymous describe but no anonymous prepared statement exists");
+                    error_response(
+                        &mut self.write,
+                        "prepared statement \"\" does not exist",
+                        "58000",
+                    )
+                    .await?;
+                    return Err(Error::ClientError(
+                        "Anonymous prepared statement doesn't exist".to_string(),
+                    ));
+                }
+            }
+        } else {
+            client_given_name.clone()
+        };
+
+        match self.prepared_statements.get(&lookup_key) {
             Some((rewritten_parse, _)) => {
                 let describe = describe.rename(&rewritten_parse.name);
 
@@ -1582,7 +1662,7 @@ where
                 );
 
                 // Ensure prepared statement is on server
-                self.ensure_prepared_statement_is_on_server(client_given_name, pool, server)
+                self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
                     .await?;
 
                 // Add directly to buffer
@@ -1618,7 +1698,7 @@ where
         // Always add Close to buffer in extended query protocol
         // This ensures Close is sent to server when followed by Flush
         self.buffer.put(&message[..]);
-        
+
         // Remove from prepared statements cache if it's a named prepared statement
         if self.prepared_statements_enabled && close.is_prepared_statement() && !close.anonymous() {
             self.prepared_statements.remove(&close.name);

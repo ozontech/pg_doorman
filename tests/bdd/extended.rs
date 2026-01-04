@@ -874,7 +874,7 @@ pub async fn send_simple_query_to_session(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .expect(&format!("Session '{}' not found", session_name));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -887,9 +887,7 @@ pub async fn send_simple_query_to_session(
         .expect("Failed to read messages");
 }
 
-#[when(
-    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and store backend_pid$"#
-)]
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and store backend_pid$"#)]
 pub async fn send_simple_query_and_store_backend_pid(
     world: &mut DoormanWorld,
     query: String,
@@ -898,7 +896,7 @@ pub async fn send_simple_query_and_store_backend_pid(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .expect(&format!("Session '{}' not found", session_name));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -908,7 +906,7 @@ pub async fn send_simple_query_and_store_backend_pid(
     let mut backend_pid: Option<i32> = None;
     loop {
         let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
-        
+
         match msg_type {
             'T' => {
                 // RowDescription - skip
@@ -924,7 +922,8 @@ pub async fn send_simple_query_and_store_backend_pid(
                             // Read the value as string and parse to int
                             let value_bytes = &data[6..6 + field_len as usize];
                             let value_str = String::from_utf8_lossy(value_bytes);
-                            backend_pid = Some(value_str.parse().expect("Failed to parse backend_pid"));
+                            backend_pid =
+                                Some(value_str.parse().expect("Failed to parse backend_pid"));
                         }
                     }
                 }
@@ -938,7 +937,10 @@ pub async fn send_simple_query_and_store_backend_pid(
             }
             'E' => {
                 // Error - this is expected for "bad sql"
-                eprintln!("Error received (expected for bad sql): {:?}", String::from_utf8_lossy(&data));
+                eprintln!(
+                    "Error received (expected for bad sql): {:?}",
+                    String::from_utf8_lossy(&data)
+                );
                 // Continue reading until ReadyForQuery
             }
             _ => {
@@ -970,7 +972,7 @@ pub async fn send_simple_query_and_store_named_backend_pid(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .expect(&format!("Session '{}' not found", session_name));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -980,7 +982,7 @@ pub async fn send_simple_query_and_store_named_backend_pid(
     let mut backend_pid: Option<i32> = None;
     loop {
         let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
-        
+
         match msg_type {
             'T' => {
                 // RowDescription - skip
@@ -996,7 +998,8 @@ pub async fn send_simple_query_and_store_named_backend_pid(
                             // Read the value as string and parse to int
                             let value_bytes = &data[6..6 + field_len as usize];
                             let value_str = String::from_utf8_lossy(value_bytes);
-                            backend_pid = Some(value_str.parse().expect("Failed to parse backend_pid"));
+                            backend_pid =
+                                Some(value_str.parse().expect("Failed to parse backend_pid"));
                         }
                     }
                 }
@@ -1010,7 +1013,10 @@ pub async fn send_simple_query_and_store_named_backend_pid(
             }
             'E' => {
                 // Error - this is expected for "bad sql"
-                eprintln!("Error received (expected for bad sql): {:?}", String::from_utf8_lossy(&data));
+                eprintln!(
+                    "Error received (expected for bad sql): {:?}",
+                    String::from_utf8_lossy(&data)
+                );
                 // Continue reading until ReadyForQuery
             }
             _ => {
@@ -1020,26 +1026,24 @@ pub async fn send_simple_query_and_store_named_backend_pid(
     }
 
     if let Some(pid) = backend_pid {
-        world.named_backend_pids.insert((session_name, pid_name), pid);
+        world
+            .named_backend_pids
+            .insert((session_name, pid_name), pid);
     }
 }
 
 #[then(
     regex = r#"^backend_pid from session "([^"]+)" should equal backend_pid from session "([^"]+)"$"#
 )]
-pub async fn compare_backend_pids(
-    world: &mut DoormanWorld,
-    session1: String,
-    session2: String,
-) {
+pub async fn compare_backend_pids(world: &mut DoormanWorld, session1: String, session2: String) {
     let pid1 = world
         .session_backend_pids
         .get(&session1)
-        .expect(&format!("Backend PID for session '{}' not found", session1));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session1));
     let pid2 = world
         .session_backend_pids
         .get(&session2)
-        .expect(&format!("Backend PID for session '{}' not found", session2));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session2));
 
     println!("Session '{}' backend_pid: {}", session1, pid1);
     println!("Session '{}' backend_pid: {}", session2, pid2);
@@ -1062,11 +1066,11 @@ pub async fn compare_backend_pids_not_equal(
     let pid1 = world
         .session_backend_pids
         .get(&session1)
-        .expect(&format!("Backend PID for session '{}' not found", session1));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session1));
     let pid2 = world
         .session_backend_pids
         .get(&session2)
-        .expect(&format!("Backend PID for session '{}' not found", session2));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session2));
 
     println!("Session '{}' backend_pid: {}", session1, pid1);
     println!("Session '{}' backend_pid: {}", session2, pid2);
@@ -1090,14 +1094,30 @@ pub async fn compare_named_backend_pid_with_initial(
     let named_pid = world
         .named_backend_pids
         .get(&(session_name.clone(), pid_name.clone()))
-        .expect(&format!("Named backend PID '{}' for session '{}' not found", pid_name, session_name));
+        .unwrap_or_else(|| {
+            panic!(
+                "Named backend PID '{}' for session '{}' not found",
+                pid_name, session_name
+            )
+        });
     let initial_pid = world
         .session_backend_pids
         .get(&initial_session_name)
-        .expect(&format!("Initial backend PID for session '{}' not found", initial_session_name));
+        .unwrap_or_else(|| {
+            panic!(
+                "Initial backend PID for session '{}' not found",
+                initial_session_name
+            )
+        });
 
-    println!("Session '{}' named backend_pid '{}': {}", session_name, pid_name, named_pid);
-    println!("Session '{}' initial backend_pid: {}", initial_session_name, initial_pid);
+    println!(
+        "Session '{}' named backend_pid '{}': {}",
+        session_name, pid_name, named_pid
+    );
+    println!(
+        "Session '{}' initial backend_pid: {}",
+        initial_session_name, initial_pid
+    );
 
     assert_eq!(
         named_pid, initial_pid,
