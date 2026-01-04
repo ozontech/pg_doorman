@@ -835,3 +835,273 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
     world.pg_accumulated_messages.clear();
     world.doorman_accumulated_messages.clear();
 }
+
+// Steps for named sessions (reuse-server-backend tests)
+
+#[when(
+    regex = r#"^we create session "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
+)]
+pub async fn create_named_session(
+    world: &mut DoormanWorld,
+    session_name: String,
+    user: String,
+    password: String,
+    database: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    // Connect to pg_doorman
+    let mut conn = PgConnection::connect(&doorman_addr)
+        .await
+        .expect("Failed to connect to pg_doorman");
+    conn.send_startup(&user, &database)
+        .await
+        .expect("Failed to send startup to pg_doorman");
+    conn.authenticate(&user, &password)
+        .await
+        .expect("Failed to authenticate to pg_doorman");
+
+    world.named_sessions.insert(session_name, conn);
+}
+
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)"$"#)]
+pub async fn send_simple_query_to_session(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .expect(&format!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read all messages until ReadyForQuery
+    let _messages = conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages");
+}
+
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and store backend_pid$"#
+)]
+pub async fn send_simple_query_and_store_backend_pid(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .expect(&format!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read messages and parse backend_pid
+    let mut backend_pid: Option<i32> = None;
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+        
+        match msg_type {
+            'T' => {
+                // RowDescription - skip
+            }
+            'D' => {
+                // DataRow - parse the integer value
+                if data.len() >= 2 {
+                    let field_count = i16::from_be_bytes([data[0], data[1]]);
+                    if field_count == 1 {
+                        // Read field length (4 bytes)
+                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
+                        if field_len > 0 {
+                            // Read the value as string and parse to int
+                            let value_bytes = &data[6..6 + field_len as usize];
+                            let value_str = String::from_utf8_lossy(value_bytes);
+                            backend_pid = Some(value_str.parse().expect("Failed to parse backend_pid"));
+                        }
+                    }
+                }
+            }
+            'C' => {
+                // CommandComplete - skip
+            }
+            'Z' => {
+                // ReadyForQuery - done
+                break;
+            }
+            'E' => {
+                // Error - this is expected for "bad sql"
+                eprintln!("Error received (expected for bad sql): {:?}", String::from_utf8_lossy(&data));
+                // Continue reading until ReadyForQuery
+            }
+            _ => {
+                // Other messages - skip
+            }
+        }
+    }
+
+    if let Some(pid) = backend_pid {
+        world.session_backend_pids.insert(session_name, pid);
+    }
+}
+
+#[when(regex = r#"^we sleep (\d+)ms$"#)]
+pub async fn sleep_ms(_world: &mut DoormanWorld, ms: String) {
+    let duration = ms.parse::<u64>().expect("Invalid sleep duration");
+    tokio::time::sleep(tokio::time::Duration::from_millis(duration)).await;
+}
+
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and store backend_pid as "([^"]+)"$"#
+)]
+pub async fn send_simple_query_and_store_named_backend_pid(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+    pid_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .expect(&format!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read messages and parse backend_pid
+    let mut backend_pid: Option<i32> = None;
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+        
+        match msg_type {
+            'T' => {
+                // RowDescription - skip
+            }
+            'D' => {
+                // DataRow - parse the integer value
+                if data.len() >= 2 {
+                    let field_count = i16::from_be_bytes([data[0], data[1]]);
+                    if field_count == 1 {
+                        // Read field length (4 bytes)
+                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
+                        if field_len > 0 {
+                            // Read the value as string and parse to int
+                            let value_bytes = &data[6..6 + field_len as usize];
+                            let value_str = String::from_utf8_lossy(value_bytes);
+                            backend_pid = Some(value_str.parse().expect("Failed to parse backend_pid"));
+                        }
+                    }
+                }
+            }
+            'C' => {
+                // CommandComplete - skip
+            }
+            'Z' => {
+                // ReadyForQuery - done
+                break;
+            }
+            'E' => {
+                // Error - this is expected for "bad sql"
+                eprintln!("Error received (expected for bad sql): {:?}", String::from_utf8_lossy(&data));
+                // Continue reading until ReadyForQuery
+            }
+            _ => {
+                // Other messages - skip
+            }
+        }
+    }
+
+    if let Some(pid) = backend_pid {
+        world.named_backend_pids.insert((session_name, pid_name), pid);
+    }
+}
+
+#[then(
+    regex = r#"^backend_pid from session "([^"]+)" should equal backend_pid from session "([^"]+)"$"#
+)]
+pub async fn compare_backend_pids(
+    world: &mut DoormanWorld,
+    session1: String,
+    session2: String,
+) {
+    let pid1 = world
+        .session_backend_pids
+        .get(&session1)
+        .expect(&format!("Backend PID for session '{}' not found", session1));
+    let pid2 = world
+        .session_backend_pids
+        .get(&session2)
+        .expect(&format!("Backend PID for session '{}' not found", session2));
+
+    println!("Session '{}' backend_pid: {}", session1, pid1);
+    println!("Session '{}' backend_pid: {}", session2, pid2);
+
+    assert_eq!(
+        pid1, pid2,
+        "Backend PIDs should be equal: session '{}'={}, session '{}'={}",
+        session1, pid1, session2, pid2
+    );
+}
+
+#[then(
+    regex = r#"^backend_pid from session "([^"]+)" should not equal backend_pid from session "([^"]+)"$"#
+)]
+pub async fn compare_backend_pids_not_equal(
+    world: &mut DoormanWorld,
+    session1: String,
+    session2: String,
+) {
+    let pid1 = world
+        .session_backend_pids
+        .get(&session1)
+        .expect(&format!("Backend PID for session '{}' not found", session1));
+    let pid2 = world
+        .session_backend_pids
+        .get(&session2)
+        .expect(&format!("Backend PID for session '{}' not found", session2));
+
+    println!("Session '{}' backend_pid: {}", session1, pid1);
+    println!("Session '{}' backend_pid: {}", session2, pid2);
+
+    assert_ne!(
+        pid1, pid2,
+        "Backend PIDs should NOT be equal: session '{}'={}, session '{}'={}",
+        session1, pid1, session2, pid2
+    );
+}
+
+#[then(
+    regex = r#"^backend_pid "([^"]+)" from session "([^"]+)" should equal initial backend_pid from session "([^"]+)"$"#
+)]
+pub async fn compare_named_backend_pid_with_initial(
+    world: &mut DoormanWorld,
+    pid_name: String,
+    session_name: String,
+    initial_session_name: String,
+) {
+    let named_pid = world
+        .named_backend_pids
+        .get(&(session_name.clone(), pid_name.clone()))
+        .expect(&format!("Named backend PID '{}' for session '{}' not found", pid_name, session_name));
+    let initial_pid = world
+        .session_backend_pids
+        .get(&initial_session_name)
+        .expect(&format!("Initial backend PID for session '{}' not found", initial_session_name));
+
+    println!("Session '{}' named backend_pid '{}': {}", session_name, pid_name, named_pid);
+    println!("Session '{}' initial backend_pid: {}", initial_session_name, initial_pid);
+
+    assert_eq!(
+        named_pid, initial_pid,
+        "Named backend PID '{}' from session '{}' ({}) should equal initial backend PID from session '{}' ({})",
+        pid_name, session_name, named_pid, initial_session_name, initial_pid
+    );
+}
