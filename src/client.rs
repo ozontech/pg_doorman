@@ -1093,7 +1093,7 @@ where
                 if current_pool.settings.sync_server_parameters {
                     server.sync_parameters(&self.server_parameters).await?;
                 }
-                server.set_flush_wait_code(' ');
+                server.set_async_mode(false);
 
                 let mut initial_message = Some(message);
 
@@ -1199,7 +1199,7 @@ where
                         // Close
                         // Close the prepared statement.
                         'C' => {
-                            self.process_close_immediate(message)?;
+                            self.process_close_immediate(message, server)?;
                         }
 
                         // Sync
@@ -1209,11 +1209,12 @@ where
                             self.buffer.put(&message[..]);
 
                             if code == 'H' {
-                                // For Flush, wait for CommandComplete to stop reading
-                                server.set_flush_wait_code('C');
+                                // For Flush, enter async mode
+                                server.set_async_mode(true);
                                 debug!("Client requested flush, going async");
                             } else {
-                                server.set_flush_wait_code(' ')
+                                // For Sync, exit async mode
+                                server.set_async_mode(false);
                             }
 
                             self.send_and_receive_loop(None, server).await?;
@@ -1603,8 +1604,15 @@ where
     /// Process Close message immediately without buffering.
     /// For prepared statements: removes from cache and increments pending_close_complete counter.
     /// For others: adds data directly to self.buffer.
-    fn process_close_immediate(&mut self, message: BytesMut) -> Result<(), Error> {
+    /// In async mode: always sends Close to server to get CloseComplete immediately.
+    fn process_close_immediate(&mut self, message: BytesMut, server: &Server) -> Result<(), Error> {
         let close: Close = (&message).try_into()?;
+
+        // In async mode, always send Close to server to get CloseComplete immediately
+        if server.is_async() {
+            self.buffer.put(&message[..]);
+            return Ok(());
+        }
 
         // We don't send the close message to the server if prepared statements are enabled,
         // and it's a close with a prepared statement name provided
