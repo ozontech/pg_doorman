@@ -1,6 +1,6 @@
-@python
-Feature: Python client tests
-  Test pg_doorman with Python PostgreSQL clients (psycopg2, asyncpg)
+@dotnet
+Feature: .NET anonymous queries without prepare on server side
+  Test pg_doorman batch anonymous queries without server-side preparation
 
   Background:
     Given PostgreSQL started with pg_hba.conf:
@@ -10,10 +10,6 @@ Feature: Python client tests
       host    all             all             ::1/128                 trust
       """
     And fixtures from "tests/fixture.sql" applied
-    And pg_doorman hba file contains:
-      """
-      host all all 127.0.0.1/32 trust
-      """
     And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
@@ -23,7 +19,8 @@ Feature: Python client tests
       connect_timeout = 5000
       admin_username = "admin"
       admin_password = "admin"
-      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      prepared_statements = true
+      prepared_statements_cache_size = 10000
       tls_private_key = "${DOORMAN_SSL_KEY}"
       tls_certificate = "${DOORMAN_SSL_CERT}"
 
@@ -35,24 +32,14 @@ Feature: Python client tests
       [pools.example_db.users.0]
       username = "example_user_1"
       password = "md58a67a0c805a5ee0384ea28e0dea557b6"
-      pool_size = 10
+      pool_size = 40
       """
 
-  @todo-skip
-  Scenario: Run Python async tests
+  Scenario: Run .NET anonymous queries without prepare on server side
     When I run shell command:
       """
-      cd tests/python && \
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      python3 ./test_async.py
+      export DATABASE_URL="Host=127.0.0.1;Port=${DOORMAN_PORT};Database=example_db;Username=example_user_1;Password=test"
+      tests/dotnet/run_test.sh anon_queries anonymous-caching.cs
       """
     Then the command should succeed
-
-  Scenario: Run Python psycopg2 tests
-    When I run shell command:
-      """
-      cd tests/python && \
-      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
-      python3 ./test_psycopg2.py
-      """
-    Then the command should succeed
+    And the command output should contain "anonymous-caching complete"
