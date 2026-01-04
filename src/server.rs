@@ -427,7 +427,24 @@ impl Server {
     {
         loop {
             self.stats.wait_reading();
-            let (code_u8, message_len) = read_message_header(&mut self.stream).await?;
+
+            // In async mode, use a short timeout to avoid blocking when no more data available
+            let (code_u8, message_len) = if self.is_async() {
+                match tokio::time::timeout(
+                    Duration::from_millis(100),
+                    read_message_header(&mut self.stream),
+                )
+                .await
+                {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        // Timeout - no more data available in async mode
+                        break;
+                    }
+                }
+            } else {
+                read_message_header(&mut self.stream).await?
+            };
             // if message server is too big.
             if self.max_message_size > 0
                 && message_len > self.max_message_size
@@ -777,11 +794,6 @@ impl Server {
                 // Keep buffering until ReadyForQuery shows up.
                 _ => (),
             };
-
-            // In async mode, exit after any completion message when no more data available
-            if self.is_async() && !self.data_available {
-                break;
-            }
         }
 
         let bytes = self.buffer.clone();

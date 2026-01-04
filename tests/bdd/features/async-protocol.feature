@@ -350,6 +350,7 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @async-protocol-twenty-three
   Scenario: Describe statement before Bind with Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "stmt1" with query "select $1::int" to both
@@ -359,6 +360,30 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Flush to both
     And we verify partial response received from both
     And we send Bind "" to "stmt1" with params "1" to both
+    And we send Execute "" to both
+    And we send Sync to both
+    Then we should receive identical messages from both
+
+  @async-protocol-twenty-four
+  Scenario: Parse + Describe + Flush for anonymous statement (asyncpg pattern)
+    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "" with query "SELECT 1 as col" to both
+    And we send Describe "S" "" to both
+    And we send Flush to both
+    And we verify partial response received from both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Sync to both
+    Then we should receive identical messages from both
+
+  @async-protocol-twenty-five
+  Scenario: Parse + Describe + Flush for named statement (asyncpg COPY pattern)
+    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "__asyncpg_stmt_1__" with query "SELECT 1 as col" to both
+    And we send Describe "S" "__asyncpg_stmt_1__" to both
+    And we send Flush to both
+    And we verify partial response received from both
+    And we send Bind "" to "__asyncpg_stmt_1__" with params "" to both
     And we send Execute "" to both
     And we send Sync to both
     Then we should receive identical messages from both
