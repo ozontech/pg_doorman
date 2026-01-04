@@ -1199,7 +1199,7 @@ where
                         // Close
                         // Close the prepared statement.
                         'C' => {
-                            self.process_close_immediate(message, server)?;
+                            self.process_close_immediate(message)?;
                         }
 
                         // Sync
@@ -1218,6 +1218,14 @@ where
                             }
 
                             self.send_and_receive_loop(None, server).await?;
+                            
+                            // Reset async mode after processing Flush
+                            // Each Flush is independent and should not affect subsequent commands
+                            if code == 'H' {
+                                server.set_async_mode(false);
+                                debug!("Flush completed, exiting async mode");
+                            }
+                            
                             self.stats.query();
                             server.stats.query(
                                 query_start_at.elapsed().as_micros() as u64,
@@ -1604,24 +1612,16 @@ where
     /// Process Close message immediately without buffering.
     /// For prepared statements: removes from cache and increments pending_close_complete counter.
     /// For others: adds data directly to self.buffer.
-    /// In async mode: always sends Close to server to get CloseComplete immediately.
-    fn process_close_immediate(&mut self, message: BytesMut, server: &Server) -> Result<(), Error> {
+    fn process_close_immediate(&mut self, message: BytesMut) -> Result<(), Error> {
         let close: Close = (&message).try_into()?;
 
-        // In async mode, always send Close to server to get CloseComplete immediately
-        if server.is_async() {
-            self.buffer.put(&message[..]);
-            return Ok(());
-        }
-
-        // We don't send the close message to the server if prepared statements are enabled,
-        // and it's a close with a prepared statement name provided
+        // Always add Close to buffer in extended query protocol
+        // This ensures Close is sent to server when followed by Flush
+        self.buffer.put(&message[..]);
+        
+        // Remove from prepared statements cache if it's a named prepared statement
         if self.prepared_statements_enabled && close.is_prepared_statement() && !close.anonymous() {
             self.prepared_statements.remove(&close.name);
-            // Increment counter - CloseComplete will be sent before ReadyForQuery
-            self.pending_close_complete += 1;
-        } else {
-            self.buffer.put(&message[..]);
         }
 
         Ok(())

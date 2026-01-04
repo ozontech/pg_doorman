@@ -182,6 +182,7 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @async-protocol-thirteenth
   Scenario: Close portal with Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "" with query "select $1::int" to both
@@ -194,6 +195,7 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @async-protocol-fourteenth
   Scenario: Partial execution with max_rows and Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "" with query "select generate_series(1, 10)" to both
@@ -210,6 +212,7 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @async-protocol-fifteen
   Scenario: Interleaved Parse and Bind with Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "stmt1" with query "select $1::int" to both
@@ -224,6 +227,7 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @async-protocol-sixteen
   Scenario: Prepared statement cache with Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "cached_stmt" with query "select $1::int" to both
@@ -242,6 +246,7 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @async-protocol-seventeen
   Scenario: Transaction with Parse + Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "BEGIN" to both
@@ -255,6 +260,7 @@ Feature: Async Protocol (Extended Query with Flush)
     When we send SimpleQuery "COMMIT" to both
     Then we should receive identical messages from both
 
+  @async-protocol-eighteen
   Scenario: Transaction rollback with Parse + Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "BEGIN" to both
@@ -268,6 +274,7 @@ Feature: Async Protocol (Extended Query with Flush)
     When we send SimpleQuery "ROLLBACK" to both
     Then we should receive identical messages from both
 
+  @async-protocol-nineteen
   Scenario: Multiple statements in transaction with Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "BEGIN" to both
@@ -288,6 +295,7 @@ Feature: Async Protocol (Extended Query with Flush)
     When we send SimpleQuery "COMMIT" to both
     Then we should receive identical messages from both
 
+  @async-protocol-twenty
   Scenario: Error in transaction with Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "BEGIN" to both
@@ -299,6 +307,7 @@ Feature: Async Protocol (Extended Query with Flush)
     When we send SimpleQuery "ROLLBACK" to both
     Then we should receive identical messages from both
 
+  @async-protocol-twenty-one
   Scenario: Prepared statement with multiple parameter types and Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "" with query "select $1::int, $2::text, $3::bool" to both
@@ -309,6 +318,7 @@ Feature: Async Protocol (Extended Query with Flush)
     And we send Sync to both
     Then we should receive identical messages from both
 
+  @async-protocol-twenty-two
   Scenario: Reparse same anonymous statement with Flush
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "" with query "select $1::int" to both
