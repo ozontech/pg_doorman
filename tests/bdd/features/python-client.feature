@@ -48,6 +48,16 @@ Feature: Python client tests
       """
     Then the command should succeed
 
+  @async-edge-cases
+  Scenario: Run Python async edge case tests
+    When I run shell command:
+      """
+      cd tests/python && \
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
+      python3 ./test_async_edge_cases.py
+      """
+    Then the command should succeed
+
   Scenario: Run Python psycopg2 tests
     When I run shell command:
       """

@@ -54,6 +54,8 @@ pub struct DoormanWorld {
     pub session_backend_pids: HashMap<String, i32>,
     /// Named backend PIDs (for storing multiple PIDs per session with custom keys)
     pub named_backend_pids: HashMap<(String, String), i32>,
+    /// Messages from named sessions (for prepared statements cache tests)
+    pub session_messages: HashMap<String, Vec<(char, Vec<u8>)>>,
 }
 
 impl std::fmt::Debug for DoormanWorld {

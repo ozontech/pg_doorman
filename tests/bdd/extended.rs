@@ -1125,3 +1125,157 @@ pub async fn compare_named_backend_pid_with_initial(
         pid_name, session_name, named_pid, initial_session_name, initial_pid
     );
 }
+
+// Steps for prepared statements cache tests
+
+#[when(regex = r#"^we send Parse "([^"]*)" with query "([^"]+)" to session "([^"]+)"$"#)]
+pub async fn send_parse_to_session(
+    world: &mut DoormanWorld,
+    name: String,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_parse(&name, &query)
+        .await
+        .expect("Failed to send Parse");
+}
+
+#[when(
+    regex = r#"^we send Bind "([^"]*)" to "([^"]*)" with params "([^"]*)" to session "([^"]+)"$"#
+)]
+pub async fn send_bind_to_session(
+    world: &mut DoormanWorld,
+    portal: String,
+    statement: String,
+    params_str: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    // Parse params - simple implementation for comma-separated values
+    let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| Some(s.trim().as_bytes().to_vec()))
+            .collect()
+    };
+
+    conn.send_bind(&portal, &statement, params)
+        .await
+        .expect("Failed to send Bind");
+}
+
+#[when(regex = r#"^we send Execute "([^"]*)" to session "([^"]+)"$"#)]
+pub async fn send_execute_to_session(
+    world: &mut DoormanWorld,
+    portal: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_execute(&portal, 0)
+        .await
+        .expect("Failed to send Execute");
+}
+
+#[when(regex = r#"^we send Sync to session "([^"]+)"$"#)]
+pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_sync().await.expect("Failed to send Sync");
+    
+    // Read all messages until ReadyForQuery and store them
+    let messages = conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages");
+    
+    world
+        .session_messages
+        .insert(session_name.clone(), messages);
+}
+
+#[when(regex = r#"^we close session "([^"]+)"$"#)]
+pub async fn close_session(world: &mut DoormanWorld, session_name: String) {
+    world
+        .named_sessions
+        .remove(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive DataRow with "([^"]+)"$"#)]
+pub async fn session_should_receive_datarow(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_value: String,
+) {
+    // Get messages from the stored session messages
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
+
+    // Find DataRow in the messages
+    let mut found_value: Option<String> = None;
+    for (msg_type, data) in messages {
+        match msg_type {
+            'D' => {
+                // DataRow - parse the value
+                if data.len() >= 2 {
+                    let field_count = i16::from_be_bytes([data[0], data[1]]);
+                    if field_count >= 1 {
+                        // Read first field length (4 bytes)
+                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
+                        if field_len > 0 {
+                            // Read the value as string
+                            let value_bytes = &data[6..6 + field_len as usize];
+                            let value_str = String::from_utf8_lossy(value_bytes).to_string();
+                            found_value = Some(value_str);
+                            break;
+                        }
+                    }
+                }
+            }
+            'E' => {
+                // Error
+                panic!(
+                    "Error received from session '{}': {:?}",
+                    session_name,
+                    String::from_utf8_lossy(data)
+                );
+            }
+            _ => {
+                // Other messages - skip
+            }
+        }
+    }
+
+    let actual_value = found_value.unwrap_or_else(|| {
+        panic!(
+            "No DataRow received from session '{}', expected '{}'",
+            session_name, expected_value
+        )
+    });
+
+    assert_eq!(
+        actual_value, expected_value,
+        "Session '{}': expected '{}', got '{}'",
+        session_name, expected_value, actual_value
+    );
+}
