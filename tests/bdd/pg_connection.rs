@@ -257,6 +257,44 @@ impl PgConnection {
         Ok(())
     }
 
+    /// Send CopyData message ('d') - used during COPY FROM STDIN
+    pub async fn send_copy_data(&mut self, data: &[u8]) -> tokio::io::Result<()> {
+        let len = (data.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'd');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend_from_slice(data);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    /// Send CopyDone message ('c') - signals end of COPY FROM STDIN data
+    pub async fn send_copy_done(&mut self) -> tokio::io::Result<()> {
+        let mut full_msg = Vec::new();
+        full_msg.push(b'c');
+        full_msg.extend_from_slice(&4i32.to_be_bytes());
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
+    /// Send CopyFail message ('f') - signals COPY FROM STDIN failure
+    pub async fn send_copy_fail(&mut self, error_message: &str) -> tokio::io::Result<()> {
+        let mut msg = Vec::new();
+        msg.extend_from_slice(error_message.as_bytes());
+        msg.push(0);
+
+        let len = (msg.len() + 4) as i32;
+        let mut full_msg = Vec::new();
+        full_msg.push(b'f');
+        full_msg.extend_from_slice(&len.to_be_bytes());
+        full_msg.extend(msg);
+
+        self.stream.write_all(&full_msg).await?;
+        Ok(())
+    }
+
     pub async fn read_all_messages_until_ready(
         &mut self,
     ) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {

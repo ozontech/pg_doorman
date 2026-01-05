@@ -160,6 +160,52 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
     details
 }
 
+/// Normalize RowDescription message by zeroing out table OIDs
+/// RowDescription format:
+///   Int16 - number of fields
+///   For each field:
+///     String - field name (null-terminated)
+///     Int32 - table OID (if from a table, else 0) <- we zero this
+///     Int16 - column attribute number
+///     Int32 - data type OID
+///     Int16 - data type size
+///     Int32 - type modifier
+///     Int16 - format code
+fn normalize_row_description(data: &[u8]) -> Vec<u8> {
+    let mut result = data.to_vec();
+    if data.len() < 2 {
+        return result;
+    }
+
+    let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
+    let mut pos = 2;
+
+    for _ in 0..field_count {
+        // Skip field name (null-terminated string)
+        while pos < result.len() && result[pos] != 0 {
+            pos += 1;
+        }
+        pos += 1; // skip null terminator
+
+        // Zero out table OID (4 bytes)
+        if pos + 4 <= result.len() {
+            result[pos] = 0;
+            result[pos + 1] = 0;
+            result[pos + 2] = 0;
+            result[pos + 3] = 0;
+        }
+        pos += 4; // table OID
+
+        pos += 2; // column attribute number
+        pos += 4; // data type OID
+        pos += 2; // data type size
+        pos += 4; // type modifier
+        pos += 2; // format code
+    }
+
+    result
+}
+
 // BDD step implementations
 
 #[when(
@@ -225,6 +271,92 @@ pub async fn send_simple_query_to_both(world: &mut DoormanWorld, query: String) 
         .expect("Failed to send query to pg_doorman");
 
     // Read messages from both
+    let pg_messages = pg_conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages from PostgreSQL");
+    let doorman_messages = doorman_conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages from pg_doorman");
+
+    world.pg_accumulated_messages.extend(pg_messages);
+    world.doorman_accumulated_messages.extend(doorman_messages);
+}
+
+#[when(regex = r#"^we send CopyFromStdin "([^"]+)" with data "([^"]*)" to both$"#)]
+pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: String, data: String) {
+    let pg_conn = world.pg_conn.as_mut().expect("Not connected to PostgreSQL");
+    let doorman_conn = world
+        .doorman_conn
+        .as_mut()
+        .expect("Not connected to pg_doorman");
+
+    // Unescape the data string (handle \t and \n)
+    let unescaped_data = data
+        .replace("\\t", "\t")
+        .replace("\\n", "\n");
+
+    // Send the COPY command via simple query to PostgreSQL
+    pg_conn
+        .send_simple_query(&query)
+        .await
+        .expect("Failed to send COPY query to PostgreSQL");
+
+    // Send the COPY command via simple query to pg_doorman
+    doorman_conn
+        .send_simple_query(&query)
+        .await
+        .expect("Failed to send COPY query to pg_doorman");
+
+    // Read initial response from PostgreSQL (should be CopyInResponse 'G' or ErrorResponse 'E')
+    let (pg_msg_type, pg_msg_data) = pg_conn
+        .read_message()
+        .await
+        .expect("Failed to read COPY response from PostgreSQL");
+
+    // Read initial response from pg_doorman
+    let (doorman_msg_type, doorman_msg_data) = doorman_conn
+        .read_message()
+        .await
+        .expect("Failed to read COPY response from pg_doorman");
+
+    // If we got CopyInResponse ('G'), send the data and CopyDone
+    if pg_msg_type == 'G' {
+        // Send copy data to PostgreSQL
+        if !unescaped_data.is_empty() {
+            pg_conn
+                .send_copy_data(unescaped_data.as_bytes())
+                .await
+                .expect("Failed to send CopyData to PostgreSQL");
+        }
+        pg_conn
+            .send_copy_done()
+            .await
+            .expect("Failed to send CopyDone to PostgreSQL");
+    } else {
+        // Error response - store it
+        world.pg_accumulated_messages.push((pg_msg_type, pg_msg_data.clone()));
+    }
+
+    if doorman_msg_type == 'G' {
+        // Send copy data to pg_doorman
+        if !unescaped_data.is_empty() {
+            doorman_conn
+                .send_copy_data(unescaped_data.as_bytes())
+                .await
+                .expect("Failed to send CopyData to pg_doorman");
+        }
+        doorman_conn
+            .send_copy_done()
+            .await
+            .expect("Failed to send CopyDone to pg_doorman");
+    } else {
+        // Error response - store it
+        world.doorman_accumulated_messages.push((doorman_msg_type, doorman_msg_data.clone()));
+    }
+
+    // Read remaining messages until ReadyForQuery from both
     let pg_messages = pg_conn
         .read_all_messages_until_ready()
         .await
@@ -779,7 +911,15 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         }
 
         // Check message data
-        if pg_data != doorman_data {
+        // For RowDescription ('T'), normalize table OIDs before comparison
+        // because temp tables have different OIDs on different connections
+        let (pg_data_normalized, doorman_data_normalized) = if *pg_type == 'T' {
+            (normalize_row_description(pg_data), normalize_row_description(doorman_data))
+        } else {
+            (pg_data.clone(), doorman_data.clone())
+        };
+
+        if pg_data_normalized != doorman_data_normalized {
             eprintln!("\n=== MESSAGE DATA MISMATCH at position {} ===", i);
             eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
             eprintln!(
@@ -789,7 +929,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
 
             // Find first difference
             for (pos, (pg_byte, doorman_byte)) in
-                pg_data.iter().zip(doorman_data.iter()).enumerate()
+                pg_data_normalized.iter().zip(doorman_data_normalized.iter()).enumerate()
             {
                 if pg_byte != doorman_byte {
                     eprintln!(
@@ -1415,4 +1555,84 @@ pub async fn verify_backend_pid_different(
 pub async fn sleep_for_milliseconds(_world: &mut DoormanWorld, ms: String) {
     let duration = ms.parse::<u64>().expect("Invalid sleep duration");
     tokio::time::sleep(tokio::time::Duration::from_millis(duration)).await;
+}
+
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" without waiting$"#)]
+pub async fn send_simple_query_to_session_without_waiting(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+    // Don't wait for response - just send the query
+}
+
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" expecting error$"#)]
+pub async fn send_simple_query_to_session_expecting_error(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read all messages until ReadyForQuery or error and store them
+    let messages = conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages");
+
+    world
+        .session_messages
+        .insert(session_name.clone(), messages);
+}
+
+#[then(regex = r#"^session "([^"]+)" should receive error containing "([^"]+)"$"#)]
+pub async fn session_should_receive_error_containing(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_text: String,
+) {
+    // Get messages from the stored session messages
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
+
+    // Find ErrorResponse in the messages
+    let mut found_error: Option<String> = None;
+    for (msg_type, data) in messages {
+        if *msg_type == 'E' {
+            // ErrorResponse - parse the error message
+            let error_str = String::from_utf8_lossy(data).to_string();
+            found_error = Some(error_str);
+            break;
+        }
+    }
+
+    let error_msg = found_error.unwrap_or_else(|| {
+        panic!(
+            "No ErrorResponse received from session '{}', expected error containing '{}'",
+            session_name, expected_text
+        )
+    });
+
+    assert!(
+        error_msg.to_lowercase().contains(&expected_text.to_lowercase()),
+        "Session '{}': expected error containing '{}', got '{}'",
+        session_name, expected_text, error_msg
+    );
 }
