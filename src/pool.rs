@@ -546,7 +546,8 @@ pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {
 }
 
 pub async fn retain_connections() {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+    let retain_time_ms = get_config().general.retain_connections_time;
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(retain_time_ms));
     let count = Arc::new(AtomicUsize::new(0));
     loop {
         interval.tick().await;

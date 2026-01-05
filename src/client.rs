@@ -1583,9 +1583,7 @@ where
 
                 // Ensure prepared statement is on server
                 // Skip this for async clients - Parse is already in buffer and will be sent with Flush
-                // Also skip if Parse is not yet on server (still in buffer) - will be sent with Flush
-                let parse_on_server = server.has_prepared_statement(&rewritten_name);
-                if !self.async_client && parse_on_server {
+                if !self.async_client {
                     self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
                         .await?;
                 }
@@ -1668,9 +1666,7 @@ where
 
                 // Ensure prepared statement is on server
                 // Skip this for async clients - Parse is already in buffer and will be sent with Flush
-                // Also skip if Parse is not yet on server (still in buffer) - will be sent with Flush
-                let parse_on_server = server.has_prepared_statement(&rewritten_parse.name);
-                if !self.async_client && parse_on_server {
+                if !self.async_client {
                     self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
                         .await?;
                 }
