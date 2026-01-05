@@ -1724,3 +1724,114 @@ pub async fn send_copy_from_stdin_to_session_expecting_error(
 
     world.session_messages.insert(session_name, messages);
 }
+
+// Admin console (pgbouncer database) steps
+
+#[when(
+    regex = r#"^we create admin session "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)"$"#
+)]
+pub async fn create_admin_session(
+    world: &mut DoormanWorld,
+    session_name: String,
+    user: String,
+    password: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    // Connect to pg_doorman admin console (database = pgbouncer)
+    let mut conn = PgConnection::connect(&doorman_addr)
+        .await
+        .expect("Failed to connect to pg_doorman admin");
+    conn.send_startup(&user, "pgbouncer")
+        .await
+        .expect("Failed to send startup to pg_doorman admin");
+    conn.authenticate(&user, &password)
+        .await
+        .expect("Failed to authenticate to pg_doorman admin");
+
+    world.named_sessions.insert(session_name, conn);
+}
+
+#[when(regex = r#"^we execute "([^"]+)" on admin session "([^"]+)" and store row count$"#)]
+pub async fn execute_admin_query_and_store_row_count(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read messages and count DataRow messages
+    let mut row_count = 0;
+    loop {
+        let (msg_type, _data) = conn.read_message().await.expect("Failed to read message");
+
+        match msg_type {
+            'T' => {
+                // RowDescription - skip
+            }
+            'D' => {
+                // DataRow - count it
+                row_count += 1;
+            }
+            'C' => {
+                // CommandComplete - skip
+            }
+            'Z' => {
+                // ReadyForQuery - done
+                break;
+            }
+            'E' => {
+                panic!(
+                    "Error received from admin session '{}': {:?}",
+                    session_name, _data
+                );
+            }
+            _ => {
+                // Other messages - skip
+            }
+        }
+    }
+
+    // Store row count in session_backend_pids (reusing existing field for simplicity)
+    world
+        .session_backend_pids
+        .insert(format!("{}_row_count", session_name), row_count);
+}
+
+#[then(regex = r#"^admin session "([^"]+)" row count should be (\d+)$"#)]
+pub async fn verify_admin_row_count(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_count: i32,
+) {
+    let key = format!("{}_row_count", session_name);
+    let actual_count = world
+        .session_backend_pids
+        .get(&key)
+        .unwrap_or_else(|| panic!("No row count stored for session '{}'", session_name));
+
+    assert_eq!(
+        *actual_count, expected_count,
+        "Admin session '{}': expected {} rows, got {}",
+        session_name, expected_count, actual_count
+    );
+}
+
+#[when(regex = r#"^we abort TCP connection for session "([^"]+)"$"#)]
+pub async fn abort_session_tcp_connection(world: &mut DoormanWorld, session_name: String) {
+    let conn = world
+        .named_sessions
+        .remove(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    // Abruptly close the TCP connection
+    conn.abort_connection().await;
+}

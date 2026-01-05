@@ -343,4 +343,10 @@ impl PgConnection {
         }
         Ok(messages)
     }
+
+    /// Abruptly close the TCP connection (simulates network failure)
+    pub async fn abort_connection(self) {
+        // Drop the stream without proper shutdown - simulates network failure
+        drop(self.stream);
+    }
 }

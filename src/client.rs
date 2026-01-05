@@ -1965,6 +1965,10 @@ impl<S, T> Drop for Client<S, T> {
                 stats.idle(0);
             }
         }
+
+        // Ensure client is removed from stats tracking when dropped
+        // This handles cases where client disconnects unexpectedly (e.g., TCP abort)
+        self.stats.disconnect();
     }
 }
 
