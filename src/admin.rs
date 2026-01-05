@@ -12,9 +12,7 @@ use tokio::time::Instant;
 // Internal crate imports
 use crate::config::{get_config, reload_config, VERSION};
 use crate::errors::Error;
-use crate::messages::protocol::{
-    command_complete, data_row, error_response, notify, row_description,
-};
+use crate::messages::protocol::{command_complete, data_row, error_response, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
 use crate::pool::{get_all_pools, ClientServerMap};
@@ -60,7 +58,7 @@ where
                 error!("unsupported admin subcommand for SHOW: {query_parts:?}");
                 error_response(
                     stream,
-                    "Unsupported query against the admin database",
+                    "Unsupported query against the admin database, please use SHOW HELP for a list of supported subcommands",
                     "58000",
                 )
                 .await
@@ -251,30 +249,25 @@ async fn show_help<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    let mut res = BytesMut::new();
+    let columns = vec![("item", DataType::Text)];
 
-    let detail_msg = [
-        "",
+    let help_items = [
         "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION",
-        // "SHOW PEERS|PEER_POOLS", // missing PEERS|PEER_POOLS
-        // "SHOW FDS|SOCKETS|ACTIVE_SOCKETS|LISTS|MEM|STATE", // missing FDS|SOCKETS|ACTIVE_SOCKETS|MEM|STATE
         "SHOW LISTS",
         "SHOW CONNECTIONS",
-        // "SHOW DNS_HOSTS|DNS_ZONES", // missing DNS_HOSTS|DNS_ZONES
-        "SHOW STATS", // missing STATS_TOTALS|STATS_AVERAGES|TOTALS
-        //"SET key = arg",
+        "SHOW STATS",
         "RELOAD",
-        // "PAUSE [<db>, <user>]",
-        // "RESUME [<db>, <user>]",
-        // "DISABLE <db>", // missing
-        // "ENABLE <db>", // missing
-        // "RECONNECT [<db>]", missing
-        // "KILL <db>",
-        // "SUSPEND",
         "SHUTDOWN",
     ];
 
-    res.put(notify("Console usage", detail_msg.join("\n\t")));
+    let mut res = BytesMut::new();
+
+    res.put(row_description(&columns));
+
+    for item in help_items {
+        res.put(data_row(&vec![item.to_string()]));
+    }
+
     res.put(command_complete("SHOW"));
 
     // ReadyForQuery

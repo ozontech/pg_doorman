@@ -1835,3 +1835,235 @@ pub async fn abort_session_tcp_connection(world: &mut DoormanWorld, session_name
     // Abruptly close the TCP connection
     conn.abort_connection().await;
 }
+
+#[then(regex = r#"^admin session "([^"]+)" row count should be greater than (\d+)$"#)]
+pub async fn verify_admin_row_count_greater_than(
+    world: &mut DoormanWorld,
+    session_name: String,
+    min_count: i32,
+) {
+    let key = format!("{}_row_count", session_name);
+    let actual_count = world
+        .session_backend_pids
+        .get(&key)
+        .unwrap_or_else(|| panic!("No row count stored for session '{}'", session_name));
+
+    assert!(
+        *actual_count > min_count,
+        "Admin session '{}': expected more than {} rows, got {}",
+        session_name,
+        min_count,
+        actual_count
+    );
+}
+
+#[then(regex = r#"^admin session "([^"]+)" row count should be greater than or equal to (\d+)$"#)]
+pub async fn verify_admin_row_count_greater_or_equal(
+    world: &mut DoormanWorld,
+    session_name: String,
+    min_count: i32,
+) {
+    let key = format!("{}_row_count", session_name);
+    let actual_count = world
+        .session_backend_pids
+        .get(&key)
+        .unwrap_or_else(|| panic!("No row count stored for session '{}'", session_name));
+
+    assert!(
+        *actual_count >= min_count,
+        "Admin session '{}': expected at least {} rows, got {}",
+        session_name,
+        min_count,
+        actual_count
+    );
+}
+
+#[when(regex = r#"^we execute "([^"]+)" on admin session "([^"]+)" expecting possible error$"#)]
+pub async fn execute_admin_query_expecting_possible_error(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read messages and count DataRow messages, but don't panic on error
+    let mut row_count = 0;
+    let mut got_error = false;
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+
+        match msg_type {
+            'T' => {
+                // RowDescription - skip
+            }
+            'D' => {
+                // DataRow - count it
+                row_count += 1;
+            }
+            'C' => {
+                // CommandComplete - skip
+            }
+            'Z' => {
+                // ReadyForQuery - done
+                break;
+            }
+            'E' => {
+                // Error - log it but don't panic
+                got_error = true;
+                eprintln!(
+                    "Admin session '{}' received error (expected): {:?}",
+                    session_name,
+                    String::from_utf8_lossy(&data)
+                );
+            }
+            _ => {
+                // Other messages - skip
+            }
+        }
+    }
+
+    // Store row count (will be 0 if error)
+    world
+        .session_backend_pids
+        .insert(format!("{}_row_count", session_name), row_count);
+
+    // Store error flag
+    world.session_backend_pids.insert(
+        format!("{}_got_error", session_name),
+        if got_error { 1 } else { 0 },
+    );
+}
+
+#[when(regex = r#"^we execute "([^"]+)" on admin session "([^"]+)" and store response$"#)]
+pub async fn execute_admin_query_and_store_response(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read messages and collect all response content
+    let mut response_content = String::new();
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+
+        match msg_type {
+            'T' => {
+                // RowDescription - skip
+            }
+            'D' => {
+                // DataRow - extract text content
+                if data.len() >= 2 {
+                    let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
+                    let mut pos = 2;
+                    for _ in 0..field_count {
+                        if pos + 4 <= data.len() {
+                            let field_len = i32::from_be_bytes([
+                                data[pos],
+                                data[pos + 1],
+                                data[pos + 2],
+                                data[pos + 3],
+                            ]);
+                            pos += 4;
+                            if field_len > 0 && pos + field_len as usize <= data.len() {
+                                let value =
+                                    String::from_utf8_lossy(&data[pos..pos + field_len as usize]);
+                                response_content.push_str(&value);
+                                response_content.push(' ');
+                                pos += field_len as usize;
+                            }
+                        }
+                    }
+                }
+            }
+            'C' => {
+                // CommandComplete - extract tag
+                if let Some(null_pos) = data.iter().position(|&b| b == 0) {
+                    let tag = String::from_utf8_lossy(&data[..null_pos]);
+                    response_content.push_str(&tag);
+                    response_content.push(' ');
+                }
+            }
+            'A' => {
+                // NotificationResponse (Async notification) - this is what show help returns
+                // Format: process_id (4 bytes) + channel (null-terminated) + payload (null-terminated)
+                if data.len() >= 4 {
+                    let mut pos = 4; // skip process_id
+                                     // Read channel name
+                    if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
+                        let channel = String::from_utf8_lossy(&data[pos..pos + null_pos]);
+                        response_content.push_str(&channel);
+                        response_content.push(' ');
+                        pos += null_pos + 1;
+                        // Read payload
+                        if let Some(null_pos2) = data[pos..].iter().position(|&b| b == 0) {
+                            let payload = String::from_utf8_lossy(&data[pos..pos + null_pos2]);
+                            response_content.push_str(&payload);
+                            response_content.push(' ');
+                        }
+                    }
+                }
+            }
+            'Z' => {
+                // ReadyForQuery - done
+                break;
+            }
+            'E' => {
+                // Error - store error message
+                let error_str = String::from_utf8_lossy(&data);
+                response_content.push_str("ERROR: ");
+                response_content.push_str(&error_str);
+            }
+            _ => {
+                // Other messages - skip
+            }
+        }
+    }
+
+    // Store response content
+    world
+        .session_messages
+        .insert(session_name, vec![('R', response_content.into_bytes())]);
+}
+
+#[then(regex = r#"^admin session "([^"]+)" response should contain "([^"]+)"$"#)]
+pub async fn verify_admin_response_contains(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_text: String,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
+
+    let response_content = if let Some((_, data)) = messages.first() {
+        String::from_utf8_lossy(data).to_string()
+    } else {
+        String::new()
+    };
+
+    assert!(
+        response_content
+            .to_uppercase()
+            .contains(&expected_text.to_uppercase()),
+        "Admin session '{}': expected response to contain '{}', got '{}'",
+        session_name,
+        expected_text,
+        response_content
+    );
+}

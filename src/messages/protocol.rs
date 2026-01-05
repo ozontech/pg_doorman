@@ -527,19 +527,21 @@ pub fn command_complete(command: &str) -> BytesMut {
 }
 
 /// Create a notification message.
-pub fn notify(message: &str, details: String) -> BytesMut {
+/// NotificationResponse format (PostgreSQL protocol):
+///   'A' (1 byte) + length (4 bytes) + process_id (4 bytes) + channel (null-terminated) + payload (null-terminated)
+pub fn notify(channel: &str, payload: String) -> BytesMut {
     let mut res = BytesMut::new();
     let mut notify = BytesMut::new();
 
-    // Notification name
-    notify.put_slice(message.as_bytes());
-    notify.put_u8(0);
-
-    // Process ID
+    // Process ID (4 bytes) - must be first
     notify.put_i32(0);
 
-    // Additional information
-    notify.put_slice(details.as_bytes());
+    // Channel name (null-terminated string)
+    notify.put_slice(channel.as_bytes());
+    notify.put_u8(0);
+
+    // Payload (null-terminated string)
+    notify.put_slice(payload.as_bytes());
     notify.put_u8(0);
 
     res.put_u8(b'A');
