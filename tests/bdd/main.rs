@@ -47,6 +47,17 @@ fn main() {
 
         let writer = DoormanWorld::cucumber()
             .with_cli(cli)
+            .before(|_feature, _rule, scenario, _world| {
+                Box::pin(async move {
+                    // Spawn a timeout task for this scenario
+                    let scenario_name = scenario.name.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                        eprintln!("⚠️  Scenario '{}' exceeded 120 second timeout", scenario_name);
+                        std::process::exit(124); // Timeout exit code
+                    });
+                })
+            })
             .after(|_feature, _rule, _scenario, _finished, world| {
                 // This hook is called after EVERY scenario, regardless of success/failure
                 // Cleanup pg_doorman process if it exists

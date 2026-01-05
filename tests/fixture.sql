@@ -29,7 +29,7 @@ set password_encryption to "scram-sha-256";
 create user example_user_2 with password 'test';
 
 alter system set log_min_duration_statement to 0;
-alter system set log_line_prefix to '%m [%p] %q%u@%d/%a ';
+alter system set log_line_prefix to '%m [%p] %q%u@%d/%h %a ';
 alter system set log_connections to on;
 alter system set log_disconnections to on;
 alter system set log_min_messages to debug1;
