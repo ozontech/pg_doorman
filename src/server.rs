@@ -439,6 +439,7 @@ impl Server {
                     Ok(result) => result?,
                     Err(_) => {
                         // Timeout - no more data available in async mode
+                        self.data_available = false;
                         break;
                     }
                 }

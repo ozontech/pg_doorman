@@ -1248,7 +1248,8 @@ where
 
                                 // Release server back to the pool if we are in transaction mode.
                                 // If we are in session mode, we keep the server until the client disconnects.
-                                if self.transaction_mode && !server.in_copy_mode() {
+                                // Don't release if in async mode (Flush) - client expects to continue sending commands.
+                                if self.transaction_mode && !server.in_copy_mode() && !server.is_async() {
                                     break;
                                 }
                                 if server.in_aborted() {
