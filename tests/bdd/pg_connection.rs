@@ -280,6 +280,7 @@ impl PgConnection {
     }
 
     /// Send CopyFail message ('f') - signals COPY FROM STDIN failure
+    #[allow(dead_code)]
     pub async fn send_copy_fail(&mut self, error_message: &str) -> tokio::io::Result<()> {
         let mut msg = Vec::new();
         msg.extend_from_slice(error_message.as_bytes());

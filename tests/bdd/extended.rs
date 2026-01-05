@@ -293,9 +293,7 @@ pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: Strin
         .expect("Not connected to pg_doorman");
 
     // Unescape the data string (handle \t and \n)
-    let unescaped_data = data
-        .replace("\\t", "\t")
-        .replace("\\n", "\n");
+    let unescaped_data = data.replace("\\t", "\t").replace("\\n", "\n");
 
     // Send the COPY command via simple query to PostgreSQL
     pg_conn
@@ -336,7 +334,9 @@ pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: Strin
             .expect("Failed to send CopyDone to PostgreSQL");
     } else {
         // Error response - store it
-        world.pg_accumulated_messages.push((pg_msg_type, pg_msg_data.clone()));
+        world
+            .pg_accumulated_messages
+            .push((pg_msg_type, pg_msg_data.clone()));
     }
 
     if doorman_msg_type == 'G' {
@@ -353,7 +353,9 @@ pub async fn send_copy_from_stdin_to_both(world: &mut DoormanWorld, query: Strin
             .expect("Failed to send CopyDone to pg_doorman");
     } else {
         // Error response - store it
-        world.doorman_accumulated_messages.push((doorman_msg_type, doorman_msg_data.clone()));
+        world
+            .doorman_accumulated_messages
+            .push((doorman_msg_type, doorman_msg_data.clone()));
     }
 
     // Read remaining messages until ReadyForQuery from both
@@ -914,7 +916,10 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         // For RowDescription ('T'), normalize table OIDs before comparison
         // because temp tables have different OIDs on different connections
         let (pg_data_normalized, doorman_data_normalized) = if *pg_type == 'T' {
-            (normalize_row_description(pg_data), normalize_row_description(doorman_data))
+            (
+                normalize_row_description(pg_data),
+                normalize_row_description(doorman_data),
+            )
         } else {
             (pg_data.clone(), doorman_data.clone())
         };
@@ -928,8 +933,10 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
             );
 
             // Find first difference
-            for (pos, (pg_byte, doorman_byte)) in
-                pg_data_normalized.iter().zip(doorman_data_normalized.iter()).enumerate()
+            for (pos, (pg_byte, doorman_byte)) in pg_data_normalized
+                .iter()
+                .zip(doorman_data_normalized.iter())
+                .enumerate()
             {
                 if pg_byte != doorman_byte {
                     eprintln!(
@@ -1339,13 +1346,13 @@ pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String
         .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_sync().await.expect("Failed to send Sync");
-    
+
     // Read all messages until ReadyForQuery and store them
     let messages = conn
         .read_all_messages_until_ready()
         .await
         .expect("Failed to read messages");
-    
+
     world
         .session_messages
         .insert(session_name.clone(), messages);
@@ -1471,14 +1478,12 @@ pub async fn remember_backend_pid_from_session(
         }
     }
 
-    let pid = backend_pid.unwrap_or_else(|| {
-        panic!(
-            "No backend_pid received from session '{}'",
-            session_name
-        )
-    });
+    let pid = backend_pid
+        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
 
-    world.named_backend_pids.insert((session_name.clone(), pid_name), pid);
+    world
+        .named_backend_pids
+        .insert((session_name.clone(), pid_name), pid);
 }
 
 #[then(regex = r#"^we verify backend_pid from session "([^"]+)" is different from "([^"]+)"$"#)]
@@ -1532,12 +1537,8 @@ pub async fn verify_backend_pid_different(
         }
     }
 
-    let current = current_pid.unwrap_or_else(|| {
-        panic!(
-            "No backend_pid received from session '{}'",
-            session_name
-        )
-    });
+    let current = current_pid
+        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
 
     let stored = world
         .named_backend_pids
@@ -1631,8 +1632,95 @@ pub async fn session_should_receive_error_containing(
     });
 
     assert!(
-        error_msg.to_lowercase().contains(&expected_text.to_lowercase()),
+        error_msg
+            .to_lowercase()
+            .contains(&expected_text.to_lowercase()),
         "Session '{}': expected error containing '{}', got '{}'",
-        session_name, expected_text, error_msg
+        session_name,
+        expected_text,
+        error_msg
     );
+}
+
+#[when(
+    regex = r#"^we create session "([^"]+)" to postgres as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
+)]
+pub async fn create_named_session_to_postgres(
+    world: &mut DoormanWorld,
+    session_name: String,
+    user: String,
+    password: String,
+    database: String,
+) {
+    let pg_port = world.pg_port.expect("PostgreSQL not started");
+    let pg_addr = format!("127.0.0.1:{}", pg_port);
+
+    // Connect to PostgreSQL directly
+    let mut conn = PgConnection::connect(&pg_addr)
+        .await
+        .expect("Failed to connect to PostgreSQL");
+    conn.send_startup(&user, &database)
+        .await
+        .expect("Failed to send startup to PostgreSQL");
+    conn.authenticate(&user, &password)
+        .await
+        .expect("Failed to authenticate to PostgreSQL");
+
+    world.named_sessions.insert(session_name, conn);
+}
+
+#[when(
+    regex = r#"^we send CopyFromStdin "([^"]+)" with data "([^"]*)" to session "([^"]+)" expecting error$"#
+)]
+pub async fn send_copy_from_stdin_to_session_expecting_error(
+    world: &mut DoormanWorld,
+    query: String,
+    data: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    // Unescape the data string (handle \t and \n)
+    let unescaped_data = data.replace("\\t", "\t").replace("\\n", "\n");
+
+    // Send the COPY command via simple query
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send COPY query");
+
+    // Read initial response (should be CopyInResponse 'G' or ErrorResponse 'E')
+    let (msg_type, msg_data) = conn
+        .read_message()
+        .await
+        .expect("Failed to read COPY response");
+
+    let mut messages: Vec<(char, Vec<u8>)> = Vec::new();
+
+    // If we got CopyInResponse ('G'), send the data and CopyDone
+    if msg_type == 'G' {
+        // Send copy data
+        if !unescaped_data.is_empty() {
+            conn.send_copy_data(unescaped_data.as_bytes())
+                .await
+                .expect("Failed to send CopyData");
+        }
+        conn.send_copy_done()
+            .await
+            .expect("Failed to send CopyDone");
+    } else {
+        // Error response - store it
+        messages.push((msg_type, msg_data));
+    }
+
+    // Read remaining messages until ReadyForQuery
+    let remaining = conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages");
+    messages.extend(remaining);
+
+    world.session_messages.insert(session_name, messages);
 }
