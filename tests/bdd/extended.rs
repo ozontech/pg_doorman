@@ -2220,3 +2220,45 @@ pub async fn session_should_receive_cancel_error(
         error_message
     );
 }
+
+#[then(regex = r#"^session "([^"]+)" should complete without error$"#)]
+pub async fn session_should_complete_without_error(world: &mut DoormanWorld, session_name: String) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    // Read messages until ReadyForQuery, checking for errors
+    let mut error_found = false;
+    let mut error_message = String::new();
+
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+
+        match msg_type {
+            'E' => {
+                // Error message - this is unexpected
+                error_message = String::from_utf8_lossy(&data).to_string();
+                error_found = true;
+                eprintln!(
+                    "Session '{}': received unexpected error: {}",
+                    session_name, error_message
+                );
+            }
+            'Z' => {
+                // ReadyForQuery - done
+                eprintln!("Session '{}': query completed successfully", session_name);
+                break;
+            }
+            _ => {
+                // Other messages - continue (T=RowDescription, D=DataRow, C=CommandComplete, etc.)
+            }
+        }
+    }
+
+    assert!(
+        !error_found,
+        "Session '{}': expected query to complete without error, but got: {}",
+        session_name, error_message
+    );
+}
