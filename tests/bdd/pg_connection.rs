@@ -3,12 +3,20 @@ use tokio::net::TcpStream;
 
 pub struct PgConnection {
     stream: TcpStream,
+    /// Process ID from BackendKeyData (used for cancel requests)
+    process_id: Option<i32>,
+    /// Secret key from BackendKeyData (used for cancel requests)
+    secret_key: Option<i32>,
 }
 
 impl PgConnection {
     pub async fn connect(addr: &str) -> tokio::io::Result<Self> {
         let stream = TcpStream::connect(addr).await?;
-        Ok(Self { stream })
+        Ok(Self {
+            stream,
+            process_id: None,
+            secret_key: None,
+        })
     }
 
     pub async fn send_startup(&mut self, user: &str, database: &str) -> tokio::io::Result<()> {
@@ -72,7 +80,14 @@ impl PgConnection {
                     }
                 }
                 'S' => continue, // ParameterStatus
-                'K' => continue, // BackendKeyData
+                'K' => {
+                    // BackendKeyData: process_id (4 bytes) + secret_key (4 bytes)
+                    if data.len() >= 8 {
+                        self.process_id = Some(i32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        self.secret_key = Some(i32::from_be_bytes([data[4], data[5], data[6], data[7]]));
+                    }
+                    continue;
+                }
                 'Z' => {
                     // ReadyForQuery
                     if data[0] == b'I' {
@@ -348,5 +363,36 @@ impl PgConnection {
     pub async fn abort_connection(self) {
         // Drop the stream without proper shutdown - simulates network failure
         drop(self.stream);
+    }
+
+    /// Get the process ID from BackendKeyData (received during authentication)
+    pub fn get_process_id(&self) -> Option<i32> {
+        self.process_id
+    }
+
+    /// Get the secret key from BackendKeyData (received during authentication)
+    pub fn get_secret_key(&self) -> Option<i32> {
+        self.secret_key
+    }
+
+    /// Send a CancelRequest to the server
+    /// This creates a new connection, sends the cancel request, and closes it
+    /// Protocol: 16 bytes total - length (4) + cancel code (4) + process_id (4) + secret_key (4)
+    pub async fn send_cancel_request(
+        addr: &str,
+        process_id: i32,
+        secret_key: i32,
+    ) -> tokio::io::Result<()> {
+        let mut stream = TcpStream::connect(addr).await?;
+
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&16i32.to_be_bytes()); // length = 16
+        msg.extend_from_slice(&80877102i32.to_be_bytes()); // CancelRequest code
+        msg.extend_from_slice(&process_id.to_be_bytes());
+        msg.extend_from_slice(&secret_key.to_be_bytes());
+
+        stream.write_all(&msg).await?;
+        // Server will close the connection after receiving cancel request
+        Ok(())
     }
 }

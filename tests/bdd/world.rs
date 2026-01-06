@@ -52,6 +52,8 @@ pub struct DoormanWorld {
     pub named_sessions: HashMap<String, crate::pg_connection::PgConnection>,
     /// Backend PIDs for named sessions
     pub session_backend_pids: HashMap<String, i32>,
+    /// Secret keys for named sessions (from BackendKeyData, used for cancel requests)
+    pub session_secret_keys: HashMap<String, i32>,
     /// Named backend PIDs (for storing multiple PIDs per session with custom keys)
     pub named_backend_pids: HashMap<(String, String), i32>,
     /// Messages from named sessions (for prepared statements cache tests)
