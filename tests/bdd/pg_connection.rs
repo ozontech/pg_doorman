@@ -83,8 +83,10 @@ impl PgConnection {
                 'K' => {
                     // BackendKeyData: process_id (4 bytes) + secret_key (4 bytes)
                     if data.len() >= 8 {
-                        self.process_id = Some(i32::from_be_bytes([data[0], data[1], data[2], data[3]]));
-                        self.secret_key = Some(i32::from_be_bytes([data[4], data[5], data[6], data[7]]));
+                        self.process_id =
+                            Some(i32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                        self.secret_key =
+                            Some(i32::from_be_bytes([data[4], data[5], data[6], data[7]]));
                     }
                     continue;
                 }
@@ -363,6 +365,31 @@ impl PgConnection {
     pub async fn abort_connection(self) {
         // Drop the stream without proper shutdown - simulates network failure
         drop(self.stream);
+    }
+
+    /// Read a limited number of bytes from the stream (for partial read tests)
+    /// Returns the number of bytes actually read
+    pub async fn read_limited_bytes(&mut self, max_bytes: usize) -> tokio::io::Result<usize> {
+        let mut total_read = 0;
+        let mut buffer = vec![0u8; 8192]; // 8KB buffer
+
+        while total_read < max_bytes {
+            let to_read = std::cmp::min(buffer.len(), max_bytes - total_read);
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                self.stream.read(&mut buffer[..to_read]),
+            )
+            .await
+            {
+                Ok(Ok(0)) => break, // EOF
+                Ok(Ok(n)) => {
+                    total_read += n;
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => break, // Timeout - no more data available
+            }
+        }
+        Ok(total_read)
     }
 
     /// Get the process ID from BackendKeyData (received during authentication)

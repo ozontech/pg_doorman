@@ -2116,7 +2116,9 @@ pub async fn create_named_session_with_backend_key(
     world.named_sessions.insert(session_name, conn);
 }
 
-#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" without waiting for response$"#)]
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" without waiting for response$"#
+)]
 pub async fn send_simple_query_to_session_no_wait(
     world: &mut DoormanWorld,
     query: String,
@@ -2260,5 +2262,160 @@ pub async fn session_should_complete_without_error(world: &mut DoormanWorld, ses
         !error_found,
         "Session '{}': expected query to complete without error, but got: {}",
         session_name, error_message
+    );
+}
+
+// Buffer cleanup test steps
+
+#[when(regex = r#"^we read (\d+) bytes from session "([^"]+)"$"#)]
+pub async fn read_bytes_from_session(world: &mut DoormanWorld, bytes: usize, session_name: String) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    let bytes_read = conn
+        .read_limited_bytes(bytes)
+        .await
+        .expect("Failed to read bytes from session");
+
+    eprintln!(
+        "Session '{}': read {} bytes (requested {})",
+        session_name, bytes_read, bytes
+    );
+}
+
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and verify no stale data$"#
+)]
+pub async fn send_query_and_verify_no_stale_data(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read all messages and store them for verification
+    let mut messages: Vec<(char, Vec<u8>)> = Vec::new();
+    let mut data_content = String::new();
+
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+
+        match msg_type {
+            'T' => {
+                // RowDescription - expected
+                messages.push((msg_type, data));
+            }
+            'D' => {
+                // DataRow - extract content
+                if data.len() >= 2 {
+                    let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
+                    let mut pos = 2;
+                    for _ in 0..field_count {
+                        if pos + 4 <= data.len() {
+                            let field_len = i32::from_be_bytes([
+                                data[pos],
+                                data[pos + 1],
+                                data[pos + 2],
+                                data[pos + 3],
+                            ]);
+                            pos += 4;
+                            if field_len > 0 && pos + field_len as usize <= data.len() {
+                                let value =
+                                    String::from_utf8_lossy(&data[pos..pos + field_len as usize]);
+                                data_content.push_str(&value);
+                                pos += field_len as usize;
+                            }
+                        }
+                    }
+                }
+                messages.push((msg_type, data));
+            }
+            'C' => {
+                // CommandComplete - expected
+                messages.push((msg_type, data));
+            }
+            'Z' => {
+                // ReadyForQuery - done
+                messages.push((msg_type, data));
+                break;
+            }
+            'E' => {
+                // Error - unexpected
+                let error_str = String::from_utf8_lossy(&data);
+                panic!(
+                    "Session '{}': received unexpected error: {}",
+                    session_name, error_str
+                );
+            }
+            _ => {
+                // Other messages - store them
+                messages.push((msg_type, data));
+            }
+        }
+    }
+
+    // Store the data content for later verification
+    world
+        .session_messages
+        .insert(session_name.clone(), vec![('D', data_content.into_bytes())]);
+
+    eprintln!(
+        "Session '{}': received {} messages",
+        session_name,
+        messages.len()
+    );
+}
+
+#[then(regex = r#"^session "([^"]+)" should have received clean response with marker "([^"]+)"$"#)]
+pub async fn verify_clean_response_with_marker(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_marker: String,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
+
+    let data_content = if let Some((_, data)) = messages.first() {
+        String::from_utf8_lossy(data).to_string()
+    } else {
+        String::new()
+    };
+
+    // Verify that the response contains ONLY the expected marker
+    // and no stale data (like 'X', 'A', 'B', 'C', 'T' repeated patterns from previous queries)
+    assert!(
+        data_content.contains(&expected_marker),
+        "Session '{}': expected response to contain marker '{}', got '{}'",
+        session_name,
+        expected_marker,
+        data_content
+    );
+
+    // Check for stale data patterns (large repeated characters from previous queries)
+    let stale_patterns = ["XXXX", "AAAA", "BBBB", "CCCC", "TTTT"];
+    for pattern in stale_patterns {
+        assert!(
+            !data_content.contains(pattern),
+            "Session '{}': found stale data pattern '{}' in response '{}' - buffer was not cleaned!",
+            session_name,
+            pattern,
+            &data_content[..std::cmp::min(200, data_content.len())]
+        );
+    }
+
+    eprintln!(
+        "Session '{}': verified clean response with marker '{}'",
+        session_name, expected_marker
     );
 }

@@ -803,11 +803,11 @@ impl Server {
         self.stats.data_received(bytes.len());
 
         // Clear the buffer for next query.
-        self.buffer.clear();
-
-        // Clean server rss.
         if self.buffer.len() > 8196 {
             self.buffer = BytesMut::with_capacity(8196);
+        } else {
+            // Clear the buffer for next query.
+            self.buffer.clear();
         }
 
         // Successfully received data from server
