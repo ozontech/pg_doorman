@@ -258,6 +258,9 @@ pub struct General {
     #[serde(default = "General::default_server_lifetime")]
     pub server_lifetime: u64,
 
+    #[serde(default = "General::default_retain_connections_time")]
+    pub retain_connections_time: u64,
+
     #[serde(default = "General::default_server_round_robin")] // False
     pub server_round_robin: bool,
 
@@ -378,6 +381,10 @@ impl General {
     }
     pub fn default_server_lifetime() -> u64 {
         1000 * 60 * 5 // 5 min
+    }
+
+    pub fn default_retain_connections_time() -> u64 {
+        60_000 // 60 seconds
     }
 
     pub fn default_connect_timeout() -> u64 {
@@ -558,6 +565,7 @@ impl Default for General {
             admin_username: String::from("admin"),
             admin_password: String::from("admin"),
             server_lifetime: Self::default_server_lifetime(),
+            retain_connections_time: Self::default_retain_connections_time(),
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),

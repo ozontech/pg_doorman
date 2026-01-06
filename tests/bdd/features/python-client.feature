@@ -38,12 +38,23 @@ Feature: Python client tests
       pool_size = 10
       """
 
+  @async-debug
   Scenario: Run Python async tests
     When I run shell command:
       """
       cd tests/python && \
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
       python3 ./test_async.py
+      """
+    Then the command should succeed
+
+  @async-edge-cases
+  Scenario: Run Python async edge case tests
+    When I run shell command:
+      """
+      cd tests/python && \
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
+      python3 ./test_async_edge_cases.py
       """
     Then the command should succeed
 

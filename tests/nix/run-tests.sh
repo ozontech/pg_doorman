@@ -101,6 +101,11 @@ run_in_container() {
         -e "POSTGRES_PORT=5432"
     )
 
+    # Pass DEBUG environment variable if set
+    if [ -n "${DEBUG:-}" ]; then
+        docker_args+=(-e "DEBUG=${DEBUG}")
+    fi
+
     if [ "$interactive" = "true" ]; then
         docker_args+=(-i)
     fi
@@ -123,7 +128,7 @@ run_in_container() {
 # Function to build pg_doorman inside container
 build_doorman() {
     log_info "Building pg_doorman..."
-    run_in_container "setup-test-deps && cargo build --release"
+    run_in_container "cargo build --release"
     log_info "pg_doorman built successfully"
 }
 
@@ -132,7 +137,7 @@ run_bdd_tests() {
     local tags="${1:-}"
     log_info "Running BDD tests${tags:+ with tags: ${tags}}"
 
-    local cmd="setup-test-deps && cargo test --test bdd"
+    local cmd="cargo test --test bdd"
     if [ -n "$tags" ]; then
         cmd="${cmd} -- --tags ${tags}"
     fi
@@ -140,25 +145,34 @@ run_bdd_tests() {
     run_in_container "$cmd"
 }
 
-# Function to run language-specific tests
-run_go_tests() {
-    log_info "Running Go tests..."
-    run_in_container "cd tests/go && setup-test-deps && go test -v ."
+# Function to run Go client tests
+test_go() {
+    log_info "Running Go client BDD tests..."
+    run_in_container "cargo test --test bdd -- --tags @go"
 }
 
-run_python_tests() {
-    log_info "Running Python tests..."
-    run_in_container "cd tests/python && setup-test-deps && pytest -v ."
+# Function to run Rust client tests
+test_rust() {
+    log_info "Running Rust client BDD tests..."
+    run_in_container "cargo test --test bdd -- --tags @rust"
 }
 
-run_nodejs_tests() {
-    log_info "Running Node.js tests..."
-    run_in_container "cd tests/nodejs && setup-test-deps && npm test"
+# Function to run Python client tests
+test_python() {
+    log_info "Running Python client BDD tests..."
+    run_in_container "cargo test --test bdd -- --tags @python"
 }
 
-run_dotnet_tests() {
-    log_info "Running .NET tests..."
-    run_in_container "cd tests/dotnet && setup-test-deps && dotnet test"
+# Function to run Node.js client tests
+test_nodejs() {
+    log_info "Running Node.js client BDD tests..."
+    run_in_container "cargo test --test bdd -- --tags @nodejs"
+}
+
+# Function to run .NET client tests
+test_dotnet() {
+    log_info "Running .NET client BDD tests..."
+    run_in_container "cargo test --test bdd -- --tags @dotnet"
 }
 
 # Function to open interactive shell
@@ -178,11 +192,11 @@ Commands:
     build                 Build pg_doorman inside container
 
     bdd [tags]           Run BDD/Cucumber tests (optionally with tags like @go, @python)
-    test-go              Run Go tests
-    test-python          Run Python tests
-    test-nodejs          Run Node.js tests
-    test-dotnet          Run .NET tests
-    test-all             Run all language tests
+    test-go              Run Go client BDD tests
+    test-rust            Run Rust client BDD tests
+    test-python          Run Python client BDD tests
+    test-nodejs          Run Node.js client BDD tests
+    test-dotnet          Run .NET client BDD tests
 
     help                 Show this help message
 
@@ -196,8 +210,7 @@ Examples:
     $0 shell                   # Interactive shell
     $0 build                   # Build pg_doorman
     $0 bdd @go                 # Run BDD tests tagged with @go
-    $0 test-python             # Run Python tests
-    $0 test-all                # Run all tests
+    $0 test-rust               # Run Rust client tests
 
 EOF
 }
@@ -221,28 +234,23 @@ case "${1:-help}" in
         ;;
     test-go)
         try_pull_image
-        run_go_tests
+        test_go
+        ;;
+    test-rust)
+        try_pull_image
+        test_rust
         ;;
     test-python)
         try_pull_image
-        run_python_tests
+        test_python
         ;;
     test-nodejs)
         try_pull_image
-        run_nodejs_tests
+        test_nodejs
         ;;
     test-dotnet)
         try_pull_image
-        run_dotnet_tests
-        ;;
-    test-all)
-        try_pull_image
-        log_info "Running all language tests..."
-        run_go_tests
-        run_python_tests
-        run_nodejs_tests
-        run_dotnet_tests
-        log_info "All tests completed!"
+        test_dotnet
         ;;
     help|--help|-h)
         usage

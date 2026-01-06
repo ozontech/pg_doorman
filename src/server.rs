@@ -322,7 +322,8 @@ pub struct Server {
     /// Is the server in copy-in or copy-out modes
     in_copy_mode: bool,
 
-    flush_wait_code: char,
+    /// Is the server in async mode (Flush instead of Sync)
+    async_mode: bool,
 
     /// Is the server broken? We'll remote it from the pool if so.
     bad: bool,
@@ -426,7 +427,25 @@ impl Server {
     {
         loop {
             self.stats.wait_reading();
-            let (code_u8, message_len) = read_message_header(&mut self.stream).await?;
+
+            // In async mode, use a short timeout to avoid blocking when no more data available
+            let (code_u8, message_len) = if self.is_async() {
+                match tokio::time::timeout(
+                    Duration::from_millis(100),
+                    read_message_header(&mut self.stream),
+                )
+                .await
+                {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        // Timeout - no more data available in async mode
+                        self.data_available = false;
+                        break;
+                    }
+                }
+            } else {
+                read_message_header(&mut self.stream).await?
+            };
             // if message server is too big.
             if self.max_message_size > 0
                 && message_len > self.max_message_size
@@ -631,7 +650,6 @@ impl Server {
                     // Handle async mode errors
                     if self.is_async() {
                         self.data_available = false;
-                        self.set_flush_wait_code(code);
                         self.cleanup_state.needs_cleanup();
                         self.mark_bad("PostgreSQL error in asynchronous operation mode");
                     }
@@ -670,10 +688,8 @@ impl Server {
                             self.prepared_statement_cache.as_mut().unwrap().clear();
                         }
                     }
-                    if self.flush_wait_code == 'C' {
-                        self.data_available = false;
-                        break;
-                    }
+                    // CommandComplete doesn't have more data after it
+                    // The general exit condition will handle breaking the loop
                 }
 
                 'S' => {
@@ -726,12 +742,52 @@ impl Server {
                 // Buffer until ReadyForQuery shows up, so don't exit the loop yet.
                 'c' => (),
 
+                // ParseComplete
+                // Response to Parse message in extended query protocol
+                '1' => {
+                    if self.is_async() {
+                        self.data_available = false;
+                    }
+                }
+
+                // BindComplete
+                // Response to Bind message in extended query protocol
+                '2' => {
+                    if self.is_async() {
+                        self.data_available = false;
+                    }
+                }
+
+                // CloseComplete
+                // Response to Close message in extended query protocol
+                '3' => {
+                    if self.is_async() {
+                        self.data_available = false;
+                    }
+                }
+
+                // ParameterDescription
+                // Response to Describe message for a statement
+                't' => {
+                    if self.is_async() {
+                        self.data_available = false;
+                    }
+                }
+
+                // PortalSuspended
+                // Indicates that Execute completed but portal still has rows
+                's' => {
+                    if self.is_async() {
+                        self.data_available = false;
+                    }
+                }
+
                 // NoData
+                // Response to Describe when statement/portal produces no rows
                 // https://www.postgresql.org/docs/current/protocol-flow.html
                 'n' => {
                     if self.is_async() {
                         self.data_available = false;
-                        self.set_flush_wait_code(code);
                     }
                 }
 
@@ -739,10 +795,6 @@ impl Server {
                 // Keep buffering until ReadyForQuery shows up.
                 _ => (),
             };
-
-            if !self.data_available && code == self.flush_wait_code {
-                break;
-            }
         }
 
         let bytes = self.buffer.clone();
@@ -751,11 +803,11 @@ impl Server {
         self.stats.data_received(bytes.len());
 
         // Clear the buffer for next query.
-        self.buffer.clear();
-
-        // Clean server rss.
         if self.buffer.len() > 8196 {
             self.buffer = BytesMut::with_capacity(8196);
+        } else {
+            // Clear the buffer for next query.
+            self.buffer.clear();
         }
 
         // Successfully received data from server
@@ -804,7 +856,7 @@ impl Server {
 
     #[inline(always)]
     pub fn is_async(&self) -> bool {
-        self.flush_wait_code != ' '
+        self.async_mode
     }
 
     pub async fn send_and_flush_timeout(
@@ -955,8 +1007,8 @@ impl Server {
     /// Switch to async mode, flushing messages as soon
     /// as we receive them without buffering or waiting for "ReadyForQuery".
     #[inline(always)]
-    pub fn set_flush_wait_code(&mut self, wait: char) {
-        self.flush_wait_code = wait
+    pub fn set_async_mode(&mut self, async_mode: bool) {
+        self.async_mode = async_mode
     }
 
     fn add_prepared_statement_to_cache(&mut self, name: &str) -> Option<String> {
@@ -1594,7 +1646,7 @@ impl Server {
                         in_copy_mode: false,
                         data_available: false,
                         bad: false,
-                        flush_wait_code: ' ',
+                        async_mode: false,
                         cleanup_state: CleanupState::new(),
                         client_server_map,
                         connected_at: chrono::offset::Utc::now().naive_utc(),

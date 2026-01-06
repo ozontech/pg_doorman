@@ -48,6 +48,7 @@ Feature: Go prepared statements tests
     Then the command should succeed
     And the command output should contain "PASS: TestLibPQPrepared"
 
+  @go-lib-pq
   Scenario: Test lib/pq single prepared statement
     When I run shell command:
       """
@@ -57,6 +58,7 @@ Feature: Go prepared statements tests
     Then the command should succeed
     And the command output should contain "PASS: TestLibPQOnePrepared"
 
+  @go-prepared
   Scenario: Test pgx v4 pool with prepared statements
     When I run shell command:
       """

@@ -142,15 +142,22 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
     // Use CARGO_BIN_EXE_pg_doorman which is automatically set by cargo test
     let doorman_binary = env!("CARGO_BIN_EXE_pg_doorman");
 
-    // Use null for stdout/stderr to prevent hanging on pipe reads
-    // When tests fail, the pipes would block indefinitely waiting for EOF
-    // Log files can be used for debugging if needed
+    // Check if DEBUG mode is enabled
+    let debug_mode = std::env::var("DEBUG").is_ok();
+
+    // In DEBUG mode, stream output to console; otherwise use null to prevent hanging
+    let (stdout_cfg, stderr_cfg) = if debug_mode {
+        (Stdio::inherit(), Stdio::inherit())
+    } else {
+        (Stdio::null(), Stdio::null())
+    };
+
     let child = Command::new(doorman_binary)
         .arg(&config_path)
         .arg("-l")
-        .arg("debug")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .arg(if debug_mode { "debug" } else { "info" })
+        .stdout(stdout_cfg)
+        .stderr(stderr_cfg)
         .spawn()
         .expect("Failed to start pg_doorman");
 
