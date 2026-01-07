@@ -14,10 +14,10 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
+use self::tls::{load_identity, TLSMode};
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
-use self::tls::{load_identity, TLSMode};
 
 // Sub-modules
 mod address;
@@ -209,11 +209,7 @@ impl Config {
         };
 
         for (pool_name, pool) in &self.pools {
-            info!(
-                "[pool: {}] Pool mode: {}",
-                pool_name,
-                pool.pool_mode
-            );
+            info!("[pool: {}] Pool mode: {}", pool_name, pool.pool_mode);
             info!(
                 "[pool: {}] Server: {}:{}",
                 pool_name, pool.server_host, pool.server_port
@@ -225,8 +221,7 @@ impl Config {
             info!(
                 "[pool: {}] Connect timeout: {}ms",
                 pool_name,
-                pool.connect_timeout
-                    .unwrap_or(self.general.connect_timeout)
+                pool.connect_timeout.unwrap_or(self.general.connect_timeout)
             );
             info!(
                 "[pool: {}] Idle timeout: {}ms",
@@ -236,8 +231,7 @@ impl Config {
             info!(
                 "[pool: {}] Server lifetime: {}ms",
                 pool_name,
-                pool.server_lifetime
-                    .unwrap_or(self.general.server_lifetime)
+                pool.server_lifetime.unwrap_or(self.general.server_lifetime)
             );
             for (user_index, user) in &pool.users {
                 info!(

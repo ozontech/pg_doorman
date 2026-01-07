@@ -14,6 +14,8 @@ use crate::stats::{
 };
 
 use super::system::get_process_memory_usage;
+#[cfg(target_os = "linux")]
+use super::SHOW_SOCKETS;
 use super::{
     SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_QUERIES_COUNTER,
     SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER,
@@ -21,8 +23,6 @@ use super::{
     SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_SERVERS_PREPARED_HITS,
     SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
 };
-#[cfg(target_os = "linux")]
-use super::SHOW_SOCKETS;
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
 pub fn update_metrics() {

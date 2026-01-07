@@ -75,8 +75,7 @@ fn test_scram_authentication() {
         let server_secret = format!("{SCRAM_SHA_256}$4096:salt$storedkey:serverkey");
 
         let result =
-            authenticate_with_scram(&mut reader, &mut writer, &server_secret, "test_user")
-                .await;
+            authenticate_with_scram(&mut reader, &mut writer, &server_secret, "test_user").await;
         assert!(result.is_ok());
     });
 }

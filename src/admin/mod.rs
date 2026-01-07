@@ -14,12 +14,12 @@ use crate::messages::protocol::error_response;
 use crate::pool::ClientServerMap;
 
 use commands::{reload, shutdown};
-use show::{
-    show_clients, show_config, show_connections, show_databases, show_help, show_lists,
-    show_pools, show_pools_extended, show_servers, show_stats, show_users, show_version,
-};
 #[cfg(target_os = "linux")]
 use show::show_sockets;
+use show::{
+    show_clients, show_config, show_connections, show_databases, show_help, show_lists, show_pools,
+    show_pools_extended, show_servers, show_stats, show_users, show_version,
+};
 
 /// Handle admin client.
 pub async fn handle_admin<T>(

@@ -5,8 +5,8 @@ use ipnet::IpNet;
 use serde_derive::{Deserialize, Serialize};
 use std::mem;
 
-use crate::auth::hba::PgHba;
 use super::tls;
+use crate::auth::hba::PgHba;
 
 use super::Include;
 

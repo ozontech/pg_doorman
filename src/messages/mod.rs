@@ -8,8 +8,8 @@ use std::sync::Arc;
 use once_cell::sync::Lazy;
 
 // Declare submodules
-pub mod constants;
 pub mod config_socket;
+pub mod constants;
 pub mod error;
 pub mod extended;
 pub mod protocol;
@@ -47,6 +47,6 @@ pub static CURRENT_MEMORY: Lazy<Arc<AtomicI64>> = Lazy::new(|| Arc::new(AtomicI6
 
 // Tests
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod protocol_tests;
+#[cfg(test)]
+mod tests;

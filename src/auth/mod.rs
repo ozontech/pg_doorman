@@ -22,10 +22,10 @@ use crate::auth::scram::{
     prepare_server_final_message, prepare_server_first_response,
 };
 use crate::config::{get_config, PoolMode};
+use crate::errors::{ClientIdentifier, Error};
 use crate::messages::constants::{
     JWT_PUB_KEY_PASSWORD_PREFIX, MD5_PASSWORD_PREFIX, SASL_CONTINUE, SASL_FINAL, SCRAM_SHA_256,
 };
-use crate::errors::{ClientIdentifier, Error};
 use crate::messages::{
     error_response, error_response_terminal, md5_challenge, md5_hash_password,
     md5_hash_second_pass, plain_password_challenge, read_password, scram_server_response,
@@ -548,7 +548,6 @@ where
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod mocks;

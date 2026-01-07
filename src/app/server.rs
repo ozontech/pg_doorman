@@ -24,13 +24,13 @@ use std::os::unix::process::CommandExt;
 
 use crate::app::args::Args;
 use crate::config::{get_config, reload_config, Config};
-use crate::utils::core_affinity;
 use crate::daemon;
-use crate::format_duration;
 use crate::messages::configure_tcp_socket;
-use crate::pool::{retain_connections, ClientServerMap, ConnectionPool};
+use crate::pool::{retain, ClientServerMap, ConnectionPool};
 use crate::prometheus::start_prometheus_server;
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
+use crate::utils::core_affinity;
+use crate::utils::format_duration;
 
 use crate::app::tls::init_tls;
 
@@ -159,7 +159,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         });
 
         tokio::task::spawn(async move {
-            retain_connections().await;
+            retain::retain_connections().await;
         });
 
         // Prometheus metrics exporter

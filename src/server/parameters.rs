@@ -84,7 +84,10 @@ impl ServerParameters {
     }
 
     #[inline(always)]
-    pub(crate) fn compare_params(&self, incoming_parameters: &ServerParameters) -> HashMap<String, String> {
+    pub(crate) fn compare_params(
+        &self,
+        incoming_parameters: &ServerParameters,
+    ) -> HashMap<String, String> {
         let mut diff = HashMap::new();
 
         for key in TRACKED_PARAMETERS.iter() {

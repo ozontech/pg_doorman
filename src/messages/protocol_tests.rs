@@ -1,40 +1,39 @@
 //! Tests for protocol message handling.
 
-use bytes::BytesMut;
 use super::protocol::{
-insert_close_complete_after_last_close_complete,
-insert_close_complete_before_ready_for_query,
-insert_parse_complete_before_bind_complete,
+    insert_close_complete_after_last_close_complete, insert_close_complete_before_ready_for_query,
+    insert_parse_complete_before_bind_complete,
 };
+use bytes::BytesMut;
 
 // Helper to create ParseComplete message
 fn parse_complete_msg() -> Vec<u8> {
-vec![b'1', 0, 0, 0, 4]
+    vec![b'1', 0, 0, 0, 4]
 }
 
 // Helper to create BindComplete message
 fn bind_complete_msg() -> Vec<u8> {
-vec![b'2', 0, 0, 0, 4]
+    vec![b'2', 0, 0, 0, 4]
 }
 
 // Helper to create CloseComplete message
 fn close_complete_msg() -> Vec<u8> {
-vec![b'3', 0, 0, 0, 4]
+    vec![b'3', 0, 0, 0, 4]
 }
 
 // Helper to create ReadyForQuery message
 fn ready_for_query_msg(status: u8) -> Vec<u8> {
-vec![b'Z', 0, 0, 0, 5, status]
+    vec![b'Z', 0, 0, 0, 5, status]
 }
 
 // Helper to create CommandComplete message
 fn command_complete_msg(tag: &str) -> Vec<u8> {
-let mut msg = Vec::new();
-msg.push(b'C');
-msg.extend_from_slice(&((4 + tag.len() + 1) as i32).to_be_bytes());
-msg.extend_from_slice(tag.as_bytes());
-msg.push(0);
-msg
+    let mut msg = Vec::new();
+    msg.push(b'C');
+    msg.extend_from_slice(&((4 + tag.len() + 1) as i32).to_be_bytes());
+    msg.extend_from_slice(tag.as_bytes());
+    msg.push(0);
+    msg
 }
 
 #[test]

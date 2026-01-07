@@ -1,13 +1,10 @@
 use arc_swap::ArcSwap;
 use deadpool::{managed, Runtime};
-use log::{error, info, warn};
-use lru::LruCache;
+use log::{error, info};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,6 +14,11 @@ use crate::messages::Parse;
 
 use crate::server::{Server, ServerParameters};
 use crate::stats::{AddressStats, ServerStats};
+
+mod prepared_statement_cache;
+pub use prepared_statement_cache::PreparedStatementCache;
+
+pub mod retain;
 
 pub type ProcessId = i32;
 pub type SecretKey = i32;
@@ -36,55 +38,6 @@ pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
 
 pub type PreparedStatementCacheType = Arc<Mutex<PreparedStatementCache>>;
 pub type ServerParametersType = Arc<tokio::sync::Mutex<ServerParameters>>;
-
-// TODO: Add stats the this cache
-// TODO: Add application name to the cache value to help identify which application is using the cache
-// TODO: Create admin command to show which statements are in the cache
-#[derive(Debug)]
-pub struct PreparedStatementCache {
-    cache: LruCache<u64, Arc<Parse>>,
-}
-
-impl PreparedStatementCache {
-    pub fn new(mut size: usize) -> Self {
-        // Cannot be zeros
-        if size == 0 {
-            size = 1;
-        }
-
-        PreparedStatementCache {
-            cache: LruCache::new(NonZeroUsize::new(size).unwrap()),
-        }
-    }
-
-    /// Adds the prepared statement to the cache if it doesn't exist with a new name
-    /// if it already exists will give you the existing parse
-    ///
-    /// Pass the hash to this so that we can do the compute before acquiring the lock
-    pub fn get_or_insert(&mut self, parse: &Parse, hash: u64) -> Arc<Parse> {
-        match self.cache.get(&hash) {
-            Some(rewritten_parse) => rewritten_parse.clone(),
-            None => {
-                let new_parse = Arc::new(parse.clone().rewrite());
-                let evicted = self.cache.push(hash, new_parse.clone());
-
-                if let Some((_, evicted_parse)) = evicted {
-                    warn!(
-                        "Evicted prepared statement {} from cache",
-                        evicted_parse.name
-                    );
-                }
-
-                new_parse
-            }
-        }
-    }
-
-    /// Marks the hash as most recently used if it exists
-    pub fn promote(&mut self, hash: &u64) {
-        self.cache.promote(hash);
-    }
-}
 
 /// An identifier for a PgDoorman pool,
 /// a virtual database pool.
@@ -345,25 +298,6 @@ impl ConnectionPool {
         self.database.status()
     }
 
-    pub fn retain_pool_connections(&self, count: Arc<AtomicUsize>, max: usize) {
-        self.database.retain(|_, metrics| {
-            if count.load(Ordering::Relaxed) >= max {
-                return true;
-            }
-            if let Some(v) = metrics.recycled {
-                if (v.elapsed().as_millis() as u64) > self.settings.idle_timeout_ms {
-                    count.fetch_add(1, Ordering::Relaxed);
-                    return false;
-                }
-            }
-            if (metrics.age().as_millis() as u64) > self.settings.life_time_ms {
-                count.fetch_add(1, Ordering::Relaxed);
-                return false;
-            }
-            true
-        })
-    }
-
     /// Get the address information for a server.
     #[inline(always)]
     pub fn address(&self) -> &Address {
@@ -543,17 +477,4 @@ pub fn get_pool(db: &str, user: &str, virtual_pool_id: u16) -> Option<Connection
 /// Get a pointer to all configured pools.
 pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {
     (*(*POOLS.load())).clone()
-}
-
-pub async fn retain_connections() {
-    let retain_time_ms = get_config().general.retain_connections_time;
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(retain_time_ms));
-    let count = Arc::new(AtomicUsize::new(0));
-    loop {
-        interval.tick().await;
-        for (_, pool) in get_all_pools() {
-            pool.retain_pool_connections(count.clone(), 1);
-        }
-        count.store(0, Ordering::Relaxed);
-    }
 }

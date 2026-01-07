@@ -60,10 +60,7 @@ pub(crate) async fn send_and_flush(server: &mut Server, messages: &BytesMut) -> 
             server.stats.wait_idle();
             error!(
                 "Terminating connection to server {} (database: {}, user: {}) due to error: {}",
-                server.address.host,
-                server.address.database,
-                server.address.username,
-                err
+                server.address.host, server.address.database, server.address.username, err
             );
             server.mark_bad("flush to server error");
             Err(err)
@@ -350,18 +347,14 @@ where
                 if message.len() == 12 && message.to_vec().eq(COMMAND_COMPLETE_BY_DISCARD_ALL) {
                     server.registering_prepared_statement.clear();
                     if server.prepared_statement_cache.is_some() {
-                        warn!(
-                            "Cleanup server {server} prepared statements cache (DISCARD ALL)"
-                        );
+                        warn!("Cleanup server {server} prepared statements cache (DISCARD ALL)");
                         server.prepared_statement_cache.as_mut().unwrap().clear();
                     }
                 }
                 if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DEALLOCATE_ALL) {
                     server.registering_prepared_statement.clear();
                     if server.prepared_statement_cache.is_some() {
-                        warn!(
-                            "Cleanup server {server} prepared statements cache (DEALLOCATE ALL)"
-                        );
+                        warn!("Cleanup server {server} prepared statements cache (DEALLOCATE ALL)");
                         server.prepared_statement_cache.as_mut().unwrap().clear();
                     }
                 }
@@ -376,9 +369,7 @@ where
                 if let Some(client_server_parameters) = client_server_parameters.as_mut() {
                     client_server_parameters.set_param(key.clone(), value.clone(), false);
                     if server.log_client_parameter_status_changes {
-                        info!(
-                            "Server {server}: client parameter status change: {key} = {value}"
-                        )
+                        info!("Server {server}: client parameter status change: {key} = {value}")
                     }
                 }
 

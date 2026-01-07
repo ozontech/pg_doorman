@@ -2,8 +2,8 @@ use log::{error, info};
 use std::path::Path;
 
 use crate::config::Config;
-use crate::rate_limit::RateLimiter;
 use crate::tls::build_acceptor;
+use crate::utils::rate_limit::RateLimiter;
 
 #[derive(Clone)]
 pub struct TlsState {
@@ -25,22 +25,23 @@ pub fn init_tls(config: &Config) -> TlsState {
     };
 
     // Не обновляется по HUP (как и в исходном `main`).
-    let acceptor: Option<tokio_native_tls::TlsAcceptor> = if config.general.tls_certificate.is_some() {
-        match build_acceptor(
-            Path::new(&config.general.tls_certificate.clone().unwrap()),
-            Path::new(&config.general.tls_private_key.clone().unwrap()),
-            config.general.tls_ca_cert.clone(),
-            config.general.tls_mode.clone(),
-        ) {
-            Ok(acceptor) => Some(acceptor),
-            Err(err) => {
-                error!("Failed to build TLS acceptor: {err}");
-                std::process::exit(exitcode::CONFIG);
+    let acceptor: Option<tokio_native_tls::TlsAcceptor> =
+        if config.general.tls_certificate.is_some() {
+            match build_acceptor(
+                Path::new(&config.general.tls_certificate.clone().unwrap()),
+                Path::new(&config.general.tls_private_key.clone().unwrap()),
+                config.general.tls_ca_cert.clone(),
+                config.general.tls_mode.clone(),
+            ) {
+                Ok(acceptor) => Some(acceptor),
+                Err(err) => {
+                    error!("Failed to build TLS acceptor: {err}");
+                    std::process::exit(exitcode::CONFIG);
+                }
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     TlsState {
         rate_limiter,

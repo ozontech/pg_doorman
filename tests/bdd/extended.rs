@@ -2285,9 +2285,7 @@ pub async fn read_bytes_from_session(world: &mut DoormanWorld, bytes: usize, ses
     );
 }
 
-#[when(
-    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and verify no stale data$"#
-)]
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and verify no stale data$"#)]
 pub async fn send_query_and_verify_no_stale_data(
     world: &mut DoormanWorld,
     query: String,

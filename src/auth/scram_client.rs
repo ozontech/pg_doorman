@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 
 use std::fmt::Write;
 
-use crate::messages::constants::*;
 use crate::errors::Error;
+use crate::messages::constants::*;
 
 /// Normalize a password string. Postgres
 /// passwords don't have to be UTF-8.

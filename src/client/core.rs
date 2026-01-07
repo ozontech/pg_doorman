@@ -1,51 +1,32 @@
 use crate::errors::{ClientIdentifier, Error};
 /// Handle clients by pretending to be a PostgreSQL server.
 use bytes::{Buf, BufMut, BytesMut};
-use log::{debug, error, info, warn};
-use once_cell::sync::Lazy;
+use log::{debug, error, warn};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ops::DerefMut;
 use std::str;
 use std::sync::atomic::Ordering;
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{split, AsyncReadExt, BufReader, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
+use tokio::io::BufReader;
 use tokio::sync::broadcast::Receiver;
-use tokio::sync::mpsc::Sender;
 
 use crate::admin::handle_admin;
 use crate::auth::authenticate;
 use crate::auth::hba::CheckResult;
 use crate::auth::talos::{extract_talos_token, talos_role_to_string};
-use crate::utils::comments::SqlCommentParser;
 use crate::config::{check_hba, get_config};
 use crate::messages::constants::*;
-use crate::messages::config_socket::configure_tcp_socket_for_cancel;
 use crate::messages::*;
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool, CANCELED_PIDS};
-use crate::utils::rate_limit::RateLimiter;
 use crate::server::{Server, ServerParameters};
-use crate::stats::{
-    ClientStats, ServerStats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
-    TLS_CONNECTION_COUNTER,
+use crate::stats::{ClientStats, ServerStats};
+use crate::utils::comments::SqlCommentParser;
+
+use super::util::{
+    shrink_buffer_if_needed, CLIENT_COUNTER, PREPARED_STATEMENT_COUNTER, QUERY_DEALLOCATE,
 };
-
-/// Incrementally count prepared statements
-/// to avoid random conflicts in places where the random number generator is weak.
-pub static PREPARED_STATEMENT_COUNTER: Lazy<Arc<AtomicUsize>> =
-    Lazy::new(|| Arc::new(AtomicUsize::new(0)));
-pub static CLIENT_COUNTER: Lazy<Arc<AtomicUsize>> = Lazy::new(|| Arc::new(AtomicUsize::new(0)));
-// Ignore deallocate queries from pgx.
-static QUERY_DEALLOCATE: &[u8] = "deallocate ".as_bytes();
-
-/// Type of connection received from client.
-enum ClientConnectionType {
-    Startup,
-    Tls,
-    CancelQuery,
-}
 
 /// The client state. One of these is created per client.
 pub struct Client<S, T> {
@@ -135,412 +116,6 @@ pub struct Client<S, T> {
     virtual_pool_count: u16,
 }
 
-pub async fn client_entrypoint_too_many_clients_already(
-    mut stream: TcpStream,
-    client_server_map: ClientServerMap,
-    shutdown: Receiver<()>,
-    drain: Sender<i32>,
-) -> Result<(), Error> {
-    let addr = match stream.peer_addr() {
-        Ok(addr) => addr,
-        Err(err) => {
-            return Err(Error::SocketError(format!(
-                "Failed to get peer address: {err:?}"
-            )));
-        }
-    };
-
-    match get_startup::<TcpStream>(&mut stream).await {
-        Ok((ClientConnectionType::Tls, _)) => {
-            let mut no = BytesMut::new();
-            no.put_u8(b'N');
-            write_all(&mut stream, no).await?
-            // здесь может быть ошибка SSL is not enabled on the server,
-            // вместо too many client, но это сделано намерянно, потому что мы
-            // не сможем обработать столько клиентов еще и через SSL.
-        }
-        Ok((ClientConnectionType::Startup, _)) => (
-            // pass
-            ),
-        Ok((ClientConnectionType::CancelQuery, bytes)) => {
-            // Important: without configuring the TCP socket for cancel requests,
-            // libpq-based clients (e.g., psycopg2) may emit a noisy stderr warning on cancellation
-            // such as:
-            // "query cancellation failed: cancellation failed: connection to server ..."
-            // We set the appropriate socket options to avoid this spurious message.
-            configure_tcp_socket_for_cancel(&stream);
-            let (read, write) = split(stream);
-            // Continue with cancel query request.
-            return match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
-            {
-                Ok(mut client) => {
-                    info!("Client {addr:?} issued a cancel query request");
-                    if !client.is_admin() {
-                        let _ = drain.send(1).await;
-                    }
-                    let result = client.handle().await;
-                    if !client.is_admin() {
-                        let _ = drain.send(-1).await;
-                        if result.is_err() {
-                            client.stats.disconnect();
-                        }
-                    }
-                    result
-                }
-                Err(err) => Err(err),
-            };
-        }
-        Err(err) => return Err(err),
-    }
-    error_response_terminal(&mut stream, "sorry, too many clients already", "53300").await?;
-    Ok(())
-}
-
-/// Client entrypoint.
-#[allow(clippy::too_many_arguments)]
-pub async fn client_entrypoint(
-    mut stream: TcpStream,
-    client_server_map: ClientServerMap,
-    shutdown: Receiver<()>,
-    drain: Sender<i32>,
-    admin_only: bool,
-    tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
-    tls_rate_limiter: Option<RateLimiter>,
-) -> Result<(), Error> {
-    let config = get_config();
-    let log_client_connections = config.general.log_client_connections;
-    let tls_mode = config.general.tls_mode.clone();
-
-    // Figure out if the client wants TLS or not.
-    let addr = match stream.peer_addr() {
-        Ok(addr) => addr,
-        Err(err) => {
-            return Err(Error::SocketError(format!(
-                "Failed to get peer address: {err:?}"
-            )));
-        }
-    };
-
-    match get_startup::<TcpStream>(&mut stream).await {
-        // Client requested a TLS connection.
-        Ok((ClientConnectionType::Tls, _)) => {
-            // TLS settings are configured, will setup TLS now.
-            if let Some(tls_acceptor) = tls_acceptor {
-                TLS_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let mut yes = BytesMut::new();
-                yes.put_u8(b'S');
-                write_all(&mut stream, yes).await?;
-
-                if let Some(tls_rate_limiter) = tls_rate_limiter {
-                    tls_rate_limiter.wait().await;
-                }
-
-                // Negotiate TLS.
-                match startup_tls(
-                    stream,
-                    client_server_map,
-                    shutdown,
-                    admin_only,
-                    tls_acceptor,
-                )
-                .await
-                {
-                    Ok(mut client) => {
-                        if log_client_connections {
-                            info!("Client {addr:?} connected (TLS)");
-                        }
-
-                        if !client.is_admin() {
-                            let _ = drain.send(1).await;
-                        }
-
-                        let result = client.handle().await;
-
-                        if !client.is_admin() {
-                            let _ = drain.send(-1).await;
-
-                            if result.is_err() {
-                                client.stats.disconnect();
-                            }
-                        }
-
-                        result
-                    }
-                    Err(err) => Err(err),
-                }
-            }
-            // TLS is not configured, we cannot offer it.
-            else {
-                // Rejecting client request for TLS.
-                PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let mut no = BytesMut::new();
-                no.put_u8(b'N');
-                write_all(&mut stream, no).await?;
-
-                // Attempting regular startup. Client can disconnect now
-                // if they choose.
-                match get_startup::<TcpStream>(&mut stream).await {
-                    // Client accepted unencrypted connection.
-                    Ok((ClientConnectionType::Startup, bytes)) => {
-                        let (read, write) = split(stream);
-
-                        // Continue with regular startup.
-                        match Client::startup(
-                            read,
-                            write,
-                            addr,
-                            bytes,
-                            client_server_map,
-                            shutdown,
-                            admin_only,
-                            false,
-                        )
-                        .await
-                        {
-                            Ok(mut client) => {
-                                if log_client_connections {
-                                    info!("Client {addr:?} connected (plain)");
-                                }
-                                if !client.is_admin() {
-                                    let _ = drain.send(1).await;
-                                }
-
-                                let result = client.handle().await;
-
-                                if !client.is_admin() {
-                                    let _ = drain.send(-1).await;
-
-                                    if result.is_err() {
-                                        client.stats.disconnect();
-                                    }
-                                }
-
-                                result
-                            }
-                            Err(err) => Err(err),
-                        }
-                    }
-
-                    // Client probably disconnected rejecting our plain text connection.
-                    Ok((ClientConnectionType::Tls, _))
-                    | Ok((ClientConnectionType::CancelQuery, _)) => Err(Error::ProtocolSyncError(
-                        "Bad postgres client (plain)".into(),
-                    )),
-
-                    Err(err) => Err(err),
-                }
-            }
-        }
-
-        // Client wants to use plain connection without encryption.
-        Ok((ClientConnectionType::Startup, bytes)) => {
-            if tls_mode.is_some() && config.general.only_ssl_connections() {
-                error_response_terminal(
-                    &mut stream,
-                    "Connection without SSL is not allowed by tls_mode.",
-                    "28000",
-                )
-                .await?;
-                return Err(Error::ProtocolSyncError("ssl is required".to_string()));
-            }
-            PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let (read, write) = split(stream);
-
-            // Continue with regular startup.
-            match Client::startup(
-                read,
-                write,
-                addr,
-                bytes,
-                client_server_map,
-                shutdown,
-                admin_only,
-                false,
-            )
-            .await
-            {
-                Ok(mut client) => {
-                    if log_client_connections {
-                        info!("Client {addr:?} connected (plain)");
-                    }
-                    if !client.is_admin() {
-                        let _ = drain.send(1).await;
-                    }
-
-                    let result = client.handle().await;
-
-                    if !client.is_admin() {
-                        let _ = drain.send(-1).await;
-
-                        if result.is_err() {
-                            client.stats.disconnect();
-                        }
-                    }
-
-                    result
-                }
-                Err(err) => Err(err),
-            }
-        }
-
-        // Client wants to cancel a query.
-        Ok((ClientConnectionType::CancelQuery, bytes)) => {
-            CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            // Important: without configuring the TCP socket for cancel requests,
-            // libpq-based clients (e.g., psycopg2) may emit a noisy stderr warning on cancellation
-            // such as:
-            // "query cancellation failed: cancellation failed: connection to server ..."
-            // We set the appropriate socket options to avoid this spurious message.
-            configure_tcp_socket_for_cancel(&stream);
-            let (read, write) = split(stream);
-
-            // Continue with cancel query request.
-            match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await {
-                Ok(mut client) => {
-                    info!("Cancel request received from {addr:?}; forwarding to the backend");
-
-                    if !client.is_admin() {
-                        let _ = drain.send(1).await;
-                    }
-
-                    let result = client.handle().await;
-
-                    if !client.is_admin() {
-                        let _ = drain.send(-1).await;
-
-                        if result.is_err() {
-                            client.stats.disconnect();
-                        }
-                    }
-                    result
-                }
-
-                Err(err) => Err(err),
-            }
-        }
-
-        // Something failed, probably the socket.
-        Err(err) => Err(err),
-    }
-}
-
-/// Handle the first message the client sends.
-async fn get_startup<S>(stream: &mut S) -> Result<(ClientConnectionType, BytesMut), Error>
-where
-    S: tokio::io::AsyncRead + std::marker::Unpin + tokio::io::AsyncWrite,
-{
-    // Get startup message length.
-    let len = match stream.read_i32().await {
-        Ok(len) => len,
-        Err(_) => return Err(Error::ClientBadStartup),
-    };
-
-    // Get the rest of the message.
-    let mut startup = vec![0u8; len as usize - 4];
-    match stream.read_exact(&mut startup).await {
-        Ok(_) => (),
-        Err(_) => return Err(Error::ClientBadStartup),
-    };
-
-    let mut bytes = BytesMut::from(&startup[..]);
-    let code = bytes.get_i32();
-
-    match code {
-        // Client is requesting SSL (TLS).
-        SSL_REQUEST_CODE => Ok((ClientConnectionType::Tls, bytes)),
-
-        // Client wants to use plain text, requesting regular startup.
-        PROTOCOL_VERSION_NUMBER => Ok((ClientConnectionType::Startup, bytes)),
-
-        // Client is requesting to cancel a running query (plain text connection).
-        CANCEL_REQUEST_CODE => Ok((ClientConnectionType::CancelQuery, bytes)),
-
-        REQUEST_GSSENCMODE_CODE => {
-            // Rejecting client request for GSSENCMODE.
-            let mut no = BytesMut::new();
-            no.put_u8(b'G');
-            write_all_flush(stream, &no).await?;
-            Err(Error::AuthError("GSSENCMODE is unsupported".to_string()))
-        }
-
-        // Something else, probably something is wrong, and it's not our fault,
-        // e.g. badly implemented Postgres client.
-        _ => Err(Error::ProtocolSyncError(format!(
-            "Unexpected startup code: {code}"
-        ))),
-    }
-}
-
-/// Handle TLS connection negotiation.
-pub async fn startup_tls(
-    stream: TcpStream,
-    client_server_map: ClientServerMap,
-    shutdown: Receiver<()>,
-    admin_only: bool,
-    tls_acceptor: tokio_native_tls::TlsAcceptor,
-) -> Result<
-    Client<
-        ReadHalf<tokio_native_tls::TlsStream<TcpStream>>,
-        WriteHalf<tokio_native_tls::TlsStream<TcpStream>>,
-    >,
-    Error,
-> {
-    // Negotiate TLS.
-    let addr = match stream.peer_addr() {
-        Ok(addr) => addr,
-        Err(err) => {
-            return Err(Error::SocketError(format!(
-                "Failed to get peer address: {err:?}"
-            )));
-        }
-    };
-
-    let mut stream = match tls_acceptor.accept(stream).await {
-        Ok(stream) => stream,
-
-        // TLS negotiation failed.
-        Err(err) => {
-            error!("TLS negotiation failed: {err:?}");
-            return Err(Error::TlsError);
-        }
-    };
-
-    // TLS negotiation successful.
-    // Continue with regular startup using encrypted connection.
-    match get_startup::<tokio_native_tls::TlsStream<TcpStream>>(&mut stream).await {
-        // Got good startup message, proceeding like normal except we
-        // are encrypted now.
-        Ok((ClientConnectionType::Startup, bytes)) => {
-            let (read, write) = split(stream);
-
-            Client::startup(
-                read,
-                write,
-                addr,
-                bytes,
-                client_server_map,
-                shutdown,
-                admin_only,
-                true,
-            )
-            .await
-        }
-
-        Ok((ClientConnectionType::CancelQuery, bytes)) => {
-            CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let (read, write) = split(stream);
-            Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
-        }
-
-        // Bad Postgres client.
-        Ok((ClientConnectionType::Tls, _)) => {
-            Err(Error::ProtocolSyncError("Bad postgres client (tls)".into()))
-        }
-
-        Err(err) => Err(err),
-    }
-}
-
 impl<S, T> Client<S, T>
 where
     S: tokio::io::AsyncRead + std::marker::Unpin,
@@ -548,6 +123,10 @@ where
 {
     pub fn is_admin(&self) -> bool {
         self.admin
+    }
+
+    pub(crate) fn disconnect_stats(&self) {
+        self.stats.disconnect();
     }
 
     /// Wait for a ROLLBACK from client after server entered aborted transaction state.
@@ -1969,16 +1548,5 @@ impl<S, T> Drop for Client<S, T> {
         // Ensure client is removed from stats tracking when dropped
         // This handles cases where client disconnects unexpectedly (e.g., TCP abort)
         self.stats.disconnect();
-    }
-}
-
-const INITIAL_BUFFER_SIZE: usize = 8196;
-const BUFFER_SHRINK_THRESHOLD: usize = 4 * INITIAL_BUFFER_SIZE; // 32KB
-
-#[inline]
-fn shrink_buffer_if_needed(buffer: &mut BytesMut) {
-    if buffer.capacity() > BUFFER_SHRINK_THRESHOLD {
-        let new_buffer = BytesMut::with_capacity(INITIAL_BUFFER_SIZE);
-        *buffer = new_buffer;
     }
 }

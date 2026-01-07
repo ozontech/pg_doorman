@@ -869,4 +869,3 @@ pub fn insert_close_complete_before_ready_for_query(mut buffer: BytesMut, count:
         buffer
     }
 }
-

@@ -30,8 +30,8 @@ use crate::stats::ServerStats;
 
 use super::cleanup::CleanupState;
 use super::parameters::ServerParameters;
-use super::{prepared_statements, protocol_io, startup_cancel};
 use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
+use super::{prepared_statements, protocol_io, startup_cancel};
 
 /// Server state.
 #[derive(Debug)]
@@ -564,16 +564,14 @@ impl Server {
 
                                 match stream.read_exact(&mut sasl_auth).await {
                                     Ok(_) => (),
-                                    Err(_) => {
-                                        return Err(Error::ServerStartupError(
-                                            "Failed to read SASL authentication message from server".into(),
-                                            server_identifier.clone(),
-                                        ))
-                                    }
+                                    Err(_) => return Err(Error::ServerStartupError(
+                                        "Failed to read SASL authentication message from server"
+                                            .into(),
+                                        server_identifier.clone(),
+                                    )),
                                 };
 
-                                let sasl_type =
-                                    String::from_utf8_lossy(&sasl_auth[..sasl_len - 2]);
+                                let sasl_type = String::from_utf8_lossy(&sasl_auth[..sasl_len - 2]);
 
                                 if sasl_type.contains(SCRAM_SHA_256) {
                                     // Generate client message.
@@ -614,7 +612,8 @@ impl Server {
                                 Ok(_) => (),
                                 Err(_) => {
                                     return Err(Error::ServerStartupError(
-                                        "Failed to read SASL continuation message from server".into(),
+                                        "Failed to read SASL continuation message from server"
+                                            .into(),
                                         server_identifier.clone(),
                                     ))
                                 }
@@ -680,7 +679,10 @@ impl Server {
                                 )
                                 .await
                                 .map_err(|err| {
-                                    Error::ServerAuthError(err.to_string(), server_identifier.clone())
+                                    Error::ServerAuthError(
+                                        err.to_string(),
+                                        server_identifier.clone(),
+                                    )
                                 })?;
                                 let mut password_response = BytesMut::new();
                                 password_response.put_u8(b'p');
@@ -803,7 +805,10 @@ impl Server {
                                         "Get server error - {} {}: {}",
                                         f.severity, f.code, f.message
                                     );
-                                    Err(Error::ServerStartupError(f.message, server_identifier.clone()))
+                                    Err(Error::ServerStartupError(
+                                        f.message,
+                                        server_identifier.clone(),
+                                    ))
                                 }
                                 Err(err) => {
                                     error!("Get unparsed server error: {err:?}");
@@ -951,7 +956,7 @@ impl Drop for Server {
             "{} {}, session duration: {}",
             message,
             self,
-            crate::format_duration(&duration)
+            crate::utils::format_duration(&duration)
         );
     }
 }

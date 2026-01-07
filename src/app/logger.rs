@@ -1,5 +1,6 @@
 extern crate log;
 
+use log::info;
 use log::LevelFilter;
 use std::process;
 use syslog::{BasicLogger, Facility, Formatter3164};
@@ -10,8 +11,6 @@ use super::args::{Args, LogFormat};
 use crate::config::{Config, VERSION};
 
 pub fn init_logging(args: &Args, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-    use log::info;
-
     init(args, config.general.syslog_prog_name.clone());
     info!("Welcome to PgDoorman! (Version {VERSION})");
     Ok(())

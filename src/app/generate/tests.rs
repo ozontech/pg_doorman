@@ -2,7 +2,10 @@ use super::*;
 
 // Test-specific implementation of generate_config_with_client
 // This is used by the `#[cfg(test)]` `generate_config` wrapper.
-pub fn generate_config_with_client<E1: std::error::Error + 'static, E2: std::error::Error + 'static>(
+pub fn generate_config_with_client<
+    E1: std::error::Error + 'static,
+    E2: std::error::Error + 'static,
+>(
     config: &GenerateConfig,
     users: Result<Vec<(String, String)>, E1>,
     databases: Result<Vec<String>, E2>,

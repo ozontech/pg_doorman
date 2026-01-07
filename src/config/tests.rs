@@ -271,9 +271,7 @@ async fn test_validate_tls_mode_without_cert_or_key() {
     let result = config.validate().await;
     assert!(result.is_err());
     if let Err(Error::BadConfig(msg)) = result {
-        assert!(
-            msg.contains("tls_mode is require but tls_certificate or tls_private_key is not")
-        );
+        assert!(msg.contains("tls_mode is require but tls_certificate or tls_private_key is not"));
     } else {
         panic!("Expected BadConfig error about tls_mode without cert/key");
     }

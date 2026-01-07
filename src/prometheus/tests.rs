@@ -33,9 +33,7 @@ async fn test_prometheus_server_basic() {
 
     // Connect to the server
     let mut stream =
-        match tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(server_addr))
-            .await
-        {
+        match tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(server_addr)).await {
             Ok(Ok(stream)) => stream,
             Ok(Err(e)) => {
                 server_handle.abort();
@@ -131,18 +129,17 @@ async fn test_prometheus_server_integration() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Connect to the server
-    let mut stream =
-        match timeout(Duration::from_secs(1), TcpStream::connect(server_addr)).await {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(e)) => {
-                server_handle.abort();
-                panic!("Failed to connect to server: {e}");
-            }
-            Err(_) => {
-                server_handle.abort();
-                panic!("Timed out connecting to server");
-            }
-        };
+    let mut stream = match timeout(Duration::from_secs(1), TcpStream::connect(server_addr)).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            server_handle.abort();
+            panic!("Failed to connect to server: {e}");
+        }
+        Err(_) => {
+            server_handle.abort();
+            panic!("Timed out connecting to server");
+        }
+    };
 
     // Send a simple HTTP request
     let request = "GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n";
