@@ -661,6 +661,29 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#debug-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Debug Mode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#available-test-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available Test Tags
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writing-new-tests" class="md-nav__link">
     <span class="md-ellipsis">
       Writing New Tests
@@ -671,9 +694,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#structure" class="md-nav__link">
+  <a href="#shell-tests-recommended-for-client-libraries" class="md-nav__link">
     <span class="md-ellipsis">
-      Structure
+      Shell Tests (Recommended for Client Libraries)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-protocol-level-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust Protocol-Level Tests
     </span>
   </a>
   
@@ -685,11 +717,6 @@
       Adding Dependencies
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
@@ -1034,6 +1061,29 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#debug-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Debug Mode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#available-test-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      Available Test Tags
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#writing-new-tests" class="md-nav__link">
     <span class="md-ellipsis">
       Writing New Tests
@@ -1044,9 +1094,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#structure" class="md-nav__link">
+  <a href="#shell-tests-recommended-for-client-libraries" class="md-nav__link">
     <span class="md-ellipsis">
-      Structure
+      Shell Tests (Recommended for Client Libraries)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-protocol-level-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust Protocol-Level Tests
     </span>
   </a>
   
@@ -1058,11 +1117,6 @@
       Adding Dependencies
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
@@ -1145,13 +1199,15 @@
 <p>Thank you for your interest in contributing to PgDoorman! This guide will help you set up your development environment and understand the contribution process.</p>
 <h2 id="getting-started">Getting Started</h2>
 <h3 id="prerequisites">Prerequisites</h3>
-<p>Before you begin, make sure you have the following installed:</p>
+<p>For running integration tests, you only need:</p>
 <ul>
-<li><a href="https://www.rust-lang.org/tools/install">Rust</a> (latest stable version)</li>
-<li><a href="https://git-scm.com/downloads">Git</a></li>
-<li><a href="https://docs.docker.com/get-docker/">Docker</a> (optional, for running tests)</li>
-<li><a href="https://www.gnu.org/software/make/">Make</a> (optional, for running test scripts)</li>
+<li><a href="https://docs.docker.com/get-docker/">Docker</a> (required)</li>
+<li><a href="https://www.gnu.org/software/make/">Make</a> (required)</li>
 </ul>
+<p><strong>Nix installation is NOT required</strong> — test environment reproducibility is ensured by Docker containers built with Nix.</p>
+<p>For local development (optional):
+- <a href="https://www.rust-lang.org/tools/install">Rust</a> (latest stable version)
+- <a href="https://git-scm.com/downloads">Git</a></p>
 <h3 id="setting-up-your-development-environment">Setting Up Your Development Environment</h3>
 <ol>
 <li><strong>Fork the repository</strong> on GitHub</li>
@@ -1194,7 +1250,7 @@
 </li>
 </ol>
 <h2 id="integration-testing">Integration Testing</h2>
-<p>PgDoorman uses BDD (Behavior-Driven Development) tests with a Docker-based test environment. <strong>Nix installation is NOT required</strong> — everything runs inside Docker containers.</p>
+<p>PgDoorman uses BDD (Behavior-Driven Development) tests with a Docker-based test environment. <strong>Reproducibility is guaranteed</strong> — all tests run inside Docker containers with identical environments.</p>
 <h3 id="test-environment">Test Environment</h3>
 <p>The test Docker image (built with Nix) includes:
 - PostgreSQL 16
@@ -1204,82 +1260,213 @@
 - .NET SDK 8
 - Rust 1.87.0</p>
 <h3 id="running-tests">Running Tests</h3>
-<p>Navigate to the <code>tests</code> directory and use Make:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>tests
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="c1"># Pull the test image from registry</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>make<span class="w"> </span>pull
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="c1"># Or build locally (takes 10-15 minutes on first run)</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>make<span class="w"> </span>local-build
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
-</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="c1"># Run all BDD tests</span>
-</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>make<span class="w"> </span>test-bdd
-</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
-</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="c1"># Run tests for specific language</span>
-</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>make<span class="w"> </span>test-bdd-go<span class="w">          </span><span class="c1"># Go client tests</span>
-</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>make<span class="w"> </span>test-bdd-python<span class="w">      </span><span class="c1"># Python client tests</span>
-</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>make<span class="w"> </span>test-bdd-nodejs<span class="w">      </span><span class="c1"># Node.js client tests</span>
-</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>make<span class="w"> </span>test-bdd-dotnet<span class="w">      </span><span class="c1"># .NET client tests</span>
-</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>
-</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="c1"># Run tests for specific feature</span>
-</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>make<span class="w"> </span>test-bdd-hba<span class="w">         </span><span class="c1"># HBA authentication tests</span>
-</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>make<span class="w"> </span>test-bdd-prometheus<span class="w">  </span><span class="c1"># Prometheus metrics tests</span>
-</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>make<span class="w"> </span>test-bdd-rollback<span class="w">    </span><span class="c1"># Rollback functionality tests</span>
-</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>
-</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a><span class="c1"># Open interactive shell in test container</span>
-</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>make<span class="w"> </span>shell
-</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>
-</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="c1"># Build pg_doorman inside container</span>
-</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>make<span class="w"> </span>tests-build
+<p>From the <strong>project root directory</strong>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Pull the test image from registry</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>make<span class="w"> </span>pull
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Or build locally (takes 10-15 minutes on first run)</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>make<span class="w"> </span>local-build
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Run all BDD tests</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>make<span class="w"> </span>test-bdd
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="c1"># Run tests with specific tag</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>make<span class="w"> </span>test-bdd<span class="w"> </span><span class="nv">TAGS</span><span class="o">=</span>@copy-protocol
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>make<span class="w"> </span>test-bdd<span class="w"> </span><span class="nv">TAGS</span><span class="o">=</span>@cancel
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>make<span class="w"> </span>test-bdd<span class="w"> </span><span class="nv">TAGS</span><span class="o">=</span>@admin-commands
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="c1"># Open interactive shell in test container</span>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>make<span class="w"> </span>shell
 </span></code></pre></div>
-<p>You can also use <code>tests/nix/run-tests.sh</code> directly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>./tests/nix/run-tests.sh<span class="w"> </span>bdd<span class="w">              </span><span class="c1"># Run all BDD tests</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>./tests/nix/run-tests.sh<span class="w"> </span>bdd<span class="w"> </span>@go<span class="w">          </span><span class="c1"># Run tests tagged with @go</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>./tests/nix/run-tests.sh<span class="w"> </span>bdd<span class="w"> </span>@python<span class="w">      </span><span class="c1"># Run tests tagged with @python</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>./tests/nix/run-tests.sh<span class="w"> </span>shell<span class="w">            </span><span class="c1"># Interactive shell</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>./tests/nix/run-tests.sh<span class="w"> </span><span class="nb">help</span><span class="w">             </span><span class="c1"># Show all available commands</span>
+<h3 id="debug-mode">Debug Mode</h3>
+<p>Enable debug output with the <code>DEBUG=1</code> environment variable:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">DEBUG</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>make<span class="w"> </span>test-bdd<span class="w"> </span><span class="nv">TAGS</span><span class="o">=</span>@copy-protocol
 </span></code></pre></div>
-<h3 id="writing-new-tests">Writing New Tests</h3>
+<p>When <code>DEBUG=1</code> is set:
+- Tracing is enabled with DEBUG level
+- Thread IDs are shown in logs
+- Line numbers are included
+- PostgreSQL protocol details are visible
+- Detailed step-by-step execution is logged</p>
+<p>This is useful when:
+- Debugging failing tests
+- Understanding protocol-level communication
+- Investigating timing issues
+- Developing new test scenarios</p>
+<h3 id="available-test-tags">Available Test Tags</h3>
+<table>
+<thead>
+<tr>
+<th>Tag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@go</code></td>
+<td>Go client tests</td>
+</tr>
+<tr>
+<td><code>@python</code></td>
+<td>Python client tests</td>
+</tr>
+<tr>
+<td><code>@nodejs</code></td>
+<td>Node.js client tests</td>
+</tr>
+<tr>
+<td><code>@dotnet</code></td>
+<td>.NET client tests</td>
+</tr>
+<tr>
+<td><code>@rust</code></td>
+<td>Rust protocol-level tests</td>
+</tr>
+<tr>
+<td><code>@copy-protocol</code></td>
+<td>COPY protocol tests</td>
+</tr>
+<tr>
+<td><code>@cancel</code></td>
+<td>Query cancellation tests</td>
+</tr>
+<tr>
+<td><code>@admin-commands</code></td>
+<td>Admin console commands</td>
+</tr>
+<tr>
+<td><code>@admin-leak</code></td>
+<td>Admin connection leak tests</td>
+</tr>
+<tr>
+<td><code>@buffer-cleanup</code></td>
+<td>Buffer cleanup tests</td>
+</tr>
+<tr>
+<td><code>@rollback</code></td>
+<td>Rollback functionality tests</td>
+</tr>
+<tr>
+<td><code>@hba</code></td>
+<td>HBA authentication tests</td>
+</tr>
+<tr>
+<td><code>@prometheus</code></td>
+<td>Prometheus metrics tests</td>
+</tr>
+</tbody>
+</table>
+<h2 id="writing-new-tests">Writing New Tests</h2>
 <p>Tests are organized as BDD feature files in <code>tests/bdd/features/</code>. Each feature file describes test scenarios using Gherkin syntax.</p>
-<h4 id="structure">Structure</h4>
-<ol>
-<li>
-<p><strong>Feature file</strong> (<code>tests/bdd/features/my-feature.feature</code>):
-   <div class="language-gherkin highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">@mytag</span>
+<h3 id="shell-tests-recommended-for-client-libraries">Shell Tests (Recommended for Client Libraries)</h3>
+<p>Shell tests run external test commands (Go, Python, Node.js, etc.) and verify their output. This is the simplest way to test client library compatibility.</p>
+<p><strong>Example</strong> (<code>tests/bdd/features/my-feature.feature</code>):</p>
+<div class="language-gherkin highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">@go</span><span class="nf"> </span><span class="nt">@mytag</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">Feature:</span><span class="nf"> My feature description</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
 </span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="nf">  </span><span class="k">Background:</span>
 </span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">    Given </span><span class="nf">PostgreSQL started with pg_hba.conf:</span>
 </span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="s">      host all all 127.0.0.1/32 trust</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="nf">    </span><span class="k">And </span><span class="nf">pg_doorman started with config:</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="s">      [general]</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="s">      host = &quot;127.0.0.1&quot;</span>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="s">      port = ${DOORMAN_PORT}</span>
-</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="s">      ...</span>
-</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
-</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>
-</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="nf">  </span><span class="k">Scenario:</span><span class="nf"> Test something</span>
-</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="k">    When </span><span class="nf">I run shell command:</span>
-</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
-</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="s">      cd tests/go &amp;&amp; go test -v -run TestMyTest ./mypackage</span>
-</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
-</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="nf">    </span><span class="k">Then </span><span class="nf">the command should succeed</span>
-</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="nf">    </span><span class="k">And </span><span class="nf">the command output should contain &quot;</span><span class="s">PASS</span><span class="nf">&quot;</span>
-</span></code></pre></div></p>
-</li>
-<li>
-<p><strong>Test implementation</strong> (in your preferred language):</p>
-</li>
-<li>Go: <code>tests/go/mypackage/my_test.go</code></li>
-<li>Python: <code>tests/python/test_my.py</code></li>
-<li>Node.js: <code>tests/nodejs/my.test.js</code></li>
-<li>.NET: <code>tests/dotnet/MyTest.cs</code></li>
-</ol>
-<h4 id="adding-dependencies">Adding Dependencies</h4>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="s">      local all all trust</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="s">      host all all 127.0.0.1/32 trust</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="nf">    </span><span class="k">And </span><span class="nf">fixtures from &quot;</span><span class="s">tests/fixture.sql</span><span class="nf">&quot; applied</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="nf">    </span><span class="k">And </span><span class="nf">pg_doorman started with config:</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="s">      [general]</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="s">      host = &quot;127.0.0.1&quot;</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="s">      port = ${DOORMAN_PORT}</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="s">      admin_username = &quot;admin&quot;</span>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="s">      admin_password = &quot;admin&quot;</span>
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="s">      [pools.example_db]</span>
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="s">      server_host = &quot;127.0.0.1&quot;</span>
+</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="s">      server_port = ${PG_PORT}</span>
+</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>
+</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="s">      [pools.example_db.users.0]</span>
+</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="s">      username = &quot;example_user_1&quot;</span>
+</span><span id="__span-8-25"><a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="s">      password = &quot;md58a67a0c805a5ee0384ea28e0dea557b6&quot;</span>
+</span><span id="__span-8-26"><a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="s">      pool_size = 40</span>
+</span><span id="__span-8-27"><a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-28"><a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>
+</span><span id="__span-8-29"><a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a><span class="nf">  </span><span class="k">Scenario:</span><span class="nf"> Test my Go client</span>
+</span><span id="__span-8-30"><a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a><span class="k">    When </span><span class="nf">I run shell command:</span>
+</span><span id="__span-8-31"><a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-32"><a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="s">      export DATABASE_URL=&quot;postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable&quot;</span>
+</span><span id="__span-8-33"><a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a><span class="s">      cd tests/go &amp;&amp; go test -v -run TestMyTest ./mypackage</span>
+</span><span id="__span-8-34"><a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-8-35"><a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a><span class="nf">    </span><span class="k">Then </span><span class="nf">the command should succeed</span>
+</span><span id="__span-8-36"><a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a><span class="nf">    </span><span class="k">And </span><span class="nf">the command output should contain &quot;</span><span class="s">PASS</span><span class="nf">&quot;</span>
+</span></code></pre></div>
+<p><strong>Test implementation</strong> (in your preferred language):
+- Go: <code>tests/go/mypackage/my_test.go</code>
+- Python: <code>tests/python/test_my.py</code>
+- Node.js: <code>tests/nodejs/my.test.js</code>
+- .NET: <code>tests/dotnet/MyTest.cs</code></p>
+<h3 id="rust-protocol-level-tests">Rust Protocol-Level Tests</h3>
+<p>For testing PostgreSQL protocol behavior at the wire level, use Rust-based tests. These tests directly send and receive PostgreSQL protocol messages, allowing precise control and comparison.</p>
+<p><strong>Example</strong> (<code>tests/bdd/features/protocol-test.feature</code>):</p>
+<div class="language-gherkin highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">@rust</span><span class="nf"> </span><span class="nt">@my-protocol-test</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">Feature:</span><span class="nf"> Protocol behavior test</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nf">  Testing that pg_doorman handles protocol messages identically to PostgreSQL</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="nf">  </span><span class="k">Background:</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="k">    Given </span><span class="nf">PostgreSQL started with pg_hba.conf:</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="s">      local all all trust</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="s">      host all all 127.0.0.1/32 trust</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="nf">    </span><span class="k">And </span><span class="nf">fixtures from &quot;</span><span class="s">tests/fixture.sql</span><span class="nf">&quot; applied</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="nf">    </span><span class="k">And </span><span class="nf">pg_doorman started with config:</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="nf">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="s">      [general]</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="s">      host = &quot;127.0.0.1&quot;</span>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="s">      port = ${DOORMAN_PORT}</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="s">      admin_username = &quot;admin&quot;</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="s">      admin_password = &quot;admin&quot;</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a><span class="s">      pg_hba.content = &quot;host all all 127.0.0.1/32 trust&quot;</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="s">      [pools.example_db]</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a><span class="s">      server_host = &quot;127.0.0.1&quot;</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a><span class="s">      server_port = ${PG_PORT}</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>
+</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a><span class="s">      [pools.example_db.users.0]</span>
+</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a><span class="s">      username = &quot;example_user_1&quot;</span>
+</span><span id="__span-9-27"><a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a><span class="s">      password = &quot;&quot;</span>
+</span><span id="__span-9-28"><a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a><span class="s">      pool_size = 10</span>
+</span><span id="__span-9-29"><a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a><span class="s">      </span><span class="k">&quot;&quot;&quot;</span>
+</span><span id="__span-9-30"><a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>
+</span><span id="__span-9-31"><a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a><span class="nf">  </span><span class="nt">@my-scenario</span>
+</span><span id="__span-9-32"><a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a><span class="nf">  </span><span class="k">Scenario:</span><span class="nf"> Query gives identical results from PostgreSQL and pg_doorman</span>
+</span><span id="__span-9-33"><a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a><span class="k">    When </span><span class="nf">we login to postgres and pg_doorman as &quot;</span><span class="s">example_user_1</span><span class="nf">&quot; with password &quot;&quot; and database &quot;</span><span class="s">example_db</span><span class="nf">&quot;</span>
+</span><span id="__span-9-34"><a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a><span class="nf">    </span><span class="k">And </span><span class="nf">we send SimpleQuery &quot;</span><span class="s">SELECT 1</span><span class="nf">&quot; to both</span>
+</span><span id="__span-9-35"><a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a><span class="nf">    </span><span class="k">Then </span><span class="nf">we should receive identical messages from both</span>
+</span><span id="__span-9-36"><a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a>
+</span><span id="__span-9-37"><a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a><span class="nf">  </span><span class="nt">@session-test</span>
+</span><span id="__span-9-38"><a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a><span class="nf">  </span><span class="k">Scenario:</span><span class="nf"> Session management test</span>
+</span><span id="__span-9-39"><a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a><span class="k">    When </span><span class="nf">we create session &quot;</span><span class="s">one</span><span class="nf">&quot; to pg_doorman as &quot;</span><span class="s">example_user_1</span><span class="nf">&quot; with password &quot;&quot; and database &quot;</span><span class="s">example_db</span><span class="nf">&quot;</span>
+</span><span id="__span-9-40"><a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a><span class="nf">    </span><span class="k">And </span><span class="nf">we send SimpleQuery &quot;</span><span class="s">BEGIN</span><span class="nf">&quot; to session &quot;</span><span class="s">one</span><span class="nf">&quot;</span>
+</span><span id="__span-9-41"><a id="__codelineno-9-41" name="__codelineno-9-41" href="#__codelineno-9-41"></a><span class="nf">    </span><span class="k">And </span><span class="nf">we send SimpleQuery &quot;</span><span class="s">SELECT pg_backend_pid()</span><span class="nf">&quot; to session &quot;</span><span class="s">one</span><span class="nf">&quot; and store backend_pid</span>
+</span><span id="__span-9-42"><a id="__codelineno-9-42" name="__codelineno-9-42" href="#__codelineno-9-42"></a><span class="c">    # ... more steps</span>
+</span></code></pre></div>
+<p><strong>Available Rust test steps:</strong></p>
+<p>Protocol comparison (sends to both PostgreSQL and pg_doorman):
+- <code>we login to postgres and pg_doorman as "user" with password "pass" and database "db"</code>
+- <code>we send SimpleQuery "SQL" to both</code>
+- <code>we send CopyFromStdin "COPY ..." with data "..." to both</code>
+- <code>we should receive identical messages from both</code></p>
+<p>Session management (for complex scenarios):
+- <code>we create session "name" to pg_doorman as "user" with password "pass" and database "db"</code>
+- <code>we send SimpleQuery "SQL" to session "name"</code>
+- <code>we send SimpleQuery "SQL" to session "name" and store backend_pid</code>
+- <code>we abort TCP connection for session "name"</code>
+- <code>we sleep 100ms</code></p>
+<p>Cancel request testing:
+- <code>we create session "name" ... and store backend key</code>
+- <code>we send SimpleQuery "SQL" to session "name" without waiting for response</code>
+- <code>we send cancel request for session "name"</code>
+- <code>session "name" should receive cancel error containing "text"</code></p>
+<h3 id="adding-dependencies">Adding Dependencies</h3>
 <p>If you need additional packages in the test environment, modify <code>tests/nix/flake.nix</code>:
 - Add Python packages to <code>pythonEnv</code>
 - Add system packages to <code>runtimePackages</code></p>
