@@ -26,7 +26,7 @@ use crate::errors::{Error, ServerIdentifier};
 use crate::messages::BytesMutReader;
 use crate::messages::*;
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
-use crate::scram_client::ScramSha256;
+use crate::auth::scram_client::ScramSha256;
 use crate::stats::ServerStats;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";

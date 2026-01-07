@@ -47,3 +47,5 @@ pub static CURRENT_MEMORY: Lazy<Arc<AtomicI64>> = Lazy::new(|| Arc::new(AtomicI6
 // Tests
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod protocol_tests;

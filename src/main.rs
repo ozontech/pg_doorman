@@ -57,7 +57,7 @@ use pg_doorman::format_duration;
 use pg_doorman::generate::generate_config;
 use pg_doorman::messages::configure_tcp_socket;
 use pg_doorman::pool::{retain_connections, ClientServerMap, ConnectionPool};
-use pg_doorman::prometheus_exporter::start_prometheus_server;
+use pg_doorman::prometheus::start_prometheus_server;
 use pg_doorman::rate_limit::RateLimiter;
 use pg_doorman::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use pg_doorman::tls::build_acceptor;
