@@ -1,12 +1,23 @@
 extern crate log;
-use crate::cmd_args::{Args, LogFormat};
+
 use log::LevelFilter;
 use std::process;
 use syslog::{BasicLogger, Facility, Formatter3164};
 use tracing_subscriber;
 use tracing_subscriber::EnvFilter;
 
-pub fn init(args: &Args, syslog_name: Option<String>) {
+use super::args::{Args, LogFormat};
+use crate::config::{Config, VERSION};
+
+pub fn init_logging(args: &Args, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    use log::info;
+
+    init(args, config.general.syslog_prog_name.clone());
+    info!("Welcome to PgDoorman! (Version {VERSION})");
+    Ok(())
+}
+
+fn init(args: &Args, syslog_name: Option<String>) {
     if let Some(syslog_name) = syslog_name {
         let formatter = Formatter3164 {
             facility: Facility::LOG_USER,

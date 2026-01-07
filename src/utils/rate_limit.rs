@@ -52,7 +52,7 @@ impl RateLimiter {
 
 #[cfg(test)]
 mod test {
-    use crate::rate_limit::RateLimiter;
+    use super::RateLimiter;
     use std::time::Duration;
     use tokio::time::Instant;
 

@@ -26,7 +26,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 extern crate exitcode;
 
-mod app;
+use pg_doorman::app;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     app::install_panic_hook();

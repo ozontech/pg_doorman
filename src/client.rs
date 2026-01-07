@@ -19,13 +19,13 @@ use crate::admin::handle_admin;
 use crate::auth::authenticate;
 use crate::auth::hba::CheckResult;
 use crate::auth::talos::{extract_talos_token, talos_role_to_string};
-use crate::comments::SqlCommentParser;
+use crate::utils::comments::SqlCommentParser;
 use crate::config::{check_hba, get_config};
 use crate::messages::constants::*;
 use crate::messages::config_socket::configure_tcp_socket_for_cancel;
 use crate::messages::*;
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool, CANCELED_PIDS};
-use crate::rate_limit::RateLimiter;
+use crate::utils::rate_limit::RateLimiter;
 use crate::server::{Server, ServerParameters};
 use crate::stats::{
     ClientStats, ServerStats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,

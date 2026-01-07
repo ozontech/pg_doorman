@@ -35,256 +35,889 @@ const COMMAND_SAVEPOINT: &[u8; 10] = b"SAVEPOINT\0";
 const COMMAND_COMPLETE_BY_DEALLOCATE_ALL: &[u8; 15] = b"DEALLOCATE ALL\0";
 const COMMAND_COMPLETE_BY_DISCARD_ALL: &[u8; 12] = b"DISCARD ALL\0";
 
-pin_project! {
-    #[project = SteamInnerProj]
-    #[derive(Debug)]
-    pub enum StreamInner {
-        TCPPlain {
-            #[pin]
-            stream: TcpStream,
-        },
-        UnixSocket {
-            #[pin]
-            stream: UnixStream,
-        },
-    }
-}
+mod stream {
+    use super::*;
 
-impl AsyncWrite for StreamInner {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
-        let this = self.project();
-        match this {
-            SteamInnerProj::TCPPlain { stream } => stream.poll_write(cx, buf),
-            SteamInnerProj::UnixSocket { stream } => stream.poll_write(cx, buf),
+    pin_project! {
+        #[project = SteamInnerProj]
+        #[derive(Debug)]
+        pub enum StreamInner {
+            TCPPlain {
+                #[pin]
+                stream: TcpStream,
+            },
+            UnixSocket {
+                #[pin]
+                stream: UnixStream,
+            },
         }
     }
 
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        let this = self.project();
-        match this {
-            SteamInnerProj::TCPPlain { stream } => stream.poll_flush(cx),
-            SteamInnerProj::UnixSocket { stream } => stream.poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        let this = self.project();
-        match this {
-            SteamInnerProj::TCPPlain { stream } => stream.poll_shutdown(cx),
-            SteamInnerProj::UnixSocket { stream } => stream.poll_shutdown(cx),
-        }
-    }
-}
-
-impl AsyncRead for StreamInner {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let this = self.project();
-        match this {
-            SteamInnerProj::TCPPlain { stream } => stream.poll_read(cx, buf),
-            SteamInnerProj::UnixSocket { stream } => stream.poll_read(cx, buf),
-        }
-    }
-}
-
-impl StreamInner {
-    pub fn try_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            StreamInner::TCPPlain { stream } => stream.try_write(buf),
-            StreamInner::UnixSocket { stream } => stream.try_write(buf),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-struct CleanupState {
-    /// If server connection requires RESET ALL before checkin because of set statement
-    needs_cleanup_set: bool,
-
-    /// If server connection requires DEALLOCATE ALL before checkin because of prepare statement
-    needs_cleanup_prepare: bool,
-
-    /// If server connection requires CLOSE ALL before checkin because of declare statement
-    needs_cleanup_declare: bool,
-}
-
-impl CleanupState {
-    fn new() -> Self {
-        CleanupState {
-            needs_cleanup_set: false,
-            needs_cleanup_prepare: false,
-            needs_cleanup_declare: false,
-        }
-    }
-
-    #[inline(always)]
-    fn needs_cleanup(&self) -> bool {
-        self.needs_cleanup_set || self.needs_cleanup_prepare || self.needs_cleanup_declare
-    }
-
-    #[inline(always)]
-    fn set_true(&mut self) {
-        self.needs_cleanup_set = true;
-        self.needs_cleanup_prepare = true;
-        self.needs_cleanup_declare = true;
-    }
-
-    #[inline(always)]
-    fn reset(&mut self) {
-        self.needs_cleanup_set = false;
-        self.needs_cleanup_prepare = false;
-        self.needs_cleanup_declare = false;
-    }
-}
-
-impl std::fmt::Display for CleanupState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "SET: {}, PREPARE: {}, DECLARE: {}",
-            self.needs_cleanup_set, self.needs_cleanup_prepare, self.needs_cleanup_declare
-        )
-    }
-}
-
-static TRACKED_PARAMETERS: Lazy<HashSet<String>> = Lazy::new(|| {
-    let mut set = HashSet::new();
-    set.insert("client_encoding".to_string());
-    set.insert("DateStyle".to_string());
-    set.insert("TimeZone".to_string());
-    set.insert("standard_conforming_strings".to_string());
-    set.insert("application_name".to_string());
-    set
-});
-
-#[derive(Debug, Clone)]
-pub struct ServerParameters {
-    parameters: HashMap<String, String>,
-}
-
-impl Default for ServerParameters {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ServerParameters {
-    pub fn new() -> Self {
-        ServerParameters {
-            parameters: HashMap::new(),
-        }
-    }
-    pub fn is_empty(&self) -> bool {
-        self.parameters.is_empty()
-    }
-    pub fn admin() -> Self {
-        let mut server_parameters = ServerParameters {
-            parameters: HashMap::new(),
-        };
-
-        server_parameters.set_param("client_encoding".to_string(), "UTF8".to_string(), false);
-        server_parameters.set_param("DateStyle".to_string(), "ISO, MDY".to_string(), false);
-        server_parameters.set_param("TimeZone".to_string(), "Etc/UTC".to_string(), false);
-        server_parameters.set_param("server_version".to_string(), VERSION.to_string(), true);
-        server_parameters.set_param("server_encoding".to_string(), "UTF-8".to_string(), true);
-        server_parameters.set_param(
-            "standard_conforming_strings".to_string(),
-            "on".to_string(),
-            false,
-        );
-        // (64 bit = on) as of PostgreSQL 10, this is always on.
-        server_parameters.set_param("integer_datetimes".to_string(), "on".to_string(), false);
-        server_parameters.set_param(
-            "application_name".to_string(),
-            "pg_doorman".to_string(),
-            false,
-        );
-
-        server_parameters
-    }
-
-    /// returns true if a tracked parameter was set, false if it was a non-tracked parameter
-    /// if startup is false, then then only tracked parameters will be set
-    pub fn set_param(&mut self, mut key: String, value: String, startup: bool) {
-        // The startup parameter will send uncapitalized keys but parameter status packets will send capitalized keys
-        if key == "timezone" {
-            key = "TimeZone".to_string();
-        } else if key == "datestyle" {
-            key = "DateStyle".to_string();
-        };
-
-        if TRACKED_PARAMETERS.contains(&key) || startup {
-            self.parameters.insert(key, value);
-        }
-    }
-
-    pub fn set_from_hashmap(&mut self, parameters: HashMap<String, String>, startup: bool) {
-        for (key, value) in parameters {
-            self.set_param(key.to_string(), value.to_string(), startup);
-        }
-    }
-
-    // Gets the diff of the parameters
-    #[inline(always)]
-    fn compare_params(&self, incoming_parameters: &ServerParameters) -> HashMap<String, String> {
-        let mut diff = HashMap::new();
-
-        // iterate through tracked parameters
-        for key in TRACKED_PARAMETERS.iter() {
-            if let Some(incoming_value) = incoming_parameters.parameters.get(key) {
-                if let Some(value) = self.parameters.get(key) {
-                    if value != incoming_value {
-                        diff.insert(key.to_string(), incoming_value.to_string());
-                    }
-                }
+    impl AsyncWrite for StreamInner {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<Result<usize, std::io::Error>> {
+            let this = self.project();
+            match this {
+                SteamInnerProj::TCPPlain { stream } => stream.poll_write(cx, buf),
+                SteamInnerProj::UnixSocket { stream } => stream.poll_write(cx, buf),
             }
         }
 
-        diff
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), std::io::Error>> {
+            let this = self.project();
+            match this {
+                SteamInnerProj::TCPPlain { stream } => stream.poll_flush(cx),
+                SteamInnerProj::UnixSocket { stream } => stream.poll_flush(cx),
+            }
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), std::io::Error>> {
+            let this = self.project();
+            match this {
+                SteamInnerProj::TCPPlain { stream } => stream.poll_shutdown(cx),
+                SteamInnerProj::UnixSocket { stream } => stream.poll_shutdown(cx),
+            }
+        }
     }
 
-    pub fn get_application_name(&self) -> &String {
-        // Can unwrap because we set it in the constructor
-        self.parameters.get("application_name").unwrap()
+    impl AsyncRead for StreamInner {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let this = self.project();
+            match this {
+                SteamInnerProj::TCPPlain { stream } => stream.poll_read(cx, buf),
+                SteamInnerProj::UnixSocket { stream } => stream.poll_read(cx, buf),
+            }
+        }
     }
 
-    fn add_parameter_message(key: &str, value: &str, buffer: &mut BytesMut) {
-        buffer.put_u8(b'S');
+    impl StreamInner {
+        pub fn try_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            match self {
+                StreamInner::TCPPlain { stream } => stream.try_write(buf),
+                StreamInner::UnixSocket { stream } => stream.try_write(buf),
+            }
+        }
+    }
 
-        // 4 is len of i32, the plus for the null terminator
-        let len = 4 + key.len() + 1 + value.len() + 1;
+    pub(crate) async fn create_unix_stream_inner(
+        host: &str,
+        port: u16,
+    ) -> Result<StreamInner, Error> {
+        let stream = match UnixStream::connect(&format!("{host}/.s.PGSQL.{port}")).await {
+            Ok(s) => s,
+            Err(err) => {
+                error!("Could not connect to server: {err}");
+                return Err(Error::SocketError(format!(
+                    "Could not connect to server: {err}"
+                )));
+            }
+        };
 
-        buffer.put_i32(len as i32);
+        configure_unix_socket(&stream);
 
-        buffer.put_slice(key.as_bytes());
-        buffer.put_u8(0);
-        buffer.put_slice(value.as_bytes());
-        buffer.put_u8(0);
+        Ok(StreamInner::UnixSocket { stream })
+    }
+
+    pub(crate) async fn create_tcp_stream_inner(
+        host: &str,
+        port: u16,
+        tls: bool,
+        _verify_server_certificate: bool,
+    ) -> Result<StreamInner, Error> {
+        let mut stream = match TcpStream::connect(&format!("{host}:{port}")).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                error!("Could not connect to server: {err}");
+                return Err(Error::SocketError(format!(
+                    "Could not connect to server: {err}"
+                )));
+            }
+        };
+
+        // TCP timeouts.
+        configure_tcp_socket(&stream);
+
+        let stream = if tls {
+            // Request a TLS connection
+            ssl_request(&mut stream).await?;
+
+            let response = match stream.read_u8().await {
+                Ok(response) => response as char,
+                Err(err) => {
+                    return Err(Error::SocketError(format!(
+                        "Failed to read TLS response from server: {err}"
+                    )));
+                }
+            };
+
+            match response {
+                // Server supports TLS
+                'S' => {
+                    error!("Connection to server via tls is not supported");
+                    return Err(Error::SocketError("Server TLS is unsupported".to_string()));
+                }
+
+                // Server does not support TLS
+                'N' => StreamInner::TCPPlain { stream },
+
+                // Something else?
+                m => {
+                    return Err(Error::SocketError(format!("Received unexpected response '{}' (ASCII: {}) during TLS negotiation. Expected 'S' (supports TLS) or 'N' (does not support TLS).", m, m as u8)));
+                }
+            }
+        } else {
+            StreamInner::TCPPlain { stream }
+        };
+
+        Ok(stream)
     }
 }
 
-impl From<&ServerParameters> for BytesMut {
-    fn from(server_parameters: &ServerParameters) -> Self {
-        let mut bytes = BytesMut::new();
+pub use stream::StreamInner;
+use stream::{create_tcp_stream_inner, create_unix_stream_inner};
 
-        for (key, value) in &server_parameters.parameters {
-            ServerParameters::add_parameter_message(key, value, &mut bytes);
+mod cleanup {
+    #[derive(Copy, Clone, Debug)]
+    pub(crate) struct CleanupState {
+        /// If server connection requires RESET ALL before checkin because of set statement
+        pub(crate) needs_cleanup_set: bool,
+
+        /// If server connection requires DEALLOCATE ALL before checkin because of prepare statement
+        pub(crate) needs_cleanup_prepare: bool,
+
+        /// If server connection requires CLOSE ALL before checkin because of declare statement
+        pub(crate) needs_cleanup_declare: bool,
+    }
+
+    impl CleanupState {
+        pub(crate) fn new() -> Self {
+            CleanupState {
+                needs_cleanup_set: false,
+                needs_cleanup_prepare: false,
+                needs_cleanup_declare: false,
+            }
         }
 
-        bytes
+        #[inline(always)]
+        pub(crate) fn needs_cleanup(&self) -> bool {
+            self.needs_cleanup_set || self.needs_cleanup_prepare || self.needs_cleanup_declare
+        }
+
+        #[inline(always)]
+        pub(crate) fn set_true(&mut self) {
+            self.needs_cleanup_set = true;
+            self.needs_cleanup_prepare = true;
+            self.needs_cleanup_declare = true;
+        }
+
+        #[inline(always)]
+        pub(crate) fn reset(&mut self) {
+            self.needs_cleanup_set = false;
+            self.needs_cleanup_prepare = false;
+            self.needs_cleanup_declare = false;
+        }
+    }
+
+    impl std::fmt::Display for CleanupState {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "SET: {}, PREPARE: {}, DECLARE: {}",
+                self.needs_cleanup_set, self.needs_cleanup_prepare, self.needs_cleanup_declare
+            )
+        }
+    }
+}
+
+use cleanup::CleanupState;
+
+mod parameters {
+    use super::*;
+
+    static TRACKED_PARAMETERS: Lazy<HashSet<String>> = Lazy::new(|| {
+        let mut set = HashSet::new();
+        set.insert("client_encoding".to_string());
+        set.insert("DateStyle".to_string());
+        set.insert("TimeZone".to_string());
+        set.insert("standard_conforming_strings".to_string());
+        set.insert("application_name".to_string());
+        set
+    });
+
+    #[derive(Debug, Clone)]
+    pub struct ServerParameters {
+        pub(crate) parameters: HashMap<String, String>,
+    }
+
+    impl Default for ServerParameters {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ServerParameters {
+        pub fn new() -> Self {
+            ServerParameters {
+                parameters: HashMap::new(),
+            }
+        }
+
+        #[inline(always)]
+        pub fn as_hashmap(&self) -> HashMap<String, String> {
+            self.parameters.clone()
+        }
+        pub fn is_empty(&self) -> bool {
+            self.parameters.is_empty()
+        }
+        pub fn admin() -> Self {
+            let mut server_parameters = ServerParameters {
+                parameters: HashMap::new(),
+            };
+
+            server_parameters.set_param("client_encoding".to_string(), "UTF8".to_string(), false);
+            server_parameters.set_param("DateStyle".to_string(), "ISO, MDY".to_string(), false);
+            server_parameters.set_param("TimeZone".to_string(), "Etc/UTC".to_string(), false);
+            server_parameters.set_param("server_version".to_string(), VERSION.to_string(), true);
+            server_parameters.set_param("server_encoding".to_string(), "UTF-8".to_string(), true);
+            server_parameters.set_param(
+                "standard_conforming_strings".to_string(),
+                "on".to_string(),
+                false,
+            );
+            // (64 bit = on) as of PostgreSQL 10, this is always on.
+            server_parameters.set_param("integer_datetimes".to_string(), "on".to_string(), false);
+            server_parameters.set_param(
+                "application_name".to_string(),
+                "pg_doorman".to_string(),
+                false,
+            );
+
+            server_parameters
+        }
+
+        /// returns true if a tracked parameter was set, false if it was a non-tracked parameter
+        /// if startup is false, then then only tracked parameters will be set
+        pub fn set_param(&mut self, mut key: String, value: String, startup: bool) {
+            // The startup parameter will send uncapitalized keys but parameter status packets will send capitalized keys
+            if key == "timezone" {
+                key = "TimeZone".to_string();
+            } else if key == "datestyle" {
+                key = "DateStyle".to_string();
+            };
+
+            if TRACKED_PARAMETERS.contains(&key) || startup {
+                self.parameters.insert(key, value);
+            }
+        }
+
+        pub fn set_from_hashmap(&mut self, parameters: HashMap<String, String>, startup: bool) {
+            for (key, value) in parameters {
+                self.set_param(key.to_string(), value.to_string(), startup);
+            }
+        }
+
+        // Gets the diff of the parameters
+        #[inline(always)]
+        pub(crate) fn compare_params(
+            &self,
+            incoming_parameters: &ServerParameters,
+        ) -> HashMap<String, String> {
+            let mut diff = HashMap::new();
+
+            // iterate through tracked parameters
+            for key in TRACKED_PARAMETERS.iter() {
+                if let Some(incoming_value) = incoming_parameters.parameters.get(key) {
+                    if let Some(value) = self.parameters.get(key) {
+                        if value != incoming_value {
+                            diff.insert(key.to_string(), incoming_value.to_string());
+                        }
+                    }
+                }
+            }
+
+            diff
+        }
+
+        pub fn get_application_name(&self) -> &String {
+            // Can unwrap because we set it in the constructor
+            self.parameters.get("application_name").unwrap()
+        }
+
+        fn add_parameter_message(key: &str, value: &str, buffer: &mut BytesMut) {
+            buffer.put_u8(b'S');
+            // 4 is len of i32, the plus for the null terminator
+            let len = 4 + key.len() + 1 + value.len() + 1;
+
+            buffer.put_i32(len as i32);
+
+            buffer.put_slice(key.as_bytes());
+            buffer.put_u8(0);
+            buffer.put_slice(value.as_bytes());
+            buffer.put_u8(0);
+        }
+    }
+
+    impl From<&ServerParameters> for BytesMut {
+        fn from(server_parameters: &ServerParameters) -> Self {
+            let mut bytes = BytesMut::new();
+
+            for (key, value) in &server_parameters.parameters {
+                ServerParameters::add_parameter_message(key, value, &mut bytes);
+            }
+
+            bytes
+        }
+    }
+}
+
+pub use parameters::ServerParameters;
+
+mod prepared_statements {
+    use super::*;
+
+    pub(crate) fn add_to_cache(
+        prepared_statement_cache: &mut Option<LruCache<String, ()>>,
+        stats: &Arc<ServerStats>,
+        name: &str,
+    ) -> Option<String> {
+        let cache = match prepared_statement_cache {
+            Some(cache) => cache,
+            None => return None,
+        };
+
+        stats.prepared_cache_add();
+
+        // If we evict something, we need to close it on the server
+        if let Some((evicted_name, _)) = cache.push(name.to_string(), ()) {
+            if evicted_name != name {
+                return Some(evicted_name);
+            }
+        };
+
+        None
+    }
+
+    pub(crate) fn remove_from_cache(
+        prepared_statement_cache: &mut Option<LruCache<String, ()>>,
+        stats: &Arc<ServerStats>,
+        name: &str,
+    ) {
+        let cache = match prepared_statement_cache {
+            Some(cache) => cache,
+            None => return,
+        };
+
+        stats.prepared_cache_remove();
+        cache.pop(name);
+    }
+
+    pub(crate) fn has(
+        prepared_statement_cache: &Option<LruCache<String, ()>>,
+        stats: &Arc<ServerStats>,
+        name: &str,
+    ) -> bool {
+        let cache = match prepared_statement_cache {
+            Some(cache) => cache,
+            None => return false,
+        };
+        let exists = cache.contains(name);
+        if exists {
+            stats.prepared_cache_hit();
+        } else {
+            stats.prepared_cache_miss();
+        }
+        exists
+    }
+}
+
+mod protocol_io {
+    use super::*;
+
+    pub(crate) async fn send_and_flush_timeout(
+        server: &mut Server,
+        messages: &BytesMut,
+        duration: Duration,
+    ) -> Result<(), Error> {
+        match timeout(duration, send_and_flush(server, messages)).await {
+            Ok(result) => result,
+            Err(err) => {
+                server.mark_bad("flush timeout error");
+                error!(
+                    "Flush timeout for server {} (database: {}, user: {}). Operation took longer than the configured timeout: {}",
+                    server.address.host,
+                    server.address.database,
+                    server.address.username,
+                    err
+                );
+                Err(Error::FlushTimeout)
+            }
+        }
+    }
+
+    pub(crate) async fn send_and_flush(
+        server: &mut Server,
+        messages: &BytesMut,
+    ) -> Result<(), Error> {
+        server.stats.data_sent(messages.len());
+        server.stats.wait_writing();
+
+        match write_all_flush(&mut server.stream, messages).await {
+            Ok(_) => {
+                // Successfully sent to server
+                server.stats.wait_idle();
+                server.last_activity = SystemTime::now();
+                Ok(())
+            }
+            Err(err) => {
+                server.stats.wait_idle();
+                error!(
+                    "Terminating connection to server {} (database: {}, user: {}) due to error: {}",
+                    server.address.host,
+                    server.address.database,
+                    server.address.username,
+                    err
+                );
+                server.mark_bad("flush to server error");
+                Err(err)
+            }
+        }
+    }
+
+    /// Receive data from the server in response to a client request.
+    /// This function must be called multiple times while `server.is_data_available()` is true
+    /// in order to receive all data the server has to offer.
+    pub(crate) async fn recv<C>(
+        server: &mut Server,
+        mut client_stream: C,
+        mut client_server_parameters: Option<&mut ServerParameters>,
+    ) -> Result<BytesMut, Error>
+    where
+        C: tokio::io::AsyncWrite + std::marker::Unpin,
+    {
+        loop {
+            server.stats.wait_reading();
+
+            // In async mode, use a short timeout to avoid blocking when no more data available
+            let (code_u8, message_len) = if server.is_async() {
+                match tokio::time::timeout(
+                    Duration::from_millis(100),
+                    read_message_header(&mut server.stream),
+                )
+                .await
+                {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        // Timeout - no more data available in async mode
+                        server.data_available = false;
+                        break;
+                    }
+                }
+            } else {
+                read_message_header(&mut server.stream).await?
+            };
+            // if message server is too big.
+            if server.max_message_size > 0
+                && message_len > server.max_message_size
+                && code_u8 as char == 'D'
+            {
+                // send current buffer + header.
+                server.buffer.put_u8(code_u8);
+                server.buffer.put_i32(message_len);
+                let prev_bad = server.bad;
+                server.bad = true;
+                write_all_flush(&mut client_stream, &server.buffer).await?;
+                match proxy_copy_data_with_timeout(
+                    Duration::from_millis(get_config().general.proxy_copy_data_timeout),
+                    &mut server.stream,
+                    &mut client_stream,
+                    message_len as usize - mem::size_of::<i32>(),
+                )
+                .await
+                {
+                    Ok(_) => (),
+                    Err(err) => {
+                        server.mark_bad(err.to_string().as_str());
+                        return Err(err);
+                    }
+                }
+                if !prev_bad {
+                    server.bad = false;
+                }
+                server
+                    .stats
+                    .data_received(server.buffer.len() + message_len as usize);
+                server.last_activity = SystemTime::now();
+                server.data_available = true;
+                server.buffer.clear();
+                server.stats.wait_idle();
+                return Ok(server.buffer.clone());
+            }
+            // COPY protocol, 'd'
+            if server.max_message_size > 0
+                && message_len > server.max_message_size
+                && code_u8 as char == 'd'
+            {
+                // send current buffer + header.
+                server.buffer.put_u8(code_u8);
+                server.buffer.put_i32(message_len);
+                let prev_bad = server.bad;
+                server.bad = true;
+                write_all_flush(&mut client_stream, &server.buffer).await?;
+                proxy_copy_data(
+                    &mut server.stream,
+                    &mut client_stream,
+                    message_len as usize - mem::size_of::<i32>(),
+                )
+                .await?;
+                server.bad = prev_bad;
+                server
+                    .stats
+                    .data_received(server.buffer.len() + message_len as usize);
+                server.last_activity = SystemTime::now();
+                server.buffer.clear();
+                server.stats.wait_idle();
+                return Ok(server.buffer.clone());
+            }
+
+            if message_len > MAX_MESSAGE_SIZE {
+                error!(
+                    "Message size limit exceeded for server connection to {} (database: {}, user: {}). Received message size: {} bytes, maximum allowed: {} bytes. Connection will be terminated.",
+                    server.address.host,
+                    server.address.database,
+                    server.address.username,
+                    message_len,
+                    MAX_MESSAGE_SIZE
+                );
+                server.mark_bad(
+                    format!(
+                        "Message size limit exceeded: {message_len} bytes (max: {MAX_MESSAGE_SIZE} bytes)"
+                    )
+                    .as_str(),
+                );
+                return Err(MaxMessageSize);
+            }
+
+            let mut message = match read_message_data(&mut server.stream, code_u8, message_len).await {
+                Ok(message) => {
+                    server.stats.wait_idle();
+                    message
+                }
+                Err(err) => {
+                    error!(
+                        "Terminating server connection to {} (database: {}, user: {}) while reading message data. Error details: {err}",
+                        server.address.host,
+                        server.address.database,
+                        server.address.username
+                    );
+                    server.mark_bad(format!("Failed to read message data: {err}").as_str());
+                    return Err(err);
+                }
+            };
+
+            // Buffer the message we'll forward to the client later.
+            server.buffer.put(&message[..]);
+
+            let code = message.get_u8() as char;
+            let _len = message.get_i32();
+
+            match code {
+                // ReadyForQuery
+                'Z' => {
+                    let transaction_state = message.get_u8() as char;
+
+                    match transaction_state {
+                        // In transaction.
+                        'T' => {
+                            server.is_aborted = false;
+                            server.in_transaction = true;
+                        }
+
+                        // Idle, transaction over.
+                        'I' => {
+                            server.is_aborted = false;
+                            server.in_transaction = false;
+                        }
+
+                        // Some error occurred, the transaction was rolled back.
+                        'E' => {
+                            server.is_aborted = true;
+                            server.in_transaction = true;
+                            if let Ok(msg) = PgErrorMsg::parse(&message) {
+                                error!(
+                                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Position: {}]",
+                                    server.address.host,
+                                    server.address.database,
+                                    server.address.username,
+                                    msg.severity,
+                                    msg.code,
+                                    msg.message,
+                                    msg.hint.as_deref().unwrap_or("none"),
+                                    msg.position.unwrap_or(0)
+                                );
+                            } else {
+                                error!(
+                                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Could not parse error details.",
+                                    server.address.host,
+                                    server.address.database,
+                                    server.address.username
+                                );
+                            }
+                        }
+
+                        // Something totally unexpected, this is not a Postgres server we know.
+                        _ => {
+                            let err = Error::ProtocolSyncError(format!(
+                                "Protocol synchronization error with server {} (database: {}, user: {}). Received unknown transaction state character: '{}' (ASCII: {}). This may indicate an incompatible PostgreSQL server version or a corrupted message.",
+                                server.address.host,
+                                server.address.database,
+                                server.address.username,
+                                transaction_state,
+                                transaction_state as u8
+                            ));
+                            error!("{err}");
+                            server.mark_bad(
+                                format!(
+                                    "Protocol sync error: unknown transaction state '{transaction_state}'"
+                                )
+                                .as_str(),
+                            );
+                            return Err(err);
+                        }
+                    };
+
+                    // There is no more data available from the server.
+                    server.data_available = false;
+                    break;
+                }
+
+                // ErrorResponse
+                'E' => {
+                    if let Ok(msg) = PgErrorMsg::parse(&message) {
+                        let transaction_status = if server.in_transaction {
+                            "in active transaction"
+                        } else {
+                            "not in transaction"
+                        };
+                        let copy_mode_status = if server.in_copy_mode {
+                            "in COPY mode"
+                        } else {
+                            "not in COPY mode"
+                        };
+
+                        error!(
+                            "PostgreSQL server error from {} (database: {}, user: {}). Status: [{}, {}]. Error details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Detail: \"{}\", Position: {}]",
+                            server.address.host,
+                            server.address.database,
+                            server.address.username,
+                            transaction_status,
+                            copy_mode_status,
+                            msg.severity,
+                            msg.code,
+                            msg.message,
+                            msg.hint.as_deref().unwrap_or("none"),
+                            msg.detail.as_deref().unwrap_or("none"),
+                            msg.position.unwrap_or(0)
+                        );
+                    } else {
+                        error!(
+                            "PostgreSQL server error from {} (database: {}, user: {}). Could not parse error details.",
+                            server.address.host,
+                            server.address.database,
+                            server.address.username
+                        );
+                    }
+
+                    // Exit COPY mode if we're in it
+                    if server.in_copy_mode {
+                        server.in_copy_mode = false;
+                    }
+
+                    // Reset prepared statements cache on error since we can't determine the exact cause
+                    if server.prepared_statement_cache.is_some() {
+                        server.cleanup_state.needs_cleanup_prepare = true;
+                    }
+
+                    // Handle async mode errors
+                    if server.is_async() {
+                        server.data_available = false;
+                        server.cleanup_state.needs_cleanup();
+                        server.mark_bad("PostgreSQL error in asynchronous operation mode");
+                    }
+                }
+
+                // CommandComplete
+                'C' => {
+                    if server.in_copy_mode {
+                        server.in_copy_mode = false;
+                    }
+                    // CommandComplete SET одинаковый для set local и set, чистим.
+                    if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
+                        server.cleanup_state.needs_cleanup_set = true;
+                    }
+                    if message.len() == 10 && message.to_vec().eq(COMMAND_SAVEPOINT) {
+                        server.use_savepoint = true;
+                    }
+                    if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DECLARE) {
+                        server.cleanup_state.needs_cleanup_declare = true;
+                    }
+                    if message.len() == 12 && message.to_vec().eq(COMMAND_COMPLETE_BY_DISCARD_ALL) {
+                        server.registering_prepared_statement.clear();
+                        if server.prepared_statement_cache.is_some() {
+                            warn!("Cleanup server {server} prepared statements cache (DISCARD ALL)");
+                            server.prepared_statement_cache.as_mut().unwrap().clear();
+                        }
+                    }
+                    if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DEALLOCATE_ALL) {
+                        server.registering_prepared_statement.clear();
+                        if server.prepared_statement_cache.is_some() {
+                            warn!(
+                                "Cleanup server {server} prepared statements cache (DEALLOCATE ALL)"
+                            );
+                            server.prepared_statement_cache.as_mut().unwrap().clear();
+                        }
+                    }
+                    // CommandComplete doesn't have more data after it
+                    // The general exit condition will handle breaking the loop
+                }
+
+                'S' => {
+                    let key = message.read_string().unwrap();
+                    let value = message.read_string().unwrap();
+
+                    if let Some(client_server_parameters) = client_server_parameters.as_mut() {
+                        client_server_parameters.set_param(key.clone(), value.clone(), false);
+                        if server.log_client_parameter_status_changes {
+                            info!(
+                                "Server {server}: client parameter status change: {key} = {value}"
+                            )
+                        }
+                    }
+
+                    server.server_parameters.set_param(key, value, false);
+                }
+
+                // DataRow
+                'D' => {
+                    // More data is available after this message, this is not the end of the reply.
+                    server.data_available = true;
+
+                    // Don't flush yet, the more we buffer, the faster this goes...up to a limit.
+                    if server.buffer.len() >= 8196 {
+                        break;
+                    }
+                }
+
+                // CopyInResponse: copy is starting from client to server.
+                'G' => {
+                    server.in_copy_mode = true;
+                    break;
+                }
+
+                // CopyOutResponse: copy is starting from the server to the client.
+                'H' => {
+                    server.in_copy_mode = true;
+                    server.data_available = true;
+                    break;
+                }
+
+                // CopyData
+                'd' => {
+                    // Don't flush yet, buffer until we reach limit
+                    if server.buffer.len() >= 8196 {
+                        break;
+                    }
+                }
+
+                // CopyDone
+                // Buffer until ReadyForQuery shows up, so don't exit the loop yet.
+                'c' => (),
+
+                // ParseComplete
+                // Response to Parse message in extended query protocol
+                '1' => {
+                    if server.is_async() {
+                        server.data_available = false;
+                    }
+                }
+
+                // BindComplete
+                // Response to Bind message in extended query protocol
+                '2' => {
+                    if server.is_async() {
+                        server.data_available = false;
+                    }
+                }
+
+                // CloseComplete
+                // Response to Close message in extended query protocol
+                '3' => {
+                    if server.is_async() {
+                        server.data_available = false;
+                    }
+                }
+
+                // ParameterDescription
+                // Response to Describe message for a statement
+                't' => {
+                    if server.is_async() {
+                        server.data_available = false;
+                    }
+                }
+
+                // PortalSuspended
+                // Indicates that Execute completed but portal still has rows
+                's' => {
+                    if server.is_async() {
+                        server.data_available = false;
+                    }
+                }
+
+                // NoData
+                // Response to Describe when statement/portal produces no rows
+                // https://www.postgresql.org/docs/current/protocol-flow.html
+                'n' => {
+                    if server.is_async() {
+                        server.data_available = false;
+                    }
+                }
+
+                // Anything else, e.g. errors, notices, etc.
+                // Keep buffering until ReadyForQuery shows up.
+                _ => (),
+            };
+        }
+
+        let bytes = server.buffer.clone();
+
+        // Keep track of how much data we got from the server for stats.
+        server.stats.data_received(bytes.len());
+
+        // Clear the buffer for next query.
+        if server.buffer.len() > 8196 {
+            server.buffer = BytesMut::with_capacity(8196);
+        } else {
+            // Clear the buffer for next query.
+            server.buffer.clear();
+        }
+
+        // Successfully received data from server
+        server.last_activity = SystemTime::now();
+
+        // Pass the data back to the client.
+        Ok(bytes)
     }
 }
 
@@ -411,7 +1044,7 @@ impl Server {
 
     #[inline(always)]
     pub fn server_parameters_as_hashmap(&self) -> HashMap<String, String> {
-        self.server_parameters.parameters.clone()
+        self.server_parameters.as_hashmap()
     }
 
     /// Receive data from the server in response to a client request.
@@ -864,37 +1497,10 @@ impl Server {
         messages: &BytesMut,
         duration: Duration,
     ) -> Result<(), Error> {
-        match timeout(duration, self.send_and_flush(messages)).await {
-            Ok(result) => result,
-            Err(err) => {
-                self.mark_bad("flush timeout error");
-                error!("Flush timeout for server {} (database: {}, user: {}). Operation took longer than the configured timeout: {}", 
-                      self.address.host, self.address.database, self.address.username, err);
-                Err(Error::FlushTimeout)
-            }
-        }
+        protocol_io::send_and_flush_timeout(self, messages, duration).await
     }
     pub async fn send_and_flush(&mut self, messages: &BytesMut) -> Result<(), Error> {
-        self.stats.data_sent(messages.len());
-        self.stats.wait_writing();
-
-        match write_all_flush(&mut self.stream, messages).await {
-            Ok(_) => {
-                // Successfully sent to server
-                self.stats.wait_idle();
-                self.last_activity = SystemTime::now();
-                Ok(())
-            }
-            Err(err) => {
-                self.stats.wait_idle();
-                error!(
-                    "Terminating connection to server {} (database: {}, user: {}) due to error: {}",
-                    self.address.host, self.address.database, self.address.username, err
-                );
-                self.mark_bad("flush to server error");
-                Err(err)
-            }
-        }
+        protocol_io::send_and_flush(self, messages).await
     }
 
     /// If the server is still inside a transaction.
@@ -1012,31 +1618,15 @@ impl Server {
     }
 
     fn add_prepared_statement_to_cache(&mut self, name: &str) -> Option<String> {
-        let cache = match &mut self.prepared_statement_cache {
-            Some(cache) => cache,
-            None => return None,
-        };
-
-        self.stats.prepared_cache_add();
-
-        // If we evict something, we need to close it on the server
-        if let Some((evicted_name, _)) = cache.push(name.to_string(), ()) {
-            if evicted_name != name {
-                return Some(evicted_name);
-            }
-        };
-
-        None
+        prepared_statements::add_to_cache(&mut self.prepared_statement_cache, &self.stats, name)
     }
 
     fn remove_prepared_statement_from_cache(&mut self, name: &str) {
-        let cache = match &mut self.prepared_statement_cache {
-            Some(cache) => cache,
-            None => return,
-        };
-
-        self.stats.prepared_cache_remove();
-        cache.pop(name);
+        prepared_statements::remove_from_cache(
+            &mut self.prepared_statement_cache,
+            &self.stats,
+            name,
+        );
     }
 
     pub async fn register_prepared_statement(
@@ -1107,17 +1697,7 @@ impl Server {
     /// Updates the prepared statement cache hit/miss counters.
     #[inline]
     pub fn has_prepared_statement(&mut self, name: &str) -> bool {
-        let cache = match &self.prepared_statement_cache {
-            Some(cache) => cache,
-            None => return false,
-        };
-        let exists = cache.contains(name);
-        if exists {
-            self.stats.prepared_cache_hit();
-        } else {
-            self.stats.prepared_cache_miss();
-        }
-        exists
+        prepared_statements::has(&self.prepared_statement_cache, &self.stats, name)
     }
 
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {
@@ -1723,73 +2303,4 @@ impl Drop for Server {
             crate::format_duration(&duration)
         );
     }
-}
-
-async fn create_unix_stream_inner(host: &str, port: u16) -> Result<StreamInner, Error> {
-    let stream = match UnixStream::connect(&format!("{host}/.s.PGSQL.{port}")).await {
-        Ok(s) => s,
-        Err(err) => {
-            error!("Could not connect to server: {err}");
-            return Err(Error::SocketError(format!(
-                "Could not connect to server: {err}"
-            )));
-        }
-    };
-
-    configure_unix_socket(&stream);
-
-    Ok(StreamInner::UnixSocket { stream })
-}
-
-async fn create_tcp_stream_inner(
-    host: &str,
-    port: u16,
-    tls: bool,
-    _verify_server_certificate: bool,
-) -> Result<StreamInner, Error> {
-    let mut stream = match TcpStream::connect(&format!("{host}:{port}")).await {
-        Ok(stream) => stream,
-        Err(err) => {
-            error!("Could not connect to server: {err}");
-            return Err(Error::SocketError(format!(
-                "Could not connect to server: {err}"
-            )));
-        }
-    };
-
-    // TCP timeouts.
-    configure_tcp_socket(&stream);
-
-    let stream = if tls {
-        // Request a TLS connection
-        ssl_request(&mut stream).await?;
-
-        let response = match stream.read_u8().await {
-            Ok(response) => response as char,
-            Err(err) => {
-                return Err(Error::SocketError(format!(
-                    "Failed to read TLS response from server: {err}"
-                )));
-            }
-        };
-
-        match response {
-            // Server supports TLS
-            'S' => {
-                error!("Connection to server via tls is not supported");
-                return Err(Error::SocketError("Server TLS is unsupported".to_string()));
-            }
-
-            // Server does not support TLS
-            'N' => StreamInner::TCPPlain { stream },
-
-            // Something else?
-            m => {
-                return Err(Error::SocketError(format!("Received unexpected response '{}' (ASCII: {}) during TLS negotiation. Expected 'S' (supports TLS) or 'N' (does not support TLS).", m, m as u8)));
-            }
-        }
-    } else {
-        StreamInner::TCPPlain { stream }
-    };
-    Ok(stream)
 }

@@ -1,9 +1,9 @@
 use log::{error, info};
 use std::path::Path;
 
-use pg_doorman::config::Config;
-use pg_doorman::rate_limit::RateLimiter;
-use pg_doorman::tls::build_acceptor;
+use crate::config::Config;
+use crate::rate_limit::RateLimiter;
+use crate::tls::build_acceptor;
 
 #[derive(Clone)]
 pub struct TlsState {

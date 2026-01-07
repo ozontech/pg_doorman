@@ -22,15 +22,15 @@ use std::os::fd::AsRawFd;
 #[cfg(not(windows))]
 use std::os::unix::process::CommandExt;
 
-use pg_doorman::cmd_args::Args;
-use pg_doorman::config::{get_config, reload_config, Config};
-use pg_doorman::core_affinity;
-use pg_doorman::daemon;
-use pg_doorman::format_duration;
-use pg_doorman::messages::configure_tcp_socket;
-use pg_doorman::pool::{retain_connections, ClientServerMap, ConnectionPool};
-use pg_doorman::prometheus::start_prometheus_server;
-use pg_doorman::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
+use crate::app::args::Args;
+use crate::config::{get_config, reload_config, Config};
+use crate::utils::core_affinity;
+use crate::daemon;
+use crate::format_duration;
+use crate::messages::configure_tcp_socket;
+use crate::pool::{retain_connections, ClientServerMap, ConnectionPool};
+use crate::prometheus::start_prometheus_server;
+use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 
 use crate::app::tls::init_tls;
 
@@ -303,7 +303,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         // max clients.
                         if current_clients as u64 > max_connections {
                             warn!("Client {addr:?}: too many clients already");
-                           match pg_doorman::client::client_entrypoint_too_many_clients_already(
+                           match crate::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map, shutdown_rx, drain_tx).await {
                                 Ok(()) => (),
                                 Err(err) => {
@@ -315,7 +315,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         }
                         let start = chrono::offset::Utc::now().naive_utc();
 
-                        match pg_doorman::client::client_entrypoint(
+                        match crate::client::client_entrypoint(
                             socket,
                             client_server_map,
                             shutdown_rx,

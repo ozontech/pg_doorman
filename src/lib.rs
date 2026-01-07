@@ -1,20 +1,31 @@
 pub mod admin;
+pub mod app;
 pub mod auth;
 pub mod client;
-pub mod cmd_args;
-pub mod comments;
 pub mod config;
-pub mod core_affinity;
 pub mod daemon;
 pub mod errors;
-pub mod generate;
-pub mod logger;
+pub mod logger {
+    pub use crate::app::logger::*;
+}
 pub mod messages;
 pub mod pool;
 pub mod prometheus;
-pub mod rate_limit;
 pub mod server;
 pub mod stats;
+pub mod utils;
+
+// Backward-compatible module path (was `src/cmd_args.rs`).
+pub mod cmd_args {
+    pub use crate::app::args::*;
+
+    pub fn parse() -> Args {
+        crate::app::args::parse()
+    }
+}
+
+// Backward-compatible re-exports (old module paths).
+pub use utils::{comments, core_affinity, rate_limit};
 
 pub use config::tls;
 
