@@ -112,7 +112,7 @@ where
     let prev_bad = server.bad;
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
-    
+
     // Stream the large message directly
     match proxy_copy_data_with_timeout(
         Duration::from_millis(get_config().general.proxy_copy_data_timeout),
@@ -128,11 +128,11 @@ where
             return Err(err);
         }
     }
-    
+
     if !prev_bad {
         server.bad = false;
     }
-    
+
     server
         .stats
         .data_received(server.buffer.len() + message_len as usize);
@@ -160,7 +160,7 @@ where
     let prev_bad = server.bad;
     server.bad = true;
     write_all_flush(client_stream, &server.buffer).await?;
-    
+
     // Stream the large message directly
     proxy_copy_data(
         &mut server.stream,
@@ -168,7 +168,7 @@ where
         message_len as usize - mem::size_of::<i32>(),
     )
     .await?;
-    
+
     server.bad = prev_bad;
     server
         .stats
@@ -235,10 +235,8 @@ fn handle_ready_for_query(server: &mut Server, message: &mut BytesMut) -> Result
             ));
             error!("{err}");
             server.mark_bad(
-                format!(
-                    "Protocol sync error: unknown transaction state '{transaction_state}'"
-                )
-                .as_str(),
+                format!("Protocol sync error: unknown transaction state '{transaction_state}'")
+                    .as_str(),
             );
             return Err(err);
         }
@@ -312,7 +310,7 @@ fn handle_command_complete(server: &mut Server, message: &BytesMut) {
     if server.in_copy_mode {
         server.in_copy_mode = false;
     }
-    
+
     // Check for commands that require cleanup at connection checkin
     if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
         server.cleanup_state.needs_cleanup_set = true;
@@ -399,7 +397,7 @@ where
         {
             return handle_large_data_row(server, &mut client_stream, code_u8, message_len).await;
         }
-        
+
         // Handle large CopyData messages that exceed max_message_size
         if server.max_message_size > 0
             && message_len > server.max_message_size

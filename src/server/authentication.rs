@@ -23,7 +23,7 @@ pub(crate) async fn handle_authentication(
 ) -> Result<(), Error> {
     match auth_code {
         AUTHENTICATION_SUCCESSFUL => Ok(()),
-        
+
         // SASL authentication
         SASL => {
             let scram = scram_client_auth.as_mut().ok_or_else(|| {
@@ -55,16 +55,14 @@ pub(crate) async fn handle_authentication(
             let sasl_response = scram.message();
             let mut res = BytesMut::new();
             res.put_u8(b'p');
-            res.put_i32(
-                4 + SCRAM_SHA_256.len() as i32 + 1 + 4 + sasl_response.len() as i32,
-            );
+            res.put_i32(4 + SCRAM_SHA_256.len() as i32 + 1 + 4 + sasl_response.len() as i32);
             res.put_slice(format!("{SCRAM_SHA_256}\0").as_bytes());
             res.put_i32(sasl_response.len() as i32);
             res.put(sasl_response);
             write_all_flush(stream, &res).await?;
             Ok(())
         }
-        
+
         // SASL continuation
         SASL_CONTINUE => {
             let mut sasl_data = vec![0u8; (len - 8) as usize];
@@ -85,15 +83,12 @@ pub(crate) async fn handle_authentication(
             write_all_flush(stream, &res).await?;
             Ok(())
         }
-        
+
         // SASL final
         SASL_FINAL => {
             let mut sasl_final = vec![0u8; len as usize - 8];
             stream.read_exact(&mut sasl_final).await.map_err(|_| {
-                Error::ServerStartupError(
-                    "sasl final message".into(),
-                    server_identifier.clone(),
-                )
+                Error::ServerStartupError("sasl final message".into(), server_identifier.clone())
             })?;
 
             scram_client_auth
@@ -102,7 +97,7 @@ pub(crate) async fn handle_authentication(
                 .finish(&BytesMut::from(&sasl_final[..]))?;
             Ok(())
         }
-        
+
         // Clear password authentication
         AUTHENTICATION_CLEAR_PASSWORD => {
             if user.server_username.is_none() || user.server_password.is_none() {
@@ -136,9 +131,7 @@ pub(crate) async fn handle_authentication(
                     .to_string(),
             )
             .await
-            .map_err(|err| {
-                Error::ServerAuthError(err.to_string(), server_identifier.clone())
-            })?;
+            .map_err(|err| Error::ServerAuthError(err.to_string(), server_identifier.clone()))?;
 
             let mut password_response = BytesMut::new();
             password_response.put_u8(b'p');
@@ -153,7 +146,7 @@ pub(crate) async fn handle_authentication(
             })?;
             Ok(())
         }
-        
+
         // MD5 password authentication
         MD5_ENCRYPTED_PASSWORD => {
             if user.server_username.is_none() || user.server_password.is_none() {
@@ -162,14 +155,15 @@ pub(crate) async fn handle_authentication(
                     server_identifier.username, server_identifier.database,
                 );
                 return Err(Error::ServerAuthError(
-                    "server wants md5 authentication, but auth for this server is not configured".into(),
+                    "server wants md5 authentication, but auth for this server is not configured"
+                        .into(),
                     server_identifier.clone(),
                 ));
             }
 
             let server_username = user.server_username.as_ref().unwrap().clone();
             let server_password = user.server_password.as_ref().unwrap().clone();
-            
+
             let mut salt = BytesMut::with_capacity(4);
             stream.read_buf(&mut salt).await.map_err(|err| {
                 Error::ServerAuthError(
@@ -196,7 +190,7 @@ pub(crate) async fn handle_authentication(
             })?;
             Ok(())
         }
-        
+
         _ => {
             error!(
                 "this type of authentication on the server {}@{} is not supported, auth code: {}",

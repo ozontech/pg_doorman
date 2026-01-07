@@ -1,6 +1,9 @@
 mod core;
 mod entrypoint;
+mod error_handling;
+mod protocol;
 mod startup;
+mod transaction;
 mod util;
 
 pub use core::Client;

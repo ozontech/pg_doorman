@@ -40,7 +40,10 @@ pub(crate) async fn handle_startup_error(
 
             match PgErrorMsg::parse(&error) {
                 Ok(f) => {
-                    error!("Get server error - {} {}: {}", f.severity, f.code, f.message);
+                    error!(
+                        "Get server error - {} {}: {}",
+                        f.severity, f.code, f.message
+                    );
                     Err(Error::ServerStartupError(
                         f.message,
                         server_identifier.clone(),

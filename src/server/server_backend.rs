@@ -19,8 +19,7 @@ use crate::config::{get_config, Address, User};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::PgErrorMsg;
 use crate::messages::{
-    read_message_data, simple_query, startup, sync,
-    BytesMutReader, Close, Parse,
+    read_message_data, simple_query, startup, sync, BytesMutReader, Close, Parse,
 };
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
 use crate::stats::ServerStats;
@@ -33,7 +32,7 @@ use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInn
 use super::{prepared_statements, protocol_io, startup_cancel};
 
 /// Represents a connection to a PostgreSQL server (backend).
-/// 
+///
 /// This structure maintains the state of a single connection to a PostgreSQL database server,
 /// including connection details, transaction state, buffering, and statistics.
 /// The connection can be reused across multiple client sessions through connection pooling.
@@ -55,7 +54,7 @@ pub struct Server {
 
     /// PostgreSQL backend process ID, used for query cancellation requests.
     process_id: i32,
-    
+
     /// Secret key associated with the backend process, required for query cancellation.
     secret_key: i32,
 
@@ -253,7 +252,7 @@ impl Server {
     ) -> Result<(), Error> {
         protocol_io::send_and_flush_timeout(self, messages, duration).await
     }
-    
+
     /// Sends messages to the server and flushes the write buffer immediately.
     /// This ensures all data is transmitted to the server without delay.
     pub async fn send_and_flush(&mut self, messages: &BytesMut) -> Result<(), Error> {
@@ -582,7 +581,7 @@ impl Server {
                             server_identifier.clone(),
                         )
                     })?;
-                    
+
                     handle_authentication(
                         &mut stream,
                         auth_code,
@@ -593,7 +592,7 @@ impl Server {
                     )
                     .await?;
                 }
-                
+
                 // ErrorResponse
                 'E' => {
                     return handle_startup_error(&mut stream, len, &server_identifier)
