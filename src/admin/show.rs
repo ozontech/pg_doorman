@@ -1,21 +1,17 @@
-// Standard library imports
+//! Admin SHOW commands implementation.
+
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-// External crate imports
-use bytes::{Buf, BufMut, BytesMut};
-use log::{debug, error, info};
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
+use bytes::{BufMut, BytesMut};
 use tokio::time::Instant;
 
-// Internal crate imports
-use crate::config::{get_config, reload_config, VERSION};
+use crate::config::{get_config, VERSION};
 use crate::errors::Error;
-use crate::messages::protocol::{command_complete, data_row, error_response, row_description};
+use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::{get_all_pools, ClientServerMap};
+use crate::pool::get_all_pools;
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
@@ -26,98 +22,14 @@ use crate::stats::{
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
 
-/// Handle admin client.
-pub async fn handle_admin<T>(
-    stream: &mut T,
-    mut query: BytesMut,
-    client_server_map: ClientServerMap,
-) -> Result<(), Error>
-where
-    T: tokio::io::AsyncWrite + std::marker::Unpin,
-{
-    let code = query.get_u8() as char;
-
-    if code != 'Q' {
-        return Err(Error::ProtocolSyncError(format!(
-            "Invalid code, expected 'Q' but got '{code}'"
-        )));
-    }
-
-    let len = query.get_i32() as usize;
-    let query = String::from_utf8_lossy(&query[..len - 5]).to_string();
-
-    debug!("Admin query: {query}");
-
-    let query_parts: Vec<&str> = query.trim_end_matches(';').split_whitespace().collect();
-
-    match query_parts[0].to_ascii_uppercase().as_str() {
-        "RELOAD" => reload(stream, client_server_map).await,
-        "SHUTDOWN" => shutdown(stream).await,
-        "SHOW" => {
-            if query_parts.len() != 2 {
-                error!("unsupported admin subcommand for SHOW: {query_parts:?}");
-                error_response(
-                    stream,
-                    "Unsupported query against the admin database, please use SHOW HELP for a list of supported subcommands",
-                    "58000",
-                )
-                .await
-            } else {
-                match query_parts[1].to_ascii_uppercase().as_str() {
-                    "HELP" => show_help(stream).await,
-                    "CONFIG" => show_config(stream).await,
-                    "DATABASES" => show_databases(stream).await,
-                    "LISTS" => show_lists(stream).await,
-                    "POOLS" => show_pools(stream).await,
-                    "POOLS_EXTENDED" => show_pools_extended(stream).await,
-                    "CLIENTS" => show_clients(stream).await,
-                    "SERVERS" => show_servers(stream).await,
-                    "CONNECTIONS" => show_connections(stream).await,
-                    "STATS" => show_stats(stream).await,
-                    "VERSION" => show_version(stream).await,
-                    "USERS" => show_users(stream).await,
-                    #[cfg(target_os = "linux")]
-                    "SOCKETS" => show_sockets(stream).await,
-                    _ => {
-                        error!(
-                            "unsupported admin subcommand for SHOW: {}",
-                            query_parts[1].to_ascii_uppercase().as_str()
-                        );
-                        error_response(
-                            stream,
-                            "Unsupported SHOW query against the admin database",
-                            "58000",
-                        )
-                        .await
-                    }
-                }
-            }
-        }
-        _ => {
-            error!(
-                "unsupported admin command: {}",
-                query_parts[0].to_ascii_uppercase().as_str()
-            );
-            error_response(
-                stream,
-                "Unsupported query against the admin database",
-                "58000",
-            )
-            .await
-        }
-    }
-}
-
 /// Column-oriented statistics.
-async fn show_lists<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_lists<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let client_stats = get_client_stats();
     let server_stats = get_server_stats();
-
     let columns = vec![("list", DataType::Text), ("items", DataType::Int4)];
-
     let mut users = 1;
     let mut databases = 1;
     for (_, _) in get_all_pools() {
@@ -172,36 +84,30 @@ where
     res.put(data_row(&vec!["dns_zones".to_string(), "0".to_string()]));
     res.put(data_row(&vec!["dns_queries".to_string(), "0".to_string()]));
     res.put(data_row(&vec!["dns_pending".to_string(), "0".to_string()]));
-
     res.put(command_complete("SHOW"));
-
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show PgDoorman version.
-async fn show_version<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_version<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let mut res = BytesMut::new();
-
     res.put(row_description(&vec![("version", DataType::Text)]));
     res.put(data_row(&vec![format!("PgDoorman {}", VERSION)]));
     res.put(command_complete("SHOW"));
-
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show utilization of connection pools for each pool.
-async fn show_pools<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_pools<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -212,17 +118,15 @@ where
         res.put(data_row(&pool_stats.generate_show_pools_row()));
     });
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show extended utilization of connection pools for each pool.
-async fn show_pools_extended<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_pools_extended<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -235,22 +139,19 @@ where
         res.put(data_row(&pool_stats.generate_show_pools_extended_row()));
     });
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show all available options.
-async fn show_help<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_help<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let columns = vec![("item", DataType::Text)];
-
     let help_items = [
         "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION",
         "SHOW LISTS",
@@ -259,27 +160,21 @@ where
         "RELOAD",
         "SHUTDOWN",
     ];
-
     let mut res = BytesMut::new();
-
     res.put(row_description(&columns));
-
     for item in help_items {
         res.put(data_row(&vec![item.to_string()]));
     }
-
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show databases.
-async fn show_databases<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_databases<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -297,17 +192,13 @@ where
         ("max_connections", DataType::Int4),
         ("current_connections", DataType::Int4),
     ];
-
     let mut res = BytesMut::new();
-
     res.put(row_description(&columns));
-
     for (_, pool) in get_all_pools() {
         let pool_config = pool.settings.clone();
         let database_name = &pool.address().database;
         let address = pool.address();
         let pool_state = pool.pool_state();
-
         res.put(data_row(&vec![
             address.name(),                                          // name
             address.host.to_string(),                                // host
@@ -323,49 +214,22 @@ where
         ]));
     }
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
-    write_all_half(stream, &res).await
-}
-
-/// Reload the configuration file without restarting the process.
-async fn reload<T>(stream: &mut T, client_server_map: ClientServerMap) -> Result<(), Error>
-where
-    T: tokio::io::AsyncWrite + std::marker::Unpin,
-{
-    info!("Reloading config");
-
-    reload_config(client_server_map).await?;
-
-    get_config().show();
-
-    let mut res = BytesMut::new();
-
-    res.put(command_complete("RELOAD"));
-
-    // ReadyForQuery
-    res.put_u8(b'Z');
-    res.put_i32(5);
-    res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Shows current configuration.
-async fn show_config<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_config<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let config = &get_config();
     let config: HashMap<String, String> = config.into();
-
     // Configs that cannot be changed without restarting.
     let immutables = ["host", "port", "connect_timeout"];
-
     // Columns
     let columns = vec![
         ("key", DataType::Text),
@@ -373,11 +237,9 @@ where
         ("default", DataType::Text),
         ("changeable", DataType::Text),
     ];
-
     // Response data
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-
     // DataRow rows
     for (key, value) in config {
         let changeable = if immutables.iter().filter(|col| *col == &key).count() == 1 {
@@ -385,24 +247,19 @@ where
         } else {
             "yes".to_string()
         };
-
         let row = vec![key, value, "-".to_string(), changeable];
-
         res.put(data_row(&row));
     }
-
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show stats.
-async fn show_stats<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_stats<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -412,19 +269,16 @@ where
     pool_lookup.iter().for_each(|(_identifier, pool_stats)| {
         res.put(data_row(&pool_stats.generate_show_stats_row()));
     });
-
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show currently connected clients
-async fn show_clients<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_clients<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -442,11 +296,9 @@ where
         ("error_count", DataType::Numeric),
         ("age_seconds", DataType::Numeric),
     ];
-
     let new_map = get_client_stats();
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-
     for (_, client) in new_map {
         let row = vec![
             format!("{:#010X}", client.client_id()),
@@ -465,21 +317,18 @@ where
                 .as_secs()
                 .to_string(),
         ];
-
         res.put(data_row(&row));
     }
-
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
-async fn show_connections<T>(stream: &mut T) -> Result<(), Error>
+/// Show connections.
+pub async fn show_connections<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -492,7 +341,6 @@ where
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-
     let total = TOTAL_CONNECTION_COUNTER.load(Ordering::Relaxed);
     let tls = TLS_CONNECTION_COUNTER.load(Ordering::Relaxed);
     let plain = PLAIN_CONNECTION_COUNTER.load(Ordering::Relaxed);
@@ -506,18 +354,16 @@ where
         cancel.to_string(),
     ];
     res.put(data_row(&row));
-
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
+
 /// Show currently connected servers
-async fn show_servers<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_servers<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -538,11 +384,9 @@ where
         ("prepare_cache_miss", DataType::Numeric),
         ("prepare_cache_size", DataType::Numeric),
     ];
-
     let new_map = get_server_stats();
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-
     for (_, server) in new_map {
         let application_name = server.application_name.read();
         let row = vec![
@@ -574,60 +418,26 @@ where
                 .load(Ordering::Relaxed)
                 .to_string(),
         ];
-
         res.put(data_row(&row));
     }
-
     res.put(command_complete("SHOW"));
-
     // ReadyForQuery
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
-    write_all_half(stream, &res).await
-}
-
-/// Send response packets for shutdown.
-async fn shutdown<T>(stream: &mut T) -> Result<(), Error>
-where
-    T: tokio::io::AsyncWrite + std::marker::Unpin,
-{
-    let mut res = BytesMut::new();
-
-    res.put(row_description(&vec![("success", DataType::Text)]));
-
-    let mut shutdown_success = "t";
-
-    let pid = std::process::id();
-    if signal::kill(Pid::from_raw(pid.try_into().unwrap()), Signal::SIGINT).is_err() {
-        error!("Unable to send SIGINT to PID: {pid}");
-        shutdown_success = "f";
-    }
-
-    res.put(data_row(&vec![shutdown_success.to_string()]));
-
-    res.put(command_complete("SHUTDOWN"));
-
-    res.put_u8(b'Z');
-    res.put_i32(5);
-    res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 /// Show Users.
-async fn show_users<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_users<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let mut res = BytesMut::new();
-
     res.put(row_description(&vec![
         ("name", DataType::Text),
         ("pool_mode", DataType::Text),
     ]));
-
     for (user_pool, pool) in get_all_pools() {
         let pool_config = &pool.settings;
         res.put(data_row(&vec![
@@ -635,28 +445,23 @@ where
             pool_config.pool_mode.to_string(),
         ]));
     }
-
     res.put(command_complete("SHOW"));
-
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }
 
 #[cfg(target_os = "linux")]
-async fn show_sockets<T>(stream: &mut T) -> Result<(), Error>
+pub async fn show_sockets<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let mut res = BytesMut::new();
-
     let sockets_info = match get_socket_states_count(std::process::id()) {
         Ok(info) => info,
         Err(_) => return Err(Error::ServerError),
     };
-
     res.put(row_description(&vec![
         // tcp
         ("tcp_established", DataType::Numeric),
@@ -698,12 +503,9 @@ where
         ("unknown", DataType::Numeric),
     ]));
     res.put(data_row(&sockets_info.to_vector()));
-
     res.put(command_complete("SHOW"));
-
     res.put_u8(b'Z');
     res.put_i32(5);
     res.put_u8(b'I');
-
     write_all_half(stream, &res).await
 }

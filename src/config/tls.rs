@@ -260,7 +260,7 @@ mod tests {
             );
             assert!(
                 result.is_ok(),
-                "Failed to build acceptor without CA: {:?}",
+                "Failed to build acceptor without CA and mode: {:?}",
                 result.err()
             );
 

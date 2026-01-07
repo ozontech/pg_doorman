@@ -10,12 +10,16 @@ Thank you for your interest in contributing to PgDoorman! This guide will help y
 
 ### Prerequisites
 
-Before you begin, make sure you have the following installed:
+For running integration tests, you only need:
 
+- [Docker](https://docs.docker.com/get-docker/) (required)
+- [Make](https://www.gnu.org/software/make/) (required)
+
+**Nix installation is NOT required** — test environment reproducibility is ensured by Docker containers built with Nix.
+
+For local development (optional):
 - [Rust](https://www.rust-lang.org/tools/install) (latest stable version)
 - [Git](https://git-scm.com/downloads)
-- [Docker](https://docs.docker.com/get-docker/) (optional, for running tests)
-- [Make](https://www.gnu.org/software/make/) (optional, for running test scripts)
 
 ### Setting Up Your Development Environment
 
@@ -58,7 +62,7 @@ Before you begin, make sure you have the following installed:
 
 ## Integration Testing
 
-PgDoorman uses BDD (Behavior-Driven Development) tests with a Docker-based test environment. **Nix installation is NOT required** — everything runs inside Docker containers.
+PgDoorman uses BDD (Behavior-Driven Development) tests with a Docker-based test environment. **Reproducibility is guaranteed** — all tests run inside Docker containers with identical environments.
 
 ### Test Environment
 
@@ -72,11 +76,9 @@ The test Docker image (built with Nix) includes:
 
 ### Running Tests
 
-Navigate to the `tests` directory and use Make:
+From the **project root directory**:
 
 ```bash
-cd tests
-
 # Pull the test image from registry
 make pull
 
@@ -86,74 +88,182 @@ make local-build
 # Run all BDD tests
 make test-bdd
 
-# Run tests for specific language
-make test-bdd-go          # Go client tests
-make test-bdd-python      # Python client tests
-make test-bdd-nodejs      # Node.js client tests
-make test-bdd-dotnet      # .NET client tests
-
-# Run tests for specific feature
-make test-bdd-hba         # HBA authentication tests
-make test-bdd-prometheus  # Prometheus metrics tests
-make test-bdd-rollback    # Rollback functionality tests
+# Run tests with specific tag
+make test-bdd TAGS=@copy-protocol
+make test-bdd TAGS=@cancel
+make test-bdd TAGS=@admin-commands
 
 # Open interactive shell in test container
 make shell
-
-# Build pg_doorman inside container
-make tests-build
 ```
 
-You can also use `tests/nix/run-tests.sh` directly:
+### Debug Mode
+
+Enable debug output with the `DEBUG=1` environment variable:
 
 ```bash
-./tests/nix/run-tests.sh bdd              # Run all BDD tests
-./tests/nix/run-tests.sh bdd @go          # Run tests tagged with @go
-./tests/nix/run-tests.sh bdd @python      # Run tests tagged with @python
-./tests/nix/run-tests.sh shell            # Interactive shell
-./tests/nix/run-tests.sh help             # Show all available commands
+DEBUG=1 make test-bdd TAGS=@copy-protocol
 ```
 
-### Writing New Tests
+When `DEBUG=1` is set:
+- Tracing is enabled with DEBUG level
+- Thread IDs are shown in logs
+- Line numbers are included
+- PostgreSQL protocol details are visible
+- Detailed step-by-step execution is logged
+
+This is useful when:
+- Debugging failing tests
+- Understanding protocol-level communication
+- Investigating timing issues
+- Developing new test scenarios
+
+### Available Test Tags
+
+| Tag | Description |
+|-----|-------------|
+| `@go` | Go client tests |
+| `@python` | Python client tests |
+| `@nodejs` | Node.js client tests |
+| `@dotnet` | .NET client tests |
+| `@rust` | Rust protocol-level tests |
+| `@copy-protocol` | COPY protocol tests |
+| `@cancel` | Query cancellation tests |
+| `@admin-commands` | Admin console commands |
+| `@admin-leak` | Admin connection leak tests |
+| `@buffer-cleanup` | Buffer cleanup tests |
+| `@rollback` | Rollback functionality tests |
+| `@hba` | HBA authentication tests |
+| `@prometheus` | Prometheus metrics tests |
+
+## Writing New Tests
 
 Tests are organized as BDD feature files in `tests/bdd/features/`. Each feature file describes test scenarios using Gherkin syntax.
 
-#### Structure
+### Shell Tests (Recommended for Client Libraries)
 
-1. **Feature file** (`tests/bdd/features/my-feature.feature`):
-   ```gherkin
-   @mytag
-   Feature: My feature description
-   
-     Background:
-       Given PostgreSQL started with pg_hba.conf:
-         """
-         host all all 127.0.0.1/32 trust
-         """
-       And pg_doorman started with config:
-         """
-         [general]
-         host = "127.0.0.1"
-         port = ${DOORMAN_PORT}
-         ...
-         """
-   
-     Scenario: Test something
-       When I run shell command:
-         """
-         cd tests/go && go test -v -run TestMyTest ./mypackage
-         """
-       Then the command should succeed
-       And the command output should contain "PASS"
-   ```
+Shell tests run external test commands (Go, Python, Node.js, etc.) and verify their output. This is the simplest way to test client library compatibility.
 
-2. **Test implementation** (in your preferred language):
-   - Go: `tests/go/mypackage/my_test.go`
-   - Python: `tests/python/test_my.py`
-   - Node.js: `tests/nodejs/my.test.js`
-   - .NET: `tests/dotnet/MyTest.cs`
+**Example** (`tests/bdd/features/my-feature.feature`):
 
-#### Adding Dependencies
+```gherkin
+@go @mytag
+Feature: My feature description
+
+  Background:
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local all all trust
+      host all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [pools.example_db.users.0]
+      username = "example_user_1"
+      password = "md58a67a0c805a5ee0384ea28e0dea557b6"
+      pool_size = 40
+      """
+
+  Scenario: Test my Go client
+    When I run shell command:
+      """
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
+      cd tests/go && go test -v -run TestMyTest ./mypackage
+      """
+    Then the command should succeed
+    And the command output should contain "PASS"
+```
+
+**Test implementation** (in your preferred language):
+- Go: `tests/go/mypackage/my_test.go`
+- Python: `tests/python/test_my.py`
+- Node.js: `tests/nodejs/my.test.js`
+- .NET: `tests/dotnet/MyTest.cs`
+
+### Rust Protocol-Level Tests
+
+For testing PostgreSQL protocol behavior at the wire level, use Rust-based tests. These tests directly send and receive PostgreSQL protocol messages, allowing precise control and comparison.
+
+**Example** (`tests/bdd/features/protocol-test.feature`):
+
+```gherkin
+@rust @my-protocol-test
+Feature: Protocol behavior test
+  Testing that pg_doorman handles protocol messages identically to PostgreSQL
+
+  Background:
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local all all trust
+      host all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [pools.example_db.users.0]
+      username = "example_user_1"
+      password = ""
+      pool_size = 10
+      """
+
+  @my-scenario
+  Scenario: Query gives identical results from PostgreSQL and pg_doorman
+    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to both
+    Then we should receive identical messages from both
+
+  @session-test
+  Scenario: Session management test
+    When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "one"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid
+    # ... more steps
+```
+
+**Available Rust test steps:**
+
+Protocol comparison (sends to both PostgreSQL and pg_doorman):
+- `we login to postgres and pg_doorman as "user" with password "pass" and database "db"`
+- `we send SimpleQuery "SQL" to both`
+- `we send CopyFromStdin "COPY ..." with data "..." to both`
+- `we should receive identical messages from both`
+
+Session management (for complex scenarios):
+- `we create session "name" to pg_doorman as "user" with password "pass" and database "db"`
+- `we send SimpleQuery "SQL" to session "name"`
+- `we send SimpleQuery "SQL" to session "name" and store backend_pid`
+- `we abort TCP connection for session "name"`
+- `we sleep 100ms`
+
+Cancel request testing:
+- `we create session "name" ... and store backend key`
+- `we send SimpleQuery "SQL" to session "name" without waiting for response`
+- `we send cancel request for session "name"`
+- `session "name" should receive cancel error containing "text"`
+
+### Adding Dependencies
 
 If you need additional packages in the test environment, modify `tests/nix/flake.nix`:
 - Add Python packages to `pythonEnv`

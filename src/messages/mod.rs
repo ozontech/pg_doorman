@@ -9,6 +9,7 @@ use once_cell::sync::Lazy;
 
 // Declare submodules
 pub mod config_socket;
+pub mod constants;
 pub mod error;
 pub mod extended;
 pub mod protocol;
@@ -35,8 +36,8 @@ pub use socket::{
 };
 pub use types::{vec_to_string, BytesMutReader, DataType};
 
-// Re-export constants
-pub use crate::constants::{AUTHENTICATION_CLEAR_PASSWORD, MESSAGE_TERMINATOR, SCRAM_SHA_256};
+// Re-export protocol constants
+pub use constants::*;
 
 // Constants
 pub const MAX_MESSAGE_SIZE: i32 = 256 * 1024 * 1024;
@@ -45,5 +46,7 @@ pub const MAX_MESSAGE_SIZE: i32 = 256 * 1024 * 1024;
 pub static CURRENT_MEMORY: Lazy<Arc<AtomicI64>> = Lazy::new(|| Arc::new(AtomicI64::new(0)));
 
 // Tests
+#[cfg(test)]
+mod protocol_tests;
 #[cfg(test)]
 mod tests;
