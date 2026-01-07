@@ -7,9 +7,8 @@ pub(crate) mod protocol_io;
 pub(crate) mod startup_cancel;
 pub(crate) mod stream;
 
-#[allow(clippy::module_inception)]
-mod server;
+mod server_backend;
 
 pub use parameters::ServerParameters;
-pub use server::Server;
+pub use server_backend::Server;
 pub use stream::StreamInner;

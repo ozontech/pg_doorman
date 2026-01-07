@@ -16,7 +16,7 @@ use crate::messages::{
 };
 
 use super::parameters::ServerParameters;
-use super::server::Server;
+use super::server_backend::Server;
 
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
