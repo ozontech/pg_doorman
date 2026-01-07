@@ -21,7 +21,7 @@ use crate::auth::hba::CheckResult;
 use crate::auth::talos::{extract_talos_token, talos_role_to_string};
 use crate::comments::SqlCommentParser;
 use crate::config::{check_hba, get_config};
-use crate::constants::*;
+use crate::messages::constants::*;
 use crate::messages::config_socket::configure_tcp_socket_for_cancel;
 use crate::messages::*;
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool, CANCELED_PIDS};

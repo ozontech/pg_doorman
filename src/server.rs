@@ -20,7 +20,7 @@ use tokio::time::timeout;
 // Internal crate imports
 use crate::auth::jwt::{new_claims, sign_with_jwt_priv_key};
 use crate::config::{get_config, Address, User, VERSION};
-use crate::constants::*;
+use crate::messages::constants::*;
 use crate::errors::Error::MaxMessageSize;
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::BytesMutReader;

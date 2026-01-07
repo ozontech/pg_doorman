@@ -17,8 +17,7 @@ use tokio::io::AsyncReadExt;
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
-use crate::tls;
-use crate::tls::{load_identity, TLSMode};
+use self::tls::{load_identity, TLSMode};
 
 // Sub-modules
 mod address;
@@ -27,6 +26,7 @@ mod include;
 mod pool;
 mod prometheus;
 mod talos;
+pub mod tls;
 mod user;
 
 #[cfg(test)]

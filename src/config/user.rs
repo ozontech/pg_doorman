@@ -3,7 +3,7 @@
 use serde_derive::{Deserialize, Serialize};
 
 use crate::auth::jwt::load_jwt_pub_key;
-use crate::constants::JWT_PUB_KEY_PASSWORD_PREFIX;
+use crate::messages::JWT_PUB_KEY_PASSWORD_PREFIX;
 use crate::errors::Error;
 
 use super::PoolMode;

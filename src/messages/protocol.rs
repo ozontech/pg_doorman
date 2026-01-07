@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::mem;
 // External crate imports
-use crate::constants::SCRAM_SHA_256;
+use crate::messages::constants::SCRAM_SHA_256;
 use bytes::{Buf, BufMut, BytesMut};
 use md5::{Digest, Md5};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

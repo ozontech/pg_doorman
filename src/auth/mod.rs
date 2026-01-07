@@ -22,7 +22,7 @@ use crate::auth::scram::{
     prepare_server_final_message, prepare_server_first_response,
 };
 use crate::config::{get_config, PoolMode};
-use crate::constants::{
+use crate::messages::constants::{
     JWT_PUB_KEY_PASSWORD_PREFIX, MD5_PASSWORD_PREFIX, SASL_CONTINUE, SASL_FINAL, SCRAM_SHA_256,
 };
 use crate::errors::{ClientIdentifier, Error};
@@ -550,5 +550,7 @@ where
 }
 
 
+#[cfg(test)]
+mod mocks;
 #[cfg(test)]
 mod tests;

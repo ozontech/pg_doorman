@@ -8,6 +8,7 @@ use std::sync::Arc;
 use once_cell::sync::Lazy;
 
 // Declare submodules
+pub mod constants;
 pub mod config_socket;
 pub mod error;
 pub mod extended;
@@ -35,8 +36,8 @@ pub use socket::{
 };
 pub use types::{vec_to_string, BytesMutReader, DataType};
 
-// Re-export constants
-pub use crate::constants::{AUTHENTICATION_CLEAR_PASSWORD, MESSAGE_TERMINATOR, SCRAM_SHA_256};
+// Re-export protocol constants
+pub use constants::*;
 
 // Constants
 pub const MAX_MESSAGE_SIZE: i32 = 256 * 1024 * 1024;

@@ -4,7 +4,6 @@ pub mod client;
 pub mod cmd_args;
 pub mod comments;
 pub mod config;
-pub mod constants;
 pub mod core_affinity;
 pub mod daemon;
 pub mod errors;
@@ -16,7 +15,8 @@ pub mod prometheus;
 pub mod rate_limit;
 pub mod server;
 pub mod stats;
-pub mod tls;
+
+pub use config::tls;
 
 /// Format chrono::Duration to be more human-friendly.
 ///

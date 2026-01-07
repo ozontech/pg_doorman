@@ -6,7 +6,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::mem;
 
 use crate::auth::hba::PgHba;
-use crate::tls;
+use super::tls;
 
 use super::Include;
 
