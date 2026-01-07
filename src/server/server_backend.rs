@@ -2,7 +2,6 @@
 
 // Standard library imports
 use std::collections::{HashMap, VecDeque};
-use std::mem;
 use std::num::NonZeroUsize;
 use std::string::ToString;
 use std::sync::Arc;
@@ -15,96 +14,118 @@ use lru::LruCache;
 use tokio::io::{AsyncReadExt, BufStream};
 
 // Internal crate imports
-use crate::auth::jwt::{new_claims, sign_with_jwt_priv_key};
 use crate::auth::scram_client::ScramSha256;
 use crate::config::{get_config, Address, User};
 use crate::errors::{Error, ServerIdentifier};
-use crate::messages::constants::*;
 use crate::messages::PgErrorMsg;
 use crate::messages::{
-    md5_hash_password, read_message_data, simple_query, startup, sync, write_all_flush,
+    read_message_data, simple_query, startup, sync,
     BytesMutReader, Close, Parse,
 };
 use crate::pool::{ClientServerMap, CANCELED_PIDS};
 use crate::stats::ServerStats;
 
+use super::authentication::handle_authentication;
 use super::cleanup::CleanupState;
 use super::parameters::ServerParameters;
+use super::startup_error::handle_startup_error;
 use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
 use super::{prepared_statements, protocol_io, startup_cancel};
 
-/// Server state.
+/// Represents a connection to a PostgreSQL server (backend).
+/// 
+/// This structure maintains the state of a single connection to a PostgreSQL database server,
+/// including connection details, transaction state, buffering, and statistics.
+/// The connection can be reused across multiple client sessions through connection pooling.
 #[derive(Debug)]
 pub struct Server {
-    /// Server host, e.g. localhost,
-    /// port, e.g. 5432, and role, e.g. primary or replica.
+    /// Server address configuration including host, port, database, username, and role (primary/replica).
     pub(crate) address: Address,
 
-    /// Server connection.
+    /// Buffered TCP or Unix socket stream for communication with the PostgreSQL server.
     pub(crate) stream: BufStream<StreamInner>,
 
-    /// Our server response buffer. We buffer data before we give it to the client.
+    /// Response buffer for accumulating server messages before forwarding them to the client.
+    /// This allows batching multiple messages and reduces the number of write operations.
     pub(crate) buffer: BytesMut,
 
-    /// Server information the server sent us over on startup.
+    /// Server runtime parameters received during startup (e.g., client_encoding, TimeZone, DateStyle).
+    /// These parameters are tracked and synchronized with clients to maintain session consistency.
     pub(crate) server_parameters: ServerParameters,
 
-    /// Backend id and secret key used for query cancellation.
+    /// PostgreSQL backend process ID, used for query cancellation requests.
     process_id: i32,
+    
+    /// Secret key associated with the backend process, required for query cancellation.
     secret_key: i32,
 
-    /// Is the server inside a transaction or idle.
+    /// Transaction state: true if the server is currently inside a transaction block.
     pub(crate) in_transaction: bool,
 
-    /// Is the server inside a transaction and aborted.
+    /// Aborted transaction state: true if the current transaction has failed and requires ROLLBACK.
+    /// When true, the server will reject all commands except ROLLBACK/COMMIT.
     pub(crate) is_aborted: bool,
 
-    /// Is there more data for the client to read.
+    /// Indicates whether more data is available from the server to be read.
+    /// Set to false when ReadyForQuery message is received.
     pub(crate) data_available: bool,
 
-    /// Is the server in copy-in or copy-out modes
+    /// COPY mode state: true when the server is in COPY IN or COPY OUT mode.
+    /// In this mode, data transfer follows a different protocol.
     pub(crate) in_copy_mode: bool,
 
-    /// Is the server in async mode (Flush instead of Sync)
+    /// Async mode state: true when using Flush messages instead of Sync.
+    /// In async mode, the server doesn't wait for ReadyForQuery after each command.
     async_mode: bool,
 
-    /// Is the server broken? We'll remote it from the pool if so.
+    /// Connection health flag: true if the connection is broken and should be removed from the pool.
+    /// Set to true on protocol errors, I/O errors, or unexpected server behavior.
     pub(crate) bad: bool,
 
-    /// If server connection requires reset statements before checkin
+    /// Tracks whether the connection needs cleanup (RESET ALL, DEALLOCATE ALL, CLOSE ALL)
+    /// before being returned to the pool. Set when SET, PREPARE, or DECLARE statements are executed.
     pub(crate) cleanup_state: CleanupState,
 
-    /// Mapping of clients and servers used for query cancellation.
+    /// Shared mapping of client-to-server connections for query cancellation support.
+    /// Allows canceling queries by mapping client process IDs to server process IDs.
     client_server_map: ClientServerMap,
 
-    /// Server connected at.
+    /// Timestamp when this connection was established to the server.
     connected_at: chrono::naive::NaiveDateTime,
 
-    /// Reports various metrics, e.g. data sent & received.
+    /// Statistics collector for this server connection (bytes sent/received, queries executed, etc.).
     pub stats: Arc<ServerStats>,
 
-    /// Application name using the server at the moment.
+    /// Application name of the client currently using this server connection.
+    /// Updated when the connection is checked out from the pool.
     application_name: String,
 
-    /// Last time that a successful server send or response happened
+    /// Timestamp of the last successful I/O operation (send or receive).
+    /// Used to detect idle connections and implement connection timeouts.
     pub last_activity: SystemTime,
 
-    /// Should clean up dirty connections?
+    /// Configuration flag: if true, execute cleanup statements (RESET ALL, etc.) on dirty connections
+    /// before returning them to the pool. If false, discard dirty connections instead.
     cleanup_connections: bool,
 
-    /// Transaction use savepoint?
+    /// Transaction savepoint mode: if true, use savepoints for nested transaction control.
     pub(crate) use_savepoint: bool,
 
-    /// Log client parameter status changes
+    /// Configuration flag: if true, log when server parameters change for debugging purposes.
     pub(crate) log_client_parameter_status_changes: bool,
 
-    /// Prepared statements
+    /// LRU cache of prepared statement names currently registered on this server connection.
+    /// When the cache is full, evicted statements are automatically closed on the server.
+    /// None if prepared statement caching is disabled.
     pub(crate) prepared_statement_cache: Option<LruCache<String, ()>>,
 
-    /// Prepared statement being currently registered on the server.
+    /// Queue of prepared statement names currently being registered on the server.
+    /// Used to track Parse messages that haven't been confirmed yet.
     pub(crate) registering_prepared_statement: VecDeque<String>,
 
-    /// Max message size
+    /// Maximum message size (in bytes) before switching to streaming mode for large DataRow messages.
+    /// Messages larger than this threshold are streamed directly to avoid excessive memory usage.
+    /// A value of 0 disables streaming.
     pub(crate) max_message_size: i32,
 }
 
@@ -148,11 +169,15 @@ impl Server {
         Ok(())
     }
 
+    /// Returns the PostgreSQL backend process ID for this connection.
+    /// Used for query cancellation and connection tracking.
     #[inline(always)]
     pub fn get_process_id(&self) -> i32 {
         self.process_id
     }
 
+    /// Returns a copy of all server parameters as a HashMap.
+    /// Includes runtime parameters like client_encoding, TimeZone, DateStyle, etc.
     #[inline(always)]
     pub fn server_parameters_as_hashmap(&self) -> HashMap<String, String> {
         self.server_parameters.as_hashmap()
@@ -187,6 +212,9 @@ impl Server {
         false
     }
 
+    /// Drains any remaining data from the server that hasn't been read yet.
+    /// This is used to synchronize the connection state when data is unexpectedly available.
+    /// All received data is discarded (sent to a sink).
     pub async fn wait_available(&mut self) {
         if !self.is_data_available() {
             self.stats.wait_idle();
@@ -209,11 +237,15 @@ impl Server {
         }
     }
 
+    /// Returns true if the server is in async mode (using Flush instead of Sync).
+    /// In async mode, the server doesn't send ReadyForQuery after each command.
     #[inline(always)]
     pub fn is_async(&self) -> bool {
         self.async_mode
     }
 
+    /// Sends messages to the server and flushes the write buffer with a timeout.
+    /// Returns an error if the operation doesn't complete within the specified duration.
     pub async fn send_and_flush_timeout(
         &mut self,
         messages: &BytesMut,
@@ -221,6 +253,9 @@ impl Server {
     ) -> Result<(), Error> {
         protocol_io::send_and_flush_timeout(self, messages, duration).await
     }
+    
+    /// Sends messages to the server and flushes the write buffer immediately.
+    /// This ensures all data is transmitted to the server without delay.
     pub async fn send_and_flush(&mut self, messages: &BytesMut) -> Result<(), Error> {
         protocol_io::send_and_flush(self, messages).await
     }
@@ -239,11 +274,14 @@ impl Server {
         self.in_transaction && self.is_aborted && (!self.use_savepoint)
     }
 
+    /// Returns true if the server is currently in COPY mode (COPY IN or COPY OUT).
+    /// In COPY mode, data transfer follows a different protocol than normal queries.
     #[inline(always)]
     pub fn in_copy_mode(&self) -> bool {
         self.in_copy_mode
     }
 
+    /// Returns a string representation of the server address (host:port/database@user).
     #[inline(always)]
     pub fn address_to_string(&self) -> String {
         self.address.to_string()
@@ -538,290 +576,29 @@ impl Server {
             match code {
                 // Authentication
                 'R' => {
-                    // Determine which kind of authentication is required, if any.
-                    let auth_code = match stream.read_i32().await {
-                        Ok(auth_code) => auth_code,
-                        Err(_) => {
-                            return Err(Error::ServerStartupError(
-                                "Failed to read authentication code from server".into(),
-                                server_identifier.clone(),
-                            ));
-                        }
-                    };
-                    match auth_code {
-                        AUTHENTICATION_SUCCESSFUL => (),
-                        /* SASL begin */
-                        SASL => match scram_client_auth {
-                            None => {
-                                return Err(Error::ServerAuthError(
-                                    "server wants sasl auth, but it is not configured".into(),
-                                    server_identifier.clone(),
-                                ));
-                            }
-                            Some(_) => {
-                                let sasl_len = (len - 8) as usize;
-                                let mut sasl_auth = vec![0u8; sasl_len];
-
-                                match stream.read_exact(&mut sasl_auth).await {
-                                    Ok(_) => (),
-                                    Err(_) => return Err(Error::ServerStartupError(
-                                        "Failed to read SASL authentication message from server"
-                                            .into(),
-                                        server_identifier.clone(),
-                                    )),
-                                };
-
-                                let sasl_type = String::from_utf8_lossy(&sasl_auth[..sasl_len - 2]);
-
-                                if sasl_type.contains(SCRAM_SHA_256) {
-                                    // Generate client message.
-                                    let sasl_response =
-                                        scram_client_auth.as_mut().unwrap().message();
-
-                                    // SASLInitialResponse (F)
-                                    let mut res = BytesMut::new();
-                                    res.put_u8(b'p');
-
-                                    // length + String length + length + length of sasl response
-                                    res.put_i32(
-                                        4 // i32 size
-                                        + SCRAM_SHA_256.len() as i32 // length of SASL version string,
-                                        + 1 // Null terminator for the SASL version string,
-                                        + 4 // i32 size
-                                        + sasl_response.len() as i32, // length of SASL response
-                                    );
-
-                                    res.put_slice(format!("{SCRAM_SHA_256}\0").as_bytes());
-                                    res.put_i32(sasl_response.len() as i32);
-                                    res.put(sasl_response);
-
-                                    write_all_flush(&mut stream, &res).await?;
-                                } else {
-                                    error!("Unsupported SCRAM version: {sasl_type}");
-                                    return Err(Error::ServerAuthError(
-                                        format!("Unsupported SCRAM version: {sasl_type}"),
-                                        server_identifier.clone(),
-                                    ));
-                                }
-                            }
-                        },
-                        SASL_CONTINUE => {
-                            let mut sasl_data = vec![0u8; (len - 8) as usize];
-
-                            match stream.read_exact(&mut sasl_data).await {
-                                Ok(_) => (),
-                                Err(_) => {
-                                    return Err(Error::ServerStartupError(
-                                        "Failed to read SASL continuation message from server"
-                                            .into(),
-                                        server_identifier.clone(),
-                                    ))
-                                }
-                            };
-
-                            let msg = BytesMut::from(&sasl_data[..]);
-                            let sasl_response = scram_client_auth.as_mut().unwrap().update(&msg)?;
-
-                            // SASLResponse
-                            let mut res = BytesMut::new();
-                            res.put_u8(b'p');
-                            res.put_i32(4 + sasl_response.len() as i32);
-                            res.put(sasl_response);
-
-                            write_all_flush(&mut stream, &res).await?;
-                        }
-                        SASL_FINAL => {
-                            let mut sasl_final = vec![0u8; len as usize - 8];
-                            match stream.read_exact(&mut sasl_final).await {
-                                Ok(_) => (),
-                                Err(_) => {
-                                    return Err(Error::ServerStartupError(
-                                        "sasl final message".into(),
-                                        server_identifier.clone(),
-                                    ))
-                                }
-                            };
-
-                            scram_client_auth
-                                .as_mut()
-                                .unwrap()
-                                .finish(&BytesMut::from(&sasl_final[..]))?;
-                        }
-                        /* SASL end */
-                        AUTHENTICATION_CLEAR_PASSWORD => {
-                            if user.server_username.is_none() || user.server_password.is_none() {
-                                error!(
-                                    "authentication on server {}@{} with clear auth is not configured",
-                                    server_identifier.username, server_identifier.database,
-                                );
-                                return Err(Error::ServerAuthError(
-                                    "server wants clear password authentication, but auth for this server is not configured".into(),
-                                    server_identifier.clone(),
-                                ));
-                            }
-                            let server_password =
-                                <Option<String> as Clone>::clone(&user.server_password)
-                                    .unwrap()
-                                    .clone();
-                            let server_username =
-                                <Option<String> as Clone>::clone(&user.server_username)
-                                    .unwrap()
-                                    .clone();
-                            if server_password.starts_with(JWT_PRIV_KEY_PASSWORD_PREFIX) {
-                                // generate password
-                                let claims = new_claims(server_username, Duration::from_secs(120));
-                                let token = sign_with_jwt_priv_key(
-                                    claims,
-                                    server_password
-                                        .strip_prefix(JWT_PRIV_KEY_PASSWORD_PREFIX)
-                                        .unwrap()
-                                        .to_string(),
-                                )
-                                .await
-                                .map_err(|err| {
-                                    Error::ServerAuthError(
-                                        err.to_string(),
-                                        server_identifier.clone(),
-                                    )
-                                })?;
-                                let mut password_response = BytesMut::new();
-                                password_response.put_u8(b'p');
-                                password_response.put_i32(token.len() as i32 + 4 + 1);
-                                password_response.put_slice(token.as_bytes());
-                                password_response.put_u8(b'\0');
-                                match stream.try_write(&password_response) {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        return Err(Error::ServerAuthError(
-                                            format!(
-                                                "jwt authentication on the server failed: {err:?}"
-                                            ),
-                                            server_identifier.clone(),
-                                        ));
-                                    }
-                                }
-                            } else {
-                                return Err(Error::ServerAuthError(
-                                    "plain password is not supported".into(),
-                                    server_identifier.clone(),
-                                ));
-                            }
-                        }
-                        MD5_ENCRYPTED_PASSWORD => {
-                            if user.server_username.is_none() || user.server_password.is_none() {
-                                error!(
-                                    "authentication for server {}@{} with md5 auth is not configured",
-                                    server_identifier.username, server_identifier.database,
-                                );
-                                return Err(Error::ServerAuthError(
-                                    "server wants md5 authentication, but auth for this server is not configured".into(),
-                                    server_identifier.clone(),
-                                ));
-                            } else {
-                                let server_username =
-                                    <Option<String> as Clone>::clone(&user.server_username)
-                                        .unwrap()
-                                        .clone();
-                                let server_password =
-                                    <Option<String> as Clone>::clone(&user.server_password)
-                                        .unwrap()
-                                        .clone();
-                                let mut salt = BytesMut::with_capacity(4);
-                                stream.read_buf(&mut salt).await.map_err(|err| {
-                                    Error::ServerAuthError(
-                                        format!("md5 authentication on the server: {err:?}"),
-                                        server_identifier.clone(),
-                                    )
-                                })?;
-                                let password_hash = md5_hash_password(
-                                    server_username.as_str(),
-                                    server_password.as_str(),
-                                    salt.as_mut(),
-                                );
-                                let mut password_response = BytesMut::new();
-                                password_response.put_u8(b'p');
-                                password_response.put_i32(password_hash.len() as i32 + 4);
-                                password_response.put_slice(&password_hash);
-                                match stream.try_write(&password_response) {
-                                    Ok(_) => (),
-                                    Err(err) => {
-                                        return Err(Error::ServerAuthError(
-                                            format!(
-                                                "md5 authentication on the server failed: {err:?}"
-                                            ),
-                                            server_identifier.clone(),
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            error!("this type of authentication on the server {}@{} is not supported, auth code: {}",
-                                server_identifier.username,
-                                server_identifier.database,
-                                auth_code);
-                            return Err(Error::ServerAuthError(
-                                "authentication on the server is not supported".into(),
-                                server_identifier.clone(),
-                            ));
-                        }
-                    }
+                    let auth_code = stream.read_i32().await.map_err(|_| {
+                        Error::ServerStartupError(
+                            "Failed to read authentication code from server".into(),
+                            server_identifier.clone(),
+                        )
+                    })?;
+                    
+                    handle_authentication(
+                        &mut stream,
+                        auth_code,
+                        len,
+                        user,
+                        &mut scram_client_auth,
+                        &server_identifier,
+                    )
+                    .await?;
                 }
+                
                 // ErrorResponse
                 'E' => {
-                    let error_code = match stream.read_u8().await {
-                        Ok(error_code) => error_code,
-                        Err(_) => {
-                            return Err(Error::ServerStartupError(
-                                "error code message".into(),
-                                server_identifier.clone(),
-                            ));
-                        }
-                    };
-
-                    match error_code {
-                        // No error message is present in the message.
-                        MESSAGE_TERMINATOR => (),
-
-                        // An error message will be present.
-                        _ => {
-                            if (len as usize) < 2 * mem::size_of::<u32>() {
-                                return Err(Error::ServerStartupError(
-                                    "while create new connection to postgresql received error, but it's too small".to_string(),
-                                    server_identifier.clone(),
-                                ));
-                            }
-                            let mut error = vec![0u8; len as usize - 2 * mem::size_of::<u32>()];
-                            stream.read_exact(&mut error).await.map_err(|err| {
-                                Error::ServerStartupError(
-                                    format!("while create new connection to postgresql received error, but can't read it: {err:?}"),
-                                    server_identifier.clone(),
-                                )
-                            })?;
-
-                            return match PgErrorMsg::parse(&error) {
-                                Ok(f) => {
-                                    error!(
-                                        "Get server error - {} {}: {}",
-                                        f.severity, f.code, f.message
-                                    );
-                                    Err(Error::ServerStartupError(
-                                        f.message,
-                                        server_identifier.clone(),
-                                    ))
-                                }
-                                Err(err) => {
-                                    error!("Get unparsed server error: {err:?}");
-                                    Err(Error::ServerStartupError(
-                                         format!("while create new connection to postgresql received error, but can't read it: {err:?}"),
-                                         server_identifier.clone(),
-                                     ))
-                                }
-                            };
-                        }
-                    };
-
-                    return Err(Error::ServerError);
+                    return handle_startup_error(&mut stream, len, &server_identifier)
+                        .await
+                        .map(|_| unreachable!());
                 }
 
                 // Notice

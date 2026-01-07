@@ -1,3 +1,11 @@
+//! PostgreSQL protocol I/O operations for server connections.
+//!
+//! This module handles communication with PostgreSQL servers, including:
+//! - Sending messages to the server with timeout support
+//! - Receiving and parsing server responses
+//! - Handling large messages and COPY protocol
+//! - Managing server state based on protocol messages
+
 use std::mem;
 use std::time::{Duration, SystemTime};
 
@@ -18,12 +26,24 @@ use crate::messages::{
 use super::parameters::ServerParameters;
 use super::server_backend::Server;
 
+// PostgreSQL CommandComplete message payloads for tracking session state changes
+/// CommandComplete payload for SET statements (requires RESET ALL cleanup)
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
+/// CommandComplete payload for DECLARE CURSOR statements (requires CLOSE ALL cleanup)
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
+/// CommandComplete payload for SAVEPOINT statements (enables savepoint mode)
 const COMMAND_SAVEPOINT: &[u8; 10] = b"SAVEPOINT\0";
+/// CommandComplete payload for DEALLOCATE ALL (clears prepared statement cache)
 const COMMAND_COMPLETE_BY_DEALLOCATE_ALL: &[u8; 15] = b"DEALLOCATE ALL\0";
+/// CommandComplete payload for DISCARD ALL (clears prepared statement cache)
 const COMMAND_COMPLETE_BY_DISCARD_ALL: &[u8; 12] = b"DISCARD ALL\0";
 
+// ============================================================================
+// Public API functions
+// ============================================================================
+
+/// Sends messages to the server and flushes the write buffer with a timeout.
+/// Returns an error if the operation doesn't complete within the specified duration.
 pub(crate) async fn send_and_flush_timeout(
     server: &mut Server,
     messages: &BytesMut,
@@ -45,6 +65,9 @@ pub(crate) async fn send_and_flush_timeout(
     }
 }
 
+/// Sends messages to the server and flushes the write buffer immediately.
+/// Updates statistics and last activity timestamp on success.
+/// Marks the connection as bad and logs an error on failure.
 pub(crate) async fn send_and_flush(server: &mut Server, messages: &BytesMut) -> Result<(), Error> {
     server.stats.data_sent(messages.len());
     server.stats.wait_writing();
@@ -66,6 +89,276 @@ pub(crate) async fn send_and_flush(server: &mut Server, messages: &BytesMut) -> 
             Err(err)
         }
     }
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+/// Handles large DataRow ('D') messages that exceed max_message_size.
+/// Streams the message directly to the client without buffering.
+async fn handle_large_data_row<C>(
+    server: &mut Server,
+    client_stream: &mut C,
+    code_u8: u8,
+    message_len: i32,
+) -> Result<BytesMut, Error>
+where
+    C: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    // Send current buffer + header
+    server.buffer.put_u8(code_u8);
+    server.buffer.put_i32(message_len);
+    let prev_bad = server.bad;
+    server.bad = true;
+    write_all_flush(client_stream, &server.buffer).await?;
+    
+    // Stream the large message directly
+    match proxy_copy_data_with_timeout(
+        Duration::from_millis(get_config().general.proxy_copy_data_timeout),
+        &mut server.stream,
+        client_stream,
+        message_len as usize - mem::size_of::<i32>(),
+    )
+    .await
+    {
+        Ok(_) => (),
+        Err(err) => {
+            server.mark_bad(err.to_string().as_str());
+            return Err(err);
+        }
+    }
+    
+    if !prev_bad {
+        server.bad = false;
+    }
+    
+    server
+        .stats
+        .data_received(server.buffer.len() + message_len as usize);
+    server.last_activity = SystemTime::now();
+    server.data_available = true;
+    server.buffer.clear();
+    server.stats.wait_idle();
+    Ok(server.buffer.clone())
+}
+
+/// Handles large CopyData ('d') messages that exceed max_message_size.
+/// Streams the message directly to the client without buffering.
+async fn handle_large_copy_data<C>(
+    server: &mut Server,
+    client_stream: &mut C,
+    code_u8: u8,
+    message_len: i32,
+) -> Result<BytesMut, Error>
+where
+    C: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    // Send current buffer + header
+    server.buffer.put_u8(code_u8);
+    server.buffer.put_i32(message_len);
+    let prev_bad = server.bad;
+    server.bad = true;
+    write_all_flush(client_stream, &server.buffer).await?;
+    
+    // Stream the large message directly
+    proxy_copy_data(
+        &mut server.stream,
+        client_stream,
+        message_len as usize - mem::size_of::<i32>(),
+    )
+    .await?;
+    
+    server.bad = prev_bad;
+    server
+        .stats
+        .data_received(server.buffer.len() + message_len as usize);
+    server.last_activity = SystemTime::now();
+    server.buffer.clear();
+    server.stats.wait_idle();
+    Ok(server.buffer.clone())
+}
+
+/// Handles ReadyForQuery ('Z') message - indicates server is ready for a new query.
+/// Updates transaction state based on the transaction status indicator.
+fn handle_ready_for_query(server: &mut Server, message: &mut BytesMut) -> Result<(), Error> {
+    let transaction_state = message.get_u8() as char;
+
+    match transaction_state {
+        // 'T' - In transaction block
+        'T' => {
+            server.is_aborted = false;
+            server.in_transaction = true;
+        }
+
+        // 'I' - Idle (not in transaction)
+        'I' => {
+            server.is_aborted = false;
+            server.in_transaction = false;
+        }
+
+        // 'E' - In failed transaction block (requires ROLLBACK)
+        'E' => {
+            server.is_aborted = true;
+            server.in_transaction = true;
+            if let Ok(msg) = PgErrorMsg::parse(message) {
+                error!(
+                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Position: {}]",
+                    server.address.host,
+                    server.address.database,
+                    server.address.username,
+                    msg.severity,
+                    msg.code,
+                    msg.message,
+                    msg.hint.as_deref().unwrap_or("none"),
+                    msg.position.unwrap_or(0)
+                );
+            } else {
+                error!(
+                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Could not parse error details.",
+                    server.address.host,
+                    server.address.database,
+                    server.address.username
+                );
+            }
+        }
+
+        // Unknown transaction state - protocol error
+        _ => {
+            let err = Error::ProtocolSyncError(format!(
+                "Protocol synchronization error with server {} (database: {}, user: {}). Received unknown transaction state character: '{}' (ASCII: {}). This may indicate an incompatible PostgreSQL server version or a corrupted message.",
+                server.address.host,
+                server.address.database,
+                server.address.username,
+                transaction_state,
+                transaction_state as u8
+            ));
+            error!("{err}");
+            server.mark_bad(
+                format!(
+                    "Protocol sync error: unknown transaction state '{transaction_state}'"
+                )
+                .as_str(),
+            );
+            return Err(err);
+        }
+    };
+
+    // No more data available from the server after ReadyForQuery
+    server.data_available = false;
+    Ok(())
+}
+
+/// Handles ErrorResponse ('E') message from the server.
+/// Logs the error and updates server state accordingly.
+fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
+    if let Ok(msg) = PgErrorMsg::parse(message) {
+        let transaction_status = if server.in_transaction {
+            "in active transaction"
+        } else {
+            "not in transaction"
+        };
+        let copy_mode_status = if server.in_copy_mode {
+            "in COPY mode"
+        } else {
+            "not in COPY mode"
+        };
+
+        error!(
+            "PostgreSQL server error from {} (database: {}, user: {}). Status: [{}, {}]. Error details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Detail: \"{}\", Position: {}]",
+            server.address.host,
+            server.address.database,
+            server.address.username,
+            transaction_status,
+            copy_mode_status,
+            msg.severity,
+            msg.code,
+            msg.message,
+            msg.hint.as_deref().unwrap_or("none"),
+            msg.detail.as_deref().unwrap_or("none"),
+            msg.position.unwrap_or(0)
+        );
+    } else {
+        error!(
+            "PostgreSQL server error from {} (database: {}, user: {}). Could not parse error details.",
+            server.address.host,
+            server.address.database,
+            server.address.username
+        );
+    }
+
+    // Exit COPY mode on error
+    if server.in_copy_mode {
+        server.in_copy_mode = false;
+    }
+
+    // Reset prepared statements cache on error
+    if server.prepared_statement_cache.is_some() {
+        server.cleanup_state.needs_cleanup_prepare = true;
+    }
+
+    // Handle async mode errors
+    if server.is_async() {
+        server.data_available = false;
+        server.cleanup_state.needs_cleanup();
+        server.mark_bad("PostgreSQL error in asynchronous operation mode");
+    }
+}
+
+/// Handles CommandComplete ('C') message - indicates successful completion of a command.
+/// Tracks commands that require cleanup (SET, DECLARE, etc.) and updates server state.
+fn handle_command_complete(server: &mut Server, message: &BytesMut) {
+    // Exit COPY mode if we were in it
+    if server.in_copy_mode {
+        server.in_copy_mode = false;
+    }
+    
+    // Check for commands that require cleanup at connection checkin
+    if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
+        server.cleanup_state.needs_cleanup_set = true;
+    }
+    if message.len() == 10 && message.to_vec().eq(COMMAND_SAVEPOINT) {
+        server.use_savepoint = true;
+    }
+    if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DECLARE) {
+        server.cleanup_state.needs_cleanup_declare = true;
+    }
+    if message.len() == 12 && message.to_vec().eq(COMMAND_COMPLETE_BY_DISCARD_ALL) {
+        server.registering_prepared_statement.clear();
+        if server.prepared_statement_cache.is_some() {
+            warn!("Cleanup server {server} prepared statements cache (DISCARD ALL)");
+            server.prepared_statement_cache.as_mut().unwrap().clear();
+        }
+    }
+    if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DEALLOCATE_ALL) {
+        server.registering_prepared_statement.clear();
+        if server.prepared_statement_cache.is_some() {
+            warn!("Cleanup server {server} prepared statements cache (DEALLOCATE ALL)");
+            server.prepared_statement_cache.as_mut().unwrap().clear();
+        }
+    }
+}
+
+/// Handles ParameterStatus ('S') message - server runtime parameter change notification.
+/// Updates both server and client parameter tracking.
+fn handle_parameter_status(
+    server: &mut Server,
+    message: &mut BytesMut,
+    client_server_parameters: &mut Option<&mut ServerParameters>,
+) {
+    let key = message.read_string().unwrap();
+    let value = message.read_string().unwrap();
+
+    // Update client parameters if tracking is enabled
+    if let Some(client_server_parameters) = client_server_parameters.as_mut() {
+        client_server_parameters.set_param(key.clone(), value.clone(), false);
+        if server.log_client_parameter_status_changes {
+            info!("Server {server}: client parameter status change: {key} = {value}")
+        }
+    }
+
+    // Always update server parameters
+    server.server_parameters.set_param(key, value, false);
 }
 
 /// Receive data from the server in response to a client request.
@@ -99,68 +392,20 @@ where
         } else {
             read_message_header(&mut server.stream).await?
         };
-        // if message server is too big.
+        // Handle large DataRow messages that exceed max_message_size
         if server.max_message_size > 0
             && message_len > server.max_message_size
             && code_u8 as char == 'D'
         {
-            // send current buffer + header.
-            server.buffer.put_u8(code_u8);
-            server.buffer.put_i32(message_len);
-            let prev_bad = server.bad;
-            server.bad = true;
-            write_all_flush(&mut client_stream, &server.buffer).await?;
-            match proxy_copy_data_with_timeout(
-                Duration::from_millis(get_config().general.proxy_copy_data_timeout),
-                &mut server.stream,
-                &mut client_stream,
-                message_len as usize - mem::size_of::<i32>(),
-            )
-            .await
-            {
-                Ok(_) => (),
-                Err(err) => {
-                    server.mark_bad(err.to_string().as_str());
-                    return Err(err);
-                }
-            }
-            if !prev_bad {
-                server.bad = false;
-            }
-            server
-                .stats
-                .data_received(server.buffer.len() + message_len as usize);
-            server.last_activity = SystemTime::now();
-            server.data_available = true;
-            server.buffer.clear();
-            server.stats.wait_idle();
-            return Ok(server.buffer.clone());
+            return handle_large_data_row(server, &mut client_stream, code_u8, message_len).await;
         }
-        // COPY protocol, 'd'
+        
+        // Handle large CopyData messages that exceed max_message_size
         if server.max_message_size > 0
             && message_len > server.max_message_size
             && code_u8 as char == 'd'
         {
-            // send current buffer + header.
-            server.buffer.put_u8(code_u8);
-            server.buffer.put_i32(message_len);
-            let prev_bad = server.bad;
-            server.bad = true;
-            write_all_flush(&mut client_stream, &server.buffer).await?;
-            proxy_copy_data(
-                &mut server.stream,
-                &mut client_stream,
-                message_len as usize - mem::size_of::<i32>(),
-            )
-            .await?;
-            server.bad = prev_bad;
-            server
-                .stats
-                .data_received(server.buffer.len() + message_len as usize);
-            server.last_activity = SystemTime::now();
-            server.buffer.clear();
-            server.stats.wait_idle();
-            return Ok(server.buffer.clone());
+            return handle_large_copy_data(server, &mut client_stream, code_u8, message_len).await;
         }
 
         if message_len > MAX_MESSAGE_SIZE {
@@ -205,175 +450,25 @@ where
         let _len = message.get_i32();
 
         match code {
-            // ReadyForQuery
+            // ReadyForQuery - server is ready for a new query
             'Z' => {
-                let transaction_state = message.get_u8() as char;
-
-                match transaction_state {
-                    // In transaction.
-                    'T' => {
-                        server.is_aborted = false;
-                        server.in_transaction = true;
-                    }
-
-                    // Idle, transaction over.
-                    'I' => {
-                        server.is_aborted = false;
-                        server.in_transaction = false;
-                    }
-
-                    // Some error occurred, the transaction was rolled back.
-                    'E' => {
-                        server.is_aborted = true;
-                        server.in_transaction = true;
-                        if let Ok(msg) = PgErrorMsg::parse(&message) {
-                            error!(
-                                "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Position: {}]",
-                                server.address.host,
-                                server.address.database,
-                                server.address.username,
-                                msg.severity,
-                                msg.code,
-                                msg.message,
-                                msg.hint.as_deref().unwrap_or("none"),
-                                msg.position.unwrap_or(0)
-                            );
-                        } else {
-                            error!(
-                                "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Could not parse error details.",
-                                server.address.host,
-                                server.address.database,
-                                server.address.username
-                            );
-                        }
-                    }
-
-                    // Something totally unexpected, this is not a Postgres server we know.
-                    _ => {
-                        let err = Error::ProtocolSyncError(format!(
-                            "Protocol synchronization error with server {} (database: {}, user: {}). Received unknown transaction state character: '{}' (ASCII: {}). This may indicate an incompatible PostgreSQL server version or a corrupted message.",
-                            server.address.host,
-                            server.address.database,
-                            server.address.username,
-                            transaction_state,
-                            transaction_state as u8
-                        ));
-                        error!("{err}");
-                        server.mark_bad(
-                            format!(
-                                "Protocol sync error: unknown transaction state '{transaction_state}'"
-                            )
-                            .as_str(),
-                        );
-                        return Err(err);
-                    }
-                };
-
-                // There is no more data available from the server.
-                server.data_available = false;
+                handle_ready_for_query(server, &mut message)?;
                 break;
             }
 
-            // ErrorResponse
+            // ErrorResponse - server encountered an error
             'E' => {
-                if let Ok(msg) = PgErrorMsg::parse(&message) {
-                    let transaction_status = if server.in_transaction {
-                        "in active transaction"
-                    } else {
-                        "not in transaction"
-                    };
-                    let copy_mode_status = if server.in_copy_mode {
-                        "in COPY mode"
-                    } else {
-                        "not in COPY mode"
-                    };
-
-                    error!(
-                        "PostgreSQL server error from {} (database: {}, user: {}). Status: [{}, {}]. Error details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Detail: \"{}\", Position: {}]",
-                        server.address.host,
-                        server.address.database,
-                        server.address.username,
-                        transaction_status,
-                        copy_mode_status,
-                        msg.severity,
-                        msg.code,
-                        msg.message,
-                        msg.hint.as_deref().unwrap_or("none"),
-                        msg.detail.as_deref().unwrap_or("none"),
-                        msg.position.unwrap_or(0)
-                    );
-                } else {
-                    error!(
-                        "PostgreSQL server error from {} (database: {}, user: {}). Could not parse error details.",
-                        server.address.host,
-                        server.address.database,
-                        server.address.username
-                    );
-                }
-
-                // Exit COPY mode if we're in it
-                if server.in_copy_mode {
-                    server.in_copy_mode = false;
-                }
-
-                // Reset prepared statements cache on error since we can't determine the exact cause
-                if server.prepared_statement_cache.is_some() {
-                    server.cleanup_state.needs_cleanup_prepare = true;
-                }
-
-                // Handle async mode errors
-                if server.is_async() {
-                    server.data_available = false;
-                    server.cleanup_state.needs_cleanup();
-                    server.mark_bad("PostgreSQL error in asynchronous operation mode");
-                }
+                handle_error_response(server, &mut message);
             }
 
-            // CommandComplete
+            // CommandComplete - command executed successfully
             'C' => {
-                if server.in_copy_mode {
-                    server.in_copy_mode = false;
-                }
-                // CommandComplete SET одинаковый для set local и set, чистим.
-                if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
-                    server.cleanup_state.needs_cleanup_set = true;
-                }
-                if message.len() == 10 && message.to_vec().eq(COMMAND_SAVEPOINT) {
-                    server.use_savepoint = true;
-                }
-                if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DECLARE) {
-                    server.cleanup_state.needs_cleanup_declare = true;
-                }
-                if message.len() == 12 && message.to_vec().eq(COMMAND_COMPLETE_BY_DISCARD_ALL) {
-                    server.registering_prepared_statement.clear();
-                    if server.prepared_statement_cache.is_some() {
-                        warn!("Cleanup server {server} prepared statements cache (DISCARD ALL)");
-                        server.prepared_statement_cache.as_mut().unwrap().clear();
-                    }
-                }
-                if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DEALLOCATE_ALL) {
-                    server.registering_prepared_statement.clear();
-                    if server.prepared_statement_cache.is_some() {
-                        warn!("Cleanup server {server} prepared statements cache (DEALLOCATE ALL)");
-                        server.prepared_statement_cache.as_mut().unwrap().clear();
-                    }
-                }
-                // CommandComplete doesn't have more data after it
-                // The general exit condition will handle breaking the loop
+                handle_command_complete(server, &message);
             }
 
+            // ParameterStatus - server parameter changed
             'S' => {
-                let key = message.read_string().unwrap();
-                let value = message.read_string().unwrap();
-
-                if let Some(client_server_parameters) = client_server_parameters.as_mut() {
-                    client_server_parameters.set_param(key.clone(), value.clone(), false);
-                    if server.log_client_parameter_status_changes {
-                        info!("Server {server}: client parameter status change: {key} = {value}")
-                    }
-                }
-
-                server.server_parameters.set_param(key, value, false);
+                handle_parameter_status(server, &mut message, &mut client_server_parameters);
             }
 
             // DataRow
