@@ -257,6 +257,7 @@ EOF
             overlays = [ (import inputs.rust-overlay) ];
             config = {
               allowUnfree = true;
+              allowUnsupportedSystem = true;
             };
           };
 
