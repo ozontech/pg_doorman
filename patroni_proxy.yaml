@@ -1,0 +1,37 @@
+# Patroni Proxy Configuration
+
+
+clusters:
+  # 'local_cluster' is an arbitrary name for the cluster
+  local_cluster:
+    # List of Patroni API endpoints
+    hosts:
+      - "http://127.0.0.1:8008"
+      # - "http://127.0.0.2:8008"
+      # - "http://127.0.0.3:8008"
+
+    # TLS configuration for connecting to Patroni API (optional)
+    # tls:
+    #   ca_cert: "/path/to/ca.crt"
+    #   client_cert: "/path/to/client.crt"
+    #   client_key: "/path/to/client.key"
+    #   skip_verify: false
+
+    # Port mappings
+    ports:
+      # 'master' is an arbitrary name for this port configuration
+      master:
+        # Address to listen on
+        listen: "127.0.0.1:6432"
+        # Roles allowed for this port: leader, sync, async, any
+        roles: ["leader"]
+        # The actual Postgres port on the host
+        host_port: 6432
+
+      # Read-only service (sync or async replicas)
+      replicas:
+        listen: "127.0.0.1:6433"
+        roles: ["sync", "async"]
+        host_port: 6432
+        # Optional: Maximum replication lag in bytes
+        max_lag_in_bytes: 16777216
