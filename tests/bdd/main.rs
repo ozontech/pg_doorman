@@ -1,6 +1,8 @@
 mod doorman_helper;
 mod extended;
+mod odyssey_helper;
 mod pg_connection;
+mod pgbouncer_helper;
 mod postgres_helper;
 mod shell_helper;
 mod world;
@@ -72,6 +74,16 @@ fn main() {
                         doorman_helper::stop_doorman(child);
                     }
                     w.doorman_process = None;
+
+                    if let Some(ref mut child) = w.pgbouncer_process {
+                        pgbouncer_helper::stop_pgbouncer(child);
+                    }
+                    w.pgbouncer_process = None;
+
+                    if let Some(ref mut child) = w.odyssey_process {
+                        odyssey_helper::stop_odyssey(child);
+                    }
+                    w.odyssey_process = None;
                 }
                 Box::pin(async {})
             })

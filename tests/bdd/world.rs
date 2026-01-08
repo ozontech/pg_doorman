@@ -44,6 +44,18 @@ pub struct DoormanWorld {
     pub pg_conn: Option<crate::pg_connection::PgConnection>,
     /// pg_doorman connection
     pub doorman_conn: Option<crate::pg_connection::PgConnection>,
+    /// pgbouncer process handle
+    pub pgbouncer_process: Option<Child>,
+    /// pgbouncer port
+    pub pgbouncer_port: Option<u16>,
+    /// pgbouncer config file
+    pub pgbouncer_config_file: Option<NamedTempFile>,
+    /// odyssey process handle
+    pub odyssey_process: Option<Child>,
+    /// odyssey port
+    pub odyssey_port: Option<u16>,
+    /// odyssey config file
+    pub odyssey_config_file: Option<NamedTempFile>,
     /// Accumulated messages from PG
     pub pg_accumulated_messages: Vec<(char, Vec<u8>)>,
     /// Accumulated messages from Doorman
@@ -75,6 +87,16 @@ impl std::fmt::Debug for DoormanWorld {
                 "doorman_config_file",
                 &self.doorman_config_file.as_ref().map(|f| f.path()),
             )
+            .field(
+                "pgbouncer_process",
+                &self.pgbouncer_process.as_ref().map(|p| p.id()),
+            )
+            .field("pgbouncer_port", &self.pgbouncer_port)
+            .field(
+                "odyssey_process",
+                &self.odyssey_process.as_ref().map(|p| p.id()),
+            )
+            .field("odyssey_port", &self.odyssey_port)
             .finish()
     }
 }

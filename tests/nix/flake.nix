@@ -50,6 +50,8 @@
           runtimePackages = with pkgs; [
             # PostgreSQL
             postgresql_16
+            odyssey
+            pgbouncer
 
             # Node.js
             nodejs_22
