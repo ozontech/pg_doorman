@@ -1,0 +1,81 @@
+name: Benchmarks
+
+permissions:
+  contents: read
+  packages: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug output'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/test-runner
+
+jobs:
+  # Job 1: Check image and get tag
+  check-image:
+    name: Check Image Cache
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      image-tag: ${{ steps.compute-tag.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compute image tag from flake files
+        id: compute-tag
+        run: |
+          # Create a hash based on flake.nix and flake.lock content
+          FLAKE_HASH=$(cat tests/nix/flake.nix tests/nix/flake.lock | sha256sum | cut -c1-16)
+          echo "tag=flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
+          echo "Computed image tag: flake-${FLAKE_HASH}"
+
+  # Job 2: Run benchmarks
+  benchmarks:
+    name: Run Benchmarks
+    needs: check-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull test image from GHCR
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }}
+
+      - name: Run benchmark tests
+        env:
+          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+          BENCHER_PROJECT: pg-doorman
+          BENCHER_BRANCH: ${{ github.ref_name }}
+          BENCHER_TESTBED: github-actions
+          DEBUG: ${{ inputs.debug }}
+          JEMALLOC_SYS_WITH_MALLOC_CONF: "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto"
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e DEBUG="${DEBUG}" \
+            -e BENCHER_API_TOKEN="${BENCHER_API_TOKEN}" \
+            -e BENCHER_PROJECT="${BENCHER_PROJECT}" \
+            -e BENCHER_BRANCH="${BENCHER_BRANCH}" \
+            -e BENCHER_TESTBED="${BENCHER_TESTBED}" \
+            -e JEMALLOC_SYS_WITH_MALLOC_CONF="${JEMALLOC_SYS_WITH_MALLOC_CONF}" \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }} \
+            cargo test --release --test bdd -- --tags @bench

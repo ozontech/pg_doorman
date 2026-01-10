@@ -52,8 +52,10 @@
               # No patches needed
               patches = [ ];
               # Disable compression to avoid zpq_stream.c build errors
+              # Build in Release mode for optimal performance
               cmakeFlags = [
                 "-DBUILD_COMPRESSION=OFF"
+                "-DCMAKE_BUILD_TYPE=Release"
               ];
               # Keep env for additional flags
               env = (oldAttrs.env or {}) // {

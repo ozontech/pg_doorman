@@ -2,9 +2,12 @@ mod doorman_helper;
 mod extended;
 mod odyssey_helper;
 mod pg_connection;
+mod pgbench_helper;
 mod pgbouncer_helper;
 mod postgres_helper;
+mod service_helper;
 mod shell_helper;
+mod utils;
 mod world;
 
 use cucumber::World;
@@ -50,8 +53,20 @@ fn main() {
         let writer = DoormanWorld::cucumber()
             .max_concurrent_scenarios(5)
             .with_cli(cli)
-            .before(|_feature, _rule, scenario, _world| {
+            .before(|feature, _rule, scenario, world| {
                 Box::pin(async move {
+                    // Skip timeout for @bench scenarios - they run long benchmarks
+                    let is_bench = feature.tags.iter().any(|t| t == "bench")
+                        || scenario.tags.iter().any(|t| t == "bench");
+                    if is_bench {
+                        eprintln!(
+                            "ℹ️  Scenario '{}' is a benchmark, timeout disabled",
+                            scenario.name
+                        );
+                        world.is_bench = true;
+                        return;
+                    }
+
                     // Spawn a timeout task for this scenario
                     let scenario_name = scenario.name.clone();
                     tokio::spawn(async move {

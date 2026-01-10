@@ -1,11 +1,22 @@
+use crate::service_helper::{stop_process_immediate, wait_for_service_ready};
+use crate::utils::{create_temp_file, get_stdio_config, is_root, set_file_permissions};
 use crate::world::DoormanWorld;
 use cucumber::{gherkin::Step, given};
 use portpicker::pick_unused_port;
-use std::io::Write;
-use std::process::{Child, Command, Stdio};
-use std::time::Duration;
-use tempfile::NamedTempFile;
-use tokio::time::sleep;
+use std::process::Command;
+
+/// Create pgbouncer userlist file with inline content
+#[given("pgbouncer userlist file:")]
+pub async fn create_pgbouncer_userlist(world: &mut DoormanWorld, step: &Step) {
+    let userlist_content = step
+        .docstring
+        .as_ref()
+        .expect("userlist_content not found")
+        .to_string();
+
+    let userlist_file = create_temp_file(&userlist_content);
+    world.pgbouncer_userlist_file = Some(userlist_file);
+}
 
 #[given("pgbouncer started with config:")]
 pub async fn start_pgbouncer_with_config(world: &mut DoormanWorld, step: &Step) {
@@ -19,69 +30,67 @@ pub async fn start_pgbouncer_with_config(world: &mut DoormanWorld, step: &Step) 
         .as_ref()
         .expect("config_content not found")
         .to_string();
-    
+
     let pgbouncer_port = pick_unused_port().expect("No free ports for pgbouncer");
 
-    let mut config_content = config_content.replace("${PGBOUNCER_PORT}", &pgbouncer_port.to_string());
+    // Set port temporarily for placeholder replacement
+    world.pgbouncer_port = Some(pgbouncer_port);
+    let config_content = world.replace_placeholders(&config_content);
 
-    if let Some(pg_port) = world.pg_port {
-        config_content = config_content.replace("${PG_PORT}", &pg_port.to_string());
+    let config_file = create_temp_file(&config_content);
+    let config_path = config_file.path().to_path_buf();
+
+    // If running as root, make config file readable by postgres user
+    if is_root() {
+        set_file_permissions(&config_path, 0o644);
+
+        // Also ensure SSL files are readable if they exist
+        if let Some(ref ssl_key_file) = world.ssl_key_file {
+            set_file_permissions(ssl_key_file.path(), 0o644);
+        }
+        if let Some(ref ssl_cert_file) = world.ssl_cert_file {
+            set_file_permissions(ssl_cert_file.path(), 0o644);
+        }
+        // Also ensure userlist file is readable
+        if let Some(ref userlist_file) = world.pgbouncer_userlist_file {
+            set_file_permissions(userlist_file.path(), 0o644);
+        }
     }
 
-    let mut config_file = NamedTempFile::new().expect("Failed to create temp config file");
-    config_file
-        .write_all(config_content.as_bytes())
-        .expect("Failed to write config content");
-    config_file.flush().expect("Failed to flush config file");
-    let config_path = config_file.path().to_path_buf();
-    
     world.pgbouncer_config_file = Some(config_file);
 
-    let debug_mode = std::env::var("DEBUG").is_ok();
-    let (stdout_cfg, stderr_cfg) = if debug_mode {
-        (Stdio::inherit(), Stdio::inherit())
+    let (stdout_cfg, stderr_cfg) = get_stdio_config();
+
+    // PgBouncer refuses to run as root, so we need to run it as postgres user
+    let child = if is_root() {
+        Command::new("sudo")
+            .arg("-u")
+            .arg("postgres")
+            .arg("pgbouncer")
+            .arg(&config_path)
+            .stdout(stdout_cfg)
+            .stderr(stderr_cfg)
+            .spawn()
+            .expect("Failed to start pgbouncer as postgres user")
     } else {
-        (Stdio::null(), Stdio::null())
+        Command::new("pgbouncer")
+            .arg(&config_path)
+            .stdout(stdout_cfg)
+            .stderr(stderr_cfg)
+            .spawn()
+            .expect("Failed to start pgbouncer")
     };
 
-    let child = Command::new("pgbouncer")
-        .arg(&config_path)
-        .stdout(stdout_cfg)
-        .stderr(stderr_cfg)
-        .spawn()
-        .expect("Failed to start pgbouncer");
-
     world.pgbouncer_process = Some(child);
-    world.pgbouncer_port = Some(pgbouncer_port);
 
-    wait_for_pgbouncer_ready(pgbouncer_port, world.pgbouncer_process.as_mut().unwrap()).await;
+    wait_for_service_ready(
+        "pgbouncer",
+        pgbouncer_port,
+        world.pgbouncer_process.as_mut().unwrap(),
+    )
+    .await;
 }
 
-pub fn stop_pgbouncer(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-async fn wait_for_pgbouncer_ready(port: u16, child: &mut Child) {
-    let mut success = false;
-    for _ in 0..20 {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                panic!("pgbouncer exited with status: {:?}", status);
-            }
-            Ok(None) => {
-                // Check if port is open
-                if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                    success = true;
-                    break;
-                }
-            }
-            Err(e) => panic!("Error checking pgbouncer process: {}", e),
-        }
-        sleep(Duration::from_millis(500)).await;
-    }
-
-    if !success {
-        panic!("pgbouncer failed to start on port {}", port);
-    }
+pub fn stop_pgbouncer(child: &mut std::process::Child) {
+    stop_process_immediate(child);
 }

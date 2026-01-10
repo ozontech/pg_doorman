@@ -106,6 +106,20 @@ run_in_container() {
         docker_args+=(-e "DEBUG=${DEBUG}")
     fi
 
+    # Pass BENCHER environment variables for benchmark reporting
+    if [ -n "${BENCHER_API_TOKEN:-}" ]; then
+        docker_args+=(-e "BENCHER_API_TOKEN=${BENCHER_API_TOKEN}")
+    fi
+    if [ -n "${BENCHER_PROJECT:-}" ]; then
+        docker_args+=(-e "BENCHER_PROJECT=${BENCHER_PROJECT}")
+    fi
+    if [ -n "${BENCHER_BRANCH:-}" ]; then
+        docker_args+=(-e "BENCHER_BRANCH=${BENCHER_BRANCH}")
+    fi
+    if [ -n "${BENCHER_TESTBED:-}" ]; then
+        docker_args+=(-e "BENCHER_TESTBED=${BENCHER_TESTBED}")
+    fi
+
     if [ "$interactive" = "true" ]; then
         docker_args+=(-i)
     fi
@@ -204,6 +218,11 @@ Environment variables:
     REGISTRY             Container registry (default: ghcr.io)
     REPO                 Repository name (auto-detected from git)
     IMAGE_TAG            Image tag to use (default: latest)
+    DEBUG                Enable debug output
+    BENCHER_API_TOKEN    API token for bencher.dev (for benchmark reporting)
+    BENCHER_PROJECT      Bencher project name (default: pg-doorman)
+    BENCHER_BRANCH       Bencher branch name (default: main)
+    BENCHER_TESTBED      Bencher testbed name (default: localhost)
 
 Examples:
     $0 pull                    # Pull latest image
