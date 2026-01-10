@@ -387,10 +387,16 @@ pub async fn benchmark_result_should_exist(world: &mut DoormanWorld, target: Str
     }
 }
 
-/// Extract client count suffix from target name (e.g., "pg_doorman_c10" -> "c10", "pg_doorman_ssl_c10" -> "c10")
+/// Extract client count suffix from target name
+/// Examples:
+/// - "pg_doorman_c10" -> "c10"
+/// - "pg_doorman_ssl_c10" -> "c10"
+/// - "pg_doorman_simple_c10" -> "c10"
+/// - "pg_doorman_simple_connect_c10" -> "c10"
+/// - "pg_doorman_ssl_extended_c100" -> "c100"
 fn extract_client_suffix(target: &str) -> Option<&str> {
-    // Look for patterns like _c1, _c10, _c50, _c100, _c200
-    for suffix in &["_c1", "_c10", "_c50", "_c100", "_c200"] {
+    // Look for patterns like _c1, _c10, _c50, _c100, _c200 at the end
+    for suffix in &["_c200", "_c100", "_c50", "_c10", "_c1"] {
         if target.ends_with(suffix) {
             return Some(&suffix[1..]); // Return without leading underscore
         }
@@ -398,9 +404,64 @@ fn extract_client_suffix(target: &str) -> Option<&str> {
     None
 }
 
-/// Get the baseline key for a given target (e.g., "pg_doorman_c10" -> "postgresql_c10")
+/// Extract the test variant (protocol + connect + ssl) from target name
+/// Examples:
+/// - "pg_doorman_simple_c10" -> "simple"
+/// - "pg_doorman_extended_connect_c10" -> "extended_connect"
+/// - "pg_doorman_ssl_extended_c10" -> "ssl_extended"
+/// - "pg_doorman_ssl_connect_c10" -> "ssl_connect"
+fn extract_test_variant(target: &str) -> Option<String> {
+    // Remove the pooler prefix and client suffix to get the variant
+    let prefixes = ["postgresql_", "pg_doorman_", "odyssey_", "pgbouncer_"];
+    
+    let mut remaining = target;
+    for prefix in &prefixes {
+        if target.starts_with(prefix) {
+            remaining = &target[prefix.len()..];
+            break;
+        }
+    }
+    
+    // Remove client suffix
+    for suffix in &["_c200", "_c100", "_c50", "_c10", "_c1"] {
+        if remaining.ends_with(suffix) {
+            remaining = &remaining[..remaining.len() - suffix.len()];
+            break;
+        }
+    }
+    
+    if remaining.is_empty() {
+        None
+    } else {
+        Some(remaining.to_string())
+    }
+}
+
+/// Get the baseline key for a given target
+/// Examples:
+/// - "pg_doorman_c10" -> "postgresql_c10" (no variant)
+/// - "pg_doorman_simple_c10" -> "postgresql_simple_c10"
+/// - "pg_doorman_ssl_extended_c100" -> "postgresql_extended_c100" (ssl tests use non-ssl postgresql baseline)
+/// - "pg_doorman_ssl_connect_c10" -> "postgresql_simple_connect_c10" (ssl connect uses non-ssl connect baseline)
 fn get_baseline_key(target: &str) -> Option<String> {
-    extract_client_suffix(target).map(|suffix| format!("postgresql_{}", suffix))
+    let client_suffix = extract_client_suffix(target)?;
+    let variant = extract_test_variant(target);
+    
+    match variant {
+        None => Some(format!("postgresql_{}", client_suffix)),
+        Some(v) => {
+            // For SSL variants, use the non-SSL postgresql baseline
+            let baseline_variant = v
+                .replace("ssl_", "")
+                .replace("_ssl", "");
+            
+            if baseline_variant.is_empty() {
+                Some(format!("postgresql_{}", client_suffix))
+            } else {
+                Some(format!("postgresql_{}_{}", baseline_variant, client_suffix))
+            }
+        }
+    }
 }
 
 /// Send normalized benchmark results to bencher.dev

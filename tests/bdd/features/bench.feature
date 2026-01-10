@@ -98,64 +98,97 @@ Feature: Benchmarking environment setup with SSL
       }
       """
 
-    # ==================== NON-SSL BENCHMARKS ====================
+    # ==================== SIMPLE PROTOCOL ====================
 
-    # --- 1 client ---
-    When I run pgbench for "postgresql_c1" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pg_doorman_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "odyssey_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pgbouncer_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
+    # --- 10 clients, simple protocol ---
+    When I run pgbench for "postgresql_simple_c10" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_simple_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_simple_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_simple_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
 
-    # --- 10 clients ---
-    When I run pgbench for "postgresql_c10" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pg_doorman_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "odyssey_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pgbouncer_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
+    # --- 100 clients, simple protocol ---
+    When I run pgbench for "postgresql_simple_c100" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_simple_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_simple_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_simple_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}"
 
-    # --- 50 clients ---
-    When I run pgbench for "postgresql_c50" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 50 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pg_doorman_c50" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 50 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "odyssey_c50" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 50 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pgbouncer_c50" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 50 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
+    # ==================== EXTENDED PROTOCOL ====================
 
-    # --- 100 clients ---
-    When I run pgbench for "postgresql_c100" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pg_doorman_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "odyssey_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pgbouncer_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
+    # --- 10 clients, extended protocol ---
+    When I run pgbench for "postgresql_extended_c10" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_extended_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_extended_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_extended_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
 
-    # --- 200 clients ---
-    When I run pgbench for "postgresql_c200" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 200 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pg_doorman_c200" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 200 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "odyssey_c200" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 200 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
-    When I run pgbench for "pgbouncer_c200" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 200 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}"
+    # --- 100 clients, extended protocol ---
+    When I run pgbench for "postgresql_extended_c100" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_extended_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_extended_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_extended_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}"
 
-    # ==================== SSL BENCHMARKS ====================
+    # ==================== PREPARED PROTOCOL ====================
 
-    # --- 1 client SSL ---
-    When I run pgbench for "pg_doorman_ssl_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "odyssey_ssl_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "pgbouncer_ssl_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    # --- 10 clients, prepared protocol ---
+    When I run pgbench for "postgresql_prepared_c10" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_prepared_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_prepared_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_prepared_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
 
-    # --- 10 clients SSL ---
-    When I run pgbench for "pg_doorman_ssl_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "odyssey_ssl_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "pgbouncer_ssl_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    # --- 100 clients, prepared protocol ---
+    When I run pgbench for "postgresql_prepared_c100" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_prepared_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_prepared_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_prepared_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}"
 
-    # --- 50 clients SSL ---
-    When I run pgbench for "pg_doorman_ssl_c50" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 50 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "odyssey_ssl_c50" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 50 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "pgbouncer_ssl_c50" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 50 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    # ==================== WITH --connect (reconnect each transaction) ====================
 
-    # --- 100 clients SSL ---
-    When I run pgbench for "pg_doorman_ssl_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "odyssey_ssl_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "pgbouncer_ssl_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    # --- 10 clients, simple protocol, with connect ---
+    When I run pgbench for "postgresql_simple_connect_c10" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_simple_connect_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_simple_connect_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_simple_connect_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
 
-    # --- 200 clients SSL ---
-    When I run pgbench for "pg_doorman_ssl_c200" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 200 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "odyssey_ssl_c200" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 200 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
-    When I run pgbench for "pgbouncer_ssl_c200" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 200 -j 4 -T 30 -P 1 postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    # --- 100 clients, simple protocol, with connect ---
+    When I run pgbench for "postgresql_simple_connect_c100" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_simple_connect_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_simple_connect_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_simple_connect_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}"
+
+    # --- 10 clients, extended protocol, with connect ---
+    When I run pgbench for "postgresql_extended_connect_c10" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_extended_connect_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_extended_connect_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_extended_connect_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+
+    # --- 100 clients, extended protocol, with connect ---
+    When I run pgbench for "postgresql_extended_connect_c100" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pg_doorman_extended_connect_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "odyssey_extended_connect_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+    When I run pgbench for "pgbouncer_extended_connect_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}"
+
+    # ==================== SSL + EXTENDED PROTOCOL ====================
+
+    # --- 10 clients, extended protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_extended_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_extended_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_extended_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+
+    # --- 100 clients, extended protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_extended_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_extended_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_extended_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+
+    # ==================== SSL + CONNECT ====================
+
+    # --- 10 clients, simple protocol, SSL, with connect ---
+    When I run pgbench for "pg_doorman_ssl_connect_c10" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_connect_c10" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_connect_c10" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 10 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+
+    # --- 100 clients, simple protocol, SSL, with connect ---
+    When I run pgbench for "pg_doorman_ssl_connect_c100" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_connect_c100" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_connect_c100" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 100 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
 
     # Print and send results
     Then I print benchmark results
