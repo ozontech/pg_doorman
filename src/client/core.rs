@@ -1,16 +1,37 @@
 use crate::errors::Error;
 /// Handle clients by pretending to be a PostgreSQL server.
-use bytes::BytesMut;
-use std::collections::HashMap;
+use ahash::AHashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::BufReader;
 use tokio::sync::broadcast::Receiver;
 
+use crate::client::buffer_pool::PooledBuffer;
 use crate::messages::{error_response, Parse};
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
 use crate::server::ServerParameters;
 use crate::stats::{ClientStats, ServerStats};
+
+/// Key for prepared statement cache - avoids string allocations for anonymous statements
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PreparedStatementKey {
+    /// Named prepared statement (client-provided name)
+    Named(String),
+    /// Anonymous prepared statement (identified by hash)
+    Anonymous(u64),
+}
+
+impl PreparedStatementKey {
+    /// Create a key from client-given name, using hash for anonymous statements
+    #[inline]
+    pub fn from_name_or_hash(name: String, hash: u64) -> Self {
+        if name.is_empty() {
+            PreparedStatementKey::Anonymous(hash)
+        } else {
+            PreparedStatementKey::Named(name)
+        }
+    }
+}
 
 /// The client state. One of these is created per client.
 pub struct Client<S, T> {
@@ -23,7 +44,7 @@ pub struct Client<S, T> {
 
     /// Internal buffer, where we place messages until we have to flush
     /// them to the backend.
-    pub(crate) buffer: BytesMut,
+    pub(crate) buffer: PooledBuffer,
 
     /// Counter for pending CloseComplete messages to send before ReadyForQuery
     pub(crate) pending_close_complete: u32,
@@ -48,10 +69,6 @@ pub struct Client<S, T> {
     /// Clients are mapped to servers while they use them. This allows a client
     /// to connect and cancel a query.
     pub(crate) client_server_map: ClientServerMap,
-
-    /// Client parameters, e.g. user, client_encoding, etc.
-    #[allow(dead_code)]
-    pub(crate) parameters: HashMap<String, String>,
 
     /// Statistics related to this client
     pub(crate) stats: Arc<ClientStats>,
@@ -85,14 +102,14 @@ pub struct Client<S, T> {
     pub(crate) async_client: bool,
 
     /// Mapping of client named prepared statement to rewritten parse messages
-    pub(crate) prepared_statements: HashMap<String, (Arc<Parse>, u64)>,
+    pub(crate) prepared_statements: AHashMap<PreparedStatementKey, (Arc<Parse>, u64)>,
 
     /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
     pub(crate) last_anonymous_prepared_hash: Option<u64>,
 
     pub(crate) max_memory_usage: u64,
 
-    pub(crate) client_last_messages_in_tx: BytesMut,
+    pub(crate) client_last_messages_in_tx: PooledBuffer,
 
     pub(crate) pooler_check_query_request_vec: Vec<u8>,
 

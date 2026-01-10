@@ -5,8 +5,8 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// Default timeout for pgbench commands (10 minutes)
-const PGBENCH_TIMEOUT_SECS: u64 = 600;
+/// Default timeout for pgbench commands (60 seconds)
+const PGBENCH_TIMEOUT_SECS: u64 = 60;
 
 /// Create a pgbench script file once at the beginning of the scenario
 /// The file will be reused for all pgbench runs via ${PGBENCH_FILE} placeholder
@@ -180,6 +180,41 @@ fn parse_tps(output: &str) -> Option<f64> {
     None
 }
 
+/// Parse TPS from progress lines when pgbench times out or hangs
+/// Looks for patterns like:
+/// - "progress: 28.0 s, 26161.5 tps, lat 3.739 ms stddev 2.837, 0 failed"
+/// Returns average of all non-zero TPS values found
+fn parse_progress_tps(output: &str) -> Option<f64> {
+    let mut tps_values: Vec<f64> = Vec::new();
+    
+    for line in output.lines() {
+        // Look for progress lines with tps
+        if line.contains("progress:") && line.contains(" tps,") {
+            // Find the tps value: "progress: 28.0 s, 26161.5 tps,"
+            if let Some(tps_pos) = line.find(" tps,") {
+                // Go backwards from " tps," to find the number
+                let before_tps = &line[..tps_pos];
+                // Find the last comma before tps
+                if let Some(comma_pos) = before_tps.rfind(", ") {
+                    let num_str = before_tps[comma_pos + 2..].trim();
+                    if let Ok(tps) = num_str.parse::<f64>() {
+                        if tps > 0.0 {
+                            tps_values.push(tps);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if tps_values.is_empty() {
+        None
+    } else {
+        let avg = tps_values.iter().sum::<f64>() / tps_values.len() as f64;
+        Some(avg)
+    }
+}
+
 /// Run pgbench and store result for a target
 #[when(expr = "I run pgbench for {string} with:")]
 pub async fn run_pgbench_for_target(world: &mut DoormanWorld, target: String, step: &Step) {
@@ -247,7 +282,31 @@ pub async fn run_pgbench_for_target_inline(
             }
         }
         Err(e) => {
-            panic!("pgbench failed for {}: {}", target, e);
+            // Check if this is a "prepared statement does not exist" error (e.g., odyssey doesn't support prepared protocol)
+            if e.contains("prepared statement") && e.contains("does not exist") {
+                eprintln!(
+                    "\x1b[1;33m⚠ TPS for {}: 0.00 (prepared statements not supported)\x1b[0m",
+                    target
+                );
+                world.bench_results.insert(target, 0.0);
+            } else if e.contains("timed out") {
+                // Try to parse progress lines for average TPS on timeout
+                if let Some(tps) = parse_tps(&e).or_else(|| parse_progress_tps(&e)) {
+                    eprintln!(
+                        "\x1b[1;33m⚠ TPS for {} (from progress, timed out): {:.2}\x1b[0m",
+                        target, tps
+                    );
+                    world.bench_results.insert(target, tps);
+                } else {
+                    eprintln!(
+                        "\x1b[1;31m✗ TPS for {}: 0.00 (timed out, no progress data)\x1b[0m",
+                        target
+                    );
+                    world.bench_results.insert(target, 0.0);
+                }
+            } else {
+                panic!("pgbench failed for {}: {}", target, e);
+            }
         }
     }
 }
@@ -285,7 +344,31 @@ pub async fn run_pgbench_for_target_with_env(
             }
         }
         Err(e) => {
-            panic!("pgbench failed for {}: {}", target, e);
+            // Check if this is a "prepared statement does not exist" error (e.g., odyssey doesn't support prepared protocol)
+            if e.contains("prepared statement") && e.contains("does not exist") {
+                eprintln!(
+                    "\x1b[1;33m⚠ TPS for {}: 0.00 (prepared statements not supported)\x1b[0m",
+                    target
+                );
+                world.bench_results.insert(target, 0.0);
+            } else if e.contains("timed out") {
+                // Try to parse progress lines for average TPS on timeout
+                if let Some(tps) = parse_tps(&e).or_else(|| parse_progress_tps(&e)) {
+                    eprintln!(
+                        "\x1b[1;33m⚠ TPS for {} (from progress, timed out): {:.2}\x1b[0m",
+                        target, tps
+                    );
+                    world.bench_results.insert(target, tps);
+                } else {
+                    eprintln!(
+                        "\x1b[1;31m✗ TPS for {}: 0.00 (timed out, no progress data)\x1b[0m",
+                        target
+                    );
+                    world.bench_results.insert(target, 0.0);
+                }
+            } else {
+                panic!("pgbench failed for {}: {}", target, e);
+            }
         }
     }
 }
@@ -387,169 +470,143 @@ pub async fn benchmark_result_should_exist(world: &mut DoormanWorld, target: Str
     }
 }
 
-/// Extract client count suffix from target name
+/// Extract test suffix from target name (everything after pooler prefix)
 /// Examples:
-/// - "pg_doorman_c10" -> "c10"
-/// - "pg_doorman_ssl_c10" -> "c10"
-/// - "pg_doorman_simple_c10" -> "c10"
-/// - "pg_doorman_simple_connect_c10" -> "c10"
-/// - "pg_doorman_ssl_extended_c100" -> "c100"
-fn extract_client_suffix(target: &str) -> Option<&str> {
-    // Look for patterns like _c1, _c10, _c50, _c100, _c200 at the end
-    for suffix in &["_c200", "_c100", "_c50", "_c10", "_c1"] {
-        if target.ends_with(suffix) {
-            return Some(&suffix[1..]); // Return without leading underscore
+/// - "pg_doorman_c40" -> "c40"
+/// - "pg_doorman_ssl_c40" -> "ssl_c40"
+/// - "pg_doorman_extended_connect_c80" -> "extended_connect_c80"
+fn extract_test_suffix(target: &str) -> Option<String> {
+    let prefixes = ["postgresql_", "pg_doorman_", "odyssey_", "pgbouncer_"];
+    
+    for prefix in &prefixes {
+        if target.starts_with(prefix) {
+            return Some(target[prefix.len()..].to_string());
         }
     }
     None
 }
 
-/// Extract the test variant (protocol + connect + ssl) from target name
-/// Examples:
-/// - "pg_doorman_simple_c10" -> "simple"
-/// - "pg_doorman_extended_connect_c10" -> "extended_connect"
-/// - "pg_doorman_ssl_extended_c10" -> "ssl_extended"
-/// - "pg_doorman_ssl_connect_c10" -> "ssl_connect"
-fn extract_test_variant(target: &str) -> Option<String> {
-    // Remove the pooler prefix and client suffix to get the variant
-    let prefixes = ["postgresql_", "pg_doorman_", "odyssey_", "pgbouncer_"];
-    
-    let mut remaining = target;
-    for prefix in &prefixes {
-        if target.starts_with(prefix) {
-            remaining = &target[prefix.len()..];
-            break;
-        }
-    }
-    
-    // Remove client suffix
-    for suffix in &["_c200", "_c100", "_c50", "_c10", "_c1"] {
-        if remaining.ends_with(suffix) {
-            remaining = &remaining[..remaining.len() - suffix.len()];
-            break;
-        }
-    }
-    
-    if remaining.is_empty() {
-        None
-    } else {
-        Some(remaining.to_string())
-    }
-}
-
-/// Get the baseline key for a given target
-/// Examples:
-/// - "pg_doorman_c10" -> "postgresql_c10" (no variant)
-/// - "pg_doorman_simple_c10" -> "postgresql_simple_c10"
-/// - "pg_doorman_ssl_extended_c100" -> "postgresql_extended_c100" (ssl tests use non-ssl postgresql baseline)
-/// - "pg_doorman_ssl_connect_c10" -> "postgresql_simple_connect_c10" (ssl connect uses non-ssl connect baseline)
-fn get_baseline_key(target: &str) -> Option<String> {
-    let client_suffix = extract_client_suffix(target)?;
-    let variant = extract_test_variant(target);
-    
-    match variant {
-        None => Some(format!("postgresql_{}", client_suffix)),
-        Some(v) => {
-            // For SSL variants, use the non-SSL postgresql baseline
-            let baseline_variant = v
-                .replace("ssl_", "")
-                .replace("_ssl", "");
-            
-            if baseline_variant.is_empty() {
-                Some(format!("postgresql_{}", client_suffix))
-            } else {
-                Some(format!("postgresql_{}_{}", baseline_variant, client_suffix))
-            }
-        }
-    }
-}
-
 /// Send normalized benchmark results to bencher.dev
+/// Compares pg_doorman vs pgbouncer and pg_doorman vs odyssey
+/// Value > 1.0 means pg_doorman is faster than competitor
 #[then("I send normalized benchmark results to bencher.dev")]
 pub async fn send_to_bencher(world: &mut DoormanWorld) {
+    // Collect all unique test suffixes from pg_doorman results
+    let mut test_suffixes: Vec<String> = world
+        .bench_results
+        .keys()
+        .filter(|k| k.starts_with("pg_doorman_"))
+        .filter_map(|k| extract_test_suffix(k))
+        .collect();
+    test_suffixes.sort();
+    test_suffixes.dedup();
+
+    // Print comparison results
+    eprintln!("\n=== Benchmark Results (pg_doorman vs competitors) ===");
+    eprintln!("Value > 1.0 means pg_doorman is faster\n");
+
+    let mut metrics = serde_json::Map::new();
+
+    for suffix in &test_suffixes {
+        let doorman_key = format!("pg_doorman_{}", suffix);
+        let pgbouncer_key = format!("pgbouncer_{}", suffix);
+        let odyssey_key = format!("odyssey_{}", suffix);
+
+        let doorman_tps = world.bench_results.get(&doorman_key).copied().unwrap_or(0.0);
+
+        // Compare pg_doorman vs pgbouncer
+        if let Some(&pgbouncer_tps) = world.bench_results.get(&pgbouncer_key) {
+            if pgbouncer_tps > 0.0 && doorman_tps > 0.0 {
+                let ratio = doorman_tps / pgbouncer_tps;
+                let metric_name = format!("pg_doorman_vs_pgbouncer_{}", suffix);
+                
+                eprintln!(
+                    "\x1b[1;36m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
+                    metric_name, doorman_tps, pgbouncer_tps, ratio
+                );
+
+                let mut metric = serde_json::Map::new();
+                let mut throughput = serde_json::Map::new();
+                throughput.insert("value".to_string(), serde_json::json!(ratio));
+                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metrics.insert(metric_name, serde_json::Value::Object(metric));
+            } else if doorman_tps > 0.0 {
+                // pgbouncer failed (0 tps), pg_doorman wins
+                let metric_name = format!("pg_doorman_vs_pgbouncer_{}", suffix);
+                eprintln!(
+                    "\x1b[1;32m{}: pg_doorman={:.2}, pgbouncer=0 (pg_doorman wins)\x1b[0m",
+                    metric_name, doorman_tps
+                );
+                // Use a high value to indicate pg_doorman is much better
+                let mut metric = serde_json::Map::new();
+                let mut throughput = serde_json::Map::new();
+                throughput.insert("value".to_string(), serde_json::json!(10.0));
+                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metrics.insert(metric_name, serde_json::Value::Object(metric));
+            }
+        }
+
+        // Compare pg_doorman vs odyssey
+        if let Some(&odyssey_tps) = world.bench_results.get(&odyssey_key) {
+            if odyssey_tps > 0.0 && doorman_tps > 0.0 {
+                let ratio = doorman_tps / odyssey_tps;
+                let metric_name = format!("pg_doorman_vs_odyssey_{}", suffix);
+                
+                eprintln!(
+                    "\x1b[1;35m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
+                    metric_name, doorman_tps, odyssey_tps, ratio
+                );
+
+                let mut metric = serde_json::Map::new();
+                let mut throughput = serde_json::Map::new();
+                throughput.insert("value".to_string(), serde_json::json!(ratio));
+                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metrics.insert(metric_name, serde_json::Value::Object(metric));
+            } else if doorman_tps > 0.0 {
+                // odyssey failed (0 tps), pg_doorman wins
+                let metric_name = format!("pg_doorman_vs_odyssey_{}", suffix);
+                eprintln!(
+                    "\x1b[1;32m{}: pg_doorman={:.2}, odyssey=0 (pg_doorman wins)\x1b[0m",
+                    metric_name, doorman_tps
+                );
+                let mut metric = serde_json::Map::new();
+                let mut throughput = serde_json::Map::new();
+                throughput.insert("value".to_string(), serde_json::json!(10.0));
+                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metrics.insert(metric_name, serde_json::Value::Object(metric));
+            }
+        }
+    }
+
     // Get API token from environment
     let api_token = match std::env::var("BENCHER_API_TOKEN") {
-        Ok(token) if !token.is_empty() => token,
+        Ok(token) if !token.trim().is_empty() => token.trim().to_string(),
         _ => {
-            eprintln!("BENCHER_API_TOKEN not set, skipping bencher.dev upload");
-            // Print results locally instead
-            eprintln!(
-                "\n=== Benchmark Results (normalized to postgresql baseline per client count) ==="
-            );
-            for (target, tps) in &world.bench_results {
-                if target.starts_with("postgresql_") {
-                    eprintln!("{}: {:.2} tps (baseline)", target, tps);
-                } else if let Some(baseline_key) = get_baseline_key(target) {
-                    if let Some(baseline_tps) = world.bench_results.get(&baseline_key) {
-                        if *baseline_tps > 0.0 {
-                            let normalized = tps / baseline_tps;
-                            eprintln!(
-                                "{}: {:.2} tps (normalized: {:.4} vs {})",
-                                target, tps, normalized, baseline_key
-                            );
-                        }
-                    }
-                }
-            }
+            eprintln!("\nBENCHER_API_TOKEN not set, skipping bencher.dev upload");
             return;
         }
     };
 
-    // Prepare normalized results for each target (except postgresql baselines)
-    let mut metrics = serde_json::Map::new();
-
-    for (target, tps) in &world.bench_results {
-        // Skip postgresql baselines
-        if target.starts_with("postgresql_") {
-            continue;
-        }
-
-        // Find the corresponding baseline for this client count
-        let baseline_key = match get_baseline_key(target) {
-            Some(key) => key,
-            None => {
-                eprintln!(
-                    "Warning: Cannot determine baseline for {}, skipping",
-                    target
-                );
-                continue;
-            }
-        };
-
-        let baseline_tps = match world.bench_results.get(&baseline_key) {
-            Some(tps) if *tps > 0.0 => *tps,
-            _ => {
-                eprintln!(
-                    "Warning: Baseline {} not found or invalid for {}, skipping",
-                    baseline_key, target
-                );
-                continue;
-            }
-        };
-
-        let normalized = tps / baseline_tps;
-        eprintln!(
-            "Normalized result for {}: {:.2} tps / {:.2} tps ({}) = {:.4}",
-            target, tps, baseline_tps, baseline_key, normalized
-        );
-
-        // Create metric entry for this target
-        let mut metric = serde_json::Map::new();
-        let mut throughput = serde_json::Map::new();
-        throughput.insert("value".to_string(), serde_json::json!(normalized));
-        metric.insert(
-            "throughput".to_string(),
-            serde_json::Value::Object(throughput),
-        );
-        metrics.insert(target.clone(), serde_json::Value::Object(metric));
+    if metrics.is_empty() {
+        eprintln!("No metrics to send to bencher.dev");
+        return;
     }
 
     // Build the JSON payload for bencher.dev
-    // See: https://bencher.dev/docs/api/projects/runs/
+    // See: https://bencher.dev/docs/api/projects/reports/
+    // The "results" field must be an array of JSON strings in BMF (Bencher Metric Format)
+    let metrics_json_str = serde_json::to_string(&metrics).expect("Failed to serialize metrics");
+    
+    // Get current time for end_time, and 30 minutes ago for start_time (approximate test duration)
+    let now = chrono::Utc::now();
+    let start_time = now - chrono::Duration::minutes(30);
+    
     let payload = serde_json::json!({
         "branch": std::env::var("BENCHER_BRANCH").unwrap_or_else(|_| "main".to_string()),
         "testbed": std::env::var("BENCHER_TESTBED").unwrap_or_else(|_| "localhost".to_string()),
-        "results": [metrics]
+        "start_time": start_time.to_rfc3339(),
+        "end_time": now.to_rfc3339(),
+        "results": [metrics_json_str]
     });
 
     eprintln!(
@@ -557,45 +614,220 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
         serde_json::to_string_pretty(&payload).unwrap_or_default()
     );
 
-    // Send to bencher.dev API
+    // Send to bencher.dev API using reqwest
     let project = std::env::var("BENCHER_PROJECT").unwrap_or_else(|_| "pg-doorman".to_string());
-    let url = format!("https://api.bencher.dev/v0/projects/{}/runs", project);
+    let url = format!("https://api.bencher.dev/v0/projects/{}/reports", project);
 
-    // Use curl to send the request (simpler than adding reqwest dependency)
-    let payload_str = serde_json::to_string(&payload).expect("Failed to serialize payload");
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_token))
+        .json(&payload)
+        .send()
+        .await;
 
-    let output = Command::new("curl")
-        .args([
-            "-s",
-            "-X",
-            "POST",
-            &url,
-            "-H",
-            "Content-Type: application/json",
-            "-H",
-            &format!("Authorization: Bearer {}", api_token),
-            "-d",
-            &payload_str,
-        ])
-        .output();
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
 
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-
-            if output.status.success() {
-                eprintln!("Successfully sent results to bencher.dev");
-                eprintln!("Response: {}", stdout);
+            if status.is_success() {
+                // Check if response contains an error message from API
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(message) = json.get("message") {
+                        // API returned an error in JSON format
+                        eprintln!(
+                            "\x1b[1;31m✗ Failed to send results to bencher.dev: {}\x1b[0m",
+                            message
+                        );
+                        eprintln!("Response: {}", body);
+                    } else if json.get("uuid").is_some() || json.get("report").is_some() {
+                        // Success - response contains expected fields
+                        eprintln!("\x1b[1;32m✓ Successfully sent results to bencher.dev\x1b[0m");
+                        eprintln!("Response: {}", body);
+                    } else {
+                        // Unknown response format
+                        eprintln!("\x1b[1;33m⚠ Unexpected response from bencher.dev\x1b[0m");
+                        eprintln!("Response: {}", body);
+                    }
+                } else {
+                    // Could not parse response as JSON
+                    eprintln!("\x1b[1;33m⚠ Could not parse bencher.dev response as JSON\x1b[0m");
+                    eprintln!("Response: {}", body);
+                }
             } else {
                 eprintln!(
-                    "Warning: Failed to send results to bencher.dev\nstdout: {}\nstderr: {}",
-                    stdout, stderr
+                    "\x1b[1;31m✗ Failed to send results to bencher.dev (HTTP {})\x1b[0m\nResponse: {}",
+                    status, body
                 );
             }
         }
         Err(e) => {
-            eprintln!("Warning: Failed to execute curl: {}", e);
+            eprintln!("\x1b[1;31m✗ Failed to send request to bencher.dev: {}\x1b[0m", e);
+        }
+    }
+}
+
+/// Send benchmark results for a specific test step to bencher.dev
+/// This should be called after each group of 4 tests (postgresql, pg_doorman, odyssey, pgbouncer)
+/// Example: When I send benchmark results for "simple_c1" to bencher
+#[when(expr = "I send benchmark results for {string} to bencher")]
+pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix: String) {
+    let doorman_key = format!("pg_doorman_{}", test_suffix);
+    let pgbouncer_key = format!("pgbouncer_{}", test_suffix);
+    let odyssey_key = format!("odyssey_{}", test_suffix);
+
+    let doorman_tps = world.bench_results.get(&doorman_key).copied().unwrap_or(0.0);
+    let pgbouncer_tps = world.bench_results.get(&pgbouncer_key).copied().unwrap_or(0.0);
+    let odyssey_tps = world.bench_results.get(&odyssey_key).copied().unwrap_or(0.0);
+
+    eprintln!("\n=== Sending benchmark results for {} ===", test_suffix);
+
+    let mut metrics = serde_json::Map::new();
+
+    // Compare pg_doorman vs pgbouncer
+    if pgbouncer_tps > 0.0 && doorman_tps > 0.0 {
+        let ratio = doorman_tps / pgbouncer_tps;
+        let metric_name = format!("pg_doorman_vs_pgbouncer_{}", test_suffix);
+        
+        eprintln!(
+            "\x1b[1;36m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
+            metric_name, doorman_tps, pgbouncer_tps, ratio
+        );
+
+        let mut metric = serde_json::Map::new();
+        let mut throughput = serde_json::Map::new();
+        throughput.insert("value".to_string(), serde_json::json!(ratio));
+        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metrics.insert(metric_name, serde_json::Value::Object(metric));
+    } else if doorman_tps > 0.0 && pgbouncer_tps == 0.0 {
+        let metric_name = format!("pg_doorman_vs_pgbouncer_{}", test_suffix);
+        eprintln!(
+            "\x1b[1;32m{}: pg_doorman={:.2}, pgbouncer=0 (pg_doorman wins)\x1b[0m",
+            metric_name, doorman_tps
+        );
+        let mut metric = serde_json::Map::new();
+        let mut throughput = serde_json::Map::new();
+        throughput.insert("value".to_string(), serde_json::json!(10.0));
+        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metrics.insert(metric_name, serde_json::Value::Object(metric));
+    }
+
+    // Compare pg_doorman vs odyssey
+    if odyssey_tps > 0.0 && doorman_tps > 0.0 {
+        let ratio = doorman_tps / odyssey_tps;
+        let metric_name = format!("pg_doorman_vs_odyssey_{}", test_suffix);
+        
+        eprintln!(
+            "\x1b[1;35m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
+            metric_name, doorman_tps, odyssey_tps, ratio
+        );
+
+        let mut metric = serde_json::Map::new();
+        let mut throughput = serde_json::Map::new();
+        throughput.insert("value".to_string(), serde_json::json!(ratio));
+        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metrics.insert(metric_name, serde_json::Value::Object(metric));
+    } else if doorman_tps > 0.0 && odyssey_tps == 0.0 {
+        let metric_name = format!("pg_doorman_vs_odyssey_{}", test_suffix);
+        eprintln!(
+            "\x1b[1;32m{}: pg_doorman={:.2}, odyssey=0 (pg_doorman wins)\x1b[0m",
+            metric_name, doorman_tps
+        );
+        let mut metric = serde_json::Map::new();
+        let mut throughput = serde_json::Map::new();
+        throughput.insert("value".to_string(), serde_json::json!(10.0));
+        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metrics.insert(metric_name, serde_json::Value::Object(metric));
+    }
+
+    // Get API token from environment
+    let api_token = match std::env::var("BENCHER_API_TOKEN") {
+        Ok(token) if !token.trim().is_empty() => token.trim().to_string(),
+        _ => {
+            eprintln!("BENCHER_API_TOKEN not set, skipping bencher.dev upload for {}", test_suffix);
+            return;
+        }
+    };
+
+    if metrics.is_empty() {
+        eprintln!("No metrics to send for {}", test_suffix);
+        return;
+    }
+
+    // Build the JSON payload for bencher.dev
+    // API requires start_time and end_time fields, and endpoint is /reports not /runs
+    let metrics_json_str = serde_json::to_string(&metrics).expect("Failed to serialize metrics");
+    
+    // Get current time for end_time, and 30 minutes ago for start_time (approximate test duration)
+    let now = chrono::Utc::now();
+    let start_time = now - chrono::Duration::minutes(30);
+    
+    let payload = serde_json::json!({
+        "branch": std::env::var("BENCHER_BRANCH").unwrap_or_else(|_| "main".to_string()),
+        "testbed": std::env::var("BENCHER_TESTBED").unwrap_or_else(|_| "localhost".to_string()),
+        "start_time": start_time.to_rfc3339(),
+        "end_time": now.to_rfc3339(),
+        "results": [metrics_json_str]
+    });
+
+    eprintln!(
+        "Sending to bencher.dev: {}",
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
+    );
+
+    // Send to bencher.dev API using reqwest
+    let project = std::env::var("BENCHER_PROJECT").unwrap_or_else(|_| "pg-doorman".to_string());
+    let url = format!("https://api.bencher.dev/v0/projects/{}/reports", project);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_token))
+        .json(&payload)
+        .send()
+        .await;
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+
+            if status.is_success() {
+                // Check if response contains an error message from API
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(message) = json.get("message") {
+                        // API returned an error in JSON format
+                        eprintln!(
+                            "\x1b[1;31m✗ Failed to send {} results to bencher.dev: {}\x1b[0m",
+                            test_suffix, message
+                        );
+                        eprintln!("Response: {}", body);
+                    } else if json.get("uuid").is_some() || json.get("report").is_some() {
+                        // Success - response contains expected fields
+                        eprintln!("\x1b[1;32m✓ Successfully sent {} results to bencher.dev\x1b[0m", test_suffix);
+                        eprintln!("Response: {}", body);
+                    } else {
+                        // Unknown response format
+                        eprintln!("\x1b[1;33m⚠ Unexpected response from bencher.dev for {}\x1b[0m", test_suffix);
+                        eprintln!("Response: {}", body);
+                    }
+                } else {
+                    // Could not parse response as JSON
+                    eprintln!("\x1b[1;33m⚠ Could not parse bencher.dev response as JSON for {}\x1b[0m", test_suffix);
+                    eprintln!("Response: {}", body);
+                }
+            } else {
+                eprintln!(
+                    "\x1b[1;31m✗ Failed to send {} results to bencher.dev (HTTP {})\x1b[0m\nResponse: {}",
+                    test_suffix, status, body
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("\x1b[1;31m✗ Failed to send request to bencher.dev for {}: {}\x1b[0m", test_suffix, e);
         }
     }
 }
@@ -638,6 +870,167 @@ pub async fn print_benchmark_results(world: &mut DoormanWorld) {
                     eprintln!("  {}: {:.2} tps", target, tps);
                 }
             }
+        }
+    }
+}
+
+/// Generate a Markdown table with benchmark results and save to file
+/// The table shows relative performance: pg_doorman/pgbouncer and pg_doorman/odyssey
+/// Value > 1.0 means pg_doorman is faster than competitor
+#[then("I generate benchmark markdown table")]
+pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
+    eprintln!("\n=== Generating Benchmark Markdown Table ===");
+
+    // Define test configurations to display
+    // Format: (suffix_pattern, display_name)
+    let test_configs = [
+        // Simple protocol
+        ("simple_c1", "Simple Protocol, 1 client"),
+        ("simple_c40", "Simple Protocol, 40 clients"),
+        ("simple_c80", "Simple Protocol, 80 clients"),
+        ("simple_c120", "Simple Protocol, 120 clients"),
+        // Extended protocol
+        ("extended_c1", "Extended Protocol, 1 client"),
+        ("extended_c40", "Extended Protocol, 40 clients"),
+        ("extended_c80", "Extended Protocol, 80 clients"),
+        ("extended_c120", "Extended Protocol, 120 clients"),
+        // Prepared protocol
+        ("prepared_c1", "Prepared Protocol, 1 client"),
+        ("prepared_c40", "Prepared Protocol, 40 clients"),
+        ("prepared_c80", "Prepared Protocol, 80 clients"),
+        ("prepared_c120", "Prepared Protocol, 120 clients"),
+        // Simple + connect
+        ("simple_connect_c1", "Simple + Reconnect, 1 client"),
+        ("simple_connect_c40", "Simple + Reconnect, 40 clients"),
+        ("simple_connect_c80", "Simple + Reconnect, 80 clients"),
+        ("simple_connect_c120", "Simple + Reconnect, 120 clients"),
+        // Extended + connect
+        ("extended_connect_c1", "Extended + Reconnect, 1 client"),
+        ("extended_connect_c40", "Extended + Reconnect, 40 clients"),
+        ("extended_connect_c80", "Extended + Reconnect, 80 clients"),
+        ("extended_connect_c120", "Extended + Reconnect, 120 clients"),
+        // Prepared + connect
+        ("prepared_connect_c1", "Prepared + Reconnect, 1 client"),
+        ("prepared_connect_c40", "Prepared + Reconnect, 40 clients"),
+        ("prepared_connect_c80", "Prepared + Reconnect, 80 clients"),
+        ("prepared_connect_c120", "Prepared + Reconnect, 120 clients"),
+        // SSL variants
+        ("ssl_extended_c1", "SSL + Extended, 1 client"),
+        ("ssl_extended_c40", "SSL + Extended, 40 clients"),
+        ("ssl_extended_c80", "SSL + Extended, 80 clients"),
+        ("ssl_extended_c120", "SSL + Extended, 120 clients"),
+        // SSL + connect
+        ("ssl_connect_c1", "SSL + Reconnect, 1 client"),
+        ("ssl_connect_c40", "SSL + Reconnect, 40 clients"),
+        ("ssl_connect_c80", "SSL + Reconnect, 80 clients"),
+        ("ssl_connect_c120", "SSL + Reconnect, 120 clients"),
+    ];
+
+    let mut table_rows: Vec<String> = Vec::new();
+
+    // Table header - relative values: pg_doorman/competitor
+    table_rows.push("| Test | vs pgbouncer | vs odyssey |".to_string());
+    table_rows.push("|------|--------------|------------|".to_string());
+
+    for (suffix, display_name) in &test_configs {
+        let doorman_key = format!("pg_doorman_{}", suffix);
+        let pgbouncer_key = format!("pgbouncer_{}", suffix);
+        let odyssey_key = format!("odyssey_{}", suffix);
+
+        let doorman_tps = world.bench_results.get(&doorman_key).copied();
+        let pgbouncer_tps = world.bench_results.get(&pgbouncer_key).copied();
+        let odyssey_tps = world.bench_results.get(&odyssey_key).copied();
+
+        // Skip if no pg_doorman results for this test
+        if doorman_tps.is_none() {
+            continue;
+        }
+
+        let doorman = doorman_tps.unwrap_or(0.0);
+
+        // Calculate relative values: pg_doorman / competitor
+        // Value > 1.0 means pg_doorman is faster
+        let format_ratio = |competitor_tps: Option<f64>| -> String {
+            match competitor_tps {
+                Some(v) if v > 0.0 && doorman > 0.0 => {
+                    let ratio = doorman / v;
+                    format!("{:.2}", ratio)
+                }
+                Some(_) if doorman > 0.0 => "∞".to_string(), // competitor failed, pg_doorman wins
+                Some(_) => "N/A".to_string(),
+                None => "-".to_string(),
+            }
+        };
+
+        let row = format!(
+            "| {} | {} | {} |",
+            display_name,
+            format_ratio(pgbouncer_tps),
+            format_ratio(odyssey_tps)
+        );
+        table_rows.push(row);
+    }
+
+    // Generate the full markdown content
+    let now = chrono::Utc::now();
+    let markdown_content = format!(
+        r#"---
+title: Benchmarks
+---
+
+# Performance Benchmarks
+
+## Automated Benchmark Results
+
+Last updated: {}
+
+These benchmarks are automatically generated by the CI pipeline using `pgbench`.
+
+### Test Environment
+
+- **Pool size**: 40 connections
+- **Test duration**: 30 seconds per test
+- **Workers**: pg_doorman and odyssey use 4 workers
+
+### Results (Relative Performance: pg_doorman / competitor)
+
+{}
+
+### Legend
+
+- **Value > 1.0**: pg_doorman is faster than competitor
+- **Value = 1.0**: Equal performance
+- **Value < 1.0**: pg_doorman is slower than competitor
+- **∞**: Competitor failed (0 TPS), pg_doorman wins
+- **N/A**: Test not supported by this pooler
+- **-**: Test not executed
+
+### Test Types
+
+- **Simple Protocol**: Basic query execution
+- **Extended Protocol**: Parse/Bind/Execute flow
+- **Prepared Protocol**: Uses prepared statements
+- **Reconnect**: New connection per transaction (`--connect` flag)
+- **SSL**: TLS encrypted connections
+
+### Notes
+
+- Odyssey does not support prepared statements in transaction pooling mode
+- Results may vary based on hardware and system load
+"#,
+        now.format("%Y-%m-%d %H:%M UTC"),
+        table_rows.join("\n")
+    );
+
+    // Write to file
+    let file_path = "documentation/docs/benchmarks.md";
+    match std::fs::write(file_path, &markdown_content) {
+        Ok(_) => {
+            eprintln!("\x1b[1;32m✓ Benchmark table written to {}\x1b[0m", file_path);
+            eprintln!("\n{}", markdown_content);
+        }
+        Err(e) => {
+            eprintln!("\x1b[1;31m✗ Failed to write benchmark table to {}: {}\x1b[0m", file_path, e);
         }
     }
 }

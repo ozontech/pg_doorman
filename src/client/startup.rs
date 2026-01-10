@@ -1,6 +1,6 @@
+use ahash::AHashMap;
 use bytes::{Buf, BufMut, BytesMut};
 use log::error;
-use std::collections::HashMap;
 use std::ffi::CStr;
 use std::str;
 use std::sync::atomic::Ordering;
@@ -24,6 +24,7 @@ use crate::pool::ClientServerMap;
 use crate::server::ServerParameters;
 use crate::stats::{ClientStats, CANCEL_CONNECTION_COUNTER};
 
+use super::buffer_pool::PooledBuffer;
 use super::core::Client;
 
 /// Type of connection received from client.
@@ -170,7 +171,7 @@ where
         admin_only: bool,
         use_tls: bool,
     ) -> Result<Client<S, T>, Error> {
-        let parameters = parse_startup(bytes.clone())?;
+        let parameters = parse_startup(bytes)?;
 
         // This parameter is mandatory by the protocol.
         let username_from_parameters = match parameters.get("user") {
@@ -184,7 +185,8 @@ where
 
         let pool_name = parameters
             .get("database")
-            .unwrap_or(username_from_parameters);
+            .unwrap_or(username_from_parameters)
+            .to_string();
 
         let application_name = match parameters.get("application_name") {
             Some(application_name) => application_name,
@@ -194,7 +196,7 @@ where
         let mut client_identifier = ClientIdentifier::new(
             application_name,
             username_from_parameters,
-            pool_name,
+            &pool_name,
             addr.to_string().as_str(),
         );
         client_identifier.hba_md5 = check_hba(
@@ -202,14 +204,14 @@ where
             use_tls,
             "md5",
             username_from_parameters,
-            pool_name,
+            &pool_name,
         );
         client_identifier.hba_scram = check_hba(
             addr.ip(),
             use_tls,
             "scram-sha-256",
             username_from_parameters,
-            pool_name,
+            &pool_name,
         );
         {
             // If md5 or scram is allowed, we can try to authenticate with Talos.
@@ -267,7 +269,7 @@ where
 
         let admin = ["pgdoorman", "pgbouncer"]
             .iter()
-            .filter(|db| *db == pool_name)
+            .filter(|db| **db == pool_name)
             .count()
             == 1;
 
@@ -317,13 +319,13 @@ where
             &mut write,
             admin,
             &client_identifier,
-            pool_name,
+            &pool_name,
             username_from_parameters,
         )
         .await?;
 
         // Update the parameters to merge what the application sent and what's originally on the server
-        server_parameters.set_from_hashmap(parameters.clone(), false);
+        server_parameters.set_from_hashmap(&parameters, false);
         let mut buf = BytesMut::new();
         {
             let mut auth_ok = BytesMut::with_capacity(9);
@@ -346,7 +348,7 @@ where
             process_id,
             client_identifier.application_name.as_str(),
             client_identifier.username.as_str(),
-            pool_name,
+            &pool_name,
             addr.to_string().as_str(),
             tokio::time::Instant::now(),
             use_tls,
@@ -357,7 +359,7 @@ where
             read: BufReader::new(read),
             write,
             addr,
-            buffer: BytesMut::with_capacity(8196),
+            buffer: PooledBuffer::new(),
             pending_close_complete: 0,
             pending_parse_complete: 0,
             cancel_mode: false,
@@ -365,26 +367,24 @@ where
             process_id,
             secret_key,
             client_server_map,
-            parameters: parameters.clone(),
             stats,
             admin,
             last_server_stats: None,
             connected_to_server: false,
-            pool_name: pool_name.clone(),
-            username: client_identifier.username.clone(),
+            pool_name,
+            username: std::mem::take(&mut client_identifier.username),
             server_parameters,
             shutdown,
             prepared_statements_enabled,
             async_client: false,
-            prepared_statements: HashMap::new(),
+            prepared_statements: AHashMap::new(),
             last_anonymous_prepared_hash: None,
             virtual_pool_count: config.general.virtual_pool_count,
-            client_last_messages_in_tx: BytesMut::with_capacity(8196),
+            client_last_messages_in_tx: PooledBuffer::new(),
             created_at: Instant::now(),
             max_memory_usage: config.general.max_memory_usage,
             pooler_check_query_request_vec: config
                 .general
-                .clone()
                 .poller_check_query_request_bytes_vec(),
         })
     }
@@ -404,7 +404,7 @@ where
             read: BufReader::new(read),
             write,
             addr,
-            buffer: BytesMut::with_capacity(8196),
+            buffer: PooledBuffer::new(),
             pending_close_complete: 0,
             pending_parse_complete: 0,
             cancel_mode: true,
@@ -412,7 +412,6 @@ where
             process_id,
             secret_key,
             client_server_map,
-            parameters: HashMap::new(),
             stats: Arc::new(ClientStats::default()),
             admin: false,
             last_server_stats: None,
@@ -422,10 +421,10 @@ where
             shutdown,
             prepared_statements_enabled: false,
             async_client: false,
-            prepared_statements: HashMap::new(),
+            prepared_statements: AHashMap::new(),
             last_anonymous_prepared_hash: None,
             connected_to_server: false,
-            client_last_messages_in_tx: BytesMut::with_capacity(8196),
+            client_last_messages_in_tx: PooledBuffer::new(),
             virtual_pool_count: get_config().general.virtual_pool_count,
             created_at: Instant::now(),
             max_memory_usage: 128 * 1024 * 1024,

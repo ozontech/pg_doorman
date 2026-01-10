@@ -1,4 +1,3 @@
-use bytes::{BufMut, BytesMut};
 use log::{error, info};
 use std::sync::atomic::Ordering;
 use tokio::io::split;
@@ -9,7 +8,7 @@ use tokio::sync::mpsc::Sender;
 use crate::config::get_config;
 use crate::errors::Error;
 use crate::messages::config_socket::configure_tcp_socket_for_cancel;
-use crate::messages::{error_response_terminal, write_all};
+use crate::messages::{error_response_terminal, write_all_flush};
 use crate::pool::ClientServerMap;
 use crate::stats::{CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER};
 use crate::utils::rate_limit::RateLimiter;
@@ -34,9 +33,7 @@ pub async fn client_entrypoint_too_many_clients_already(
 
     match get_startup::<TcpStream>(&mut stream).await {
         Ok((ClientConnectionType::Tls, _)) => {
-            let mut no = BytesMut::new();
-            no.put_u8(b'N');
-            write_all(&mut stream, no).await?;
+            write_all_flush(&mut stream, b"N").await?;
             // здесь может быть ошибка SSL is not enabled on the server,
             // вместо too many client, но это сделано намерянно, потому что мы
             // не сможем обработать столько клиентов еще и через SSL.
@@ -109,9 +106,7 @@ pub async fn client_entrypoint(
             // TLS settings are configured, will setup TLS now.
             if let Some(tls_acceptor) = tls_acceptor {
                 TLS_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let mut yes = BytesMut::new();
-                yes.put_u8(b'S');
-                write_all(&mut stream, yes).await?;
+                write_all_flush(&mut stream, b"S").await?;
 
                 if let Some(tls_rate_limiter) = tls_rate_limiter {
                     tls_rate_limiter.wait().await;
@@ -155,9 +150,7 @@ pub async fn client_entrypoint(
             else {
                 // Rejecting client request for TLS.
                 PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let mut no = BytesMut::new();
-                no.put_u8(b'N');
-                write_all(&mut stream, no).await?;
+                write_all_flush(&mut stream, b"N").await?;
 
                 // Attempting regular startup. Client can disconnect now
                 // if they choose.

@@ -343,7 +343,7 @@ impl ConnectionPool {
                 Ok(conn) => conn,
                 Err(err) => return Err(Error::ServerStartupReadParameters(err.to_string())),
             };
-            guard.set_from_hashmap(conn.server_parameters_as_hashmap(), true);
+            guard.set_from_hashmap(&conn.server_parameters_as_hashmap(), true);
         }
         Ok(guard.clone())
     }

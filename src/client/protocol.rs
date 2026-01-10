@@ -1,16 +1,14 @@
 use bytes::{BufMut, BytesMut};
 use log::debug;
 use std::convert::TryInto;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::client::util::PREPARED_STATEMENT_COUNTER;
 use crate::errors::Error;
 use crate::messages::{error_response, Bind, Close, Describe, Parse};
 use crate::pool::ConnectionPool;
 use crate::server::Server;
 
-use super::core::Client;
+use super::core::{Client, PreparedStatementKey};
 
 impl<S, T> Client<S, T>
 where
@@ -20,13 +18,13 @@ where
     /// Makes sure the checked out server has the prepared statement and sends it to the server if it doesn't
     pub(crate) async fn ensure_prepared_statement_is_on_server(
         &mut self,
-        client_name: String,
+        key: PreparedStatementKey,
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
-        match self.prepared_statements.get(&client_name) {
+        match self.prepared_statements.get(&key) {
             Some((parse, hash)) => {
-                debug!("Prepared statement `{client_name}` found in cache");
+                debug!("Prepared statement `{key:?}` found in cache");
                 // In this case we want to send the parse message to the server
                 // since pgcat is initiating the prepared statement on this specific server
                 match self
@@ -36,8 +34,8 @@ where
                     Ok(_) => (),
                     Err(err) => match err {
                         Error::PreparedStatementError => {
-                            debug!("Removed {client_name} from client cache");
-                            self.prepared_statements.remove(&client_name);
+                            debug!("Removed {key:?} from client cache");
+                            self.prepared_statements.remove(&key);
                         }
 
                         _ => {
@@ -49,7 +47,7 @@ where
 
             None => {
                 return Err(Error::ClientError(format!(
-                    "prepared statement `{client_name}` not found"
+                    "prepared statement `{key:?}` not found"
                 )))
             }
         };
@@ -111,12 +109,8 @@ where
         // For async clients, create a new Parse with unique name instead of using pool cache
         // This avoids "prepared statement already exists" errors
         let new_parse = if self.async_client {
-            // Create new Parse with unique name using counter
-            let counter = PREPARED_STATEMENT_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let new_name = format!("DOORMAN_{}", counter);
-            let mut new_parse = parse.clone();
-            new_parse.name = new_name;
-            Arc::new(new_parse)
+            // Use rewrite() to rename without cloning - it takes ownership and returns modified Parse
+            Arc::new(parse.rewrite())
         } else {
             // Use pool cache for non-async clients
             match pool.register_parse_to_cache(hash, &parse) {
@@ -135,13 +129,11 @@ where
         );
 
         // For anonymous prepared statements, use hash as key to avoid collisions
-        let cache_key = if client_given_name.is_empty() {
-            // Save hash for anonymous prepared statement
+        // Save hash for anonymous prepared statement lookup
+        if client_given_name.is_empty() {
             self.last_anonymous_prepared_hash = Some(hash);
-            format!("__hash_{}", hash)
-        } else {
-            client_given_name.clone()
-        };
+        }
+        let cache_key = PreparedStatementKey::from_name_or_hash(client_given_name, hash);
 
         self.prepared_statements
             .insert(cache_key, (new_parse.clone(), hash));
@@ -185,10 +177,10 @@ where
     async fn get_prepared_statement_lookup_key(
         &mut self,
         client_given_name: &str,
-    ) -> Result<String, Error> {
+    ) -> Result<PreparedStatementKey, Error> {
         if client_given_name.is_empty() {
             match self.last_anonymous_prepared_hash {
-                Some(hash) => Ok(format!("__hash_{}", hash)),
+                Some(hash) => Ok(PreparedStatementKey::Anonymous(hash)),
                 None => {
                     debug!("Got anonymous prepared statement reference but no anonymous prepared statement exists");
                     error_response(
@@ -203,7 +195,7 @@ where
                 }
             }
         } else {
-            Ok(client_given_name.to_string())
+            Ok(PreparedStatementKey::Named(client_given_name.to_string()))
         }
     }
 
@@ -345,7 +337,8 @@ where
 
         // Remove from prepared statements cache if it's a named prepared statement
         if self.prepared_statements_enabled && close.is_prepared_statement() && !close.anonymous() {
-            self.prepared_statements.remove(&close.name);
+            let key = PreparedStatementKey::Named(close.name.clone());
+            self.prepared_statements.remove(&key);
         }
 
         Ok(())

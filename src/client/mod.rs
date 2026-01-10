@@ -5,6 +5,7 @@ mod protocol;
 mod startup;
 mod transaction;
 mod util;
+pub mod buffer_pool;
 
 pub use core::Client;
 pub use entrypoint::{client_entrypoint, client_entrypoint_too_many_clients_already};

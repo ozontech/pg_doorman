@@ -270,16 +270,15 @@ impl General {
         ";".to_string()
     }
 
-    pub fn poller_check_query_request_bytes_vec(mut self) -> Vec<u8> {
-        if self.pooler_check_query_request_bytes.is_some() {
-            return self.pooler_check_query_request_bytes.unwrap();
+    pub fn poller_check_query_request_bytes_vec(&self) -> Vec<u8> {
+        if let Some(ref bytes) = self.pooler_check_query_request_bytes {
+            return bytes.clone();
         }
         let mut buf = BytesMut::from(&b"Q"[..]);
         buf.put_i32(self.pooler_check_query.len() as i32 + mem::size_of::<i32>() as i32 + 1);
         buf.put_slice(self.pooler_check_query.as_bytes());
         buf.put_u8(b'\0');
-        self.pooler_check_query_request_bytes = Option::from(buf.to_vec());
-        self.pooler_check_query_request_bytes.unwrap()
+        buf.to_vec()
     }
 
     pub fn default_hba() -> Vec<IpNet> {

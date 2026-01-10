@@ -77,9 +77,9 @@ impl ServerParameters {
         }
     }
 
-    pub fn set_from_hashmap(&mut self, parameters: HashMap<String, String>, startup: bool) {
+    pub fn set_from_hashmap(&mut self, parameters: &HashMap<String, String>, startup: bool) {
         for (key, value) in parameters {
-            self.set_param(key.to_string(), value.to_string(), startup);
+            self.set_param(key.clone(), value.clone(), startup);
         }
     }
 

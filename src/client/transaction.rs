@@ -6,12 +6,12 @@ use std::time::{Duration, Instant};
 
 use crate::admin::handle_admin;
 use crate::client::core::Client;
-use crate::client::util::{shrink_buffer_if_needed, CLIENT_COUNTER, QUERY_DEALLOCATE};
+use crate::client::util::{CLIENT_COUNTER, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
     error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, parse_complete, read_message, ready_for_query,
+    insert_parse_complete_before_bind_complete, read_message, ready_for_query,
     write_all_flush,
 };
 use crate::pool::{ConnectionPool, CANCELED_PIDS};
@@ -94,30 +94,29 @@ where
                 }
                 // Simple Query
                 'Q' => {
-                    // Parse query string (null-terminated)
-                    let mut sql = String::new();
-                    if message.len() >= 6 {
+                    // Parse query string (null-terminated) - work with &str to avoid allocation
+                    let sql = if message.len() >= 6 {
                         let payload = &message[5..];
                         // strip trailing NUL if present
                         let end = payload
                             .iter()
                             .position(|b| *b == 0)
                             .unwrap_or(payload.len());
-                        if let Ok(s) = std::str::from_utf8(&payload[..end]) {
-                            sql = s.to_string();
-                        }
-                    }
-                    let command = SqlCommentParser::new(&sql)
-                        .remove_comment_sql()
+                        std::str::from_utf8(&payload[..end]).unwrap_or("")
+                    } else {
+                        ""
+                    };
+                    let sql_without_comments = SqlCommentParser::new(sql).remove_comment_sql();
+                    let command = sql_without_comments
                         .trim()
                         .trim_end_matches(';')
-                        .trim()
-                        .to_string();
+                        .trim();
                     if command.eq_ignore_ascii_case("rollback")
                         || command.eq_ignore_ascii_case("commit")
                     {
                         // Send CommandComplete + ReadyForQuery(Idle)
-                        let mut res = BytesMut::new();
+                        // Pre-allocate buffer: command_complete ~20 bytes + ready_for_query 6 bytes
+                        let mut res = BytesMut::with_capacity(32);
                         res.put(command_complete("ROLLBACK"));
                         res.put(ready_for_query(false)); // Idle
                         self.stats.idle_write();
@@ -549,8 +548,8 @@ where
 
             self.stats.idle_read();
             // capacity растет - вырастает rss у процесса.
-            shrink_buffer_if_needed(&mut self.client_last_messages_in_tx);
-            shrink_buffer_if_needed(&mut self.buffer);
+            self.client_last_messages_in_tx.shrink_if_needed();
+            self.buffer.shrink_if_needed();
         }
     }
 
@@ -600,13 +599,16 @@ where
 
                 // If no BindComplete was found (inserted == 0), insert at the beginning
                 if inserted == 0 && self.pending_parse_complete > 0 {
+                    // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
+                    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+                    
                     let mut prefixed_response = BytesMut::with_capacity(
                         new_response.len() + (self.pending_parse_complete as usize * 5),
                     );
 
                     // Insert ParseComplete messages at the beginning
                     for _ in 0..self.pending_parse_complete {
-                        prefixed_response.extend_from_slice(&parse_complete());
+                        prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
                     }
 
                     // Append the original response
