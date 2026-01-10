@@ -15,11 +15,14 @@ help: ## Show this help message
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(lastword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
+# Project root directory (works both when run from tests/ or from project root via include)
+PROJECT_ROOT := $(abspath $(TESTS_DIR)..)
+
 local-build: ## Build Docker image locally using Docker (no Nix installation required)
 	@echo "[INFO] Building Docker image using nixos/nix container..."
 	@echo "[INFO] This may take 10-15 minutes on first run..."
 	@docker run --rm \
-		-v $(shell pwd)/..:/workspace \
+		-v $(PROJECT_ROOT):/workspace \
 		-v nix-build-cache:/nix \
 		-w /workspace/tests/nix \
 		nixos/nix:latest \
