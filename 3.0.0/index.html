@@ -447,6 +447,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#additional-binary-patroni_proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Additional Binary: patroni_proxy
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -468,6 +477,8 @@
   
     
     
+      
+        
       
         
       
@@ -599,6 +610,29 @@
   
   <span class="md-ellipsis">
     Binary Upgrade Process
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/patroni-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Patroni Proxy
     
   </span>
   
@@ -874,6 +908,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#additional-binary-patroni_proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Additional Binary: patroni_proxy
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -928,6 +971,8 @@ Some of the key differences include:</p>
 <li>Supporting JWT for service-to-database authentication.</li>
 <li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
 </ul>
+<h3 id="additional-binary-patroni_proxy">Additional Binary: patroni_proxy</h3>
+<p>This repository also includes <a href="tutorials/patroni-proxy/">patroni_proxy</a> — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.</p>
 
 
 

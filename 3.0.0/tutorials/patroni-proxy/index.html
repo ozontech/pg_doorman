@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/3.0.0/tutorials/installation/">
+        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/3.0.0/tutorials/patroni-proxy/">
       
       
-        <link rel="prev" href="../overview/">
+        <link rel="prev" href="../binary-upgrade/">
       
       
-        <link rel="next" href="../basic-usage/">
+        <link rel="next" href="../contributing/">
       
       
       <link rel="icon" href="../../images/favicon.png">
@@ -22,7 +22,7 @@
     
     
       
-        <title>Installation Guide - PgDoorman Documentation</title>
+        <title>Patroni Proxy - PgDoorman Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#installing-pgdoorman" class="md-skip">
+        <a href="#patroni-proxy" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Installation Guide
+              Patroni Proxy
             
           </span>
         </div>
@@ -471,32 +471,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Installation Guide
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
         
   
   
@@ -507,161 +485,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#system-requirements" class="md-nav__link">
-    <span class="md-ellipsis">
-      System Requirements
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#installation-methods" class="md-nav__link">
-    <span class="md-ellipsis">
-      Installation Methods
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Installation Methods">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#pre-built-binaries-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pre-built Binaries (Recommended)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#building-from-source" class="md-nav__link">
-    <span class="md-ellipsis">
-      Building from Source
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#docker-installation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Docker Installation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Docker Installation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#using-the-official-docker-image-recommended" class="md-nav__link">
-    <span class="md-ellipsis">
-      Using the Official Docker Image (Recommended)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#using-the-dockerfile" class="md-nav__link">
-    <span class="md-ellipsis">
-      Using the Dockerfile
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#using-nix-with-docker" class="md-nav__link">
-    <span class="md-ellipsis">
-      Using Nix with Docker
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#using-docker-compose-or-podman-compose" class="md-nav__link">
-    <span class="md-ellipsis">
-      Using Docker Compose or Podman Compose
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Using Docker Compose or Podman Compose">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#running-with-docker-compose" class="md-nav__link">
-    <span class="md-ellipsis">
-      Running with Docker Compose
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#running-with-podman-compose" class="md-nav__link">
-    <span class="md-ellipsis">
-      Running with Podman Compose
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verifying-installation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Verifying Installation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
-    <span class="md-ellipsis">
-      Next Steps
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -717,10 +540,32 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../patroni-proxy/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Patroni Proxy
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -731,6 +576,239 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key Features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Key Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#zero-downtime-connection-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      Zero-Downtime Connection Management
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hot-upstream-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Hot Upstream Updates
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#role-based-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Role-Based Routing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#intelligent-load-balancing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Intelligent Load Balancing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replication-lag-awareness" class="md-nav__link">
+    <span class="md-ellipsis">
+      Replication Lag Awareness
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#member-state-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      Member State Filtering
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommended-deployment-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Recommended Deployment Architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration Options
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Usage
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#starting-patroni_proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Starting patroni_proxy
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration Reload
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manual-cluster-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      Manual Cluster Update
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      HTTP API
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparison-with-haproxy-confd" class="md-nav__link">
+    <span class="md-ellipsis">
+      Comparison with HAProxy + confd
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building" class="md-nav__link">
+    <span class="md-ellipsis">
+      Building
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Troubleshooting
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#no-backends-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      No backends available
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection-drops-after-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connection drops after update
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -965,37 +1043,73 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#system-requirements" class="md-nav__link">
+  <a href="#overview" class="md-nav__link">
     <span class="md-ellipsis">
-      System Requirements
+      Overview
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#installation-methods" class="md-nav__link">
+  <a href="#key-features" class="md-nav__link">
     <span class="md-ellipsis">
-      Installation Methods
+      Key Features
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Installation Methods">
+    <nav class="md-nav" aria-label="Key Features">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pre-built-binaries-recommended" class="md-nav__link">
+  <a href="#zero-downtime-connection-management" class="md-nav__link">
     <span class="md-ellipsis">
-      Pre-built Binaries (Recommended)
+      Zero-Downtime Connection Management
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#building-from-source" class="md-nav__link">
+  <a href="#hot-upstream-updates" class="md-nav__link">
     <span class="md-ellipsis">
-      Building from Source
+      Hot Upstream Updates
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#role-based-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Role-Based Routing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#intelligent-load-balancing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Intelligent Load Balancing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replication-lag-awareness" class="md-nav__link">
+    <span class="md-ellipsis">
+      Replication Lag Awareness
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#member-state-filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      Member State Filtering
     </span>
   </a>
   
@@ -1007,37 +1121,28 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#docker-installation" class="md-nav__link">
+  <a href="#recommended-deployment-architecture" class="md-nav__link">
     <span class="md-ellipsis">
-      Docker Installation
+      Recommended Deployment Architecture
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Docker Installation">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#using-the-official-docker-image-recommended" class="md-nav__link">
+  <a href="#configuration-options" class="md-nav__link">
     <span class="md-ellipsis">
-      Using the Official Docker Image (Recommended)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#using-the-dockerfile" class="md-nav__link">
-    <span class="md-ellipsis">
-      Using the Dockerfile
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#using-nix-with-docker" class="md-nav__link">
-    <span class="md-ellipsis">
-      Using Nix with Docker
+      Configuration Options
     </span>
   </a>
   
@@ -1049,28 +1154,37 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#using-docker-compose-or-podman-compose" class="md-nav__link">
+  <a href="#usage" class="md-nav__link">
     <span class="md-ellipsis">
-      Using Docker Compose or Podman Compose
+      Usage
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Using Docker Compose or Podman Compose">
+    <nav class="md-nav" aria-label="Usage">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#running-with-docker-compose" class="md-nav__link">
+  <a href="#starting-patroni_proxy" class="md-nav__link">
     <span class="md-ellipsis">
-      Running with Docker Compose
+      Starting patroni_proxy
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#running-with-podman-compose" class="md-nav__link">
+  <a href="#configuration-reload" class="md-nav__link">
     <span class="md-ellipsis">
-      Running with Podman Compose
+      Configuration Reload
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manual-cluster-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      Manual Cluster Update
     </span>
   </a>
   
@@ -1082,20 +1196,62 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verifying-installation" class="md-nav__link">
+  <a href="#http-api" class="md-nav__link">
     <span class="md-ellipsis">
-      Verifying Installation
+      HTTP API
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
+  <a href="#comparison-with-haproxy-confd" class="md-nav__link">
     <span class="md-ellipsis">
-      Next Steps
+      Comparison with HAProxy + confd
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building" class="md-nav__link">
+    <span class="md-ellipsis">
+      Building
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      Troubleshooting
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#no-backends-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      No backends available
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection-drops-after-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connection drops after update
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1118,81 +1274,288 @@
   
 
 
-<h1 id="installing-pgdoorman">Installing PgDoorman</h1>
-<p>This guide covers different methods for installing and running PgDoorman on your system.</p>
-<h2 id="system-requirements">System Requirements</h2>
+<h1 id="patroni-proxy">Patroni Proxy</h1>
+<p><code>patroni_proxy</code> is a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", it focuses exclusively on TCP load balancing and failover for Patroni clusters.</p>
+<h2 id="overview">Overview</h2>
+<p>Unlike traditional solutions like HAProxy, <code>patroni_proxy</code> provides seamless connection management without disrupting existing connections during cluster topology changes. When a new replica is added or removed, only the affected connections are handled — all other connections continue working without interruption.</p>
+<h2 id="key-features">Key Features</h2>
+<h3 id="zero-downtime-connection-management">Zero-Downtime Connection Management</h3>
+<p>The main advantage over HAProxy is that <code>patroni_proxy</code> <strong>does not terminate existing connections</strong> when the upstream configuration changes. This is critical for long-running transactions and connection-heavy applications.</p>
+<h3 id="hot-upstream-updates">Hot Upstream Updates</h3>
 <ul>
-<li>Linux (recommended) or macOS</li>
-<li>PostgreSQL server (version 10 or higher)</li>
-<li>Sufficient memory for connection pooling (depends on expected load)</li>
+<li>Automatic discovery of cluster members via Patroni REST API (<code>/cluster</code> endpoint)</li>
+<li>Periodic polling with configurable interval (<code>cluster_update_interval</code>)</li>
+<li>Immediate updates via HTTP API (<code>/update_clusters</code> endpoint)</li>
+<li>Configuration reload via SIGHUP signal without restart</li>
 </ul>
-<h2 id="installation-methods">Installation Methods</h2>
-<h3 id="pre-built-binaries-recommended">Pre-built Binaries (Recommended)</h3>
-<p>The simplest way to install PgDoorman is to download a pre-built binary from the <a href="https://github.com/ozontech/pg_doorman/releases">GitHub releases page</a>.</p>
-<ol>
-<li>Download the appropriate binary for your platform</li>
-<li>Make the file executable: <code>chmod +x pg_doorman</code></li>
-<li>Move it to a directory in your PATH: <code>sudo mv pg_doorman /usr/local/bin/</code></li>
-<li>Create a configuration file (see <a href="../basic-usage/">Basic Usage</a> for details)</li>
-</ol>
-<h3 id="building-from-source">Building from Source</h3>
-<p>If you prefer to build from source, you'll need to clone the repository first:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/ozontech/pg_doorman.git
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>pg_doorman
+<h3 id="role-based-routing">Role-Based Routing</h3>
+<p>Route connections based on PostgreSQL node roles:</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>leader</code></td>
+<td>Primary/master node</td>
+</tr>
+<tr>
+<td><code>sync</code></td>
+<td>Synchronous standby replicas</td>
+</tr>
+<tr>
+<td><code>async</code></td>
+<td>Asynchronous replicas</td>
+</tr>
+<tr>
+<td><code>any</code></td>
+<td>Any available node</td>
+</tr>
+</tbody>
+</table>
+<h3 id="intelligent-load-balancing">Intelligent Load Balancing</h3>
+<ul>
+<li><strong>Least Connections</strong> strategy for distributing connections across backends</li>
+<li>Connection counters are preserved during cluster updates</li>
+<li>Automatic exclusion of nodes with <code>noloadbalance</code> tag</li>
+</ul>
+<h3 id="replication-lag-awareness">Replication Lag Awareness</h3>
+<ul>
+<li>Configurable <code>max_lag_in_bytes</code> per port</li>
+<li>Automatic disconnection of clients when replica lag exceeds threshold</li>
+<li>Only affects replica connections (leader has no lag)</li>
+</ul>
+<h3 id="member-state-filtering">Member State Filtering</h3>
+<ul>
+<li>Only members with <code>state: "running"</code> are used as backends</li>
+<li>Members in <code>starting</code>, <code>stopped</code>, <code>crashed</code> states are automatically excluded</li>
+<li>Dynamic state changes are handled during periodic updates</li>
+</ul>
+<h2 id="recommended-deployment-architecture">Recommended Deployment Architecture</h2>
+<p>For optimal performance, we recommend a two-tier architecture:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│   Application   │     │   Application   │     │   Application   │
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>         │                       │                       │
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>         └───────────────────────┼───────────────────────┘
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                                 │
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                    ┌────────────▼────────────┐
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                    │     patroni_proxy       │  ← Close to clients
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                    │   (TCP load balancing)  │
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                    └────────────┬────────────┘
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                                 │
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>         ┌───────────────────────┼───────────────────────┐
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>         │                       │                       │
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>┌────────▼────────┐     ┌────────▼────────┐     ┌────────▼────────┐
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│   pg_doorman    │     │   pg_doorman    │     │   pg_doorman    │  ← Close to servers
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│   (pooling)     │     │   (pooling)     │     │   (pooling)     │
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>         │                       │                       │
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>┌────────▼────────┐     ┌────────▼────────┐     ┌────────▼────────┐
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>│   PostgreSQL    │     │   PostgreSQL    │     │   PostgreSQL    │
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>│    (leader)     │     │ (sync replica)  │     │ (async replica) │
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>└─────────────────┘     └─────────────────┘     └─────────────────┘
 </span></code></pre></div>
-<p>Then follow the instructions in the <a href="../contributing/">Contributing guide</a> to build the project.</p>
-<h2 id="docker-installation">Docker Installation</h2>
-<h3 id="using-the-official-docker-image-recommended">Using the Official Docker Image (Recommended)</h3>
-<p>PgDoorman provides an official Docker image that you can use directly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Pull the official Docker image</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/ozontech/pg_doorman
+<ul>
+<li><strong>pg_doorman</strong> should be deployed <strong>close to PostgreSQL servers</strong> — it handles connection pooling, prepared statement caching, and protocol-level optimizations that benefit from low latency to the database</li>
+<li><strong>patroni_proxy</strong> should be deployed <strong>close to application clients</strong> — it handles TCP routing and failover, distributing connections across the cluster without the overhead of connection pooling</li>
+</ul>
+<p>This separation allows each component to excel at its specific task while providing both high availability and optimal performance.</p>
+<h2 id="configuration">Configuration</h2>
+<p>Example <code>patroni_proxy.yaml</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Cluster update interval in seconds (default: 3)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">cluster_update_interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Run PgDoorman with your configuration</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>docker<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span>:6432<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>-v<span class="w"> </span>/path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span>--rm<span class="w"> </span>-t<span class="w"> </span>-i<span class="w"> </span>ghcr.io/ozontech/pg_doorman
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># HTTP API listen address for health checks and manual updates (default: 127.0.0.1:8009)</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nt">listen_address</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;127.0.0.1:8009&quot;</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="nt">clusters</span><span class="p">:</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="nt">my_cluster</span><span class="p">:</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="c1"># Patroni API endpoints (multiple for redundancy)</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">hosts</span><span class="p">:</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;http://192.168.1.1:8008&quot;</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;http://192.168.1.2:8008&quot;</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;http://192.168.1.3:8008&quot;</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span><span class="c1"># Optional: TLS configuration for Patroni API</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span><span class="c1"># tls:</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="c1">#   ca_cert: &quot;/path/to/ca.crt&quot;</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span><span class="c1">#   client_cert: &quot;/path/to/client.crt&quot;</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span><span class="c1">#   client_key: &quot;/path/to/client.key&quot;</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">    </span><span class="c1">#   skip_verify: false</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">      </span><span class="c1"># Primary/master connections</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">      </span><span class="nt">master</span><span class="p">:</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">        </span><span class="nt">listen</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.0.0.0:6432&quot;</span>
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">        </span><span class="nt">roles</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;leader&quot;</span><span class="p p-Indicator">]</span>
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">        </span><span class="nt">host_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">      </span><span class="c1"># Read-only connections to replicas</span>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">      </span><span class="nt">replicas</span><span class="p">:</span>
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">        </span><span class="nt">listen</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.0.0.0:6433&quot;</span>
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">        </span><span class="nt">roles</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;sync&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;async&quot;</span><span class="p p-Indicator">]</span>
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">        </span><span class="nt">host_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">        </span><span class="nt">max_lag_in_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16777216</span><span class="w">  </span><span class="c1"># 16MB</span>
 </span></code></pre></div>
-<h3 id="using-the-dockerfile">Using the Dockerfile</h3>
-<p>You can build and run PgDoorman using Docker:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Build the Docker image</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>pg_doorman<span class="w"> </span>-f<span class="w"> </span>Dockerfile<span class="w"> </span>.
+<h3 id="configuration-options">Configuration Options</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cluster_update_interval</code></td>
+<td>3</td>
+<td>Interval in seconds between Patroni API polls</td>
+</tr>
+<tr>
+<td><code>listen_address</code></td>
+<td>127.0.0.1:8009</td>
+<td>HTTP API listen address</td>
+</tr>
+<tr>
+<td><code>clusters.&lt;name&gt;.hosts</code></td>
+<td>-</td>
+<td>List of Patroni API endpoints</td>
+</tr>
+<tr>
+<td><code>clusters.&lt;name&gt;.tls</code></td>
+<td>-</td>
+<td>Optional TLS configuration for Patroni API</td>
+</tr>
+<tr>
+<td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.listen</code></td>
+<td>-</td>
+<td>Listen address for this port</td>
+</tr>
+<tr>
+<td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.roles</code></td>
+<td>-</td>
+<td>List of allowed roles</td>
+</tr>
+<tr>
+<td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.host_port</code></td>
+<td>-</td>
+<td>PostgreSQL port on backend hosts</td>
+</tr>
+<tr>
+<td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.max_lag_in_bytes</code></td>
+<td>-</td>
+<td>Maximum replication lag (optional)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="usage">Usage</h2>
+<h3 id="starting-patroni_proxy">Starting patroni_proxy</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Start with configuration file</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>patroni_proxy<span class="w"> </span>/path/to/patroni_proxy.yaml
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Run PgDoorman with your configuration</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>docker<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span>:6432<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>-v<span class="w"> </span>/path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span>--rm<span class="w"> </span>-t<span class="w"> </span>-i<span class="w"> </span>pg_doorman
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># With debug logging</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nv">RUST_LOG</span><span class="o">=</span>debug<span class="w"> </span>patroni_proxy<span class="w"> </span>/path/to/patroni_proxy.yaml
 </span></code></pre></div>
-<h3 id="using-nix-with-docker">Using Nix with Docker</h3>
-<p>If you use Nix, you can build a Docker image:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Build the Docker image using Nix</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>nix<span class="w"> </span>build<span class="w"> </span>.#dockerImage
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Load the image into Docker</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>docker<span class="w"> </span>load<span class="w"> </span>-i<span class="w"> </span>result
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># Run PgDoorman with your configuration</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>docker<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span>:6432<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span>-v<span class="w"> </span>/path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span>--rm<span class="w"> </span>-t<span class="w"> </span>-i<span class="w"> </span>pg_doorman
+<h3 id="configuration-reload">Configuration Reload</h3>
+<p>Reload configuration without restart (add/remove ports, update hosts):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">kill</span><span class="w"> </span>-HUP<span class="w"> </span><span class="k">$(</span>pidof<span class="w"> </span>patroni_proxy<span class="k">)</span>
 </span></code></pre></div>
-<h2 id="using-docker-compose-or-podman-compose">Using Docker Compose or Podman Compose</h2>
-<p>For a more complete setup including PostgreSQL, you can use Docker Compose or Podman Compose.</p>
-<p>A minimal compose configuration file is available in the <a href="https://github.com/ozontech/pg_doorman/tree/master/example">repository examples directory</a>.</p>
-<h3 id="running-with-docker-compose">Running with Docker Compose</h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+<h3 id="manual-cluster-update">Manual Cluster Update</h3>
+<p>Trigger immediate update of all cluster members via HTTP API:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>http://127.0.0.1:8009/update_clusters
 </span></code></pre></div>
-<h3 id="running-with-podman-compose">Running with Podman Compose</h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>podman-compose<span class="w"> </span>up<span class="w"> </span>-d
+<h2 id="http-api">HTTP API</h2>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/update_clusters</code></td>
+<td>GET</td>
+<td>Trigger immediate update of all cluster members</td>
+</tr>
+<tr>
+<td><code>/</code></td>
+<td>GET</td>
+<td>Health check (returns "OK")</td>
+</tr>
+</tbody>
+</table>
+<h2 id="comparison-with-haproxy-confd">Comparison with HAProxy + confd</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>patroni_proxy</th>
+<th>HAProxy + confd</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Connection preservation on update</td>
+<td>✅ Yes</td>
+<td>❌ No (reload drops connections)</td>
+</tr>
+<tr>
+<td>Hot upstream updates</td>
+<td>✅ Native</td>
+<td>⚠️ Requires confd + reload</td>
+</tr>
+<tr>
+<td>Replication lag awareness</td>
+<td>✅ Built-in</td>
+<td>⚠️ Requires custom checks</td>
+</tr>
+<tr>
+<td>Configuration complexity</td>
+<td>✅ Single YAML</td>
+<td>❌ Multiple configs</td>
+</tr>
+<tr>
+<td>Resource usage</td>
+<td>✅ Lightweight</td>
+<td>⚠️ HAProxy + confd processes</td>
+</tr>
+<tr>
+<td>Role-based routing</td>
+<td>✅ Native</td>
+<td>⚠️ Requires custom templates</td>
+</tr>
+</tbody>
+</table>
+<h2 id="building">Building</h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Build release binary</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--bin<span class="w"> </span>patroni_proxy
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># Run tests</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--test<span class="w"> </span>patroni_proxy_bdd
 </span></code></pre></div>
-<h2 id="verifying-installation">Verifying Installation</h2>
-<p>After installation, you can verify that PgDoorman is running correctly by:</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="no-backends-available">No backends available</h3>
+<p>If you see warnings like <code>no backends available</code>, check:</p>
 <ol>
-<li>Checking the process: <code>ps aux | grep pg_doorman</code></li>
-<li>Connecting to the admin console: <code>psql -h localhost -p 6432 -U admin pgdoorman</code></li>
-<li>Running <code>SHOW VERSION;</code> in the admin console</li>
+<li>Patroni API is accessible from patroni_proxy host</li>
+<li>Cluster members have <code>state: "running"</code></li>
+<li>Roles in configuration match actual member roles</li>
+<li>If using <code>max_lag_in_bytes</code>, check replica lag values</li>
 </ol>
-<h2 id="next-steps">Next Steps</h2>
-<p>After installation, see the <a href="../basic-usage/">Basic Usage guide</a> to configure and start using PgDoorman.</p>
+<h3 id="connection-drops-after-update">Connection drops after update</h3>
+<p>This should not happen with patroni_proxy. If connections are being dropped:</p>
+<ol>
+<li>Check if the backend host was actually removed from the cluster</li>
+<li>Verify <code>max_lag_in_bytes</code> threshold is not being exceeded</li>
+<li>Enable debug logging to see detailed connection lifecycle</li>
+</ol>
 
 
 
@@ -1231,7 +1594,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../overview/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Overview">
+          <a href="../binary-upgrade/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Binary Upgrade Process">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1241,20 +1604,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Overview
+                Binary Upgrade Process
               </div>
             </div>
           </a>
         
         
           
-          <a href="../basic-usage/" class="md-footer__link md-footer__link--next" aria-label="Next: Basic Usage">
+          <a href="../contributing/" class="md-footer__link md-footer__link--next" aria-label="Next: Contributing to PgDoorman">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Basic Usage
+                Contributing to PgDoorman
               </div>
             </div>
             <div class="md-footer__button md-icon">
