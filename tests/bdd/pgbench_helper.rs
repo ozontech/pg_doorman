@@ -881,95 +881,99 @@ pub async fn print_benchmark_results(world: &mut DoormanWorld) {
 pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     eprintln!("\n=== Generating Benchmark Markdown Table ===");
 
-    // Define test configurations to display
-    // Format: (suffix_pattern, display_name)
-    let test_configs = [
-        // Simple protocol
-        ("simple_c1", "Simple Protocol, 1 client"),
-        ("simple_c40", "Simple Protocol, 40 clients"),
-        ("simple_c80", "Simple Protocol, 80 clients"),
-        ("simple_c120", "Simple Protocol, 120 clients"),
-        // Extended protocol
-        ("extended_c1", "Extended Protocol, 1 client"),
-        ("extended_c40", "Extended Protocol, 40 clients"),
-        ("extended_c80", "Extended Protocol, 80 clients"),
-        ("extended_c120", "Extended Protocol, 120 clients"),
-        // Prepared protocol
-        ("prepared_c1", "Prepared Protocol, 1 client"),
-        ("prepared_c40", "Prepared Protocol, 40 clients"),
-        ("prepared_c80", "Prepared Protocol, 80 clients"),
-        ("prepared_c120", "Prepared Protocol, 120 clients"),
-        // Simple + connect
-        ("simple_connect_c1", "Simple + Reconnect, 1 client"),
-        ("simple_connect_c40", "Simple + Reconnect, 40 clients"),
-        ("simple_connect_c80", "Simple + Reconnect, 80 clients"),
-        ("simple_connect_c120", "Simple + Reconnect, 120 clients"),
-        // Extended + connect
-        ("extended_connect_c1", "Extended + Reconnect, 1 client"),
-        ("extended_connect_c40", "Extended + Reconnect, 40 clients"),
-        ("extended_connect_c80", "Extended + Reconnect, 80 clients"),
-        ("extended_connect_c120", "Extended + Reconnect, 120 clients"),
-        // Prepared + connect
-        ("prepared_connect_c1", "Prepared + Reconnect, 1 client"),
-        ("prepared_connect_c40", "Prepared + Reconnect, 40 clients"),
-        ("prepared_connect_c80", "Prepared + Reconnect, 80 clients"),
-        ("prepared_connect_c120", "Prepared + Reconnect, 120 clients"),
-        // SSL variants
-        ("ssl_extended_c1", "SSL + Extended, 1 client"),
-        ("ssl_extended_c40", "SSL + Extended, 40 clients"),
-        ("ssl_extended_c80", "SSL + Extended, 80 clients"),
-        ("ssl_extended_c120", "SSL + Extended, 120 clients"),
-        // SSL + connect
-        ("ssl_connect_c1", "SSL + Reconnect, 1 client"),
-        ("ssl_connect_c40", "SSL + Reconnect, 40 clients"),
-        ("ssl_connect_c80", "SSL + Reconnect, 80 clients"),
-        ("ssl_connect_c120", "SSL + Reconnect, 120 clients"),
+    // Helper function to format ratio
+    let format_ratio = |doorman: f64, competitor_tps: Option<f64>| -> String {
+        match competitor_tps {
+            Some(v) if v > 0.0 && doorman > 0.0 => {
+                let ratio = doorman / v;
+                format!("{:.2}", ratio)
+            }
+            Some(_) if doorman > 0.0 => "∞".to_string(), // competitor failed, pg_doorman wins
+            Some(_) => "N/A".to_string(),
+            None => "-".to_string(),
+        }
+    };
+
+    // Helper function to generate table rows for a set of test configs
+    let generate_table = |configs: &[(&str, &str)], results: &std::collections::HashMap<String, f64>| -> Vec<String> {
+        let mut rows = Vec::new();
+        rows.push("| Test | vs pgbouncer | vs odyssey |".to_string());
+        rows.push("|------|--------------|------------|".to_string());
+
+        for (suffix, display_name) in configs {
+            let doorman_key = format!("pg_doorman_{}", suffix);
+            let pgbouncer_key = format!("pgbouncer_{}", suffix);
+            let odyssey_key = format!("odyssey_{}", suffix);
+
+            let doorman_tps = results.get(&doorman_key).copied();
+            let pgbouncer_tps = results.get(&pgbouncer_key).copied();
+            let odyssey_tps = results.get(&odyssey_key).copied();
+
+            // Skip if no pg_doorman results for this test
+            if doorman_tps.is_none() {
+                continue;
+            }
+
+            let doorman = doorman_tps.unwrap_or(0.0);
+
+            let row = format!(
+                "| {} | {} | {} |",
+                display_name,
+                format_ratio(doorman, pgbouncer_tps),
+                format_ratio(doorman, odyssey_tps)
+            );
+            rows.push(row);
+        }
+        rows
+    };
+
+    // Simple Protocol tests
+    let simple_configs: Vec<(&str, &str)> = vec![
+        ("simple_c1", "1 client"),
+        ("simple_c40", "40 clients"),
+        ("simple_c80", "80 clients"),
+        ("simple_c120", "120 clients"),
+        ("simple_connect_c1", "1 client + Reconnect"),
+        ("simple_connect_c40", "40 clients + Reconnect"),
+        ("simple_connect_c80", "80 clients + Reconnect"),
+        ("simple_connect_c120", "120 clients + Reconnect"),
     ];
 
-    let mut table_rows: Vec<String> = Vec::new();
+    // Extended Protocol tests
+    let extended_configs: Vec<(&str, &str)> = vec![
+        ("extended_c1", "1 client"),
+        ("extended_c40", "40 clients"),
+        ("extended_c80", "80 clients"),
+        ("extended_c120", "120 clients"),
+        ("extended_connect_c1", "1 client + Reconnect"),
+        ("extended_connect_c40", "40 clients + Reconnect"),
+        ("extended_connect_c80", "80 clients + Reconnect"),
+        ("extended_connect_c120", "120 clients + Reconnect"),
+        ("ssl_extended_c1", "1 client + SSL"),
+        ("ssl_extended_c40", "40 clients + SSL"),
+        ("ssl_extended_c80", "80 clients + SSL"),
+        ("ssl_extended_c120", "120 clients + SSL"),
+        ("ssl_connect_c1", "1 client + SSL + Reconnect"),
+        ("ssl_connect_c40", "40 clients + SSL + Reconnect"),
+        ("ssl_connect_c80", "80 clients + SSL + Reconnect"),
+        ("ssl_connect_c120", "120 clients + SSL + Reconnect"),
+    ];
 
-    // Table header - relative values: pg_doorman/competitor
-    table_rows.push("| Test | vs pgbouncer | vs odyssey |".to_string());
-    table_rows.push("|------|--------------|------------|".to_string());
+    // Prepared Protocol tests
+    let prepared_configs: Vec<(&str, &str)> = vec![
+        ("prepared_c1", "1 client"),
+        ("prepared_c40", "40 clients"),
+        ("prepared_c80", "80 clients"),
+        ("prepared_c120", "120 clients"),
+        ("prepared_connect_c1", "1 client + Reconnect"),
+        ("prepared_connect_c40", "40 clients + Reconnect"),
+        ("prepared_connect_c80", "80 clients + Reconnect"),
+        ("prepared_connect_c120", "120 clients + Reconnect"),
+    ];
 
-    for (suffix, display_name) in &test_configs {
-        let doorman_key = format!("pg_doorman_{}", suffix);
-        let pgbouncer_key = format!("pgbouncer_{}", suffix);
-        let odyssey_key = format!("odyssey_{}", suffix);
-
-        let doorman_tps = world.bench_results.get(&doorman_key).copied();
-        let pgbouncer_tps = world.bench_results.get(&pgbouncer_key).copied();
-        let odyssey_tps = world.bench_results.get(&odyssey_key).copied();
-
-        // Skip if no pg_doorman results for this test
-        if doorman_tps.is_none() {
-            continue;
-        }
-
-        let doorman = doorman_tps.unwrap_or(0.0);
-
-        // Calculate relative values: pg_doorman / competitor
-        // Value > 1.0 means pg_doorman is faster
-        let format_ratio = |competitor_tps: Option<f64>| -> String {
-            match competitor_tps {
-                Some(v) if v > 0.0 && doorman > 0.0 => {
-                    let ratio = doorman / v;
-                    format!("{:.2}", ratio)
-                }
-                Some(_) if doorman > 0.0 => "∞".to_string(), // competitor failed, pg_doorman wins
-                Some(_) => "N/A".to_string(),
-                None => "-".to_string(),
-            }
-        };
-
-        let row = format!(
-            "| {} | {} | {} |",
-            display_name,
-            format_ratio(pgbouncer_tps),
-            format_ratio(odyssey_tps)
-        );
-        table_rows.push(row);
-    }
+    let simple_table = generate_table(&simple_configs, &world.bench_results);
+    let extended_table = generate_table(&extended_configs, &world.bench_results);
+    let prepared_table = generate_table(&prepared_configs, &world.bench_results);
 
     // Generate the full markdown content
     let now = chrono::Utc::now();
@@ -992,10 +996,6 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
 - **Test duration**: 30 seconds per test
 - **Workers**: pg_doorman and odyssey use 4 workers
 
-### Results (Relative Performance: pg_doorman / competitor)
-
-{}
-
 ### Legend
 
 - **Value > 1.0**: pg_doorman is faster than competitor
@@ -1005,13 +1005,25 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
 - **N/A**: Test not supported by this pooler
 - **-**: Test not executed
 
-### Test Types
+---
 
-- **Simple Protocol**: Basic query execution
-- **Extended Protocol**: Parse/Bind/Execute flow
-- **Prepared Protocol**: Uses prepared statements
-- **Reconnect**: New connection per transaction (`--connect` flag)
-- **SSL**: TLS encrypted connections
+## Simple Protocol
+
+{}
+
+---
+
+## Extended Protocol
+
+{}
+
+---
+
+## Prepared Protocol
+
+{}
+
+---
 
 ### Notes
 
@@ -1019,7 +1031,9 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
 - Results may vary based on hardware and system load
 "#,
         now.format("%Y-%m-%d %H:%M UTC"),
-        table_rows.join("\n")
+        simple_table.join("\n"),
+        extended_table.join("\n"),
+        prepared_table.join("\n")
     );
 
     // Write to file
