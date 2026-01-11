@@ -526,9 +526,10 @@ impl Server {
         };
 
         let username = user
-            .clone()
             .server_username
-            .unwrap_or(user.clone().username);
+            .as_ref()
+            .unwrap_or(&user.username)
+            .clone();
         // StartupMessage
         startup(
             &mut stream,
@@ -648,7 +649,7 @@ impl Server {
                     let _idle = read_message_data(&mut stream, code as u8, len).await?;
 
                     let server = Server {
-                        address: address.clone(),
+                        address: address.to_owned(),
                         stream: BufStream::new(stream),
                         buffer: BytesMut::with_capacity(8196),
                         server_parameters,
@@ -664,7 +665,7 @@ impl Server {
                         client_server_map,
                         connected_at: chrono::offset::Utc::now().naive_utc(),
                         stats,
-                        application_name: application_name.clone(),
+                        application_name,
                         last_activity: SystemTime::now(),
                         cleanup_connections,
                         use_savepoint: false,
