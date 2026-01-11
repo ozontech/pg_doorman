@@ -44,6 +44,20 @@ pub struct DoormanWorld {
     pub pg_conn: Option<crate::pg_connection::PgConnection>,
     /// pg_doorman connection
     pub doorman_conn: Option<crate::pg_connection::PgConnection>,
+    /// pgbouncer process handle
+    pub pgbouncer_process: Option<Child>,
+    /// pgbouncer port
+    pub pgbouncer_port: Option<u16>,
+    /// pgbouncer config file
+    pub pgbouncer_config_file: Option<NamedTempFile>,
+    /// pgbouncer userlist file (for authentication)
+    pub pgbouncer_userlist_file: Option<NamedTempFile>,
+    /// odyssey process handle
+    pub odyssey_process: Option<Child>,
+    /// odyssey port
+    pub odyssey_port: Option<u16>,
+    /// odyssey config file
+    pub odyssey_config_file: Option<NamedTempFile>,
     /// Accumulated messages from PG
     pub pg_accumulated_messages: Vec<(char, Vec<u8>)>,
     /// Accumulated messages from Doorman
@@ -58,6 +72,58 @@ pub struct DoormanWorld {
     pub named_backend_pids: HashMap<(String, String), i32>,
     /// Messages from named sessions (for prepared statements cache tests)
     pub session_messages: HashMap<String, Vec<(char, Vec<u8>)>>,
+    /// Benchmark results: target name -> tps (transactions per second)
+    pub bench_results: HashMap<String, f64>,
+    /// Temporary pgbench script file (created once, reused for all benchmarks)
+    pub pgbench_script_file: Option<NamedTempFile>,
+    /// Flag indicating if this is a benchmark scenario (affects log level)
+    pub is_bench: bool,
+}
+
+impl DoormanWorld {
+    /// Replace all known placeholders in the given text
+    pub fn replace_placeholders(&self, text: &str) -> String {
+        let mut result = text.to_string();
+
+        // Replace port placeholders
+        if let Some(port) = self.doorman_port {
+            result = result.replace("${DOORMAN_PORT}", &port.to_string());
+        }
+        if let Some(port) = self.pg_port {
+            result = result.replace("${PG_PORT}", &port.to_string());
+        }
+        if let Some(port) = self.pgbouncer_port {
+            result = result.replace("${PGBOUNCER_PORT}", &port.to_string());
+        }
+        if let Some(port) = self.odyssey_port {
+            result = result.replace("${ODYSSEY_PORT}", &port.to_string());
+        }
+
+        // Replace file path placeholders
+        if let Some(ref hba_file) = self.doorman_hba_file {
+            result = result.replace("${DOORMAN_HBA_FILE}", hba_file.path().to_str().unwrap());
+        }
+        if let Some(ref ssl_key_file) = self.ssl_key_file {
+            result = result.replace("${DOORMAN_SSL_KEY}", ssl_key_file.path().to_str().unwrap());
+        }
+        if let Some(ref ssl_cert_file) = self.ssl_cert_file {
+            result = result.replace(
+                "${DOORMAN_SSL_CERT}",
+                ssl_cert_file.path().to_str().unwrap(),
+            );
+        }
+        if let Some(ref script_file) = self.pgbench_script_file {
+            result = result.replace("${PGBENCH_FILE}", script_file.path().to_str().unwrap());
+        }
+        if let Some(ref userlist_file) = self.pgbouncer_userlist_file {
+            result = result.replace(
+                "${PGBOUNCER_USERLIST}",
+                userlist_file.path().to_str().unwrap(),
+            );
+        }
+
+        result
+    }
 }
 
 impl std::fmt::Debug for DoormanWorld {
@@ -75,6 +141,16 @@ impl std::fmt::Debug for DoormanWorld {
                 "doorman_config_file",
                 &self.doorman_config_file.as_ref().map(|f| f.path()),
             )
+            .field(
+                "pgbouncer_process",
+                &self.pgbouncer_process.as_ref().map(|p| p.id()),
+            )
+            .field("pgbouncer_port", &self.pgbouncer_port)
+            .field(
+                "odyssey_process",
+                &self.odyssey_process.as_ref().map(|p| p.id()),
+            )
+            .field("odyssey_port", &self.odyssey_port)
             .finish()
     }
 }

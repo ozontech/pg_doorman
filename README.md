@@ -25,6 +25,26 @@ A key advantage of PgDoorman is its ability to work transparently with applicati
 
 Over two years of use, we've improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
 
+## Additional Binary: patroni_proxy
+
+This repository also includes `patroni_proxy` — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", `patroni_proxy` focuses exclusively on TCP load balancing and failover for Patroni clusters.
+
+**Key advantages over HAProxy:**
+- **Zero-downtime connection management** — existing connections are preserved during cluster topology changes
+- **Hot upstream updates** — automatic discovery of cluster members via Patroni REST API without connection drops
+- **Role-based routing** — route connections to leader, sync replicas, or async replicas based on configuration
+
+### Recommended Deployment Architecture
+
+For optimal performance, we recommend a two-tier architecture:
+
+- **pg_doorman** should be deployed **close to PostgreSQL servers** — it handles connection pooling, prepared statement caching, and protocol-level optimizations that benefit from low latency to the database
+- **patroni_proxy** should be deployed **close to application clients** — it handles TCP routing and failover, distributing connections across the cluster without the overhead of connection pooling
+
+This separation allows each component to excel at its specific task while providing both high availability and optimal performance.
+
+For more details, see the [patroni_proxy documentation](src/bin/patroni_proxy/README.md).
+
 ## Installation
 
 ### System Requirements

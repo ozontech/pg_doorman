@@ -42,29 +42,24 @@ impl ServerParameters {
             parameters: HashMap::new(),
         };
 
-        server_parameters.set_param("client_encoding".to_string(), "UTF8".to_string(), false);
-        server_parameters.set_param("DateStyle".to_string(), "ISO, MDY".to_string(), false);
-        server_parameters.set_param("TimeZone".to_string(), "Etc/UTC".to_string(), false);
-        server_parameters.set_param("server_version".to_string(), VERSION.to_string(), true);
-        server_parameters.set_param("server_encoding".to_string(), "UTF-8".to_string(), true);
-        server_parameters.set_param(
-            "standard_conforming_strings".to_string(),
-            "on".to_string(),
-            false,
-        );
+        server_parameters.set_param("client_encoding", "UTF8", false);
+        server_parameters.set_param("DateStyle", "ISO, MDY", false);
+        server_parameters.set_param("TimeZone", "Etc/UTC", false);
+        server_parameters.set_param("server_version", VERSION, true);
+        server_parameters.set_param("server_encoding", "UTF-8", true);
+        server_parameters.set_param("standard_conforming_strings", "on", false);
         // (64 bit = on) as of PostgreSQL 10, this is always on.
-        server_parameters.set_param("integer_datetimes".to_string(), "on".to_string(), false);
-        server_parameters.set_param(
-            "application_name".to_string(),
-            "pg_doorman".to_string(),
-            false,
-        );
+        server_parameters.set_param("integer_datetimes", "on", false);
+        server_parameters.set_param("application_name", "pg_doorman", false);
 
         server_parameters
     }
 
     /// If `startup` is false, then only tracked parameters will be set.
-    pub fn set_param(&mut self, mut key: String, value: String, startup: bool) {
+    pub fn set_param(&mut self, key: impl Into<String>, value: impl Into<String>, startup: bool) {
+        let mut key = key.into();
+        let value = value.into();
+        
         // Startup parameters may come uncapitalized, while ParameterStatus uses canonical keys.
         if key == "timezone" {
             key = "TimeZone".to_string();
@@ -77,9 +72,9 @@ impl ServerParameters {
         }
     }
 
-    pub fn set_from_hashmap(&mut self, parameters: HashMap<String, String>, startup: bool) {
+    pub fn set_from_hashmap(&mut self, parameters: &HashMap<String, String>, startup: bool) {
         for (key, value) in parameters {
-            self.set_param(key.to_string(), value.to_string(), startup);
+            self.set_param(key, value, startup);
         }
     }
 

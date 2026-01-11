@@ -161,8 +161,8 @@ pub(crate) async fn handle_authentication(
                 ));
             }
 
-            let server_username = user.server_username.as_ref().unwrap().clone();
-            let server_password = user.server_password.as_ref().unwrap().clone();
+            let server_username = user.server_username.as_ref().unwrap();
+            let server_password = user.server_password.as_ref().unwrap();
 
             let mut salt = BytesMut::with_capacity(4);
             stream.read_buf(&mut salt).await.map_err(|err| {

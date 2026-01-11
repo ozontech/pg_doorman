@@ -1,3 +1,4 @@
+use crate::utils::is_root;
 use crate::world::DoormanWorld;
 use cucumber::{gherkin::Step, given, then};
 use portpicker::pick_unused_port;
@@ -10,11 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::sleep;
-
-/// Check if the current process is running as root
-fn is_root() -> bool {
-    unsafe { libc::geteuid() == 0 }
-}
 
 /// Build a PostgreSQL command, running as postgres user if we are root
 fn pg_command_builder(cmd: &str, args: &[&str]) -> Command {
@@ -260,14 +256,8 @@ pub async fn apply_fixtures(world: &mut DoormanWorld, file_path: String) {
     }
 }
 
-/// Start PostgreSQL with inline pg_hba.conf content
-#[given("PostgreSQL started with pg_hba.conf:")]
-pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
-    let hba_content = step
-        .docstring
-        .as_ref()
-        .expect("hba_content not found")
-        .to_string();
+/// Internal helper to start PostgreSQL with hba content and optional extra options
+async fn start_postgres_internal(world: &mut DoormanWorld, hba_content: &str, extra_options: &str) {
     let tmp_dir = TempDir::new().expect("Failed to create temp dir");
     let db_path = tmp_dir.path().join("db");
     let port = pick_unused_port().expect("No free ports");
@@ -334,6 +324,14 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
     let socket_dir = tmp_dir.path().to_str().unwrap();
 
     let log_path = tmp_dir.path().join("pg.log");
+
+    // Build pg_ctl options with extra options if provided
+    let pg_options = if extra_options.is_empty() {
+        format!("-p {} -F -k {}", port, socket_dir)
+    } else {
+        format!("-p {} -F -k {} {}", port, socket_dir, extra_options)
+    };
+
     // pg_ctl start (suppress output, logs go to pg.log)
     let _ = pg_command_builder(
         "pg_ctl",
@@ -343,7 +341,7 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &pg_options,
             "start",
         ],
     )
@@ -418,6 +416,32 @@ pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
     world.pg_tmp_dir = Some(tmp_dir);
     world.pg_port = Some(port);
     world.pg_db_path = Some(db_path);
+}
+
+/// Start PostgreSQL with inline pg_hba.conf content
+#[given("PostgreSQL started with pg_hba.conf:")]
+pub async fn start_postgres_with_hba(world: &mut DoormanWorld, step: &Step) {
+    let hba_content = step
+        .docstring
+        .as_ref()
+        .expect("hba_content not found")
+        .to_string();
+    start_postgres_internal(world, &hba_content, "").await;
+}
+
+/// Start PostgreSQL with inline pg_hba.conf content and extra options (e.g., max_connections)
+#[given(expr = "PostgreSQL started with options {string} and pg_hba.conf:")]
+pub async fn start_postgres_with_options_and_hba(
+    world: &mut DoormanWorld,
+    options: String,
+    step: &Step,
+) {
+    let hba_content = step
+        .docstring
+        .as_ref()
+        .expect("hba_content not found")
+        .to_string();
+    start_postgres_internal(world, &hba_content, &options).await;
 }
 
 /// Check that psql connection to pg_doorman succeeds

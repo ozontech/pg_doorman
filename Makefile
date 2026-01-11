@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := build
 
 include tests/Makefile
+include src/bin/patroni_proxy/Makefile
 
 vendor.tar.gz:
 	cargo vendor ./vendor

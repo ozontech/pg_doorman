@@ -312,23 +312,23 @@ fn handle_command_complete(server: &mut Server, message: &BytesMut) {
     }
 
     // Check for commands that require cleanup at connection checkin
-    if message.len() == 4 && message.to_vec().eq(COMMAND_COMPLETE_BY_SET) {
+    if message.len() == 4 && &message[..] == COMMAND_COMPLETE_BY_SET {
         server.cleanup_state.needs_cleanup_set = true;
     }
-    if message.len() == 10 && message.to_vec().eq(COMMAND_SAVEPOINT) {
+    if message.len() == 10 && &message[..] == COMMAND_SAVEPOINT {
         server.use_savepoint = true;
     }
-    if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DECLARE) {
+    if message.len() == 15 && &message[..] == COMMAND_COMPLETE_BY_DECLARE {
         server.cleanup_state.needs_cleanup_declare = true;
     }
-    if message.len() == 12 && message.to_vec().eq(COMMAND_COMPLETE_BY_DISCARD_ALL) {
+    if message.len() == 12 && &message[..] == COMMAND_COMPLETE_BY_DISCARD_ALL {
         server.registering_prepared_statement.clear();
         if server.prepared_statement_cache.is_some() {
             warn!("Cleanup server {server} prepared statements cache (DISCARD ALL)");
             server.prepared_statement_cache.as_mut().unwrap().clear();
         }
     }
-    if message.len() == 15 && message.to_vec().eq(COMMAND_COMPLETE_BY_DEALLOCATE_ALL) {
+    if message.len() == 15 && &message[..] == COMMAND_COMPLETE_BY_DEALLOCATE_ALL {
         server.registering_prepared_statement.clear();
         if server.prepared_statement_cache.is_some() {
             warn!("Cleanup server {server} prepared statements cache (DEALLOCATE ALL)");
@@ -349,7 +349,7 @@ fn handle_parameter_status(
 
     // Update client parameters if tracking is enabled
     if let Some(client_server_parameters) = client_server_parameters.as_mut() {
-        client_server_parameters.set_param(key.clone(), value.clone(), false);
+        client_server_parameters.set_param(&key, &value, false);
         if server.log_client_parameter_status_changes {
             info!("Server {server}: client parameter status change: {key} = {value}")
         }

@@ -26,10 +26,58 @@
       perSystem =
         {
           system,
-          pkgs,
           ...
         }:
         let
+          # Odyssey overlay to fix build issues
+          # Use PostgreSQL 14 to avoid compatibility issues with newer PostgreSQL versions
+          odysseyOverlay = final: prev: 
+            let
+              pg = prev.postgresql_14;
+            in {
+            odyssey = prev.odyssey.overrideAttrs (oldAttrs: rec {
+              version = "1.4.1";
+              src = prev.fetchFromGitHub {
+                owner = "yandex";
+                repo = "odyssey";
+                rev = "v${version}";
+                sha256 = "sha256-AzyOvJ8cQTpj0mfzZtz8jhXrsbqBU75IzgC3gleQRqw=";
+              };
+              # Use PostgreSQL 14 for pg_config
+              nativeBuildInputs = (oldAttrs.nativeBuildInputs or []) ++ [ pg ];
+              buildInputs = [
+                prev.openssl
+                pg
+              ];
+              # No patches needed
+              patches = [ ];
+              # Disable compression to avoid zpq_stream.c build errors
+              # Build in Release mode for optimal performance
+              cmakeFlags = [
+                "-DBUILD_COMPRESSION=OFF"
+                "-DCMAKE_BUILD_TYPE=Release"
+              ];
+              # Keep env for additional flags
+              env = (oldAttrs.env or {}) // {
+                NIX_CFLAGS_COMPILE = (oldAttrs.env.NIX_CFLAGS_COMPILE or "") 
+                  + " -Wno-error=implicit-int -Wno-error=incompatible-pointer-types";
+              };
+            });
+          };
+
+          # Import pkgs with overlays applied
+          pkgs = import inputs.nixpkgs {
+            inherit system;
+            overlays = [
+              (import inputs.rust-overlay)
+              odysseyOverlay
+            ];
+            config = {
+              allowUnfree = true;
+              allowUnsupportedSystem = true;
+            };
+          };
+
           # Rust toolchain from rust-overlay
           rustToolchain = pkgs.rust-bin.stable."1.87.0".default.override {
             extensions = [
@@ -50,6 +98,8 @@
           runtimePackages = with pkgs; [
             # PostgreSQL
             postgresql_16
+            odyssey
+            pgbouncer
 
             # Node.js
             nodejs_22
@@ -250,14 +300,6 @@ EOF
 
         in
         {
-          _module.args.pkgs = import inputs.nixpkgs {
-            inherit system;
-            overlays = [ (import inputs.rust-overlay) ];
-            config = {
-              allowUnfree = true;
-            };
-          };
-
           packages = {
             default = dockerImage;
             inherit dockerImage;

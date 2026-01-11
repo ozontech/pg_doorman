@@ -195,23 +195,6 @@ fn run_command_with_timeout(
     }
 }
 
-/// Helper function to replace placeholders in commands
-fn replace_placeholders(world: &DoormanWorld, command: &str) -> String {
-    let mut result = command.to_string();
-
-    // Replace ${DOORMAN_PORT} with actual doorman port
-    if let Some(port) = world.doorman_port {
-        result = result.replace("${DOORMAN_PORT}", &port.to_string());
-    }
-
-    // Replace ${PG_PORT} with actual postgres port
-    if let Some(port) = world.pg_port {
-        result = result.replace("${PG_PORT}", &port.to_string());
-    }
-
-    result
-}
-
 /// Run a shell command with inline multi-line support (docstring)
 #[when("I run shell command:")]
 pub async fn run_shell_command_multiline(world: &mut DoormanWorld, step: &Step) {
@@ -221,7 +204,7 @@ pub async fn run_shell_command_multiline(world: &mut DoormanWorld, step: &Step) 
         .expect("Shell command not found in docstring")
         .to_string();
 
-    let command = replace_placeholders(world, &command);
+    let command = world.replace_placeholders(&command);
 
     let result = run_command(&command, None);
     world.last_test_result = Some(result);
@@ -230,7 +213,7 @@ pub async fn run_shell_command_multiline(world: &mut DoormanWorld, step: &Step) 
 /// Run a shell command with a single-line string argument
 #[when(expr = "I run shell command {string}")]
 pub async fn run_shell_command_string(world: &mut DoormanWorld, command: String) {
-    let command = replace_placeholders(world, &command);
+    let command = world.replace_placeholders(&command);
 
     let result = run_command(&command, None);
     world.last_test_result = Some(result);

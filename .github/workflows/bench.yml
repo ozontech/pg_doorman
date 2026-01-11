@@ -1,7 +1,7 @@
 name: Benchmarks
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 on:
@@ -44,6 +44,9 @@ jobs:
     name: Run Benchmarks
     needs: check-image
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -66,6 +69,7 @@ jobs:
           BENCHER_BRANCH: ${{ github.ref_name }}
           BENCHER_TESTBED: github-actions
           DEBUG: ${{ inputs.debug }}
+          JEMALLOC_SYS_WITH_MALLOC_CONF: "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto"
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
@@ -75,5 +79,20 @@ jobs:
             -e BENCHER_PROJECT="${BENCHER_PROJECT}" \
             -e BENCHER_BRANCH="${BENCHER_BRANCH}" \
             -e BENCHER_TESTBED="${BENCHER_TESTBED}" \
+            -e JEMALLOC_SYS_WITH_MALLOC_CONF="${JEMALLOC_SYS_WITH_MALLOC_CONF}" \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }} \
-            cargo test --test bdd -- --tags @bench
+            cargo test --release --test bdd -- --tags @bench
+
+      - name: Commit benchmark results
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # Save benchmarks.md before reset
+          cp documentation/docs/benchmarks.md /tmp/benchmarks.md.tmp
+          git fetch origin ${{ github.ref_name }}
+          git reset --hard origin/${{ github.ref_name }}
+          # Restore benchmarks.md after reset
+          cp /tmp/benchmarks.md.tmp documentation/docs/benchmarks.md
+          git add documentation/docs/benchmarks.md
+          git diff --staged --quiet || git commit -m "Update benchmark results [skip ci]"
+          git push --force-with-lease
