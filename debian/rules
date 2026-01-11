@@ -1,0 +1,34 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export JEMALLOC_SYS_WITH_MALLOC_CONF = dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Rust is installed by the build script, use vendored dependencies
+	if [ -d vendor ]; then \
+		mkdir -p .cargo && \
+		echo '[source.crates-io]' > .cargo/config.toml && \
+		echo 'replace-with = "vendored-sources"' >> .cargo/config.toml && \
+		echo '[source.vendored-sources]' >> .cargo/config.toml && \
+		echo 'directory = "vendor"' >> .cargo/config.toml; \
+	fi
+	cargo build --release
+
+override_dh_auto_install:
+	install -D -m 755 target/release/pg_doorman debian/pg-doorman/usr/bin/pg_doorman
+	install -D -m 755 target/release/patroni_proxy debian/pg-doorman/usr/bin/patroni_proxy
+
+override_dh_auto_test:
+	true
+
+override_dh_shlibdeps:
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
+
+override_dh_strip:
+	true
+
+override_dh_auto_clean:
+	true

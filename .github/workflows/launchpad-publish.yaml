@@ -1,0 +1,330 @@
+name: Publish to Launchpad PPA
+
+on:
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  # Last 4 Ubuntu LTS/stable versions
+  UBUNTU_VERSIONS: "jammy noble oracular plucky"
+  # jammy = 22.04 LTS
+  # noble = 24.04 LTS  
+  # oracular = 24.10
+  # plucky = 25.04
+  PPA_NAME: "ppa:pg-doorman/pg-doorman"
+  RUST_VERSION: "1.87.0"
+
+jobs:
+  verify-version:
+    name: Verify tag version matches Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Get and verify version
+        id: get_version
+        run: |
+          # Extract version from Cargo.toml
+          CARGO_VERSION=$(grep '^version =' Cargo.toml | head -1 | cut -d '"' -f2)
+          echo "Cargo.toml version: $CARGO_VERSION"
+          
+          # For release events, verify tag matches Cargo.toml version
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Extract version from git tag (remove 'v' prefix)
+            TAG_VERSION=${GITHUB_REF_NAME#v}
+            echo "Git tag version: $TAG_VERSION"
+            
+            # Compare versions
+            if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+              echo "Error: Version mismatch between Cargo.toml ($CARGO_VERSION) and git tag ($TAG_VERSION)"
+              exit 1
+            fi
+          else
+            echo "Pull request build - skipping tag verification"
+          fi
+          
+          echo "version=$CARGO_VERSION" >> $GITHUB_OUTPUT
+
+  prepare-source-packages:
+    name: Prepare source packages for Launchpad
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            git \
+            devscripts \
+            debhelper \
+            dput \
+            gnupg \
+            wget \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            cmake \
+            clang \
+            g++ \
+            ca-certificates
+
+      - name: Install Rust
+        run: |
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz
+          cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
+
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --no-tty --import
+          # Get the key ID
+          GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2)
+          echo "GPG_KEY_ID=$GPG_KEY_ID" >> $GITHUB_ENV
+          # Trust the key automatically without TTY
+          echo -e "5\ny\n" | gpg --batch --no-tty --command-fd 0 --expert --edit-key $GPG_KEY_ID trust
+          # Configure GPG for non-interactive use (fix "Inappropriate ioctl for device" error)
+          mkdir -p ~/.gnupg
+          echo "use-agent" >> ~/.gnupg/gpg.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          echo "RELOADAGENT" | gpg-connect-agent || true
+
+      - name: Create vendor tarball
+        run: |
+          cargo vendor
+          tar czf vendor.tar.gz vendor/
+
+      - name: Build source packages for each Ubuntu version
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          set -e
+          
+          # Verify all required tools are installed
+          echo "Verifying required tools..."
+          for tool in dput debuild gpg tar; do
+            if ! which $tool > /dev/null 2>&1; then
+              echo "Error: Required tool '$tool' is not installed"
+              exit 1
+            fi
+            echo "  $tool: $(which $tool)"
+          done
+          echo "All required tools are available"
+          
+          # Create output directory for all packages
+          mkdir -p /tmp/packages
+          
+          for DISTRO in $UBUNTU_VERSIONS; do
+            echo "=========================================="
+            echo "Building for Ubuntu $DISTRO"
+            echo "=========================================="
+            
+            # Create a clean working directory
+            WORK_DIR=$(mktemp -d)
+            cp -r . "$WORK_DIR/pg-doorman-${VERSION}"
+            cd "$WORK_DIR/pg-doorman-${VERSION}"
+            
+            # Remove .git directory to reduce size
+            rm -rf .git
+            
+            # Include vendor directory for offline build
+            tar xzf vendor.tar.gz
+            
+            # Generate changelog for this distribution
+            cat > debian/changelog << EOF
+          pg-doorman (${VERSION}~${DISTRO}) ${DISTRO}; urgency=medium
+
+            * Release version ${VERSION}
+            * PostgreSQL connection pooler and proxy
+            * Includes pg_doorman and patroni_proxy binaries
+
+           -- pg-doorman maintainers <pg-doorman@launchpad.net>  $(date -R)
+          EOF
+            
+            # Create the source package
+            cd "$WORK_DIR"
+            tar czf "pg-doorman_${VERSION}~${DISTRO}.orig.tar.gz" "pg-doorman-${VERSION}"
+            cd "pg-doorman-${VERSION}"
+            
+            # Build source package (unsigned first, then sign manually)
+            # Using dpkg-buildpackage directly to avoid debsign TTY issues
+            dpkg-buildpackage -us -uc -ui -S -sa
+            
+            # Sign the .dsc and .changes files manually with gpg
+            cd "$WORK_DIR"
+            debsign -k${{ env.GPG_KEY_ID }} --no-re-sign -p"gpg --batch --no-tty --pinentry-mode loopback --passphrase ''" pg-doorman_${VERSION}~${DISTRO}_source.changes
+            
+            # Copy built packages to output directory
+            cp "$WORK_DIR"/pg-doorman_${VERSION}~${DISTRO}* /tmp/packages/
+            
+            # Cleanup working directory
+            cd /
+            rm -rf "$WORK_DIR"
+            
+            echo "Successfully built package for Ubuntu $DISTRO"
+          done
+          
+          echo "=========================================="
+          echo "All packages built successfully"
+          echo "=========================================="
+          ls -la /tmp/packages/
+
+      - name: Upload source packages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchpad-source-packages
+          path: /tmp/packages/
+
+  test-package-installation:
+    name: Test package installation (${{ matrix.distro }})
+    needs: [verify-version, prepare-source-packages]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - distro: jammy
+            image: ubuntu:22.04
+          - distro: noble
+            image: ubuntu:24.04
+          - distro: oracular
+            image: ubuntu:24.10
+          - distro: plucky
+            image: ubuntu:25.04
+    container:
+      image: ${{ matrix.image }}
+      env:
+        DEBIAN_FRONTEND: noninteractive
+    
+    steps:
+      - name: Download source packages
+        uses: actions/download-artifact@v4
+        with:
+          name: launchpad-source-packages
+          path: /tmp/packages
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential \
+            devscripts \
+            debhelper \
+            pkg-config \
+            libssl-dev \
+            cmake \
+            clang \
+            g++ \
+            wget \
+            ca-certificates
+
+      - name: Install Rust
+        run: |
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz
+          cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
+
+      - name: Build and install package
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -e
+          cd /tmp/packages
+          
+          echo "=========================================="
+          echo "Building binary package for Ubuntu $DISTRO"
+          echo "=========================================="
+          
+          # Extract source package
+          dpkg-source -x pg-doorman_${VERSION}~${DISTRO}.dsc
+          cd pg-doorman-${VERSION}~${DISTRO}
+          
+          # Build binary package
+          dpkg-buildpackage -us -uc -b
+          
+          # Install the package
+          cd ..
+          dpkg -i pg-doorman_${VERSION}~${DISTRO}_*.deb || apt-get install -f -y
+          
+          echo "=========================================="
+          echo "Verifying installation"
+          echo "=========================================="
+          
+          # Verify binaries are installed and working
+          which pg_doorman
+          which patroni_proxy
+          pg_doorman --version
+          patroni_proxy --version
+          
+          echo "=========================================="
+          echo "Package installation test passed for Ubuntu $DISTRO"
+          echo "=========================================="
+
+  upload-to-launchpad:
+    name: Upload to Launchpad PPA
+    needs: [verify-version, prepare-source-packages]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Download source packages
+        uses: actions/download-artifact@v4
+        with:
+          name: launchpad-source-packages
+          path: /tmp/packages
+
+      - name: Install dput
+        run: |
+          apt-get update
+          apt-get install -y dput gnupg
+
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --no-tty --import
+          GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2)
+          echo "GPG_KEY_ID=$GPG_KEY_ID" >> $GITHUB_ENV
+
+      - name: Upload source packages to Launchpad PPA
+        if: github.event_name == 'release'
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          set -e
+          
+          cd /tmp/packages
+          
+          for DISTRO in $UBUNTU_VERSIONS; do
+            echo "=========================================="
+            echo "Uploading package for Ubuntu $DISTRO"
+            echo "=========================================="
+            
+            dput ${{ env.PPA_NAME }} "pg-doorman_${VERSION}~${DISTRO}_source.changes"
+            
+            echo "Successfully uploaded package for Ubuntu $DISTRO"
+          done
+          
+          echo "=========================================="
+          echo "All packages uploaded to Launchpad PPA"
+          echo "=========================================="
