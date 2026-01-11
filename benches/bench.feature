@@ -107,28 +107,24 @@ Feature: Benchmarking environment setup with SSL
     # ==================== SIMPLE PROTOCOL ====================
 
     # --- 1 client, simple protocol ---
-    When I run pgbench for "postgresql_simple_c1" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "simple_c1" to bencher
 
     # --- 40 clients, simple protocol ---
-    When I run pgbench for "postgresql_simple_c40" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "simple_c40" to bencher
 
     # --- 80 clients, simple protocol ---
-    When I run pgbench for "postgresql_simple_c80" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "simple_c80" to bencher
 
     # --- 120 clients, simple protocol ---
-    When I run pgbench for "postgresql_simple_c120" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
@@ -137,28 +133,24 @@ Feature: Benchmarking environment setup with SSL
     # ==================== EXTENDED PROTOCOL ====================
 
     # --- 1 client, extended protocol ---
-    When I run pgbench for "postgresql_extended_c1" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "extended_c1" to bencher
 
     # --- 40 clients, extended protocol ---
-    When I run pgbench for "postgresql_extended_c40" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "extended_c40" to bencher
 
     # --- 80 clients, extended protocol ---
-    When I run pgbench for "postgresql_extended_c80" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "extended_c80" to bencher
 
     # --- 120 clients, extended protocol ---
-    When I run pgbench for "postgresql_extended_c120" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
@@ -167,28 +159,24 @@ Feature: Benchmarking environment setup with SSL
     # ==================== PREPARED PROTOCOL ====================
 
     # --- 1 client, prepared protocol ---
-    When I run pgbench for "postgresql_prepared_c1" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "prepared_c1" to bencher
 
     # --- 40 clients, prepared protocol ---
-    When I run pgbench for "postgresql_prepared_c40" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "prepared_c40" to bencher
 
     # --- 80 clients, prepared protocol ---
-    When I run pgbench for "postgresql_prepared_c80" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "prepared_c80" to bencher
 
     # --- 120 clients, prepared protocol ---
-    When I run pgbench for "postgresql_prepared_c120" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
@@ -197,84 +185,72 @@ Feature: Benchmarking environment setup with SSL
     # ==================== WITH --connect (reconnect each transaction) ====================
 
     # --- 1 client, simple protocol, with connect ---
-    When I run pgbench for "postgresql_simple_connect_c1" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_connect_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_connect_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_connect_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "simple_connect_c1" to bencher
 
     # --- 40 clients, simple protocol, with connect ---
-    When I run pgbench for "postgresql_simple_connect_c40" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_connect_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_connect_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_connect_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "simple_connect_c40" to bencher
 
     # --- 80 clients, simple protocol, with connect ---
-    When I run pgbench for "postgresql_simple_connect_c80" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_connect_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_connect_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_connect_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "simple_connect_c80" to bencher
 
     # --- 120 clients, simple protocol, with connect ---
-    When I run pgbench for "postgresql_simple_connect_c120" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_simple_connect_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_simple_connect_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_simple_connect_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "simple_connect_c120" to bencher
 
     # --- 1 client, extended protocol, with connect ---
-    When I run pgbench for "postgresql_extended_connect_c1" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_connect_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_connect_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_connect_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "extended_connect_c1" to bencher
 
     # --- 40 clients, extended protocol, with connect ---
-    When I run pgbench for "postgresql_extended_connect_c40" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_connect_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_connect_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_connect_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "extended_connect_c40" to bencher
 
     # --- 80 clients, extended protocol, with connect ---
-    When I run pgbench for "postgresql_extended_connect_c80" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_connect_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_connect_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_connect_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "extended_connect_c80" to bencher
 
     # --- 120 clients, extended protocol, with connect ---
-    When I run pgbench for "postgresql_extended_connect_c120" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_extended_connect_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_extended_connect_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_extended_connect_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "extended_connect_c120" to bencher
 
     # --- 1 client, prepared protocol, with connect ---
-    When I run pgbench for "postgresql_prepared_connect_c1" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_connect_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_connect_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_connect_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "prepared_connect_c1" to bencher
 
     # --- 40 clients, prepared protocol, with connect ---
-    When I run pgbench for "postgresql_prepared_connect_c40" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_connect_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_connect_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_connect_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "prepared_connect_c40" to bencher
 
     # --- 80 clients, prepared protocol, with connect ---
-    When I run pgbench for "postgresql_prepared_connect_c80" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_connect_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_connect_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_connect_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "prepared_connect_c80" to bencher
 
     # --- 120 clients, prepared protocol, with connect ---
-    When I run pgbench for "postgresql_prepared_connect_c120" with "-n -h 127.0.0.1 -p ${PG_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pg_doorman_prepared_connect_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "odyssey_prepared_connect_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I run pgbench for "pgbouncer_prepared_connect_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
