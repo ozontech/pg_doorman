@@ -33,6 +33,7 @@ impl Role {
     }
 
     /// Convert Role enum to Patroni role string
+    #[allow(dead_code)]
     pub fn to_patroni_role(self) -> &'static str {
         match self {
             Role::Leader => "leader",
@@ -250,8 +251,9 @@ impl PatroniClient {
                     self.blacklist.remove(host);
                     return Ok(cluster.members);
                 }
-                Err(_) => {
+                Err(e) => {
                     // Add to blacklist
+                    tracing::warn!("Failed to fetch cluster from {}: {}", host, e);
                     self.blacklist.add(host);
                 }
             }
@@ -265,7 +267,8 @@ impl PatroniClient {
                         self.blacklist.remove(host);
                         return Ok(cluster.members);
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        tracing::warn!("Failed to fetch cluster from {}: {}", host, e);
                         self.blacklist.add(host);
                     }
                 }

@@ -69,6 +69,7 @@ nav:
         - 'tutorials/installation.md'
         - 'tutorials/basic-usage.md'
         - 'tutorials/binary-upgrade.md'
+        - 'tutorials/patroni-proxy.md'
         - 'tutorials/contributing.md'
         - 'changelog.md' 
     - 'Reference':

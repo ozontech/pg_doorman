@@ -937,6 +937,10 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
         ("simple_connect_c40", "40 clients + Reconnect"),
         ("simple_connect_c80", "80 clients + Reconnect"),
         ("simple_connect_c120", "120 clients + Reconnect"),
+        ("ssl_simple_c1", "1 client + SSL"),
+        ("ssl_simple_c40", "40 clients + SSL"),
+        ("ssl_simple_c80", "80 clients + SSL"),
+        ("ssl_simple_c120", "120 clients + SSL"),
     ];
 
     // Extended Protocol tests
@@ -969,6 +973,10 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
         ("prepared_connect_c40", "40 clients + Reconnect"),
         ("prepared_connect_c80", "80 clients + Reconnect"),
         ("prepared_connect_c120", "120 clients + Reconnect"),
+        ("ssl_prepared_c1", "1 client + SSL"),
+        ("ssl_prepared_c40", "40 clients + SSL"),
+        ("ssl_prepared_c80", "80 clients + SSL"),
+        ("ssl_prepared_c120", "120 clients + SSL"),
     ];
 
     let simple_table = generate_table(&simple_configs, &world.bench_results);

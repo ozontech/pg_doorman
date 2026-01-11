@@ -88,6 +88,11 @@ name = "bdd"
 harness = false
 path = "tests/bdd/main.rs"
 
+[[test]]
+name = "patroni_proxy_bdd"
+harness = false
+path = "src/bin/patroni_proxy/tests/bdd/main.rs"
+
 [[bench]]
 name = "hash_benchmarks"
 harness = false

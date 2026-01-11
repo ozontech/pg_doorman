@@ -314,3 +314,25 @@ jobs:
             -w /workspace \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --test bdd -- --tags @rust
+
+  # Job 9: Run BDD tests for patroni_proxy
+  patroni-proxy-tests:
+    name: Patroni Proxy BDD Tests
+    needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull test image from GHCR
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+
+      - name: Run BDD tests for patroni_proxy
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+            cargo test --test patroni_proxy_bdd

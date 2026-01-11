@@ -72,7 +72,21 @@ pub struct ClusterConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Cluster update interval in seconds (default: 3)
+    #[serde(default = "default_cluster_update_interval")]
+    pub cluster_update_interval: u64,
+    /// HTTP listen address for health checks and metrics (default: "127.0.0.1:8009")
+    #[serde(default = "default_listen_address")]
+    pub listen_address: String,
     pub clusters: HashMap<String, ClusterConfig>,
+}
+
+fn default_cluster_update_interval() -> u64 {
+    3
+}
+
+fn default_listen_address() -> String {
+    "127.0.0.1:8009".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -260,6 +274,7 @@ impl ConfigDiff {
         ConfigDiff { changes }
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
@@ -335,6 +350,7 @@ impl ConfigRepository {
         Ok(diff)
     }
 
+    #[allow(dead_code)]
     pub fn config_path(&self) -> &str {
         &self.config_path
     }

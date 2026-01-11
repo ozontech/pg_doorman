@@ -40,3 +40,7 @@ Some of the key differences include:
 - Supporting JWT for service-to-database authentication.
 - Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).
 
+### Additional Binary: patroni_proxy
+
+This repository also includes [patroni_proxy](tutorials/patroni-proxy.md) — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.
+

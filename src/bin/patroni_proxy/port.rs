@@ -106,15 +106,40 @@ impl Port {
     /// - noloadbalance tag must not be true
     ///
     /// When a member is removed, all its active connections are terminated.
+    /// Existing backends are preserved to maintain connection counters.
     pub async fn update_members(&self, members: Vec<Member>) {
-        let filtered: Vec<Arc<Backend>> = members
+        // Filter eligible members
+        let eligible_hosts: Vec<String> = members
             .into_iter()
             .filter(|m| self.is_member_eligible(m))
-            .map(|m| Arc::new(Backend::new(m.host.clone(), self.host_port)))
+            .map(|m| m.host.clone())
             .collect();
 
-        // Collect new hosts
-        let new_hosts: HashSet<String> = filtered.iter().map(|b| b.host.clone()).collect();
+        let new_hosts: HashSet<String> = eligible_hosts.iter().cloned().collect();
+
+        // Build new backends list, reusing existing Backend objects to preserve connection counters
+        let new_backends: Vec<Arc<Backend>> = {
+            let current_backends = self.backends.read().await;
+            
+            // Create a map of existing backends by host for quick lookup
+            let existing_map: HashMap<&String, &Arc<Backend>> = current_backends
+                .iter()
+                .map(|b| (&b.host, b))
+                .collect();
+
+            eligible_hosts
+                .iter()
+                .map(|host| {
+                    if let Some(existing) = existing_map.get(host) {
+                        // Reuse existing backend to preserve connection counter
+                        Arc::clone(existing)
+                    } else {
+                        // Create new backend for new host
+                        Arc::new(Backend::new(host.clone(), self.host_port))
+                    }
+                })
+                .collect()
+        };
 
         // Get old hosts and find removed ones
         let removed_hosts: Vec<String> = {
@@ -153,9 +178,9 @@ impl Port {
             }
         }
 
-        let count = filtered.len();
+        let count = new_backends.len();
         let mut backends = self.backends.write().await;
-        *backends = filtered;
+        *backends = new_backends;
 
         debug!(
             "Port '{}': updated backends, {} members available",
@@ -408,6 +433,7 @@ impl Port {
     }
 
     /// Returns the port name
+    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         &self.name
     }

@@ -256,6 +256,32 @@ Feature: Benchmarking environment setup with SSL
     When I run pgbench for "pgbouncer_prepared_connect_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared --connect postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=disable"
     When I send benchmark results for "prepared_connect_c120" to bencher
 
+    # ==================== SSL + SIMPLE PROTOCOL ====================
+
+    # --- 1 client, simple protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_simple_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_simple_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_simple_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_simple_c1" to bencher
+
+    # --- 40 clients, simple protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_simple_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_simple_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_simple_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_simple_c40" to bencher
+
+    # --- 80 clients, simple protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_simple_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_simple_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_simple_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_simple_c80" to bencher
+
+    # --- 120 clients, simple protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_simple_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_simple_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_simple_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=simple postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_simple_c120" to bencher
+
     # ==================== SSL + EXTENDED PROTOCOL ====================
 
     # --- 1 client, extended protocol, SSL ---
@@ -281,6 +307,32 @@ Feature: Benchmarking environment setup with SSL
     When I run pgbench for "odyssey_ssl_extended_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
     When I run pgbench for "pgbouncer_ssl_extended_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=extended postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
     When I send benchmark results for "ssl_extended_c120" to bencher
+
+    # ==================== SSL + PREPARED PROTOCOL ====================
+
+    # --- 1 client, prepared protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_prepared_c1" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_prepared_c1" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_prepared_c1" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 1 -j 1 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_prepared_c1" to bencher
+
+    # --- 40 clients, prepared protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_prepared_c40" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_prepared_c40" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_prepared_c40" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 40 -j 2 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_prepared_c40" to bencher
+
+    # --- 80 clients, prepared protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_prepared_c80" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_prepared_c80" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_prepared_c80" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 80 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_prepared_c80" to bencher
+
+    # --- 120 clients, prepared protocol, SSL ---
+    When I run pgbench for "pg_doorman_ssl_prepared_c120" with "-n -h 127.0.0.1 -p ${DOORMAN_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "odyssey_ssl_prepared_c120" with "-n -h 127.0.0.1 -p ${ODYSSEY_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I run pgbench for "pgbouncer_ssl_prepared_c120" with "-n -h 127.0.0.1 -p ${PGBOUNCER_PORT} -U postgres -c 120 -j 4 -T 30 -P 1 --protocol=prepared postgres -f ${PGBENCH_FILE}" and env "PGSSLMODE=require"
+    When I send benchmark results for "ssl_prepared_c120" to bencher
 
     # ==================== SSL + CONNECT ====================
 
