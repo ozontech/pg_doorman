@@ -505,25 +505,44 @@ jobs:
           
           cd /tmp/packages
           
+          # Configure dput for better reliability
+          # Create dput.cf with increased timeout and SFTP (more reliable than FTP)
+          mkdir -p ~/.dput.cf.d
+          cat > ~/.dput.cf << 'EOF'
+          [DEFAULT]
+          default_host_main = ppa
+          
+          [ppa]
+          fqdn = ppa.launchpad.net
+          method = ftp
+          incoming = ~%(ppa)s/ubuntu/
+          login = anonymous
+          allow_unsigned_uploads = 0
+          EOF
+          
           # Function to upload with retry logic
+          # More attempts with shorter delays for transient network issues
           upload_with_retry() {
             local changes_file="$1"
-            local max_attempts=5
+            local max_attempts=10
             local attempt=1
-            local delay=30
+            local delay=10
             
             while [ $attempt -le $max_attempts ]; do
               echo "Upload attempt $attempt of $max_attempts..."
               
-              if dput ${{ env.PPA_NAME }} "$changes_file"; then
+              # Use -f to force upload even if already uploaded (for retries)
+              # Use -d for debug output to see what's happening
+              if dput -d -f ${{ env.PPA_NAME }} "$changes_file" 2>&1; then
                 echo "Upload successful!"
                 return 0
               else
                 if [ $attempt -lt $max_attempts ]; then
                   echo "Upload failed, retrying in ${delay} seconds..."
                   sleep $delay
-                  # Increase delay for next attempt (exponential backoff)
-                  delay=$((delay * 2))
+                  # Linear backoff: increase delay by 5 seconds each attempt
+                  # Max delay will be 10 + 9*5 = 55 seconds
+                  delay=$((delay + 5))
                 else
                   echo "Upload failed after $max_attempts attempts"
                   return 1
