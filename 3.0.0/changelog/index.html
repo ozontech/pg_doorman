@@ -639,6 +639,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#3.0.0" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.0.0 Jan 12, 2026
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#2.5.0" class="md-nav__link">
     <span class="md-ellipsis">
       2.5.0 Nov 18, 2025
@@ -1010,6 +1019,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#3.0.0" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.0.0 Jan 12, 2026
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#2.5.0" class="md-nav__link">
     <span class="md-ellipsis">
       2.5.0 Nov 18, 2025
@@ -1209,6 +1227,34 @@
 
 
 <h1 id="changelog">Changelog</h1>
+<h3 id="3.0.0">3.0.0 <small>Jan 12, 2026</small></h3>
+<p><strong>Major Release — Complete Architecture Refactoring</strong></p>
+<p>This release represents a significant milestone with a complete codebase refactoring that dramatically improves async protocol support, making PgDoorman the most efficient connection pooler for asynchronous PostgreSQL workloads.</p>
+<p><strong>New Features:</strong></p>
+<ul>
+<li><strong>patroni_proxy</strong> — A new high-performance TCP proxy for Patroni-managed PostgreSQL clusters:<ul>
+<li>Zero-downtime connection management — existing connections are preserved during cluster topology changes</li>
+<li>Hot upstream updates — automatic discovery of cluster members via Patroni REST API without connection drops</li>
+<li>Role-based routing — route connections to leader, sync replicas, or async replicas based on configuration</li>
+<li>Replication lag awareness with configurable <code>max_lag_in_bytes</code> per port</li>
+<li>Least connections load balancing strategy</li>
+</ul>
+</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li><strong>Complete codebase refactoring</strong> — modular architecture with better separation of concerns:<ul>
+<li>Client handling split into dedicated modules (core, entrypoint, protocol, startup, transaction)</li>
+<li>Configuration system reorganized into focused modules (general, pool, user, tls, prometheus, talos)</li>
+<li>Admin, auth, and prometheus subsystems extracted into separate modules</li>
+<li>Improved code maintainability and testability</li>
+</ul>
+</li>
+<li><strong>Enhanced async protocol support</strong> — significantly improved handling of asynchronous PostgreSQL protocol, providing better performance than other connection poolers for async workloads</li>
+<li><strong>Extended protocol improvements</strong> — better client buffering and message handling for extended query protocol</li>
+<li><strong>xxhash3 for prepared statement hashing</strong> — faster hash computation for prepared statement cache</li>
+<li><strong>Comprehensive BDD testing framework</strong> — multi-language integration tests (Go, Rust, Python, Node.js, .NET) with Docker-based reproducible environment</li>
+</ul>
 <h3 id="2.5.0">2.5.0 <small>Nov 18, 2025</small></h3>
 <p><strong>Improvements:</strong>
 - Reworked the statistics collection system, yielding up to 20% performance gain on fast queries.
