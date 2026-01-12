@@ -147,6 +147,13 @@ jobs:
           cargo vendor
           tar czf vendor.tar.gz vendor/
 
+      - name: Download Rust tarball for offline build
+        run: |
+          # Download Rust tarball that will be included in source package for offline Launchpad builds
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz
+          echo "Downloaded Rust tarball:"
+          ls -la rust-*.tar.gz
+
       - name: Build source packages for each Ubuntu version
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
@@ -185,7 +192,8 @@ jobs:
             
             # Define what we want to package (explicit list instead of excludes)
             # These are the actual project files needed for building
-            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml"
+            # Include Rust tarball for offline build on Launchpad
+            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz"
             
             # Debug: show what we're going to copy
             echo "Files/directories to copy:"
@@ -321,11 +329,6 @@ jobs:
             fi
           done
 
-      - name: Install Rust
-        run: |
-          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz
-          cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
-
       - name: Build and install package
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
@@ -366,7 +369,7 @@ jobs:
   upload-to-launchpad:
     name: Upload to Launchpad PPA
     needs: [verify-version, prepare-source-packages]
-    if: github.event_name == 'release'
+    #if: github.event_name == 'release'
     runs-on: ubuntu-latest
     container:
       image: ubuntu:24.04
@@ -494,7 +497,7 @@ jobs:
           echo "=========================================="
 
       - name: Upload source packages to Launchpad PPA
-        if: github.event_name == 'release'
+        #if: github.event_name == 'release'
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
