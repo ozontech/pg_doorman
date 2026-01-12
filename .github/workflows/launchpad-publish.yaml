@@ -15,7 +15,7 @@ env:
   # noble = 24.04 LTS  
   # plucky = 25.04
   # Note: oracular (24.10) reached EOL and was removed
-  PPA_NAME: "ppa:pg-doorman/pg-doorman"
+  PPA_NAME: "ppa:vadv/pg-doorman"
   RUST_VERSION: "1.87.0"
 
 jobs:
