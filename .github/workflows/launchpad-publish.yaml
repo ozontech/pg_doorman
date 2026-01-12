@@ -281,7 +281,7 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages
 
-      - name: Install dput and SSH tools
+      - name: Install dput and SFTP dependencies
         run: |
           # Retry logic to handle transient mirror issues
           install_packages() {
@@ -304,31 +304,16 @@ jobs:
             fi
           done
 
-      - name: Configure SFTP for Launchpad
+      - name: Setup SSH key for Launchpad SFTP
+        env:
+          LAUNCHPAD_SSH_KEY: ${{ secrets.LAUNCHPAD_SSH_KEY }}
         run: |
-          # Setup SSH known_hosts for ppa.launchpad.net
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          
-          # Get Launchpad's SSH host key
-          ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
-          chmod 600 ~/.ssh/known_hosts
-          
-          echo "SSH known_hosts configured for ppa.launchpad.net"
-          
-          # Configure dput to use SFTP instead of FTP
-          mkdir -p ~/.dput.cf.d
-          cat > ~/.dput.cf << 'EOF'
-          [ppa]
-          fqdn = ppa.launchpad.net
-          method = sftp
-          incoming = ~%(ppa)s/ubuntu/
-          login = anonymous
-          allow_unsigned_uploads = 0
-          EOF
-          
-          echo "dput configured to use SFTP method"
-          cat ~/.dput.cf
+          echo "$LAUNCHPAD_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null || true
+          echo "SSH key configured for Launchpad SFTP upload"
 
       - name: Import GPG key
         env:
@@ -421,6 +406,21 @@ jobs:
           echo "All GPG signatures verified successfully"
           echo "=========================================="
 
+      - name: Configure dput for SFTP
+        run: |
+          # Configure dput to use SFTP instead of FTP for reliable large file uploads
+          cat > ~/.dput.cf << 'EOF'
+          [ppa]
+          fqdn = ppa.launchpad.net
+          method = sftp
+          incoming = ~vadv/pg-doorman/ubuntu/
+          login = vadv
+          allow_unsigned_uploads = 0
+          EOF
+          
+          echo "dput configured for SFTP upload:"
+          cat ~/.dput.cf
+
       - name: Upload source packages to Launchpad PPA
         #if: github.event_name == 'release'
         env:
@@ -443,7 +443,8 @@ jobs:
               
               # Use -f to force upload even if already uploaded (for retries)
               # Use -d for debug output to see what's happening
-              if dput -d -f ${{ env.PPA_NAME }} "$changes_file" 2>&1; then
+              # Use custom 'ppa' config which uses SFTP
+              if dput -d -f ppa "$changes_file" 2>&1; then
                 echo "Upload successful!"
                 return 0
               else
