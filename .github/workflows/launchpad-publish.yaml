@@ -382,11 +382,11 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages
 
-      - name: Install dput
+      - name: Install dput and SFTP dependencies
         run: |
           # Retry logic to handle transient mirror issues
           install_packages() {
-            apt-get update && apt-get install -y dput gnupg
+            apt-get update && apt-get install -y dput gnupg openssh-client python3-paramiko
           }
           
           # Try up to 3 times with increasing delays
@@ -505,8 +505,8 @@ jobs:
           
           cd /tmp/packages
           
-          # Configure dput for better reliability
-          # Create dput.cf with increased timeout and SFTP (more reliable than FTP)
+          # Configure dput for better reliability using SFTP instead of FTP
+          # SFTP is more reliable for large files and handles connection issues better
           mkdir -p ~/.dput.cf.d
           cat > ~/.dput.cf << 'EOF'
           [DEFAULT]
@@ -514,11 +514,16 @@ jobs:
           
           [ppa]
           fqdn = ppa.launchpad.net
-          method = ftp
+          method = sftp
           incoming = ~%(ppa)s/ubuntu/
           login = anonymous
           allow_unsigned_uploads = 0
           EOF
+          
+          # Configure SSH to accept Launchpad's host key automatically
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null || true
           
           # Function to upload with retry logic
           # More attempts with shorter delays for transient network issues
