@@ -495,7 +495,7 @@ jobs:
           echo "=========================================="
 
       - name: Upload source packages to Launchpad PPA
-        if: github.event_name == 'release'
+        #if: github.event_name == 'release'
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
         run: |

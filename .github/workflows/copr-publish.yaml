@@ -287,7 +287,7 @@ jobs:
   upload-to-copr:
     name: Upload to Fedora COPR
     needs: [verify-version, prepare-srpm, test-rpm-build]
-    if: github.event_name == 'release'
+    #if: github.event_name == 'release'
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
