@@ -292,7 +292,7 @@ jobs:
   upload-to-launchpad:
     name: Upload to Launchpad PPA
     needs: [verify-version, prepare-source-packages]
-    #if: github.event_name == 'release'
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     container:
       image: ubuntu:24.04
@@ -425,7 +425,7 @@ jobs:
           echo "=========================================="
 
       - name: Upload source packages to Launchpad PPA
-        #if: github.event_name == 'release'
+        if: github.event_name == 'release'
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
           REBUILD_NUMBER: ${{ env.REBUILD_NUMBER }}
