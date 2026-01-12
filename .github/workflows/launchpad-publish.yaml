@@ -310,9 +310,37 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "$LAUNCHPAD_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+          
+          # Write SSH key (supports both ed25519 and RSA formats)
+          echo "$LAUNCHPAD_SSH_KEY" > ~/.ssh/id_launchpad
+          chmod 600 ~/.ssh/id_launchpad
+          
+          # Get host keys from Launchpad
           ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 644 ~/.ssh/known_hosts
+          
+          # Configure SSH to use this key for ppa.launchpad.net
+          cat > ~/.ssh/config << 'SSHCONFIG'
+          Host ppa.launchpad.net
+            IdentityFile ~/.ssh/id_launchpad
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+            BatchMode yes
+          SSHCONFIG
+          chmod 600 ~/.ssh/config
+          
+          # Start ssh-agent and add the key
+          eval $(ssh-agent -s)
+          ssh-add ~/.ssh/id_launchpad
+          
+          # Export SSH_AUTH_SOCK for subsequent steps
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
+          
+          # Test SSH connection to Launchpad (should return "No shells on this server")
+          echo "Testing SSH connection to Launchpad..."
+          ssh -v -o BatchMode=yes vadv@ppa.launchpad.net 2>&1 | head -50 || true
+          
           echo "SSH key configured for Launchpad SFTP upload"
 
       - name: Import GPG key
