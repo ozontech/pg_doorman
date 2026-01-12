@@ -63,7 +63,7 @@ For Ubuntu users, PgDoorman is available via Launchpad PPA:
 
 ```bash
 # Add the PPA repository
-sudo add-apt-repository ppa:pg-doorman/pg-doorman
+sudo add-apt-repository ppa:vadv/pg-doorman
 sudo apt-get update
 
 # Install pg-doorman

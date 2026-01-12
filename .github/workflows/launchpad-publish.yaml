@@ -14,7 +14,6 @@ env:
   # jammy = 22.04 LTS
   # noble = 24.04 LTS  
   # plucky = 25.04
-  # Note: oracular (24.10) reached EOL and was removed
   PPA_NAME: "ppa:vadv/pg-doorman"
   RUST_VERSION: "1.87.0"
 
@@ -367,7 +366,7 @@ jobs:
   upload-to-launchpad:
     name: Upload to Launchpad PPA
     needs: [verify-version, prepare-source-packages]
-    #if: github.event_name == 'release'
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     container:
       image: ubuntu:24.04
@@ -495,7 +494,7 @@ jobs:
           echo "=========================================="
 
       - name: Upload source packages to Launchpad PPA
-        #if: github.event_name == 'release'
+        if: github.event_name == 'release'
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
