@@ -238,7 +238,8 @@ jobs:
             
             # Build source package (unsigned first, then sign manually)
             # Using dpkg-buildpackage directly to avoid debsign TTY issues
-            dpkg-buildpackage -us -uc -ui -S -sa
+            # -d flag ignores Build-Depends check (Rust >= 1.75 comes from PPA on Launchpad)
+            dpkg-buildpackage -d -us -uc -ui -S -sa
             
             # Sign the .dsc and .changes files manually with gpg
             cd "$WORK_DIR"
@@ -303,7 +304,8 @@ jobs:
               clang \
               g++ \
               wget \
-              ca-certificates
+              ca-certificates \
+              software-properties-common
           }
           
           # Try up to 3 times with increasing delays
@@ -321,6 +323,15 @@ jobs:
               fi
             fi
           done
+          
+          # Add Mozilla PPA for Rust >= 1.75 (same as Launchpad build environment)
+          add-apt-repository -y ppa:ubuntu-mozilla-security/rust-next
+          apt-get update
+          apt-get install -y rustc cargo
+          
+          echo "Rust version:"
+          rustc --version
+          cargo --version
 
       - name: Build and install package
         env:
