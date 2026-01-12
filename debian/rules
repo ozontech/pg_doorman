@@ -7,6 +7,9 @@ export JEMALLOC_SYS_WITH_MALLOC_CONF = dirty_decay_ms:30000,muzzy_decay_ms:30000
 	dh $@
 
 override_dh_auto_build:
+	# Show Rust version (from PPA ppa:ubuntu-mozilla-security/rust-next)
+	rustc --version
+	cargo --version
 	# Use vendored dependencies
 	if [ -d vendor ]; then \
 		mkdir -p .cargo && \

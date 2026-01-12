@@ -2,9 +2,10 @@ Source: pg-doorman
 Section: database
 Priority: optional
 Maintainer: pg-doorman maintainers <pg-doorman@launchpad.net>
+# Requires PPA dependency on ppa:ubuntu-mozilla-security/rust-next
 Build-Depends: debhelper-compat (= 13),
-               rustc,
-               cargo,
+               rustc (>= 1.75),
+               cargo (>= 1.75),
                libssl-dev,
                pkg-config,
                cmake,
