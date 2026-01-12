@@ -22,7 +22,11 @@ pub struct ClusterManager {
 }
 
 impl ClusterManager {
-    pub fn new(name: String, hosts: Vec<String>, update_interval: Duration) -> Result<Self, String> {
+    pub fn new(
+        name: String,
+        hosts: Vec<String>,
+        update_interval: Duration,
+    ) -> Result<Self, String> {
         let client = PatroniClient::new().map_err(|e| e.to_string())?;
         Ok(Self {
             name,
@@ -42,13 +46,10 @@ impl ClusterManager {
 
         for (port_name, port_config) in port_configs {
             let full_name = format!("{}:{}", self.name, port_name);
-            let port = Arc::new(Port::new(full_name.clone(), port_config).map_err(|e| e.to_string())?);
+            let port =
+                Arc::new(Port::new(full_name.clone(), port_config).map_err(|e| e.to_string())?);
 
-            info!(
-                "Starting port '{}' on {}",
-                full_name,
-                port.listen_addr()
-            );
+            info!("Starting port '{}' on {}", full_name, port.listen_addr());
 
             // Spawn listener task
             let port_clone = Arc::clone(&port);
@@ -120,22 +121,26 @@ pub async fn handle_config_changes(
         match change {
             ClusterDiff::Added(name, cluster_config) => {
                 // Add new cluster
-                match ClusterManager::new(name.clone(), cluster_config.hosts.clone(), update_interval) {
+                match ClusterManager::new(
+                    name.clone(),
+                    cluster_config.hosts.clone(),
+                    update_interval,
+                ) {
                     Ok(manager) => {
                         let manager = Arc::new(manager);
-                        
+
                         // Start ports
                         if let Err(e) = manager.start_ports(&cluster_config.ports).await {
                             error!("Failed to start ports for cluster '{}': {}", name, e);
                             continue;
                         }
-                        
+
                         // Start update loop
                         manager.clone().start_update_loop();
-                        
+
                         let mut managers = cluster_managers.write().await;
                         managers.insert(name.clone(), manager);
-                        
+
                         info!("Cluster '{}' started successfully", name);
                     }
                     Err(e) => {
@@ -168,10 +173,13 @@ pub async fn handle_config_changes(
                 // Ports changed - incremental update: stop removed/changed, add new
                 let managers = cluster_managers.read().await;
                 if let Some(manager) = managers.get(name) {
-                    info!("Cluster '{}' ports changed, applying incremental update", name);
-                    
+                    info!(
+                        "Cluster '{}' ports changed, applying incremental update",
+                        name
+                    );
+
                     let mut ports = manager.ports.write().await;
-                    
+
                     // Find ports to remove (in old but not in new, or config changed)
                     let mut to_remove = Vec::new();
                     for (port_name, old_config) in old {
@@ -188,29 +196,36 @@ pub async fn handle_config_changes(
                             }
                         }
                     }
-                    
+
                     // Stop and remove old ports
                     for port_name in &to_remove {
                         if let Some(port) = ports.remove(port_name) {
-                            info!("Stopping port '{}:{}' (removed or changed)", name, port_name);
+                            info!(
+                                "Stopping port '{}:{}' (removed or changed)",
+                                name, port_name
+                            );
                             port.stop().await;
                         }
                     }
-                    
+
                     // Add new ports (not in old, or config changed)
                     for (port_name, new_config) in new {
                         let should_add = match old.get(port_name) {
-                            None => true, // New port
+                            None => true,                                 // New port
                             Some(old_config) => old_config != new_config, // Config changed
                         };
-                        
+
                         if should_add {
                             let full_name = format!("{}:{}", name, port_name);
                             match Port::new(full_name.clone(), new_config) {
                                 Ok(port) => {
                                     let port = Arc::new(port);
-                                    info!("Starting port '{}' on {}", full_name, port.listen_addr());
-                                    
+                                    info!(
+                                        "Starting port '{}' on {}",
+                                        full_name,
+                                        port.listen_addr()
+                                    );
+
                                     // Spawn listener task
                                     let port_clone = Arc::clone(&port);
                                     tokio::spawn(async move {
@@ -218,7 +233,7 @@ pub async fn handle_config_changes(
                                             error!("Port '{}' error: {}", full_name, e);
                                         }
                                     });
-                                    
+
                                     ports.insert(port_name.clone(), port);
                                 }
                                 Err(e) => {
@@ -227,7 +242,7 @@ pub async fn handle_config_changes(
                             }
                         }
                     }
-                    
+
                     info!("Cluster '{}' ports updated successfully", name);
                 }
             }

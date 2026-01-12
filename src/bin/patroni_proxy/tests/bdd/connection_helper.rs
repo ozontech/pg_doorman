@@ -263,7 +263,7 @@ pub async fn session_connected_to_backend(
         Ok(n) if n > 0 => {
             let response = String::from_utf8_lossy(&buf[..n]);
             let response = response.trim();
-            
+
             // Expected format: "NAME:<backend_name>"
             if let Some(backend_name) = response.strip_prefix("NAME:") {
                 if backend_name != expected_backend {

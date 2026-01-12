@@ -78,6 +78,10 @@ pub struct DoormanWorld {
     pub pgbench_script_file: Option<NamedTempFile>,
     /// Flag indicating if this is a benchmark scenario (affects log level)
     pub is_bench: bool,
+    /// Benchmark start time (set when first pgbench runs)
+    pub bench_start_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Benchmark end time (set when generating markdown table)
+    pub bench_end_time: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl DoormanWorld {

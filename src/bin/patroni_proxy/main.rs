@@ -6,6 +6,7 @@ mod port;
 mod stream;
 
 use api::start_http_server;
+use clap::Parser;
 use cluster_manager::{handle_config_changes, ClusterManager};
 use config::{ClusterDiff, ConfigDiff, ConfigRepository};
 use std::collections::HashMap;
@@ -15,15 +16,23 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
+/// Patroni Proxy: PostgreSQL proxy for Patroni clusters
+#[derive(Parser, Debug)]
+#[command(name = "patroni_proxy", author, version, about, long_about = None)]
+struct Args {
+    /// Path to configuration file
+    #[arg(default_value = "patroni_proxy.yaml")]
+    config_file: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    // Parse command line arguments
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "patroni_proxy.yaml".to_string());
+    // Parse command line arguments (handles --version and --help automatically)
+    let args = Args::parse();
+    let config_path = args.config_file;
 
     info!("Starting patroni-proxy with config: {}", config_path);
 
@@ -91,7 +100,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         log_config_changes(&diff);
                         let config = config_repo_clone.get();
                         let update_interval = Duration::from_secs(config.cluster_update_interval);
-                        handle_config_changes(&diff, &cluster_managers_clone, update_interval).await;
+                        handle_config_changes(&diff, &cluster_managers_clone, update_interval)
+                            .await;
                         info!("Configuration reloaded successfully");
                     } else {
                         info!("Configuration unchanged");

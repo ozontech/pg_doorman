@@ -1,0 +1,26 @@
+Source: pg-doorman
+Section: database
+Priority: optional
+Maintainer: pg-doorman maintainers <pg-doorman@launchpad.net>
+Build-Depends: debhelper-compat (= 13),
+               libssl-dev,
+               pkg-config,
+               cmake,
+               clang,
+               g++
+Standards-Version: 4.6.0
+Homepage: https://github.com/ozontech/pg_doorman
+Vcs-Git: https://github.com/ozontech/pg_doorman.git
+Vcs-Browser: https://github.com/ozontech/pg_doorman
+
+Package: pg-doorman
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl
+Description: PostgreSQL connection pooler and proxy
+ pg_doorman is a high-performance PostgreSQL connection pooler and proxy
+ written in Rust. It provides efficient connection pooling, load balancing,
+ and query routing capabilities for PostgreSQL databases.
+ .
+ This package includes:
+  - pg_doorman: main PostgreSQL connection pooler and proxy
+  - patroni_proxy: Patroni integration proxy for high availability setups

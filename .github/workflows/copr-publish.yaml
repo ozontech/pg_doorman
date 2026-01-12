@@ -1,0 +1,328 @@
+name: Publish to Fedora COPR
+
+on:
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  # Fedora versions to build for
+  FEDORA_VERSIONS: "39 40 41"
+  # EPEL versions (RHEL/CentOS/Rocky/Alma)
+  EPEL_VERSIONS: "8 9"
+  COPR_PROJECT: "pg-doorman"
+  RUST_VERSION: "1.87.0"
+
+jobs:
+  verify-version:
+    name: Verify tag version matches Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Get and verify version
+        id: get_version
+        run: |
+          # Extract version from Cargo.toml
+          CARGO_VERSION=$(grep '^version =' Cargo.toml | head -1 | cut -d '"' -f2)
+          echo "Cargo.toml version: $CARGO_VERSION"
+          
+          # For release events, verify tag matches Cargo.toml version
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Extract version from git tag (remove 'v' prefix)
+            TAG_VERSION=${GITHUB_REF_NAME#v}
+            echo "Git tag version: $TAG_VERSION"
+            
+            # Compare versions
+            if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+              echo "Error: Version mismatch between Cargo.toml ($CARGO_VERSION) and git tag ($TAG_VERSION)"
+              exit 1
+            fi
+          else
+            echo "Pull request build - skipping tag verification"
+          fi
+          
+          echo "version=$CARGO_VERSION" >> $GITHUB_OUTPUT
+
+  prepare-srpm:
+    name: Prepare SRPM packages
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+      env:
+        LANG: C.UTF-8
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          dnf install -y \
+            git \
+            rpm-build \
+            rpmdevtools \
+            copr-cli \
+            wget \
+            gcc \
+            gcc-c++ \
+            make \
+            openssl-devel \
+            cmake \
+            clang \
+            ca-certificates
+
+      - name: Install Rust
+        run: |
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz
+          cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
+
+      - name: Create vendor tarball
+        run: |
+          cargo vendor
+          tar czf vendor.tar.gz vendor/
+
+      - name: Setup RPM build environment
+        run: |
+          rpmdev-setuptree
+
+      - name: Build SRPM packages
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          set -e
+          
+          # Create output directory
+          mkdir -p /tmp/packages
+          
+          # Save source directory
+          SOURCE_DIR=$(pwd)
+          
+          echo "=========================================="
+          echo "Building SRPM for version $VERSION"
+          echo "=========================================="
+          
+          # Create source tarball
+          mkdir -p ~/rpmbuild/SOURCES
+          
+          # Create the source directory structure
+          WORK_DIR=$(mktemp -d)
+          mkdir -p "$WORK_DIR/pg-doorman-${VERSION}"
+          
+          # Define what we want to package
+          FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches rust-toolchain.toml LICENSE"
+          
+          # Debug: show what we're going to copy
+          echo "Files/directories to copy:"
+          for item in $FILES_TO_COPY; do
+            if [ -e "$item" ]; then
+              echo "  [OK] $item"
+            else
+              echo "  [MISSING] $item"
+            fi
+          done
+          
+          # Copy files
+          for item in $FILES_TO_COPY; do
+            if [ -e "$item" ]; then
+              cp -r "$item" "$WORK_DIR/pg-doorman-${VERSION}/"
+            fi
+          done
+          
+          # Create source tarball
+          cd "$WORK_DIR"
+          tar czf ~/rpmbuild/SOURCES/pg-doorman-${VERSION}.tar.gz "pg-doorman-${VERSION}"
+          
+          # Copy vendor tarball
+          cp "$SOURCE_DIR/vendor.tar.gz" ~/rpmbuild/SOURCES/
+          
+          # Update spec file with correct version
+          cd "$SOURCE_DIR"
+          sed "s/^Version:.*/Version:        ${VERSION}/" pkg/rpm/pg-doorman.spec > ~/rpmbuild/SPECS/pg-doorman.spec
+          
+          # Build SRPM
+          rpmbuild -bs ~/rpmbuild/SPECS/pg-doorman.spec
+          
+          # Copy SRPM to output directory
+          cp ~/rpmbuild/SRPMS/*.src.rpm /tmp/packages/
+          
+          # Cleanup
+          rm -rf "$WORK_DIR"
+          
+          echo "=========================================="
+          echo "SRPM built successfully"
+          echo "=========================================="
+          ls -la /tmp/packages/
+
+      - name: Upload SRPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: copr-srpm-packages
+          path: /tmp/packages/
+
+  test-rpm-build:
+    name: Test RPM build (${{ matrix.distro }})
+    needs: [verify-version, prepare-srpm]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - distro: fedora-40
+            image: fedora:40
+          - distro: fedora-41
+            image: fedora:41
+          - distro: rocky-9
+            image: rockylinux:9
+          - distro: alma-9
+            image: almalinux:9
+    container:
+      image: ${{ matrix.image }}
+      env:
+        LANG: C.UTF-8
+    
+    steps:
+      - name: Download SRPM packages
+        uses: actions/download-artifact@v4
+        with:
+          name: copr-srpm-packages
+          path: /tmp/packages
+
+      - name: Install build dependencies
+        run: |
+          if command -v dnf &> /dev/null; then
+            dnf install -y \
+              rpm-build \
+              rpmdevtools \
+              wget \
+              gcc \
+              gcc-c++ \
+              make \
+              openssl-devel \
+              cmake \
+              clang \
+              ca-certificates
+          else
+            yum install -y \
+              rpm-build \
+              rpmdevtools \
+              wget \
+              gcc \
+              gcc-c++ \
+              make \
+              openssl-devel \
+              cmake \
+              clang \
+              ca-certificates
+          fi
+
+      - name: Install Rust
+        run: |
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz
+          cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
+
+      - name: Build RPM from SRPM
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -e
+          cd /tmp/packages
+          
+          echo "=========================================="
+          echo "Building RPM for $DISTRO"
+          echo "=========================================="
+          
+          # Setup RPM build environment
+          rpmdev-setuptree
+          
+          # Find SRPM
+          SRPM=$(ls *.src.rpm | head -1)
+          echo "Using SRPM: $SRPM"
+          
+          # Rebuild RPM from SRPM
+          rpmbuild --rebuild "$SRPM"
+          
+          # Find built RPM
+          RPM=$(find ~/rpmbuild/RPMS -name "*.rpm" | head -1)
+          echo "Built RPM: $RPM"
+          
+          # Install the RPM
+          if command -v dnf &> /dev/null; then
+            dnf install -y "$RPM"
+          else
+            yum install -y "$RPM"
+          fi
+          
+          echo "=========================================="
+          echo "Verifying installation"
+          echo "=========================================="
+          
+          # Verify binaries are installed and working
+          /usr/bin/pg_doorman --version
+          /usr/bin/patroni_proxy --version
+          
+          echo "=========================================="
+          echo "RPM build and installation test passed for $DISTRO"
+          echo "=========================================="
+
+  upload-to-copr:
+    name: Upload to Fedora COPR
+    needs: [verify-version, prepare-srpm, test-rpm-build]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+      env:
+        LANG: C.UTF-8
+    steps:
+      - name: Download SRPM packages
+        uses: actions/download-artifact@v4
+        with:
+          name: copr-srpm-packages
+          path: /tmp/packages
+
+      - name: Install copr-cli
+        run: |
+          dnf install -y copr-cli
+
+      - name: Configure COPR
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: |
+          mkdir -p ~/.config
+          echo "$COPR_CONFIG" > ~/.config/copr
+          chmod 600 ~/.config/copr
+
+      - name: Upload SRPM to COPR
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          set -e
+          
+          cd /tmp/packages
+          
+          # Find SRPM
+          SRPM=$(ls *.src.rpm | head -1)
+          echo "Uploading SRPM: $SRPM"
+          
+          echo "=========================================="
+          echo "Uploading to COPR project: ${{ env.COPR_PROJECT }}"
+          echo "=========================================="
+          
+          # Upload SRPM to COPR
+          # COPR will build for all configured chroots (Fedora versions, EPEL, etc.)
+          copr-cli build ${{ env.COPR_PROJECT }} "$SRPM"
+          
+          echo "=========================================="
+          echo "SRPM uploaded to COPR successfully"
+          echo "=========================================="
+          echo "Build will be available at: https://copr.fedorainfracloud.org/coprs/vadvya/${{ env.COPR_PROJECT }}/"

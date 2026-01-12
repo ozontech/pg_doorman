@@ -57,6 +57,39 @@ For more details, see the [patroni_proxy documentation](src/bin/patroni_proxy/RE
 
 The simplest way to install PgDoorman is to download a pre-built binary from the [GitHub releases page](https://github.com/ozontech/pg_doorman/releases).
 
+### Ubuntu/Debian (Launchpad PPA)
+
+For Ubuntu users, PgDoorman is available via Launchpad PPA:
+
+```bash
+# Add the PPA repository
+sudo add-apt-repository ppa:pg-doorman/pg-doorman
+sudo apt-get update
+
+# Install pg-doorman
+sudo apt-get install pg-doorman
+```
+
+Supported Ubuntu versions: 22.04 (Jammy), 24.04 (Noble), 25.04 (Plucky).
+
+For more information, visit the [Launchpad PPA page](https://launchpad.net/~pg-doorman/+archive/ubuntu/pg-doorman).
+
+### Fedora/RHEL/Rocky/Alma (COPR)
+
+For Fedora and RHEL-based distributions, PgDoorman is available via Fedora COPR:
+
+```bash
+# Enable the COPR repository
+sudo dnf copr enable vadvya/pg-doorman
+
+# Install pg-doorman
+sudo dnf install pg-doorman
+```
+
+Supported distributions: Fedora 39+, RHEL/Rocky/Alma 8+.
+
+For more information, visit the [COPR project page](https://copr.fedorainfracloud.org/coprs/vadvya/pg-doorman/).
+
 ### Docker Installation
 
 PgDoorman provides an official Docker image that you can use directly:

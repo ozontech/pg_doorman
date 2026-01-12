@@ -1,6 +1,6 @@
+use crate::port_allocator::allocate_port;
 use crate::world::PatroniProxyWorld;
 use cucumber::given;
-use portpicker::pick_unused_port;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,26 +22,35 @@ pub struct MockBackend {
 impl MockBackend {
     /// Start a new named mock backend server on a free port
     pub fn start(name: String) -> Self {
-        let port = pick_unused_port().expect("No free ports for mock backend");
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-            .expect("Failed to bind mock backend");
-        
+        let port = allocate_port();
+        let listener =
+            TcpListener::bind(format!("127.0.0.1:{}", port)).expect("Failed to bind mock backend");
+
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = Arc::clone(&shutdown);
         let name_clone = name.clone();
-        
+
         let thread_handle = thread::spawn(move || {
-            listener.set_nonblocking(true).expect("Failed to set nonblocking");
-            
+            listener
+                .set_nonblocking(true)
+                .expect("Failed to set nonblocking");
+
             let mut clients: Vec<TcpStream> = Vec::new();
-            
+
             while !shutdown_clone.load(Ordering::Relaxed) {
                 // Accept new connections
                 match listener.accept() {
                     Ok((stream, addr)) => {
-                        eprintln!("[MockBackend:{}:{}] Accepted connection from {}", name_clone, port, addr);
-                        stream.set_nonblocking(true).expect("Failed to set nonblocking");
-                        stream.set_read_timeout(Some(Duration::from_millis(10))).ok();
+                        eprintln!(
+                            "[MockBackend:{}:{}] Accepted connection from {}",
+                            name_clone, port, addr
+                        );
+                        stream
+                            .set_nonblocking(true)
+                            .expect("Failed to set nonblocking");
+                        stream
+                            .set_read_timeout(Some(Duration::from_millis(10)))
+                            .ok();
                         clients.push(stream);
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -51,7 +60,7 @@ impl MockBackend {
                         eprintln!("[MockBackend:{}] Accept error: {}", name_clone, e);
                     }
                 }
-                
+
                 // Handle existing clients
                 let initial_count = clients.len();
                 clients.retain_mut(|stream| {
@@ -59,44 +68,70 @@ impl MockBackend {
                     match stream.read(&mut buf) {
                         Ok(0) => {
                             // Connection closed by client
-                            eprintln!("[MockBackend:{}:{}] Client disconnected (read 0 bytes)", name_clone, port);
+                            eprintln!(
+                                "[MockBackend:{}:{}] Client disconnected (read 0 bytes)",
+                                name_clone, port
+                            );
                             false
                         }
                         Ok(n) => {
                             let request = String::from_utf8_lossy(&buf[..n]);
-                            eprintln!("[MockBackend:{}:{}] Received {} bytes: {:?}", name_clone, port, n, request.trim());
-                            
+                            eprintln!(
+                                "[MockBackend:{}:{}] Received {} bytes: {:?}",
+                                name_clone,
+                                port,
+                                n,
+                                request.trim()
+                            );
+
                             // Handle PING command
                             if request.contains("PING") {
                                 eprintln!("[MockBackend:{}:{}] Sending PONG", name_clone, port);
                                 match stream.write_all(b"PONG\n") {
                                     Ok(_) => {
                                         let _ = stream.flush();
-                                        eprintln!("[MockBackend:{}:{}] PONG sent successfully", name_clone, port);
+                                        eprintln!(
+                                            "[MockBackend:{}:{}] PONG sent successfully",
+                                            name_clone, port
+                                        );
                                     }
                                     Err(e) => {
-                                        eprintln!("[MockBackend:{}:{}] Failed to send PONG: {}", name_clone, port, e);
+                                        eprintln!(
+                                            "[MockBackend:{}:{}] Failed to send PONG: {}",
+                                            name_clone, port, e
+                                        );
                                         return false;
                                     }
                                 }
                             }
-                            
+
                             // Handle NAME command - returns server name for identification
                             if request.contains("NAME") {
                                 let response = format!("NAME:{}\n", name_clone);
-                                eprintln!("[MockBackend:{}:{}] Sending NAME response: {}", name_clone, port, response.trim());
+                                eprintln!(
+                                    "[MockBackend:{}:{}] Sending NAME response: {}",
+                                    name_clone,
+                                    port,
+                                    response.trim()
+                                );
                                 match stream.write_all(response.as_bytes()) {
                                     Ok(_) => {
                                         let _ = stream.flush();
-                                        eprintln!("[MockBackend:{}:{}] NAME sent successfully", name_clone, port);
+                                        eprintln!(
+                                            "[MockBackend:{}:{}] NAME sent successfully",
+                                            name_clone, port
+                                        );
                                     }
                                     Err(e) => {
-                                        eprintln!("[MockBackend:{}:{}] Failed to send NAME: {}", name_clone, port, e);
+                                        eprintln!(
+                                            "[MockBackend:{}:{}] Failed to send NAME: {}",
+                                            name_clone, port, e
+                                        );
                                         return false;
                                     }
                                 }
                             }
-                            
+
                             // Keep connection alive
                             true
                         }
@@ -106,20 +141,26 @@ impl MockBackend {
                         }
                         Err(e) => {
                             // Connection error
-                            eprintln!("[MockBackend:{}:{}] Client connection error: {}", name_clone, port, e);
+                            eprintln!(
+                                "[MockBackend:{}:{}] Client connection error: {}",
+                                name_clone, port, e
+                            );
                             false
                         }
                     }
                 });
                 let final_count = clients.len();
                 if initial_count != final_count {
-                    eprintln!("[MockBackend:{}:{}] Active connections: {} -> {}", name_clone, port, initial_count, final_count);
+                    eprintln!(
+                        "[MockBackend:{}:{}] Active connections: {} -> {}",
+                        name_clone, port, initial_count, final_count
+                    );
                 }
-                
+
                 thread::sleep(Duration::from_millis(10));
             }
         });
-        
+
         Self {
             name,
             port,
@@ -127,12 +168,12 @@ impl MockBackend {
             thread_handle: Some(thread_handle),
         }
     }
-    
+
     /// Get the port number
     pub fn port(&self) -> u16 {
         self.port
     }
-    
+
     /// Stop the mock backend server
     pub fn stop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);

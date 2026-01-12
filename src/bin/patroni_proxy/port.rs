@@ -120,12 +120,10 @@ impl Port {
         // Build new backends list, reusing existing Backend objects to preserve connection counters
         let new_backends: Vec<Arc<Backend>> = {
             let current_backends = self.backends.read().await;
-            
+
             // Create a map of existing backends by host for quick lookup
-            let existing_map: HashMap<&String, &Arc<Backend>> = current_backends
-                .iter()
-                .map(|b| (&b.host, b))
-                .collect();
+            let existing_map: HashMap<&String, &Arc<Backend>> =
+                current_backends.iter().map(|b| (&b.host, b)).collect();
 
             eligible_hosts
                 .iter()

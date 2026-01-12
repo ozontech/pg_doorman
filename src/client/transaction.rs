@@ -11,8 +11,7 @@ use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
     error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, read_message, ready_for_query,
-    write_all_flush,
+    insert_parse_complete_before_bind_complete, read_message, ready_for_query, write_all_flush,
 };
 use crate::pool::{ConnectionPool, CANCELED_PIDS};
 use crate::server::Server;
@@ -107,10 +106,7 @@ where
                         ""
                     };
                     let sql_without_comments = SqlCommentParser::new(sql).remove_comment_sql();
-                    let command = sql_without_comments
-                        .trim()
-                        .trim_end_matches(';')
-                        .trim();
+                    let command = sql_without_comments.trim().trim_end_matches(';').trim();
                     if command.eq_ignore_ascii_case("rollback")
                         || command.eq_ignore_ascii_case("commit")
                     {
@@ -601,7 +597,7 @@ where
                 if inserted == 0 && self.pending_parse_complete > 0 {
                     // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
                     const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
-                    
+
                     let mut prefixed_response = BytesMut::with_capacity(
                         new_response.len() + (self.pending_parse_complete as usize * 5),
                     );
