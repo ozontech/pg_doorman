@@ -16,6 +16,8 @@ BuildRequires:  make
 BuildRequires:  openssl-devel
 BuildRequires:  cmake
 BuildRequires:  clang
+BuildRequires:  curl
+BuildRequires:  tar
 
 Requires:       openssl
 
@@ -34,6 +36,15 @@ This package includes:
 tar xzf %{SOURCE1}
 
 %build
+# Install Rust toolchain (COPR doesn't have Rust pre-installed)
+export RUSTUP_HOME=%{_builddir}/rustup
+export CARGO_HOME=%{_builddir}/cargo
+export PATH="$CARGO_HOME/bin:$PATH"
+
+# Download and install Rust 1.87.0
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.87.0 --profile minimal
+source "$CARGO_HOME/env"
+
 # Configure cargo to use vendored dependencies
 mkdir -p .cargo
 cat > .cargo/config.toml << EOF
