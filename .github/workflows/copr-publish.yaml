@@ -91,6 +91,13 @@ jobs:
           cargo vendor
           tar czf vendor.tar.gz vendor/
 
+      - name: Download Rust tarball for offline build
+        run: |
+          # Download Rust tarball that will be included in SRPM for offline COPR builds
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz
+          echo "Downloaded Rust tarball:"
+          ls -la rust-*.tar.gz
+
       - name: Setup RPM build environment
         run: |
           rpmdev-setuptree
@@ -144,6 +151,9 @@ jobs:
           
           # Copy vendor tarball
           cp "$SOURCE_DIR/vendor.tar.gz" ~/rpmbuild/SOURCES/
+          
+          # Copy Rust tarball for offline COPR build
+          cp "$SOURCE_DIR/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz" ~/rpmbuild/SOURCES/
           
           # Update spec file with correct version
           cd "$SOURCE_DIR"

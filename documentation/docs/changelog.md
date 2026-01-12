@@ -4,6 +4,33 @@ title: Changelog
 
 # Changelog
 
+### 3.0.0 <small>Jan 12, 2026</small> { id="3.0.0" }
+
+**Major Release — Complete Architecture Refactoring**
+
+This release represents a significant milestone with a complete codebase refactoring that dramatically improves async protocol support, making PgDoorman the most efficient connection pooler for asynchronous PostgreSQL workloads.
+
+**New Features:**
+
+- **patroni_proxy** — A new high-performance TCP proxy for Patroni-managed PostgreSQL clusters:
+    - Zero-downtime connection management — existing connections are preserved during cluster topology changes
+    - Hot upstream updates — automatic discovery of cluster members via Patroni REST API without connection drops
+    - Role-based routing — route connections to leader, sync replicas, or async replicas based on configuration
+    - Replication lag awareness with configurable `max_lag_in_bytes` per port
+    - Least connections load balancing strategy
+
+**Improvements:**
+
+- **Complete codebase refactoring** — modular architecture with better separation of concerns:
+    - Client handling split into dedicated modules (core, entrypoint, protocol, startup, transaction)
+    - Configuration system reorganized into focused modules (general, pool, user, tls, prometheus, talos)
+    - Admin, auth, and prometheus subsystems extracted into separate modules
+    - Improved code maintainability and testability
+- **Enhanced async protocol support** — significantly improved handling of asynchronous PostgreSQL protocol, providing better performance than other connection poolers for async workloads
+- **Extended protocol improvements** — better client buffering and message handling for extended query protocol
+- **xxhash3 for prepared statement hashing** — faster hash computation for prepared statement cache
+- **Comprehensive BDD testing framework** — multi-language integration tests (Go, Rust, Python, Node.js, .NET) with Docker-based reproducible environment
+
 ### 2.5.0 <small>Nov 18, 2025</small> { id="2.5.0" }
 
 **Improvements:**

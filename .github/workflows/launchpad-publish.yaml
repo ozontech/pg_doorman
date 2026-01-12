@@ -14,8 +14,7 @@ env:
   # jammy = 22.04 LTS
   # noble = 24.04 LTS  
   # plucky = 25.04
-  # Note: oracular (24.10) reached EOL and was removed
-  PPA_NAME: "ppa:pg-doorman/pg-doorman"
+  PPA_NAME: "ppa:vadv/pg-doorman"
   RUST_VERSION: "1.87.0"
 
 jobs:
@@ -425,25 +424,53 @@ jobs:
           
           VERIFICATION_FAILED=0
           
+          # Function to verify GPG signature and check for errors in output
+          verify_signature() {
+            local file="$1"
+            local output
+            local exit_code
+            
+            # Capture both stdout and stderr, and exit code
+            output=$(gpg --verify "$file" 2>&1) || exit_code=$?
+            
+            # Check for errors in output (SignatureVerifyError, BAD signature, etc.)
+            if echo "$output" | grep -qiE "(Error|BAD|failed|cannot)"; then
+              echo "ERROR: GPG verification output contains errors for $file:"
+              echo "$output"
+              return 1
+            fi
+            
+            # Also check exit code
+            if [ "${exit_code:-0}" -ne 0 ]; then
+              echo "ERROR: GPG verification failed with exit code $exit_code for $file:"
+              echo "$output"
+              return 1
+            fi
+            
+            # Check for "Good signature" in output
+            if ! echo "$output" | grep -qi "Good signature"; then
+              echo "ERROR: No 'Good signature' found for $file:"
+              echo "$output"
+              return 1
+            fi
+            
+            echo "OK: $file - Good signature verified"
+            return 0
+          }
+          
           for DISTRO in $UBUNTU_VERSIONS; do
             echo "Verifying signature for Ubuntu $DISTRO..."
             
             # Verify .dsc file signature
             DSC_FILE="pg-doorman_${VERSION}~${DISTRO}.dsc"
-            if ! gpg --verify "$DSC_FILE" 2>&1; then
-              echo "ERROR: GPG signature verification FAILED for $DSC_FILE"
+            if ! verify_signature "$DSC_FILE"; then
               VERIFICATION_FAILED=1
-            else
-              echo "OK: $DSC_FILE signature verified"
             fi
             
             # Verify .changes file signature
             CHANGES_FILE="pg-doorman_${VERSION}~${DISTRO}_source.changes"
-            if ! gpg --verify "$CHANGES_FILE" 2>&1; then
-              echo "ERROR: GPG signature verification FAILED for $CHANGES_FILE"
+            if ! verify_signature "$CHANGES_FILE"; then
               VERIFICATION_FAILED=1
-            else
-              echo "OK: $CHANGES_FILE signature verified"
             fi
           done
           
