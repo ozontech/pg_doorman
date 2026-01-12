@@ -1,7 +1,9 @@
 Source: pg-doorman
 Section: database
 Priority: optional
-Maintainer: pg-doorman maintainers <pg-doorman@launchpad.net>
+Maintainer: Dmitry Vasiliev <vadv-ya@yandex.ru>
+# Rust is installed from local tarball during build (no network access on Launchpad)
+# Rust tarball is included in source package
 Build-Depends: debhelper-compat (= 13),
                libssl-dev,
                pkg-config,

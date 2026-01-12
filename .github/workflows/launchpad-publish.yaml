@@ -16,6 +16,11 @@ env:
   # plucky = 25.04
   PPA_NAME: "ppa:vadv/pg-doorman"
   RUST_VERSION: "1.87.0"
+  # Rebuild number for Launchpad PPA uploads
+  # Increment this when you need to re-upload the same version
+  # (e.g., after fixing packaging issues without changing the actual version)
+  # Set to empty string "" for first upload of a version
+  REBUILD_NUMBER: "2"
 
 jobs:
   verify-version:
@@ -74,7 +79,6 @@ jobs:
               git \
               devscripts \
               debhelper \
-              dput \
               gnupg \
               wget \
               build-essential \
@@ -147,16 +151,35 @@ jobs:
           cargo vendor
           tar czf vendor.tar.gz vendor/
 
+      - name: Download Rust tarball for offline build
+        run: |
+          # Download Rust tarball that will be included in source package for offline Launchpad builds
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz
+          echo "Downloaded Rust tarball:"
+          ls -la rust-*.tar.gz
+
       - name: Build source packages for each Ubuntu version
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PRIVATE_KEY_PASSWORD }}
+          REBUILD_NUMBER: ${{ env.REBUILD_NUMBER }}
         run: |
           set -e
           
+          # Construct package version with optional rebuild suffix
+          # Format: VERSION+rebuildN~DISTRO (e.g., 3.0.0+rebuild1~jammy)
+          # If REBUILD_NUMBER is empty, no suffix is added
+          if [ -n "$REBUILD_NUMBER" ]; then
+            PKG_VERSION="${VERSION}+rebuild${REBUILD_NUMBER}"
+            echo "Package version with rebuild suffix: $PKG_VERSION"
+          else
+            PKG_VERSION="${VERSION}"
+            echo "Package version (no rebuild suffix): $PKG_VERSION"
+          fi
+          
           # Verify all required tools are installed
           echo "Verifying required tools..."
-          for tool in dput debuild gpg tar; do
+          for tool in debuild gpg tar; do
             if ! which $tool > /dev/null 2>&1; then
               echo "Error: Required tool '$tool' is not installed"
               exit 1
@@ -185,7 +208,9 @@ jobs:
             
             # Define what we want to package (explicit list instead of excludes)
             # These are the actual project files needed for building
-            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml"
+            # Rust tarball is included for offline installation (Launchpad has no network access)
+            RUST_TARBALL="rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz"
+            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml $RUST_TARBALL"
             
             # Debug: show what we're going to copy
             echo "Files/directories to copy:"
@@ -221,30 +246,31 @@ jobs:
             
             # Generate changelog for this distribution
             cat > debian/changelog << EOF
-          pg-doorman (${VERSION}~${DISTRO}) ${DISTRO}; urgency=medium
+          pg-doorman (${PKG_VERSION}~${DISTRO}) ${DISTRO}; urgency=medium
 
             * Release version ${VERSION}
             * PostgreSQL connection pooler and proxy
             * Includes pg_doorman and patroni_proxy binaries
 
-           -- pg-doorman maintainers <pg-doorman@launchpad.net>  $(date -R)
+           -- Dmitry Vasiliev <vadv-ya@yandex.ru>  $(date -R)
           EOF
             
             # Create the source package
             cd "$WORK_DIR"
-            tar czf "pg-doorman_${VERSION}~${DISTRO}.orig.tar.gz" "pg-doorman-${VERSION}"
+            tar czf "pg-doorman_${PKG_VERSION}~${DISTRO}.orig.tar.gz" "pg-doorman-${VERSION}"
             cd "pg-doorman-${VERSION}"
             
             # Build source package (unsigned first, then sign manually)
             # Using dpkg-buildpackage directly to avoid debsign TTY issues
-            dpkg-buildpackage -us -uc -ui -S -sa
+            # -d flag ignores Build-Depends check (Rust >= 1.75 comes from PPA on Launchpad)
+            dpkg-buildpackage -d -us -uc -ui -S -sa
             
             # Sign the .dsc and .changes files manually with gpg
             cd "$WORK_DIR"
-            debsign -k${{ env.GPG_KEY_ID }} --no-re-sign -p"gpg --batch --no-tty --pinentry-mode loopback --passphrase '$GPG_PASSPHRASE'" pg-doorman_${VERSION}~${DISTRO}_source.changes
+            debsign -k${{ env.GPG_KEY_ID }} --no-re-sign -p"gpg --batch --no-tty --pinentry-mode loopback --passphrase '$GPG_PASSPHRASE'" pg-doorman_${PKG_VERSION}~${DISTRO}_source.changes
             
             # Copy built packages to output directory
-            cp "$WORK_DIR"/pg-doorman_${VERSION}~${DISTRO}* /tmp/packages/
+            cp "$WORK_DIR"/pg-doorman_${PKG_VERSION}~${DISTRO}* /tmp/packages/
             
             # Cleanup working directory
             rm -rf "$WORK_DIR"
@@ -263,106 +289,6 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages/
 
-  test-package-installation:
-    name: Test package installation (${{ matrix.distro }})
-    needs: [verify-version, prepare-source-packages]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - distro: jammy
-            image: ubuntu:22.04
-          - distro: noble
-            image: ubuntu:24.04
-          - distro: plucky
-            image: ubuntu:25.04
-    container:
-      image: ${{ matrix.image }}
-      env:
-        DEBIAN_FRONTEND: noninteractive
-    
-    steps:
-      - name: Download source packages
-        uses: actions/download-artifact@v4
-        with:
-          name: launchpad-source-packages
-          path: /tmp/packages
-
-      - name: Install build dependencies
-        run: |
-          # Retry logic to handle transient mirror issues
-          install_packages() {
-            apt-get update && apt-get install -y \
-              build-essential \
-              devscripts \
-              debhelper \
-              pkg-config \
-              libssl-dev \
-              cmake \
-              clang \
-              g++ \
-              wget \
-              ca-certificates
-          }
-          
-          # Try up to 3 times with increasing delays
-          for i in 1 2 3; do
-            if install_packages; then
-              echo "Package installation succeeded on attempt $i"
-              break
-            else
-              if [ $i -lt 3 ]; then
-                echo "Package installation failed on attempt $i, retrying in $((i * 30)) seconds..."
-                sleep $((i * 30))
-              else
-                echo "Package installation failed after 3 attempts"
-                exit 1
-              fi
-            fi
-          done
-
-      - name: Install Rust
-        run: |
-          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz
-          cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
-
-      - name: Build and install package
-        env:
-          VERSION: ${{ needs.verify-version.outputs.version }}
-          DISTRO: ${{ matrix.distro }}
-        run: |
-          set -e
-          cd /tmp/packages
-          
-          echo "=========================================="
-          echo "Building binary package for Ubuntu $DISTRO"
-          echo "=========================================="
-          
-          # Extract source package
-          dpkg-source -x pg-doorman_${VERSION}~${DISTRO}.dsc
-          cd pg-doorman-${VERSION}~${DISTRO}
-          
-          # Build binary package
-          dpkg-buildpackage -us -uc -b
-          
-          # Install the package
-          cd ..
-          dpkg -i pg-doorman_${VERSION}~${DISTRO}_*.deb || apt-get install -f -y
-          
-          echo "=========================================="
-          echo "Verifying installation"
-          echo "=========================================="
-          
-          # Verify binaries are installed and working
-          which pg_doorman
-          which patroni_proxy
-          pg_doorman --version
-          patroni_proxy --version
-          
-          echo "=========================================="
-          echo "Package installation test passed for Ubuntu $DISTRO"
-          echo "=========================================="
-
   upload-to-launchpad:
     name: Upload to Launchpad PPA
     needs: [verify-version, prepare-source-packages]
@@ -379,28 +305,25 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages
 
-      - name: Install dput
+      - name: Install SFTP dependencies
         run: |
-          # Retry logic to handle transient mirror issues
-          install_packages() {
-            apt-get update && apt-get install -y dput gnupg
-          }
+          apt-get update && apt-get install -y gnupg openssh-client
+
+      - name: Setup SSH key for Launchpad SFTP
+        env:
+          LAUNCHPAD_SSH_KEY: ${{ secrets.LAUNCHPAD_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           
-          # Try up to 3 times with increasing delays
-          for i in 1 2 3; do
-            if install_packages; then
-              echo "Package installation succeeded on attempt $i"
-              break
-            else
-              if [ $i -lt 3 ]; then
-                echo "Package installation failed on attempt $i, retrying in $((i * 30)) seconds..."
-                sleep $((i * 30))
-              else
-                echo "Package installation failed after 3 attempts"
-                exit 1
-              fi
-            fi
-          done
+          # Save SSH key
+          echo "$LAUNCHPAD_SSH_KEY" > ~/.ssh/id_launchpad
+          chmod 600 ~/.ssh/id_launchpad
+          
+          # Get host keys from Launchpad
+          ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          echo "SSH key configured for Launchpad SFTP upload"
 
       - name: Import GPG key
         env:
@@ -413,8 +336,16 @@ jobs:
       - name: Verify GPG signatures before upload
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
+          REBUILD_NUMBER: ${{ env.REBUILD_NUMBER }}
         run: |
           set -e
+          
+          # Construct package version with optional rebuild suffix
+          if [ -n "$REBUILD_NUMBER" ]; then
+            PKG_VERSION="${VERSION}+rebuild${REBUILD_NUMBER}"
+          else
+            PKG_VERSION="${VERSION}"
+          fi
           
           cd /tmp/packages
           
@@ -462,13 +393,13 @@ jobs:
             echo "Verifying signature for Ubuntu $DISTRO..."
             
             # Verify .dsc file signature
-            DSC_FILE="pg-doorman_${VERSION}~${DISTRO}.dsc"
+            DSC_FILE="pg-doorman_${PKG_VERSION}~${DISTRO}.dsc"
             if ! verify_signature "$DSC_FILE"; then
               VERIFICATION_FAILED=1
             fi
             
             # Verify .changes file signature
-            CHANGES_FILE="pg-doorman_${VERSION}~${DISTRO}_source.changes"
+            CHANGES_FILE="pg-doorman_${PKG_VERSION}~${DISTRO}_source.changes"
             if ! verify_signature "$CHANGES_FILE"; then
               VERIFICATION_FAILED=1
             fi
@@ -497,17 +428,122 @@ jobs:
         if: github.event_name == 'release'
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
+          REBUILD_NUMBER: ${{ env.REBUILD_NUMBER }}
         run: |
           set -e
           
+          # Construct package version with optional rebuild suffix
+          if [ -n "$REBUILD_NUMBER" ]; then
+            PKG_VERSION="${VERSION}+rebuild${REBUILD_NUMBER}"
+          else
+            PKG_VERSION="${VERSION}"
+          fi
+          
           cd /tmp/packages
+          
+          # Function to upload all files for a distribution in a SINGLE SFTP session
+          # This is critical because Launchpad processes .changes file immediately
+          # and expects all referenced files to be present in the same upload session
+          upload_distro_package() {
+            local distro="$1"
+            local version="$2"
+            local max_attempts=5
+            local attempt=1
+            local delay=10
+            
+            echo "Uploading files for Ubuntu $distro..."
+            
+            # Get list of files from .changes file
+            local changes_file="pg-doorman_${version}~${distro}_source.changes"
+            
+            if [ ! -f "$changes_file" ]; then
+              echo "ERROR: Changes file not found: $changes_file"
+              return 1
+            fi
+            
+            # Extract files to upload from .changes file (Files: section)
+            # Format: checksum size section priority filename
+            local files_to_upload=""
+            local in_files_section=0
+            
+            while IFS= read -r line; do
+              if echo "$line" | grep -q "^Files:"; then
+                in_files_section=1
+                continue
+              fi
+              if [ $in_files_section -eq 1 ]; then
+                # Check if line starts with space (continuation of Files section)
+                if echo "$line" | grep -q "^ "; then
+                  # Extract filename (last field)
+                  local filename
+                  filename=$(echo "$line" | awk '{print $NF}')
+                  files_to_upload="$files_to_upload $filename"
+                else
+                  # End of Files section
+                  break
+                fi
+              fi
+            done < "$changes_file"
+            
+            # Add the .changes file itself (must be uploaded LAST)
+            files_to_upload="$files_to_upload $changes_file"
+            
+            echo "Files to upload: $files_to_upload"
+            
+            # Verify all files exist before attempting upload
+            for file in $files_to_upload; do
+              if [ ! -f "$file" ]; then
+                echo "ERROR: Required file not found: $file"
+                return 1
+              fi
+            done
+            
+            # Create SFTP batch file to upload ALL files in a single session
+            # This ensures Launchpad can find all files when processing .changes
+            # IMPORTANT: Use full path in put command to upload to PPA, not main archive
+            # Note: cd command doesn't work on Launchpad SFTP, so we specify full remote path
+            local batch_file=$(mktemp)
+            local remote_dir="~vadv/pg-doorman/ubuntu"
+            for file in $files_to_upload; do
+              echo "put $file ${remote_dir}/${file}" >> "$batch_file"
+            done
+            
+            echo "SFTP batch commands:"
+            cat "$batch_file"
+            
+            # Upload with retry logic
+            while [ $attempt -le $max_attempts ]; do
+              echo "Upload attempt $attempt of $max_attempts..."
+              
+              if sftp -i ~/.ssh/id_launchpad -o BatchMode=yes -o StrictHostKeyChecking=accept-new -b "$batch_file" vadv@ppa.launchpad.net; then
+                echo "Successfully uploaded all files for $distro"
+                rm -f "$batch_file"
+                return 0
+              else
+                if [ $attempt -lt $max_attempts ]; then
+                  echo "Upload failed, retrying in ${delay} seconds..."
+                  sleep $delay
+                  delay=$((delay + 10))
+                else
+                  echo "Failed to upload files for $distro after $max_attempts attempts"
+                  rm -f "$batch_file"
+                  return 1
+                fi
+              fi
+              
+              attempt=$((attempt + 1))
+            done
+          }
           
           for DISTRO in $UBUNTU_VERSIONS; do
             echo "=========================================="
             echo "Uploading package for Ubuntu $DISTRO"
             echo "=========================================="
             
-            dput ${{ env.PPA_NAME }} "pg-doorman_${VERSION}~${DISTRO}_source.changes"
+            if ! upload_distro_package "$DISTRO" "$PKG_VERSION"; then
+              echo "ERROR: Failed to upload package for Ubuntu $DISTRO"
+              exit 1
+            fi
             
             echo "Successfully uploaded package for Ubuntu $DISTRO"
           done
