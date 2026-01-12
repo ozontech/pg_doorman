@@ -69,21 +69,39 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y \
-            git \
-            devscripts \
-            debhelper \
-            dput \
-            gnupg \
-            wget \
-            build-essential \
-            pkg-config \
-            libssl-dev \
-            cmake \
-            clang \
-            g++ \
-            ca-certificates
+          # Retry logic to handle transient mirror issues
+          install_packages() {
+            apt-get update && apt-get install -y \
+              git \
+              devscripts \
+              debhelper \
+              dput \
+              gnupg \
+              wget \
+              build-essential \
+              pkg-config \
+              libssl-dev \
+              cmake \
+              clang \
+              g++ \
+              ca-certificates
+          }
+          
+          # Try up to 3 times with increasing delays
+          for i in 1 2 3; do
+            if install_packages; then
+              echo "Package installation succeeded on attempt $i"
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "Package installation failed on attempt $i, retrying in $((i * 30)) seconds..."
+                sleep $((i * 30))
+              else
+                echo "Package installation failed after 3 attempts"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Install Rust
         run: |
@@ -273,18 +291,36 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y \
-            build-essential \
-            devscripts \
-            debhelper \
-            pkg-config \
-            libssl-dev \
-            cmake \
-            clang \
-            g++ \
-            wget \
-            ca-certificates
+          # Retry logic to handle transient mirror issues
+          install_packages() {
+            apt-get update && apt-get install -y \
+              build-essential \
+              devscripts \
+              debhelper \
+              pkg-config \
+              libssl-dev \
+              cmake \
+              clang \
+              g++ \
+              wget \
+              ca-certificates
+          }
+          
+          # Try up to 3 times with increasing delays
+          for i in 1 2 3; do
+            if install_packages; then
+              echo "Package installation succeeded on attempt $i"
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "Package installation failed on attempt $i, retrying in $((i * 30)) seconds..."
+                sleep $((i * 30))
+              else
+                echo "Package installation failed after 3 attempts"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Install Rust
         run: |
@@ -346,8 +382,26 @@ jobs:
 
       - name: Install dput
         run: |
-          apt-get update
-          apt-get install -y dput gnupg
+          # Retry logic to handle transient mirror issues
+          install_packages() {
+            apt-get update && apt-get install -y dput gnupg
+          }
+          
+          # Try up to 3 times with increasing delays
+          for i in 1 2 3; do
+            if install_packages; then
+              echo "Package installation succeeded on attempt $i"
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "Package installation failed on attempt $i, retrying in $((i * 30)) seconds..."
+                sleep $((i * 30))
+              else
+                echo "Package installation failed after 3 attempts"
+                exit 1
+              fi
+            fi
+          done
 
       - name: Import GPG key
         env:
