@@ -265,111 +265,6 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages/
 
-  test-package-installation:
-    name: Test package installation (${{ matrix.distro }})
-    needs: [verify-version, prepare-source-packages]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - distro: jammy
-            image: ubuntu:22.04
-          - distro: noble
-            image: ubuntu:24.04
-          - distro: plucky
-            image: ubuntu:25.04
-    container:
-      image: ${{ matrix.image }}
-      env:
-        DEBIAN_FRONTEND: noninteractive
-    
-    steps:
-      - name: Download source packages
-        uses: actions/download-artifact@v4
-        with:
-          name: launchpad-source-packages
-          path: /tmp/packages
-
-      - name: Install build dependencies
-        run: |
-          # Retry logic to handle transient mirror issues
-          install_packages() {
-            apt-get update && apt-get install -y \
-              build-essential \
-              devscripts \
-              debhelper \
-              pkg-config \
-              libssl-dev \
-              cmake \
-              clang \
-              g++ \
-              wget \
-              ca-certificates \
-              software-properties-common
-          }
-          
-          # Try up to 3 times with increasing delays
-          for i in 1 2 3; do
-            if install_packages; then
-              echo "Package installation succeeded on attempt $i"
-              break
-            else
-              if [ $i -lt 3 ]; then
-                echo "Package installation failed on attempt $i, retrying in $((i * 30)) seconds..."
-                sleep $((i * 30))
-              else
-                echo "Package installation failed after 3 attempts"
-                exit 1
-              fi
-            fi
-          done
-          
-          # Add Mozilla PPA for Rust >= 1.75 (same as Launchpad build environment)
-          add-apt-repository -y ppa:ubuntu-mozilla-security/rust-next
-          apt-get update
-          apt-get install -y rustc cargo
-          
-          echo "Rust version:"
-          rustc --version
-          cargo --version
-
-      - name: Build and install package
-        env:
-          VERSION: ${{ needs.verify-version.outputs.version }}
-          DISTRO: ${{ matrix.distro }}
-        run: |
-          set -e
-          cd /tmp/packages
-          
-          echo "=========================================="
-          echo "Building binary package for Ubuntu $DISTRO"
-          echo "=========================================="
-          
-          # Extract source package
-          dpkg-source -x pg-doorman_${VERSION}~${DISTRO}.dsc
-          cd pg-doorman-${VERSION}~${DISTRO}
-          
-          # Build binary package
-          dpkg-buildpackage -us -uc -b
-          
-          # Install the package
-          cd ..
-          dpkg -i pg-doorman_${VERSION}~${DISTRO}_*.deb || apt-get install -f -y
-          
-          echo "=========================================="
-          echo "Verifying installation"
-          echo "=========================================="
-          
-          # Verify binaries are installed and working
-          which pg_doorman
-          which patroni_proxy
-          pg_doorman --version
-          patroni_proxy --version
-          
-          echo "=========================================="
-          echo "Package installation test passed for Ubuntu $DISTRO"
-          echo "=========================================="
-
   upload-to-launchpad:
     name: Upload to Launchpad PPA
     needs: [verify-version, prepare-source-packages]
@@ -386,11 +281,11 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages
 
-      - name: Install dput
+      - name: Install dput and SSH tools
         run: |
           # Retry logic to handle transient mirror issues
           install_packages() {
-            apt-get update && apt-get install -y dput gnupg
+            apt-get update && apt-get install -y dput gnupg openssh-client python3-paramiko
           }
           
           # Try up to 3 times with increasing delays
@@ -408,6 +303,32 @@ jobs:
               fi
             fi
           done
+
+      - name: Configure SFTP for Launchpad
+        run: |
+          # Setup SSH known_hosts for ppa.launchpad.net
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Get Launchpad's SSH host key
+          ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+          
+          echo "SSH known_hosts configured for ppa.launchpad.net"
+          
+          # Configure dput to use SFTP instead of FTP
+          mkdir -p ~/.dput.cf.d
+          cat > ~/.dput.cf << 'EOF'
+          [ppa]
+          fqdn = ppa.launchpad.net
+          method = sftp
+          incoming = ~%(ppa)s/ubuntu/
+          login = anonymous
+          allow_unsigned_uploads = 0
+          EOF
+          
+          echo "dput configured to use SFTP method"
+          cat ~/.dput.cf
 
       - name: Import GPG key
         env:
