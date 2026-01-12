@@ -1,4 +1,5 @@
 %global debug_package %{nil}
+%global rust_version 1.87.0
 
 Name:           pg-doorman
 Version:        3.0.0
@@ -9,6 +10,7 @@ License:        MIT
 URL:            https://github.com/ozontech/pg_doorman
 Source0:        %{name}-%{version}.tar.gz
 Source1:        vendor.tar.gz
+Source2:        rust-%{rust_version}-x86_64-unknown-linux-gnu.tar.gz
 
 BuildRequires:  gcc
 BuildRequires:  gcc-c++
@@ -16,7 +18,6 @@ BuildRequires:  make
 BuildRequires:  openssl-devel
 BuildRequires:  cmake
 BuildRequires:  clang
-BuildRequires:  curl
 BuildRequires:  tar
 
 Requires:       openssl
@@ -36,14 +37,13 @@ This package includes:
 tar xzf %{SOURCE1}
 
 %build
-# Install Rust toolchain (COPR doesn't have Rust pre-installed)
-export RUSTUP_HOME=%{_builddir}/rustup
-export CARGO_HOME=%{_builddir}/cargo
-export PATH="$CARGO_HOME/bin:$PATH"
+# Install Rust toolchain from local tarball (COPR has no network access)
+RUST_INSTALL_DIR=%{_builddir}/rust-install
+mkdir -p "$RUST_INSTALL_DIR"
+tar xzf %{SOURCE2} -C %{_builddir}
+%{_builddir}/rust-%{rust_version}-x86_64-unknown-linux-gnu/install.sh --prefix="$RUST_INSTALL_DIR" --without=rust-docs
 
-# Download and install Rust 1.87.0
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.87.0 --profile minimal
-source "$CARGO_HOME/env"
+export PATH="$RUST_INSTALL_DIR/bin:$PATH"
 
 # Configure cargo to use vendored dependencies
 mkdir -p .cargo
