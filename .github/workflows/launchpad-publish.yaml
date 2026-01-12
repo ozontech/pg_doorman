@@ -505,12 +505,44 @@ jobs:
           
           cd /tmp/packages
           
+          # Function to upload with retry logic
+          upload_with_retry() {
+            local changes_file="$1"
+            local max_attempts=5
+            local attempt=1
+            local delay=30
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "Upload attempt $attempt of $max_attempts..."
+              
+              if dput ${{ env.PPA_NAME }} "$changes_file"; then
+                echo "Upload successful!"
+                return 0
+              else
+                if [ $attempt -lt $max_attempts ]; then
+                  echo "Upload failed, retrying in ${delay} seconds..."
+                  sleep $delay
+                  # Increase delay for next attempt (exponential backoff)
+                  delay=$((delay * 2))
+                else
+                  echo "Upload failed after $max_attempts attempts"
+                  return 1
+                fi
+              fi
+              
+              attempt=$((attempt + 1))
+            done
+          }
+          
           for DISTRO in $UBUNTU_VERSIONS; do
             echo "=========================================="
             echo "Uploading package for Ubuntu $DISTRO"
             echo "=========================================="
             
-            dput ${{ env.PPA_NAME }} "pg-doorman_${VERSION}~${DISTRO}_source.changes"
+            if ! upload_with_retry "pg-doorman_${VERSION}~${DISTRO}_source.changes"; then
+              echo "ERROR: Failed to upload package for Ubuntu $DISTRO after multiple attempts"
+              exit 1
+            fi
             
             echo "Successfully uploaded package for Ubuntu $DISTRO"
           done

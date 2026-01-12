@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install  -o Dpkg::Options::=--force-confdef -yq --
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && truncate -s 0 /var/log/*log
 COPY --from=builder /app/target/release/pg_doorman /usr/bin/pg_doorman
+COPY --from=builder /app/target/release/patroni_proxy /usr/bin/patroni_proxy
 WORKDIR /etc/pg_doorman
 ENV RUST_LOG=info
 CMD ["pg_doorman"]
