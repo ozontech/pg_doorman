@@ -48,6 +48,7 @@ jobs:
     permissions:
       contents: write
       packages: read
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -114,9 +115,9 @@ jobs:
           # Create a unique branch name with timestamp
           BRANCH_NAME="benchmark-results-$(date +%Y%m%d-%H%M%S)"
           
-          # Fetch latest and create new branch from target
-          git fetch origin ${{ github.ref_name }}
-          git checkout -b "$BRANCH_NAME" origin/${{ github.ref_name }}
+          # Fetch latest master and create new branch from it
+          git fetch origin master
+          git checkout -b "$BRANCH_NAME" origin/master
           
           # Copy the saved benchmarks.md back
           cp /tmp/benchmarks.md documentation/docs/benchmarks.md
@@ -132,9 +133,9 @@ jobs:
           git commit -m "Update benchmark results [skip ci]"
           git push origin "$BRANCH_NAME"
           
-          # Create Pull Request
+          # Create Pull Request to master
           gh pr create \
             --title "Update benchmark results" \
             --body "Automated benchmark results update from CI workflow. This PR updates the benchmark comparison table in documentation/docs/benchmarks.md." \
-            --base "${{ github.ref_name }}" \
+            --base "master" \
             --head "$BRANCH_NAME"
