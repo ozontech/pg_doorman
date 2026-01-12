@@ -16,6 +16,11 @@ env:
   # plucky = 25.04
   PPA_NAME: "ppa:vadv/pg-doorman"
   RUST_VERSION: "1.87.0"
+  # Rebuild number for Launchpad PPA uploads
+  # Increment this when you need to re-upload the same version
+  # (e.g., after fixing packaging issues without changing the actual version)
+  # Set to empty string "" for first upload of a version
+  REBUILD_NUMBER: "2"
 
 jobs:
   verify-version:
@@ -74,7 +79,6 @@ jobs:
               git \
               devscripts \
               debhelper \
-              dput \
               gnupg \
               wget \
               build-essential \
@@ -147,16 +151,35 @@ jobs:
           cargo vendor
           tar czf vendor.tar.gz vendor/
 
+      - name: Download Rust tarball for offline build
+        run: |
+          # Download Rust tarball that will be included in source package for offline Launchpad builds
+          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz
+          echo "Downloaded Rust tarball:"
+          ls -la rust-*.tar.gz
+
       - name: Build source packages for each Ubuntu version
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PRIVATE_KEY_PASSWORD }}
+          REBUILD_NUMBER: ${{ env.REBUILD_NUMBER }}
         run: |
           set -e
           
+          # Construct package version with optional rebuild suffix
+          # Format: VERSION+rebuildN~DISTRO (e.g., 3.0.0+rebuild1~jammy)
+          # If REBUILD_NUMBER is empty, no suffix is added
+          if [ -n "$REBUILD_NUMBER" ]; then
+            PKG_VERSION="${VERSION}+rebuild${REBUILD_NUMBER}"
+            echo "Package version with rebuild suffix: $PKG_VERSION"
+          else
+            PKG_VERSION="${VERSION}"
+            echo "Package version (no rebuild suffix): $PKG_VERSION"
+          fi
+          
           # Verify all required tools are installed
           echo "Verifying required tools..."
-          for tool in dput debuild gpg tar; do
+          for tool in debuild gpg tar; do
             if ! which $tool > /dev/null 2>&1; then
               echo "Error: Required tool '$tool' is not installed"
               exit 1
@@ -185,8 +208,9 @@ jobs:
             
             # Define what we want to package (explicit list instead of excludes)
             # These are the actual project files needed for building
-            # Rust will be installed from Ubuntu repositories (rustc, cargo in Build-Depends)
-            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml"
+            # Rust tarball is included for offline installation (Launchpad has no network access)
+            RUST_TARBALL="rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz"
+            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml $RUST_TARBALL"
             
             # Debug: show what we're going to copy
             echo "Files/directories to copy:"
@@ -222,18 +246,18 @@ jobs:
             
             # Generate changelog for this distribution
             cat > debian/changelog << EOF
-          pg-doorman (${VERSION}~${DISTRO}) ${DISTRO}; urgency=medium
+          pg-doorman (${PKG_VERSION}~${DISTRO}) ${DISTRO}; urgency=medium
 
             * Release version ${VERSION}
             * PostgreSQL connection pooler and proxy
             * Includes pg_doorman and patroni_proxy binaries
 
-           -- pg-doorman maintainers <pg-doorman@launchpad.net>  $(date -R)
+           -- Dmitry Vasiliev <vadv-ya@yandex.ru>  $(date -R)
           EOF
             
             # Create the source package
             cd "$WORK_DIR"
-            tar czf "pg-doorman_${VERSION}~${DISTRO}.orig.tar.gz" "pg-doorman-${VERSION}"
+            tar czf "pg-doorman_${PKG_VERSION}~${DISTRO}.orig.tar.gz" "pg-doorman-${VERSION}"
             cd "pg-doorman-${VERSION}"
             
             # Build source package (unsigned first, then sign manually)
@@ -243,10 +267,10 @@ jobs:
             
             # Sign the .dsc and .changes files manually with gpg
             cd "$WORK_DIR"
-            debsign -k${{ env.GPG_KEY_ID }} --no-re-sign -p"gpg --batch --no-tty --pinentry-mode loopback --passphrase '$GPG_PASSPHRASE'" pg-doorman_${VERSION}~${DISTRO}_source.changes
+            debsign -k${{ env.GPG_KEY_ID }} --no-re-sign -p"gpg --batch --no-tty --pinentry-mode loopback --passphrase '$GPG_PASSPHRASE'" pg-doorman_${PKG_VERSION}~${DISTRO}_source.changes
             
             # Copy built packages to output directory
-            cp "$WORK_DIR"/pg-doorman_${VERSION}~${DISTRO}* /tmp/packages/
+            cp "$WORK_DIR"/pg-doorman_${PKG_VERSION}~${DISTRO}* /tmp/packages/
             
             # Cleanup working directory
             rm -rf "$WORK_DIR"
@@ -281,28 +305,9 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages
 
-      - name: Install dput and SFTP dependencies
+      - name: Install SFTP dependencies
         run: |
-          # Retry logic to handle transient mirror issues
-          install_packages() {
-            apt-get update && apt-get install -y dput gnupg openssh-client python3-paramiko
-          }
-          
-          # Try up to 3 times with increasing delays
-          for i in 1 2 3; do
-            if install_packages; then
-              echo "Package installation succeeded on attempt $i"
-              break
-            else
-              if [ $i -lt 3 ]; then
-                echo "Package installation failed on attempt $i, retrying in $((i * 30)) seconds..."
-                sleep $((i * 30))
-              else
-                echo "Package installation failed after 3 attempts"
-                exit 1
-              fi
-            fi
-          done
+          apt-get update && apt-get install -y gnupg openssh-client
 
       - name: Setup SSH key for Launchpad SFTP
         env:
@@ -311,35 +316,12 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Write SSH key (supports both ed25519 and RSA formats)
+          # Save SSH key
           echo "$LAUNCHPAD_SSH_KEY" > ~/.ssh/id_launchpad
           chmod 600 ~/.ssh/id_launchpad
           
           # Get host keys from Launchpad
           ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null || true
-          chmod 644 ~/.ssh/known_hosts
-          
-          # Configure SSH to use this key for ppa.launchpad.net
-          cat > ~/.ssh/config << 'SSHCONFIG'
-          Host ppa.launchpad.net
-            IdentityFile ~/.ssh/id_launchpad
-            IdentitiesOnly yes
-            StrictHostKeyChecking accept-new
-            BatchMode yes
-          SSHCONFIG
-          chmod 600 ~/.ssh/config
-          
-          # Start ssh-agent and add the key
-          eval $(ssh-agent -s)
-          ssh-add ~/.ssh/id_launchpad
-          
-          # Export SSH_AUTH_SOCK for subsequent steps
-          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
-          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
-          
-          # Test SSH connection to Launchpad (should return "No shells on this server")
-          echo "Testing SSH connection to Launchpad..."
-          ssh -v -o BatchMode=yes vadv@ppa.launchpad.net 2>&1 | head -50 || true
           
           echo "SSH key configured for Launchpad SFTP upload"
 
@@ -354,8 +336,16 @@ jobs:
       - name: Verify GPG signatures before upload
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
+          REBUILD_NUMBER: ${{ env.REBUILD_NUMBER }}
         run: |
           set -e
+          
+          # Construct package version with optional rebuild suffix
+          if [ -n "$REBUILD_NUMBER" ]; then
+            PKG_VERSION="${VERSION}+rebuild${REBUILD_NUMBER}"
+          else
+            PKG_VERSION="${VERSION}"
+          fi
           
           cd /tmp/packages
           
@@ -403,13 +393,13 @@ jobs:
             echo "Verifying signature for Ubuntu $DISTRO..."
             
             # Verify .dsc file signature
-            DSC_FILE="pg-doorman_${VERSION}~${DISTRO}.dsc"
+            DSC_FILE="pg-doorman_${PKG_VERSION}~${DISTRO}.dsc"
             if ! verify_signature "$DSC_FILE"; then
               VERIFICATION_FAILED=1
             fi
             
             # Verify .changes file signature
-            CHANGES_FILE="pg-doorman_${VERSION}~${DISTRO}_source.changes"
+            CHANGES_FILE="pg-doorman_${PKG_VERSION}~${DISTRO}_source.changes"
             if ! verify_signature "$CHANGES_FILE"; then
               VERIFICATION_FAILED=1
             fi
@@ -434,56 +424,109 @@ jobs:
           echo "All GPG signatures verified successfully"
           echo "=========================================="
 
-      - name: Configure dput for SFTP
-        run: |
-          # Configure dput to use SFTP instead of FTP for reliable large file uploads
-          cat > ~/.dput.cf << 'EOF'
-          [ppa]
-          fqdn = ppa.launchpad.net
-          method = sftp
-          incoming = ~vadv/pg-doorman/ubuntu/
-          login = vadv
-          allow_unsigned_uploads = 0
-          EOF
-          
-          echo "dput configured for SFTP upload:"
-          cat ~/.dput.cf
-
       - name: Upload source packages to Launchpad PPA
         #if: github.event_name == 'release'
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
+          REBUILD_NUMBER: ${{ env.REBUILD_NUMBER }}
         run: |
           set -e
           
+          # Construct package version with optional rebuild suffix
+          if [ -n "$REBUILD_NUMBER" ]; then
+            PKG_VERSION="${VERSION}+rebuild${REBUILD_NUMBER}"
+          else
+            PKG_VERSION="${VERSION}"
+          fi
+          
           cd /tmp/packages
           
-          # Function to upload with retry logic
-          # More attempts with shorter delays for transient network issues
-          upload_with_retry() {
-            local changes_file="$1"
-            local max_attempts=10
+          # Function to upload all files for a distribution in a SINGLE SFTP session
+          # This is critical because Launchpad processes .changes file immediately
+          # and expects all referenced files to be present in the same upload session
+          upload_distro_package() {
+            local distro="$1"
+            local version="$2"
+            local max_attempts=5
             local attempt=1
             local delay=10
             
+            echo "Uploading files for Ubuntu $distro..."
+            
+            # Get list of files from .changes file
+            local changes_file="pg-doorman_${version}~${distro}_source.changes"
+            
+            if [ ! -f "$changes_file" ]; then
+              echo "ERROR: Changes file not found: $changes_file"
+              return 1
+            fi
+            
+            # Extract files to upload from .changes file (Files: section)
+            # Format: checksum size section priority filename
+            local files_to_upload=""
+            local in_files_section=0
+            
+            while IFS= read -r line; do
+              if echo "$line" | grep -q "^Files:"; then
+                in_files_section=1
+                continue
+              fi
+              if [ $in_files_section -eq 1 ]; then
+                # Check if line starts with space (continuation of Files section)
+                if echo "$line" | grep -q "^ "; then
+                  # Extract filename (last field)
+                  local filename
+                  filename=$(echo "$line" | awk '{print $NF}')
+                  files_to_upload="$files_to_upload $filename"
+                else
+                  # End of Files section
+                  break
+                fi
+              fi
+            done < "$changes_file"
+            
+            # Add the .changes file itself (must be uploaded LAST)
+            files_to_upload="$files_to_upload $changes_file"
+            
+            echo "Files to upload: $files_to_upload"
+            
+            # Verify all files exist before attempting upload
+            for file in $files_to_upload; do
+              if [ ! -f "$file" ]; then
+                echo "ERROR: Required file not found: $file"
+                return 1
+              fi
+            done
+            
+            # Create SFTP batch file to upload ALL files in a single session
+            # This ensures Launchpad can find all files when processing .changes
+            # IMPORTANT: Use full path in put command to upload to PPA, not main archive
+            # Note: cd command doesn't work on Launchpad SFTP, so we specify full remote path
+            local batch_file=$(mktemp)
+            local remote_dir="~vadv/pg-doorman/ubuntu"
+            for file in $files_to_upload; do
+              echo "put $file ${remote_dir}/${file}" >> "$batch_file"
+            done
+            
+            echo "SFTP batch commands:"
+            cat "$batch_file"
+            
+            # Upload with retry logic
             while [ $attempt -le $max_attempts ]; do
               echo "Upload attempt $attempt of $max_attempts..."
               
-              # Use -f to force upload even if already uploaded (for retries)
-              # Use -d for debug output to see what's happening
-              # Use custom 'ppa' config which uses SFTP
-              if dput -d -f ppa "$changes_file" 2>&1; then
-                echo "Upload successful!"
+              if sftp -i ~/.ssh/id_launchpad -o BatchMode=yes -o StrictHostKeyChecking=accept-new -b "$batch_file" vadv@ppa.launchpad.net; then
+                echo "Successfully uploaded all files for $distro"
+                rm -f "$batch_file"
                 return 0
               else
                 if [ $attempt -lt $max_attempts ]; then
                   echo "Upload failed, retrying in ${delay} seconds..."
                   sleep $delay
-                  # Linear backoff: increase delay by 5 seconds each attempt
-                  # Max delay will be 10 + 9*5 = 55 seconds
-                  delay=$((delay + 5))
+                  delay=$((delay + 10))
                 else
-                  echo "Upload failed after $max_attempts attempts"
+                  echo "Failed to upload files for $distro after $max_attempts attempts"
+                  rm -f "$batch_file"
                   return 1
                 fi
               fi
@@ -497,8 +540,8 @@ jobs:
             echo "Uploading package for Ubuntu $DISTRO"
             echo "=========================================="
             
-            if ! upload_with_retry "pg-doorman_${VERSION}~${DISTRO}_source.changes"; then
-              echo "ERROR: Failed to upload package for Ubuntu $DISTRO after multiple attempts"
+            if ! upload_distro_package "$DISTRO" "$PKG_VERSION"; then
+              echo "ERROR: Failed to upload package for Ubuntu $DISTRO"
               exit 1
             fi
             
