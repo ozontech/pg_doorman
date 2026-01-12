@@ -367,7 +367,7 @@ jobs:
   upload-to-launchpad:
     name: Upload to Launchpad PPA
     needs: [verify-version, prepare-source-packages]
-    if: github.event_name == 'release'
+    #if: github.event_name == 'release'
     runs-on: ubuntu-latest
     container:
       image: ubuntu:24.04
