@@ -147,13 +147,6 @@ jobs:
           cargo vendor
           tar czf vendor.tar.gz vendor/
 
-      - name: Download Rust tarball for offline build
-        run: |
-          # Download Rust tarball that will be included in source package for offline Launchpad builds
-          wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz
-          echo "Downloaded Rust tarball:"
-          ls -la rust-*.tar.gz
-
       - name: Build source packages for each Ubuntu version
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
@@ -192,8 +185,8 @@ jobs:
             
             # Define what we want to package (explicit list instead of excludes)
             # These are the actual project files needed for building
-            # Include Rust tarball for offline build on Launchpad
-            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz"
+            # Rust will be installed from Ubuntu repositories (rustc, cargo in Build-Depends)
+            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml"
             
             # Debug: show what we're going to copy
             echo "Files/directories to copy:"
@@ -382,11 +375,11 @@ jobs:
           name: launchpad-source-packages
           path: /tmp/packages
 
-      - name: Install dput and SFTP dependencies
+      - name: Install dput
         run: |
           # Retry logic to handle transient mirror issues
           install_packages() {
-            apt-get update && apt-get install -y dput gnupg openssh-client python3-paramiko
+            apt-get update && apt-get install -y dput gnupg
           }
           
           # Try up to 3 times with increasing delays
@@ -504,26 +497,6 @@ jobs:
           set -e
           
           cd /tmp/packages
-          
-          # Configure dput for better reliability using SFTP instead of FTP
-          # SFTP is more reliable for large files and handles connection issues better
-          mkdir -p ~/.dput.cf.d
-          cat > ~/.dput.cf << 'EOF'
-          [DEFAULT]
-          default_host_main = ppa
-          
-          [ppa]
-          fqdn = ppa.launchpad.net
-          method = sftp
-          incoming = ~%(ppa)s/ubuntu/
-          login = anonymous
-          allow_unsigned_uploads = 0
-          EOF
-          
-          # Configure SSH to accept Launchpad's host key automatically
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh-keyscan -H ppa.launchpad.net >> ~/.ssh/known_hosts 2>/dev/null || true
           
           # Function to upload with retry logic
           # More attempts with shorter delays for transient network issues

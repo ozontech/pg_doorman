@@ -3,21 +3,10 @@
 export DH_VERBOSE = 1
 export JEMALLOC_SYS_WITH_MALLOC_CONF = dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto
 
-# Rust version to install from local tarball
-RUST_VERSION = 1.87.0
-RUST_INSTALL_DIR = $(CURDIR)/rust-install
-
 %:
 	dh $@
 
 override_dh_auto_build:
-	# Install Rust from local tarball (Launchpad has no network access during build)
-	if [ -f rust-$(RUST_VERSION)-x86_64-unknown-linux-gnu.tar.gz ]; then \
-		mkdir -p $(RUST_INSTALL_DIR) && \
-		tar xzf rust-$(RUST_VERSION)-x86_64-unknown-linux-gnu.tar.gz && \
-		./rust-$(RUST_VERSION)-x86_64-unknown-linux-gnu/install.sh --prefix=$(RUST_INSTALL_DIR) --without=rust-docs && \
-		export PATH="$(RUST_INSTALL_DIR)/bin:$$PATH"; \
-	fi
 	# Use vendored dependencies
 	if [ -d vendor ]; then \
 		mkdir -p .cargo && \
@@ -26,8 +15,8 @@ override_dh_auto_build:
 		echo '[source.vendored-sources]' >> .cargo/config.toml && \
 		echo 'directory = "vendor"' >> .cargo/config.toml; \
 	fi
-	# Build with local Rust installation
-	PATH="$(RUST_INSTALL_DIR)/bin:$$PATH" cargo build --release
+	# Build with system Rust
+	cargo build --release
 
 override_dh_auto_install:
 	install -D -m 755 target/release/pg_doorman debian/pg-doorman/usr/bin/pg_doorman

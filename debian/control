@@ -3,6 +3,8 @@ Section: database
 Priority: optional
 Maintainer: pg-doorman maintainers <pg-doorman@launchpad.net>
 Build-Depends: debhelper-compat (= 13),
+               rustc,
+               cargo,
                libssl-dev,
                pkg-config,
                cmake,
