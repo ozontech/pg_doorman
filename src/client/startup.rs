@@ -383,9 +383,7 @@ where
             client_last_messages_in_tx: PooledBuffer::new(),
             created_at: Instant::now(),
             max_memory_usage: config.general.max_memory_usage,
-            pooler_check_query_request_vec: config
-                .general
-                .poller_check_query_request_bytes_vec(),
+            pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
         })
     }
 

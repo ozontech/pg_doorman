@@ -186,7 +186,7 @@ fn parse_tps(output: &str) -> Option<f64> {
 /// Returns average of all non-zero TPS values found
 fn parse_progress_tps(output: &str) -> Option<f64> {
     let mut tps_values: Vec<f64> = Vec::new();
-    
+
     for line in output.lines() {
         // Look for progress lines with tps
         if line.contains("progress:") && line.contains(" tps,") {
@@ -206,7 +206,7 @@ fn parse_progress_tps(output: &str) -> Option<f64> {
             }
         }
     }
-    
+
     if tps_values.is_empty() {
         None
     } else {
@@ -232,10 +232,7 @@ pub async fn run_pgbench_for_target(world: &mut DoormanWorld, target: String, st
         Ok(output) => {
             if let Some(tps) = parse_tps(&output) {
                 // Print TPS with bright colors for visibility
-                eprintln!(
-                    "\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m",
-                    target, tps
-                );
+                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
                 world.bench_results.insert(target, tps);
             } else {
                 panic!(
@@ -274,10 +271,7 @@ pub async fn run_pgbench_for_target_inline(
         Ok(output) => {
             if let Some(tps) = parse_tps(&output) {
                 // Print TPS with bright colors for visibility
-                eprintln!(
-                    "\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m",
-                    target, tps
-                );
+                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
                 world.bench_results.insert(target, tps);
             } else {
                 panic!(
@@ -341,10 +335,7 @@ pub async fn run_pgbench_for_target_with_env(
         Ok(output) => {
             if let Some(tps) = parse_tps(&output) {
                 // Print TPS with bright colors for visibility
-                eprintln!(
-                    "\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m",
-                    target, tps
-                );
+                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
                 world.bench_results.insert(target, tps);
             } else {
                 panic!(
@@ -425,10 +416,7 @@ pub async fn run_pgbench_with_script(
         Ok(output) => {
             if let Some(tps) = parse_tps(&output) {
                 // Print TPS with bright colors for visibility
-                eprintln!(
-                    "\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m",
-                    target, tps
-                );
+                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
                 world.bench_results.insert(target, tps);
             } else {
                 panic!(
@@ -487,7 +475,7 @@ pub async fn benchmark_result_should_exist(world: &mut DoormanWorld, target: Str
 /// - "pg_doorman_extended_connect_c80" -> "extended_connect_c80"
 fn extract_test_suffix(target: &str) -> Option<String> {
     let prefixes = ["postgresql_", "pg_doorman_", "odyssey_", "pgbouncer_"];
-    
+
     for prefix in &prefixes {
         if target.starts_with(prefix) {
             return Some(target[prefix.len()..].to_string());
@@ -522,14 +510,18 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
         let pgbouncer_key = format!("pgbouncer_{}", suffix);
         let odyssey_key = format!("odyssey_{}", suffix);
 
-        let doorman_tps = world.bench_results.get(&doorman_key).copied().unwrap_or(0.0);
+        let doorman_tps = world
+            .bench_results
+            .get(&doorman_key)
+            .copied()
+            .unwrap_or(0.0);
 
         // Compare pg_doorman vs pgbouncer
         if let Some(&pgbouncer_tps) = world.bench_results.get(&pgbouncer_key) {
             if pgbouncer_tps > 0.0 && doorman_tps > 0.0 {
                 let ratio = doorman_tps / pgbouncer_tps;
                 let metric_name = format!("pg_doorman_vs_pgbouncer_{}", suffix);
-                
+
                 eprintln!(
                     "\x1b[1;36m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
                     metric_name, doorman_tps, pgbouncer_tps, ratio
@@ -538,7 +530,10 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
                 let mut metric = serde_json::Map::new();
                 let mut throughput = serde_json::Map::new();
                 throughput.insert("value".to_string(), serde_json::json!(ratio));
-                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metric.insert(
+                    "throughput".to_string(),
+                    serde_json::Value::Object(throughput),
+                );
                 metrics.insert(metric_name, serde_json::Value::Object(metric));
             } else if doorman_tps > 0.0 {
                 // pgbouncer failed (0 tps), pg_doorman wins
@@ -551,7 +546,10 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
                 let mut metric = serde_json::Map::new();
                 let mut throughput = serde_json::Map::new();
                 throughput.insert("value".to_string(), serde_json::json!(10.0));
-                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metric.insert(
+                    "throughput".to_string(),
+                    serde_json::Value::Object(throughput),
+                );
                 metrics.insert(metric_name, serde_json::Value::Object(metric));
             }
         }
@@ -561,7 +559,7 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
             if odyssey_tps > 0.0 && doorman_tps > 0.0 {
                 let ratio = doorman_tps / odyssey_tps;
                 let metric_name = format!("pg_doorman_vs_odyssey_{}", suffix);
-                
+
                 eprintln!(
                     "\x1b[1;35m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
                     metric_name, doorman_tps, odyssey_tps, ratio
@@ -570,7 +568,10 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
                 let mut metric = serde_json::Map::new();
                 let mut throughput = serde_json::Map::new();
                 throughput.insert("value".to_string(), serde_json::json!(ratio));
-                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metric.insert(
+                    "throughput".to_string(),
+                    serde_json::Value::Object(throughput),
+                );
                 metrics.insert(metric_name, serde_json::Value::Object(metric));
             } else if doorman_tps > 0.0 {
                 // odyssey failed (0 tps), pg_doorman wins
@@ -582,7 +583,10 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
                 let mut metric = serde_json::Map::new();
                 let mut throughput = serde_json::Map::new();
                 throughput.insert("value".to_string(), serde_json::json!(10.0));
-                metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+                metric.insert(
+                    "throughput".to_string(),
+                    serde_json::Value::Object(throughput),
+                );
                 metrics.insert(metric_name, serde_json::Value::Object(metric));
             }
         }
@@ -606,11 +610,11 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
     // See: https://bencher.dev/docs/api/projects/reports/
     // The "results" field must be an array of JSON strings in BMF (Bencher Metric Format)
     let metrics_json_str = serde_json::to_string(&metrics).expect("Failed to serialize metrics");
-    
+
     // Get current time for end_time, and 30 minutes ago for start_time (approximate test duration)
     let now = chrono::Utc::now();
     let start_time = now - chrono::Duration::minutes(30);
-    
+
     let payload = serde_json::json!({
         "branch": std::env::var("BENCHER_BRANCH").unwrap_or_else(|_| "main".to_string()),
         "testbed": std::env::var("BENCHER_TESTBED").unwrap_or_else(|_| "localhost".to_string()),
@@ -674,7 +678,10 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
             }
         }
         Err(e) => {
-            eprintln!("\x1b[1;31m✗ Failed to send request to bencher.dev: {}\x1b[0m", e);
+            eprintln!(
+                "\x1b[1;31m✗ Failed to send request to bencher.dev: {}\x1b[0m",
+                e
+            );
         }
     }
 }
@@ -688,9 +695,21 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
     let pgbouncer_key = format!("pgbouncer_{}", test_suffix);
     let odyssey_key = format!("odyssey_{}", test_suffix);
 
-    let doorman_tps = world.bench_results.get(&doorman_key).copied().unwrap_or(0.0);
-    let pgbouncer_tps = world.bench_results.get(&pgbouncer_key).copied().unwrap_or(0.0);
-    let odyssey_tps = world.bench_results.get(&odyssey_key).copied().unwrap_or(0.0);
+    let doorman_tps = world
+        .bench_results
+        .get(&doorman_key)
+        .copied()
+        .unwrap_or(0.0);
+    let pgbouncer_tps = world
+        .bench_results
+        .get(&pgbouncer_key)
+        .copied()
+        .unwrap_or(0.0);
+    let odyssey_tps = world
+        .bench_results
+        .get(&odyssey_key)
+        .copied()
+        .unwrap_or(0.0);
 
     eprintln!("\n=== Sending benchmark results for {} ===", test_suffix);
 
@@ -700,7 +719,7 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
     if pgbouncer_tps > 0.0 && doorman_tps > 0.0 {
         let ratio = doorman_tps / pgbouncer_tps;
         let metric_name = format!("pg_doorman_vs_pgbouncer_{}", test_suffix);
-        
+
         eprintln!(
             "\x1b[1;36m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
             metric_name, doorman_tps, pgbouncer_tps, ratio
@@ -709,7 +728,10 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
         let mut metric = serde_json::Map::new();
         let mut throughput = serde_json::Map::new();
         throughput.insert("value".to_string(), serde_json::json!(ratio));
-        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metric.insert(
+            "throughput".to_string(),
+            serde_json::Value::Object(throughput),
+        );
         metrics.insert(metric_name, serde_json::Value::Object(metric));
     } else if doorman_tps > 0.0 && pgbouncer_tps == 0.0 {
         let metric_name = format!("pg_doorman_vs_pgbouncer_{}", test_suffix);
@@ -720,7 +742,10 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
         let mut metric = serde_json::Map::new();
         let mut throughput = serde_json::Map::new();
         throughput.insert("value".to_string(), serde_json::json!(10.0));
-        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metric.insert(
+            "throughput".to_string(),
+            serde_json::Value::Object(throughput),
+        );
         metrics.insert(metric_name, serde_json::Value::Object(metric));
     }
 
@@ -728,7 +753,7 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
     if odyssey_tps > 0.0 && doorman_tps > 0.0 {
         let ratio = doorman_tps / odyssey_tps;
         let metric_name = format!("pg_doorman_vs_odyssey_{}", test_suffix);
-        
+
         eprintln!(
             "\x1b[1;35m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
             metric_name, doorman_tps, odyssey_tps, ratio
@@ -737,7 +762,10 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
         let mut metric = serde_json::Map::new();
         let mut throughput = serde_json::Map::new();
         throughput.insert("value".to_string(), serde_json::json!(ratio));
-        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metric.insert(
+            "throughput".to_string(),
+            serde_json::Value::Object(throughput),
+        );
         metrics.insert(metric_name, serde_json::Value::Object(metric));
     } else if doorman_tps > 0.0 && odyssey_tps == 0.0 {
         let metric_name = format!("pg_doorman_vs_odyssey_{}", test_suffix);
@@ -748,7 +776,10 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
         let mut metric = serde_json::Map::new();
         let mut throughput = serde_json::Map::new();
         throughput.insert("value".to_string(), serde_json::json!(10.0));
-        metric.insert("throughput".to_string(), serde_json::Value::Object(throughput));
+        metric.insert(
+            "throughput".to_string(),
+            serde_json::Value::Object(throughput),
+        );
         metrics.insert(metric_name, serde_json::Value::Object(metric));
     }
 
@@ -756,7 +787,10 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
     let api_token = match std::env::var("BENCHER_API_TOKEN") {
         Ok(token) if !token.trim().is_empty() => token.trim().to_string(),
         _ => {
-            eprintln!("BENCHER_API_TOKEN not set, skipping bencher.dev upload for {}", test_suffix);
+            eprintln!(
+                "BENCHER_API_TOKEN not set, skipping bencher.dev upload for {}",
+                test_suffix
+            );
             return;
         }
     };
@@ -769,11 +803,11 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
     // Build the JSON payload for bencher.dev
     // API requires start_time and end_time fields, and endpoint is /reports not /runs
     let metrics_json_str = serde_json::to_string(&metrics).expect("Failed to serialize metrics");
-    
+
     // Get current time for end_time, and 30 minutes ago for start_time (approximate test duration)
     let now = chrono::Utc::now();
     let start_time = now - chrono::Duration::minutes(30);
-    
+
     let payload = serde_json::json!({
         "branch": std::env::var("BENCHER_BRANCH").unwrap_or_else(|_| "main".to_string()),
         "testbed": std::env::var("BENCHER_TESTBED").unwrap_or_else(|_| "localhost".to_string()),
@@ -817,16 +851,25 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
                         eprintln!("Response: {}", body);
                     } else if json.get("uuid").is_some() || json.get("report").is_some() {
                         // Success - response contains expected fields
-                        eprintln!("\x1b[1;32m✓ Successfully sent {} results to bencher.dev\x1b[0m", test_suffix);
+                        eprintln!(
+                            "\x1b[1;32m✓ Successfully sent {} results to bencher.dev\x1b[0m",
+                            test_suffix
+                        );
                         eprintln!("Response: {}", body);
                     } else {
                         // Unknown response format
-                        eprintln!("\x1b[1;33m⚠ Unexpected response from bencher.dev for {}\x1b[0m", test_suffix);
+                        eprintln!(
+                            "\x1b[1;33m⚠ Unexpected response from bencher.dev for {}\x1b[0m",
+                            test_suffix
+                        );
                         eprintln!("Response: {}", body);
                     }
                 } else {
                     // Could not parse response as JSON
-                    eprintln!("\x1b[1;33m⚠ Could not parse bencher.dev response as JSON for {}\x1b[0m", test_suffix);
+                    eprintln!(
+                        "\x1b[1;33m⚠ Could not parse bencher.dev response as JSON for {}\x1b[0m",
+                        test_suffix
+                    );
                     eprintln!("Response: {}", body);
                 }
             } else {
@@ -837,7 +880,10 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
             }
         }
         Err(e) => {
-            eprintln!("\x1b[1;31m✗ Failed to send request to bencher.dev for {}: {}\x1b[0m", test_suffix, e);
+            eprintln!(
+                "\x1b[1;31m✗ Failed to send request to bencher.dev for {}: {}\x1b[0m",
+                test_suffix, e
+            );
         }
     }
 }
@@ -891,12 +937,21 @@ pub async fn print_benchmark_results(world: &mut DoormanWorld) {
 pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     eprintln!("\n=== Generating Benchmark Markdown Table ===");
 
-    // Helper function to format ratio
+    // Helper function to format ratio as percentage difference
+    // 1.10 -> "+10%" (pg_doorman is 10% faster)
+    // 0.90 -> "-10%" (pg_doorman is 10% slower)
     let format_ratio = |doorman: f64, competitor_tps: Option<f64>| -> String {
         match competitor_tps {
             Some(v) if v > 0.0 && doorman > 0.0 => {
                 let ratio = doorman / v;
-                format!("{:.2}", ratio)
+                let percent = (ratio - 1.0) * 100.0;
+                if percent.abs() < 3.0 {
+                    "≈0%".to_string()
+                } else if percent > 0.0 {
+                    format!("+{:.0}%", percent)
+                } else {
+                    format!("{:.0}%", percent)
+                }
             }
             Some(_) if doorman > 0.0 => "∞".to_string(), // competitor failed, pg_doorman wins
             Some(_) => "N/A".to_string(),
@@ -905,7 +960,9 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     };
 
     // Helper function to generate table rows for a set of test configs
-    let generate_table = |configs: &[(&str, &str)], results: &std::collections::HashMap<String, f64>| -> Vec<String> {
+    let generate_table = |configs: &[(&str, &str)],
+                          results: &std::collections::HashMap<String, f64>|
+     -> Vec<String> {
         let mut rows = Vec::new();
         rows.push("| Test | vs pgbouncer | vs odyssey |".to_string());
         rows.push("|------|--------------|------------|".to_string());
@@ -1007,10 +1064,15 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
             "- **Started**: {}\n- **Finished**: {}\n- **Total duration**: {}h {}m {}s",
             start_time.format("%Y-%m-%d %H:%M:%S UTC"),
             end_time.format("%Y-%m-%d %H:%M:%S UTC"),
-            hours, minutes, seconds
+            hours,
+            minutes,
+            seconds
         )
     } else {
-        format!("- **Finished**: {}", end_time.format("%Y-%m-%d %H:%M:%S UTC"))
+        format!(
+            "- **Finished**: {}",
+            end_time.format("%Y-%m-%d %H:%M:%S UTC")
+        )
     };
 
     // Generate the full markdown content
@@ -1037,9 +1099,9 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
 
 ### Legend
 
-- **Value > 1.0**: pg_doorman is faster than competitor
-- **Value = 1.0**: Equal performance
-- **Value < 1.0**: pg_doorman is slower than competitor
+- **+N%**: pg_doorman is N% faster than competitor (e.g., +10% means pg_doorman is 10% faster)
+- **-N%**: pg_doorman is N% slower than competitor (e.g., -10% means pg_doorman is 10% slower)
+- **≈0%**: Equal performance (difference less than 3%)
 - **∞**: Competitor failed (0 TPS), pg_doorman wins
 - **N/A**: Test not supported by this pooler
 - **-**: Test not executed
@@ -1080,11 +1142,17 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
     let file_path = "documentation/docs/benchmarks.md";
     match std::fs::write(file_path, &markdown_content) {
         Ok(_) => {
-            eprintln!("\x1b[1;32m✓ Benchmark table written to {}\x1b[0m", file_path);
+            eprintln!(
+                "\x1b[1;32m✓ Benchmark table written to {}\x1b[0m",
+                file_path
+            );
             eprintln!("\n{}", markdown_content);
         }
         Err(e) => {
-            eprintln!("\x1b[1;31m✗ Failed to write benchmark table to {}: {}\x1b[0m", file_path, e);
+            eprintln!(
+                "\x1b[1;31m✗ Failed to write benchmark table to {}: {}\x1b[0m",
+                file_path, e
+            );
         }
     }
 }

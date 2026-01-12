@@ -1,6 +1,6 @@
+use crate::port_allocator::allocate_port;
 use crate::world::PatroniProxyWorld;
 use cucumber::{gherkin::Step, given, when};
-use portpicker::pick_unused_port;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -28,7 +28,7 @@ pub async fn start_named_mock_patroni_server(
     // Replace placeholders in response JSON
     let response_json = world.replace_placeholders(&response_json);
 
-    let port = pick_unused_port().expect("No free ports for mock Patroni server");
+    let port = allocate_port();
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
@@ -106,10 +106,14 @@ pub async fn start_named_mock_patroni_server(
     });
 
     let host_url = format!("http://127.0.0.1:{}", port);
-    world.mock_patroni_shutdowns.insert(host_url.clone(), shutdown);
+    world
+        .mock_patroni_shutdowns
+        .insert(host_url.clone(), shutdown);
     world.mock_patroni_ports.push(port);
     world.mock_patroni_names.insert(server_name.clone(), port);
-    world.mock_patroni_responses.insert(server_name, response_holder);
+    world
+        .mock_patroni_responses
+        .insert(server_name, response_holder);
 
     // Wait for server to be ready
     wait_for_http_server_ready(port).await;

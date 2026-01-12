@@ -1,6 +1,7 @@
 mod connection_helper;
 mod mock_backend_helper;
 mod mock_patroni_helper;
+mod port_allocator;
 mod proxy_helper;
 mod utils;
 mod world;
@@ -73,7 +74,7 @@ fn main() {
 
                     // Stop all mock Patroni servers
                     mock_patroni_helper::stop_mock_patroni_servers(w);
-                    
+
                     // Stop all mock backend servers
                     mock_backend_helper::stop_mock_backends(w);
                 }

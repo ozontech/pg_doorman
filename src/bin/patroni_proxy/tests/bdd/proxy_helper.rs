@@ -1,7 +1,7 @@
+use crate::port_allocator::allocate_port;
 use crate::utils::{create_temp_file, get_stdio_config, is_debug_mode};
 use crate::world::PatroniProxyWorld;
 use cucumber::{gherkin::Step, given, when};
-use portpicker::pick_unused_port;
 use std::fs;
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -126,7 +126,7 @@ pub fn stop_proxy(child: &mut Child) {
 /// Define API listen address before starting
 #[given("API listen address is allocated")]
 pub async fn define_api_listen_address(world: &mut PatroniProxyWorld) {
-    let port = pick_unused_port().expect("No free ports for API");
+    let port = allocate_port();
     let listen_addr = format!("127.0.0.1:{}", port);
     world.api_listen_address = Some(listen_addr);
 }
@@ -134,7 +134,7 @@ pub async fn define_api_listen_address(world: &mut PatroniProxyWorld) {
 /// Allocate a single proxy port by name
 #[given(regex = r"^proxy port '(.+)' is allocated$")]
 pub async fn allocate_proxy_port(world: &mut PatroniProxyWorld, port_name: String) {
-    let port = pick_unused_port().expect("No free ports for proxy");
+    let port = allocate_port();
     let listen_addr = format!("127.0.0.1:{}", port);
     world.proxy_listen_addresses.insert(port_name, listen_addr);
 }

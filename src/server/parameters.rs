@@ -59,7 +59,7 @@ impl ServerParameters {
     pub fn set_param(&mut self, key: impl Into<String>, value: impl Into<String>, startup: bool) {
         let mut key = key.into();
         let value = value.into();
-        
+
         // Startup parameters may come uncapitalized, while ParameterStatus uses canonical keys.
         if key == "timezone" {
             key = "TimeZone".to_string();

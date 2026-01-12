@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 env:
-  # Last 4 Ubuntu LTS/stable versions
-  UBUNTU_VERSIONS: "jammy noble oracular plucky"
+  # Ubuntu LTS versions (non-EOL)
+  UBUNTU_VERSIONS: "jammy noble plucky"
   # jammy = 22.04 LTS
   # noble = 24.04 LTS  
-  # oracular = 24.10
   # plucky = 25.04
+  # Note: oracular (24.10) reached EOL and was removed
   PPA_NAME: "ppa:pg-doorman/pg-doorman"
   RUST_VERSION: "1.87.0"
 
@@ -90,22 +90,40 @@ jobs:
           wget -q https://static.rust-lang.org/dist/rust-${{ env.RUST_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -O /tmp/rust.tar.gz
           cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
 
-      - name: Import GPG key
+      - name: Import GPG key and verify passphrase
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PRIVATE_KEY_PASSWORD }}
         run: |
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --no-tty --import
+          # Configure GPG for non-interactive use BEFORE importing key
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          echo "use-agent" > ~/.gnupg/gpg.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          echo "RELOADAGENT" | gpg-connect-agent || true
+          
+          # Import GPG key (trim any whitespace/newlines from secret)
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --no-tty --import
+          
           # Get the key ID
           GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2)
           echo "GPG_KEY_ID=$GPG_KEY_ID" >> $GITHUB_ENV
+          echo "Using GPG key: $GPG_KEY_ID"
+          
           # Trust the key automatically without TTY
           echo -e "5\ny\n" | gpg --batch --no-tty --command-fd 0 --expert --edit-key $GPG_KEY_ID trust
-          # Configure GPG for non-interactive use (fix "Inappropriate ioctl for device" error)
-          mkdir -p ~/.gnupg
-          echo "use-agent" >> ~/.gnupg/gpg.conf
-          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
-          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
-          echo "RELOADAGENT" | gpg-connect-agent || true
+          
+          # Verify passphrase works by signing a test message
+          echo "Verifying GPG passphrase..."
+          echo "test message" > /tmp/gpg_test.txt
+          if ! gpg --batch --no-tty --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --sign /tmp/gpg_test.txt; then
+            echo "ERROR: GPG passphrase verification failed!"
+            echo "Please check that GPG_PRIVATE_KEY_PASSWORD secret is correct and has no extra whitespace/newlines"
+            exit 1
+          fi
+          rm -f /tmp/gpg_test.txt /tmp/gpg_test.txt.gpg
+          echo "GPG passphrase verified successfully!"
 
       - name: Create vendor tarball
         run: |
@@ -115,6 +133,7 @@ jobs:
       - name: Build source packages for each Ubuntu version
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PRIVATE_KEY_PASSWORD }}
         run: |
           set -e
           
@@ -132,21 +151,56 @@ jobs:
           # Create output directory for all packages
           mkdir -p /tmp/packages
           
+          # Save the source directory to return to it after each iteration
+          SOURCE_DIR=$(pwd)
+          
           for DISTRO in $UBUNTU_VERSIONS; do
             echo "=========================================="
             echo "Building for Ubuntu $DISTRO"
             echo "=========================================="
             
+            # Ensure we're in the source directory
+            cd "$SOURCE_DIR"
+            
             # Create a clean working directory
             WORK_DIR=$(mktemp -d)
-            cp -r . "$WORK_DIR/pg-doorman-${VERSION}"
-            cd "$WORK_DIR/pg-doorman-${VERSION}"
+            mkdir -p "$WORK_DIR/pg-doorman-${VERSION}"
             
-            # Remove .git directory to reduce size
-            rm -rf .git
+            # Define what we want to package (explicit list instead of excludes)
+            # These are the actual project files needed for building
+            FILES_TO_COPY="Cargo.toml Cargo.lock src patches benches debian vendor.tar.gz rust-toolchain.toml"
+            
+            # Debug: show what we're going to copy
+            echo "Files/directories to copy:"
+            for item in $FILES_TO_COPY; do
+              if [ -e "$item" ]; then
+                echo "  [OK] $item"
+              else
+                echo "  [MISSING] $item"
+              fi
+            done
+            
+            # Copy only the specified files/directories
+            for item in $FILES_TO_COPY; do
+              if [ -e "$item" ]; then
+                cp -r "$item" "$WORK_DIR/pg-doorman-${VERSION}/"
+              fi
+            done
+            
+            cd "$WORK_DIR/pg-doorman-${VERSION}"
             
             # Include vendor directory for offline build
             tar xzf vendor.tar.gz
+            
+            # Replace .cargo-checksum.json files with empty checksums to avoid verification issues
+            # Some crates (like vcpkg) contain test data with symlinks/special files
+            # that don't survive tar archiving, causing checksum mismatches
+            # We keep the files but clear the "files" checksums while preserving package checksum
+            for checksum_file in $(find vendor -name '.cargo-checksum.json'); do
+              # Extract package checksum and create new file with empty files checksums
+              pkg_checksum=$(grep -o '"package":"[^"]*"' "$checksum_file" | head -1 || echo '"package":null')
+              echo "{\"files\":{},${pkg_checksum}}" > "$checksum_file"
+            done
             
             # Generate changelog for this distribution
             cat > debian/changelog << EOF
@@ -170,13 +224,12 @@ jobs:
             
             # Sign the .dsc and .changes files manually with gpg
             cd "$WORK_DIR"
-            debsign -k${{ env.GPG_KEY_ID }} --no-re-sign -p"gpg --batch --no-tty --pinentry-mode loopback --passphrase ''" pg-doorman_${VERSION}~${DISTRO}_source.changes
+            debsign -k${{ env.GPG_KEY_ID }} --no-re-sign -p"gpg --batch --no-tty --pinentry-mode loopback --passphrase '$GPG_PASSPHRASE'" pg-doorman_${VERSION}~${DISTRO}_source.changes
             
             # Copy built packages to output directory
             cp "$WORK_DIR"/pg-doorman_${VERSION}~${DISTRO}* /tmp/packages/
             
             # Cleanup working directory
-            cd /
             rm -rf "$WORK_DIR"
             
             echo "Successfully built package for Ubuntu $DISTRO"
@@ -204,8 +257,6 @@ jobs:
             image: ubuntu:22.04
           - distro: noble
             image: ubuntu:24.04
-          - distro: oracular
-            image: ubuntu:24.10
           - distro: plucky
             image: ubuntu:25.04
     container:

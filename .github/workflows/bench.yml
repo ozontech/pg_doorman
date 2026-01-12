@@ -3,6 +3,7 @@ name: Benchmarks
 permissions:
   contents: write
   packages: read
+  pull-requests: write
 
 on:
   workflow_dispatch:
@@ -51,6 +52,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify required tools
+        run: |
+          echo "Checking required tools for PR creation..."
+          if ! command -v git &> /dev/null; then
+            echo "❌ git is not installed"
+            exit 1
+          fi
+          echo "✓ git: $(git --version)"
+          
+          if ! command -v gh &> /dev/null; then
+            echo "❌ gh (GitHub CLI) is not installed"
+            exit 1
+          fi
+          echo "✓ gh: $(gh --version | head -1)"
+          echo "All required tools are available"
+
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -83,16 +100,41 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }} \
             cargo test --release --test bdd -- --tags @bench
 
-      - name: Commit benchmark results
+      - name: Create Pull Request with benchmark results
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          # Save benchmarks.md before reset
-          cp documentation/docs/benchmarks.md /tmp/benchmarks.md.tmp
+
+          # Save the updated benchmarks.md BEFORE switching branches
+          # (docker run modifies the file in the workspace)
+          cp documentation/docs/benchmarks.md /tmp/benchmarks.md
+          
+          # Create a unique branch name with timestamp
+          BRANCH_NAME="benchmark-results-$(date +%Y%m%d-%H%M%S)"
+          
+          # Fetch latest and create new branch from target
           git fetch origin ${{ github.ref_name }}
-          git reset --hard origin/${{ github.ref_name }}
-          # Restore benchmarks.md after reset
-          cp /tmp/benchmarks.md.tmp documentation/docs/benchmarks.md
+          git checkout -b "$BRANCH_NAME" origin/${{ github.ref_name }}
+          
+          # Copy the saved benchmarks.md back
+          cp /tmp/benchmarks.md documentation/docs/benchmarks.md
+          
+          # Check if there are any changes to commit
           git add documentation/docs/benchmarks.md
-          git diff --staged --quiet || git commit -m "Update benchmark results [skip ci]"
-          git push --force-with-lease
+          if git diff --staged --quiet; then
+            echo "No changes to benchmark results, skipping PR creation"
+            exit 0
+          fi
+          
+          # Commit and push
+          git commit -m "Update benchmark results [skip ci]"
+          git push origin "$BRANCH_NAME"
+          
+          # Create Pull Request
+          gh pr create \
+            --title "Update benchmark results" \
+            --body "Automated benchmark results update from CI workflow. This PR updates the benchmark comparison table in documentation/docs/benchmarks.md." \
+            --base "${{ github.ref_name }}" \
+            --head "$BRANCH_NAME"
