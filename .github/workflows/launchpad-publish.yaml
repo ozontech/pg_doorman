@@ -411,6 +411,61 @@ jobs:
           GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -1 | awk '{print $2}' | cut -d'/' -f2)
           echo "GPG_KEY_ID=$GPG_KEY_ID" >> $GITHUB_ENV
 
+      - name: Verify GPG signatures before upload
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          set -e
+          
+          cd /tmp/packages
+          
+          echo "=========================================="
+          echo "Verifying GPG signatures on all packages"
+          echo "=========================================="
+          
+          VERIFICATION_FAILED=0
+          
+          for DISTRO in $UBUNTU_VERSIONS; do
+            echo "Verifying signature for Ubuntu $DISTRO..."
+            
+            # Verify .dsc file signature
+            DSC_FILE="pg-doorman_${VERSION}~${DISTRO}.dsc"
+            if ! gpg --verify "$DSC_FILE" 2>&1; then
+              echo "ERROR: GPG signature verification FAILED for $DSC_FILE"
+              VERIFICATION_FAILED=1
+            else
+              echo "OK: $DSC_FILE signature verified"
+            fi
+            
+            # Verify .changes file signature
+            CHANGES_FILE="pg-doorman_${VERSION}~${DISTRO}_source.changes"
+            if ! gpg --verify "$CHANGES_FILE" 2>&1; then
+              echo "ERROR: GPG signature verification FAILED for $CHANGES_FILE"
+              VERIFICATION_FAILED=1
+            else
+              echo "OK: $CHANGES_FILE signature verified"
+            fi
+          done
+          
+          if [ $VERIFICATION_FAILED -eq 1 ]; then
+            echo "=========================================="
+            echo "ERROR: GPG signature verification failed!"
+            echo "=========================================="
+            echo ""
+            echo "This usually means the GPG public key is not registered in Launchpad."
+            echo "Please follow these steps:"
+            echo "1. Export your public key: gpg --armor --export ${{ env.GPG_KEY_ID }}"
+            echo "2. Upload key to keyserver: gpg --keyserver keyserver.ubuntu.com --send-keys ${{ env.GPG_KEY_ID }}"
+            echo "3. Add key to Launchpad: https://launchpad.net/~/+editpgpkeys"
+            echo "4. Verify the key via email confirmation from Launchpad"
+            echo ""
+            exit 1
+          fi
+          
+          echo "=========================================="
+          echo "All GPG signatures verified successfully"
+          echo "=========================================="
+
       - name: Upload source packages to Launchpad PPA
         if: github.event_name == 'release'
         env:
