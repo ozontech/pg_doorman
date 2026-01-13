@@ -586,36 +586,13 @@ where
             };
 
             // Insert pending ParseComplete messages before BindComplete
-            // If no BindComplete found, insert at the beginning of response
             if self.pending_parse_complete > 0 {
                 let (new_response, inserted) = insert_parse_complete_before_bind_complete(
                     response,
                     self.pending_parse_complete,
                 );
-
-                // If no BindComplete was found (inserted == 0), insert at the beginning
-                if inserted == 0 && self.pending_parse_complete > 0 {
-                    // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
-                    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
-
-                    let mut prefixed_response = BytesMut::with_capacity(
-                        new_response.len() + (self.pending_parse_complete as usize * 5),
-                    );
-
-                    // Insert ParseComplete messages at the beginning
-                    for _ in 0..self.pending_parse_complete {
-                        prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                    }
-
-                    // Append the original response
-                    prefixed_response.extend_from_slice(&new_response);
-
-                    response = prefixed_response;
-                    self.pending_parse_complete = 0;
-                } else {
-                    response = new_response;
-                    self.pending_parse_complete -= inserted;
-                }
+                response = new_response;
+                self.pending_parse_complete -= inserted;
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server
