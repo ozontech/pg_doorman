@@ -38,6 +38,10 @@ const COMMAND_COMPLETE_BY_DEALLOCATE_ALL: &[u8; 15] = b"DEALLOCATE ALL\0";
 /// CommandComplete payload for DISCARD ALL (clears prepared statement cache)
 const COMMAND_COMPLETE_BY_DISCARD_ALL: &[u8; 12] = b"DISCARD ALL\0";
 
+/// Buffer flush threshold in bytes (8 KiB).
+/// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
+const BUFFER_FLUSH_THRESHOLD: usize = 8192;
+
 // ============================================================================
 // Public API functions
 // ============================================================================
@@ -475,7 +479,7 @@ where
                 server.data_available = true;
 
                 // Don't flush yet, the more we buffer, the faster this goes...up to a limit.
-                if server.buffer.len() >= 8196 {
+                if server.buffer.len() >= BUFFER_FLUSH_THRESHOLD {
                     break;
                 }
             }
@@ -496,7 +500,7 @@ where
             // CopyData
             'd' => {
                 // Don't flush yet, buffer until we reach limit
-                if server.buffer.len() >= 8196 {
+                if server.buffer.len() >= BUFFER_FLUSH_THRESHOLD {
                     break;
                 }
             }
@@ -566,8 +570,8 @@ where
     server.stats.data_received(bytes.len());
 
     // Clear the buffer for next query.
-    if server.buffer.len() > 8196 {
-        server.buffer = BytesMut::with_capacity(8196);
+    if server.buffer.len() > BUFFER_FLUSH_THRESHOLD {
+        server.buffer = BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD);
     } else {
         // Clear the buffer for next query.
         server.buffer.clear();
