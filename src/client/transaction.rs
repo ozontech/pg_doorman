@@ -17,6 +17,8 @@ use crate::pool::{ConnectionPool, CANCELED_PIDS};
 use crate::server::Server;
 use crate::utils::comments::SqlCommentParser;
 
+                    // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
+                    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
 impl<S, T> Client<S, T>
 where
     S: tokio::io::AsyncRead + std::marker::Unpin,
@@ -597,8 +599,6 @@ where
                 if inserted == 0
                     && self.pending_parse_complete > 0
                     && !server.data_available {
-                    // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
-                    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
 
                     let mut prefixed_response = BytesMut::with_capacity(
                         new_response.len() + (self.pending_parse_complete as usize * 5),

@@ -59,6 +59,7 @@ jobs:
   prepare-source-packages:
     name: Prepare source packages for Launchpad
     needs: [verify-version]
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     container:
       image: ubuntu:24.04
@@ -124,7 +125,7 @@ jobs:
           echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
           echo "RELOADAGENT" | gpg-connect-agent || true
           
-          # Import GPG key (trim any whitespace/newlines from secret)
+          # Import GPG key
           printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --no-tty --import
           
           # Get the key ID

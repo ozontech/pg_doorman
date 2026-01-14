@@ -11,6 +11,9 @@ use crate::errors::Error;
 use crate::messages::socket::{write_all, write_all_flush};
 use crate::messages::types::DataType;
 
+const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
+const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+
 /// Generate md5 password challenge.
 pub async fn md5_challenge<S>(stream: &mut S) -> Result<[u8; 4], Error>
 where
@@ -630,9 +633,6 @@ pub fn insert_parse_complete_before_bind_complete(buffer: BytesMut, count: u32) 
     if count == 0 {
         return (buffer, 0);
     }
-
-    const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
-    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
 
     let bytes = buffer.as_ref();
     let len = bytes.len();
