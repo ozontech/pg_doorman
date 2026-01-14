@@ -35,7 +35,7 @@ Feature: .NET anonymous queries without prepare on server side
       pool_size = 40
       """
 
-  Scenario: Run .NET anonymous queries without prepare on server side
+  Scenario: Run .NET send queries that cause server buffer overflow
     When I run shell command:
       """
       export DATABASE_URL="Host=127.0.0.1;Port=${DOORMAN_PORT};Database=example_db;Username=example_user_1;Password=test"
