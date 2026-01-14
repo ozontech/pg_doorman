@@ -160,6 +160,7 @@ jobs:
           ls -la rust-*.tar.gz
 
       - name: Build source packages for each Ubuntu version
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PRIVATE_KEY_PASSWORD }}
