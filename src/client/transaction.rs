@@ -602,7 +602,8 @@ where
                     && self.pending_parse_complete > 0
                     // If the server has more data, we can't insert ParseComplete messages
                     // because it would insert between DataRow messages
-                    && !server.data_available {
+                    && !server.data_available
+                {
                     // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
                     const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
 

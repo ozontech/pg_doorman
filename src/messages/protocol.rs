@@ -13,6 +13,9 @@ use crate::messages::types::DataType;
 
 const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
 const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+const CLOSE_COMPLETE_SIZE: usize = 5; // '3' (1) + length (4)
+const CLOSE_COMPLETE_MSG: [u8; 5] = [b'3', 0, 0, 0, 4];
+const READY_FOR_QUERY_SIZE: usize = 6; // 'Z' (1) + length (4) + status (1)
 
 /// Generate md5 password challenge.
 pub async fn md5_challenge<S>(stream: &mut S) -> Result<[u8; 4], Error>
@@ -755,10 +758,6 @@ pub fn insert_close_complete_after_last_close_complete(
         return (buffer, 0);
     }
 
-    const CLOSE_COMPLETE_SIZE: usize = 5; // '3' (1) + length (4)
-    const CLOSE_COMPLETE_MSG: [u8; 5] = [b'3', 0, 0, 0, 4];
-    const READY_FOR_QUERY_SIZE: usize = 6; // 'Z' (1) + length (4) + status (1)
-
     let bytes = buffer.as_ref();
     let mut pos = 0;
     let mut last_close_complete_pos: Option<usize> = None;
@@ -818,10 +817,6 @@ pub fn insert_close_complete_before_ready_for_query(mut buffer: BytesMut, count:
     if count == 0 {
         return buffer;
     }
-
-    const READY_FOR_QUERY_SIZE: usize = 6; // 'Z' (1) + length (4) + status (1)
-    const CLOSE_COMPLETE_SIZE: usize = 5; // '3' (1) + length (4)
-    const CLOSE_COMPLETE_MSG: [u8; 5] = [b'3', 0, 0, 0, 4];
 
     let insert_size = CLOSE_COMPLETE_SIZE * count as usize;
     let len = buffer.len();
