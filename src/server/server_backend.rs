@@ -31,6 +31,10 @@ use super::startup_error::handle_startup_error;
 use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
 use super::{prepared_statements, protocol_io, startup_cancel};
 
+/// Buffer flush threshold in bytes (8 KiB).
+/// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
+const BUFFER_FLUSH_THRESHOLD: usize = 8192;
+
 /// Represents a connection to a PostgreSQL server (backend).
 ///
 /// This structure maintains the state of a single connection to a PostgreSQL database server,
@@ -651,7 +655,7 @@ impl Server {
                     let server = Server {
                         address: address.to_owned(),
                         stream: BufStream::new(stream),
-                        buffer: BytesMut::with_capacity(8196),
+                        buffer: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         server_parameters,
                         process_id,
                         secret_key,

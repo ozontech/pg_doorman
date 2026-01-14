@@ -17,6 +17,10 @@ use crate::pool::{ConnectionPool, CANCELED_PIDS};
 use crate::server::Server;
 use crate::utils::comments::SqlCommentParser;
 
+/// Buffer flush threshold in bytes (8 KiB).
+/// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
+const BUFFER_FLUSH_THRESHOLD: usize = 8192;
+
 impl<S, T> Client<S, T>
 where
     S: tokio::io::AsyncRead + std::marker::Unpin,
@@ -464,7 +468,7 @@ where
                             self.buffer.put(&message[..]);
 
                             // Want to limit buffer size
-                            if self.buffer.len() > 8196 {
+                            if self.buffer.len() > BUFFER_FLUSH_THRESHOLD {
                                 // Forward the data to the server,
                                 server.send_and_flush(&self.buffer).await?;
                                 self.buffer.clear();
@@ -568,7 +572,7 @@ where
         self.stats.active_idle();
 
         // Read all data the server has to offer, which can be multiple messages
-        // buffered in 8196 bytes chunks.
+        // buffered in 8 KiB chunks.
         loop {
             let mut response = match server
                 .recv(&mut self.write, Some(&mut self.server_parameters))

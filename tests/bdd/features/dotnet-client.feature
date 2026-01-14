@@ -107,3 +107,19 @@ Feature: .NET client tests
     And the command output should contain "Test 7 complete"
     And the command output should contain "Test 8 complete"
     And the command output should contain "multi_session complete"
+
+  Scenario: Run .NET prepared statements with large data tests
+    When I run shell command:
+      """
+      export DATABASE_URL="Host=127.0.0.1;Port=${DOORMAN_PORT};Database=example_db;Username=example_user_1;Password=test"
+      tests/dotnet/run_test.sh prepared_extended_large prepared_extended_large.cs
+      """
+    Then the command should succeed
+    And the command output should contain "Test 1 complete"
+    And the command output should contain "Test 2 complete"
+    And the command output should contain "Test 3 complete"
+    And the command output should contain "Test 4 complete"
+    And the command output should contain "Test 5 complete"
+    And the command output should contain "Test 6 complete"
+    And the command output should contain "Test 7 complete"
+    And the command output should contain "prepared_extended_large complete"
