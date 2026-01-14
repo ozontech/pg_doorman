@@ -33,12 +33,57 @@ Feature: Node.js client tests
       pool_size = 10
       """
 
-  Scenario: Run Node.js client tests
+  @nodejs-basic
+  Scenario: Run Node.js basic client tests
     When I run shell command:
       """
       cd tests/nodejs && \
       export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
       npm install pg && \
-      node ./run.js
+      node ./test_simple.js
+      """
+    Then the command should succeed
+
+  @nodejs-prepared
+  Scenario: Run Node.js prepared statements tests
+    When I run shell command:
+      """
+      cd tests/nodejs && \
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
+      npm install pg && \
+      node ./test_prepared.js
+      """
+    Then the command should succeed
+
+  @nodejs-errors
+  Scenario: Run Node.js error handling tests
+    When I run shell command:
+      """
+      cd tests/nodejs && \
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
+      npm install pg && \
+      node ./test_errors.js
+      """
+    Then the command should succeed
+
+  @nodejs-transactions
+  Scenario: Run Node.js transaction tests
+    When I run shell command:
+      """
+      cd tests/nodejs && \
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
+      npm install pg && \
+      node ./test_transactions.js
+      """
+    Then the command should succeed
+
+  @nodejs-edge-cases
+  Scenario: Run Node.js edge case tests
+    When I run shell command:
+      """
+      cd tests/nodejs && \
+      export DATABASE_URL="postgresql://example_user_1:test@127.0.0.1:${DOORMAN_PORT}/example_db" && \
+      npm install pg && \
+      node ./test_edge_cases.js
       """
     Then the command should succeed
