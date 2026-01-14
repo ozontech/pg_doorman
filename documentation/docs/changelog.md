@@ -4,6 +4,16 @@ title: Changelog
 
 # Changelog
 
+### 3.0.1 <small>Jan 14, 2026</small> { id="3.0.1" }
+
+**Bug Fixes:**
+
+- Fixed protocol mismatch for .NET clients (Npgsql): prevented insertion of ParseComplete messages between DataRow messages when server has more data available.
+
+**Testing:**
+
+- Extended Node.js client test coverage with additional scenarios for prepared statements, error handling, transactions, and edge cases.
+
 ### 3.0.0 <small>Jan 12, 2026</small> { id="3.0.0" }
 
 **Major Release — Complete Architecture Refactoring**
