@@ -53,6 +53,7 @@ Feature: .NET client tests
     Then the command should succeed
     And the command output should contain "prepared complete"
 
+  @dotnet-debug
   Scenario: Run .NET batch tests
     When I run shell command:
       """
@@ -161,3 +162,17 @@ Feature: .NET client tests
     And the command output should contain "Test 9 complete"
     And the command output should contain "Test 10 complete"
     And the command output should contain "prepared_stress_describe complete"
+
+  Scenario: Run .NET Describe flow with cached prepared statements
+    When I run shell command:
+      """
+      export DATABASE_URL="Host=127.0.0.1;Port=${DOORMAN_PORT};Database=example_db;Username=example_user_1;Password=test"
+      tests/dotnet/run_test.sh describe_flow_cached describe_flow_cached.cs
+      """
+    Then the command should succeed
+    And the command output should contain "Test 1 complete"
+    And the command output should contain "Test 2 complete"
+    And the command output should contain "Test 3 complete"
+    And the command output should contain "Test 4 complete"
+    And the command output should contain "Test 5 complete"
+    And the command output should contain "describe_flow_cached complete"

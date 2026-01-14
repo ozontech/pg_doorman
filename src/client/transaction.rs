@@ -627,6 +627,43 @@ where
                 }
             }
 
+            // Insert pending ParseComplete messages for Describe flow
+            // (before ParameterDescription 't' or NoData 'n')
+            if self.pending_parse_complete_for_describe > 0 && !server.data_available {
+                const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+                let bytes = response.as_ref();
+                
+                // Find first ParameterDescription ('t') or NoData ('n') message
+                let mut pos = 0;
+                let mut insert_pos = None;
+                while pos + 5 <= bytes.len() {
+                    let msg_type = bytes[pos];
+                    if msg_type == b't' || msg_type == b'n' {
+                        insert_pos = Some(pos);
+                        break;
+                    }
+                    let msg_len = i32::from_be_bytes([
+                        bytes[pos + 1],
+                        bytes[pos + 2],
+                        bytes[pos + 3],
+                        bytes[pos + 4],
+                    ]) as usize;
+                    pos += 1 + msg_len;
+                }
+                
+                if let Some(insert_at) = insert_pos {
+                    let count = self.pending_parse_complete_for_describe as usize;
+                    let mut new_response = BytesMut::with_capacity(response.len() + count * 5);
+                    new_response.extend_from_slice(&bytes[..insert_at]);
+                    for _ in 0..count {
+                        new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                    }
+                    new_response.extend_from_slice(&bytes[insert_at..]);
+                    response = new_response;
+                    self.pending_parse_complete_for_describe = 0;
+                }
+            }
+
             // Insert pending CloseComplete messages after last CloseComplete from server
             if self.pending_close_complete > 0 {
                 let (new_response, inserted) = insert_close_complete_after_last_close_complete(
