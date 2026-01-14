@@ -4,6 +4,12 @@ title: Changelog
 
 # Changelog
 
+### 3.0.2 <small>Jan 14, 2026</small> { id="3.0.2" }
+
+**Bug Fixes:**
+
+- Fixed protocol mismatch for .NET clients (Npgsql) using named prepared statements with `Prepare()`: ParseComplete messages are now correctly inserted before ParameterDescription and NoData messages in the Describe flow, not just before BindComplete.
+
 ### 3.0.1 <small>Jan 14, 2026</small> { id="3.0.1" }
 
 **Bug Fixes:**
