@@ -477,4 +477,3 @@ fn test_insert_close_complete_after_last_only_ready_for_query() {
     let expected = [close_complete_msg(), ready_for_query_msg(b'I')].concat();
     assert_eq!(result.as_ref(), &expected[..]);
 }
-

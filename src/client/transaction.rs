@@ -21,6 +21,9 @@ use crate::utils::comments::SqlCommentParser;
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
 
+// Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
+const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+
 impl<S, T> Client<S, T>
 where
     S: tokio::io::AsyncRead + std::marker::Unpin,
@@ -604,9 +607,6 @@ where
                     // because it would insert between DataRow messages
                     && !server.data_available
                 {
-                    // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
-                    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
-
                     let mut prefixed_response = BytesMut::with_capacity(
                         new_response.len() + (self.pending_parse_complete as usize * 5),
                     );
@@ -630,9 +630,8 @@ where
             // Insert pending ParseComplete messages for Describe flow
             // (before ParameterDescription 't' or NoData 'n')
             if self.pending_parse_complete_for_describe > 0 && !server.data_available {
-                const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
                 let bytes = response.as_ref();
-                
+
                 // Find first ParameterDescription ('t') or NoData ('n') message
                 let mut pos = 0;
                 let mut insert_pos = None;
@@ -650,7 +649,7 @@ where
                     ]) as usize;
                     pos += 1 + msg_len;
                 }
-                
+
                 if let Some(insert_at) = insert_pos {
                     let count = self.pending_parse_complete_for_describe as usize;
                     let mut new_response = BytesMut::with_capacity(response.len() + count * 5);

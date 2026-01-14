@@ -633,12 +633,6 @@ pub fn server_parameter_message(key: &str, value: &str) -> BytesMut {
 }
 
 // Helper to check if message type needs ParseComplete before it
-// '2' = BindComplete
-// Note: We intentionally do NOT include 't' (ParameterDescription) or 'n' (NoData) here.
-// Those messages appear in Describe flow responses, but the pending_parse_complete counter
-// is only incremented when Parse is skipped due to caching. In batch operations,
-// the client sends Parse for each command, so we should only insert ParseComplete
-// before BindComplete messages that don't have a preceding ParseComplete.
 #[inline]
 fn needs_parse_complete(msg_type: u8) -> bool {
     msg_type == b'2'
