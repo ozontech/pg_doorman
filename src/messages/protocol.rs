@@ -11,6 +11,9 @@ use crate::errors::Error;
 use crate::messages::socket::{write_all, write_all_flush};
 use crate::messages::types::DataType;
 
+const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
+const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+
 /// Generate md5 password challenge.
 pub async fn md5_challenge<S>(stream: &mut S) -> Result<[u8; 4], Error>
 where
@@ -623,16 +626,26 @@ pub fn server_parameter_message(key: &str, value: &str) -> BytesMut {
     server_info
 }
 
-/// Insert ParseComplete messages before BindComplete messages that don't already have one.
+// Helper to check if message type needs ParseComplete before it
+// '2' = BindComplete, 't' = ParameterDescription, 'n' = NoData
+#[inline]
+fn needs_parse_complete(msg_type: u8) -> bool {
+    msg_type == b'2' || msg_type == b't' || msg_type == b'n'
+}
+
+/// Insert ParseComplete messages before BindComplete, ParameterDescription, or NoData messages
+/// that don't already have a preceding ParseComplete.
 /// This ensures proper message ordering in the PostgreSQL extended protocol.
+///
+/// Handles both:
+/// - Parse + Bind flow: ParseComplete before BindComplete ('2')
+/// - Parse + Describe flow: ParseComplete before ParameterDescription ('t') or NoData ('n')
+///
 /// Returns (modified buffer, number of ParseComplete messages inserted).
 pub fn insert_parse_complete_before_bind_complete(buffer: BytesMut, count: u32) -> (BytesMut, u32) {
     if count == 0 {
         return (buffer, 0);
     }
-
-    const PARSE_COMPLETE_SIZE: usize = 5; // '1' (1) + length (4)
-    const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
 
     let bytes = buffer.as_ref();
     let len = bytes.len();
@@ -654,7 +667,7 @@ pub fn insert_parse_complete_before_bind_complete(buffer: BytesMut, count: u32) 
                 bytes[pos + 4],
             ]) as usize;
 
-            if msg_type == b'2' && prev_msg_type != b'1' {
+            if needs_parse_complete(msg_type) && prev_msg_type != b'1' {
                 // Found position for insertion
                 let mut result = BytesMut::with_capacity(len + PARSE_COMPLETE_SIZE);
                 result.extend_from_slice(&bytes[..pos]);
@@ -690,8 +703,8 @@ pub fn insert_parse_complete_before_bind_complete(buffer: BytesMut, count: u32) 
             bytes[pos + 4],
         ]) as usize;
 
-        if msg_type == b'2' && prev_msg_type != b'1' {
-            // BindComplete without preceding ParseComplete
+        if needs_parse_complete(msg_type) && prev_msg_type != b'1' {
+            // BindComplete/ParameterDescription/NoData without preceding ParseComplete
             if num_positions < 8 {
                 bind_positions_stack[num_positions] = pos;
             } else {

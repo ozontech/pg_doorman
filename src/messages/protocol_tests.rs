@@ -36,6 +36,51 @@ fn command_complete_msg(tag: &str) -> Vec<u8> {
     msg
 }
 
+// Helper to create ParameterDescription message (response to Describe for statement)
+// Format: 't' + length (4) + param_count (2) + param_oids (4 each)
+fn parameter_description_msg(param_count: u16) -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.push(b't');
+    // length = 4 (self) + 2 (count) + 4 * param_count (oids)
+    let len = 4 + 2 + 4 * param_count as i32;
+    msg.extend_from_slice(&len.to_be_bytes());
+    msg.extend_from_slice(&param_count.to_be_bytes());
+    // Add dummy OIDs (int4 = 23) for each parameter
+    for _ in 0..param_count {
+        msg.extend_from_slice(&23i32.to_be_bytes());
+    }
+    msg
+}
+
+// Helper to create RowDescription message (response to Describe for statement/portal with columns)
+// Format: 'T' + length (4) + field_count (2) + fields...
+fn row_description_msg(field_count: u16) -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.push(b'T');
+    // For simplicity, create minimal fields with name "c" + null + table_oid(4) + col_attr(2) + type_oid(4) + type_len(2) + type_mod(4) + format(2)
+    // Each field: name(2 bytes "c\0") + 18 bytes = 20 bytes per field
+    let field_size = 2 + 4 + 2 + 4 + 2 + 4 + 2; // 20 bytes per field
+    let len = 4 + 2 + field_size * field_count as i32;
+    msg.extend_from_slice(&len.to_be_bytes());
+    msg.extend_from_slice(&field_count.to_be_bytes());
+    for _ in 0..field_count {
+        msg.push(b'c'); // field name
+        msg.push(0); // null terminator
+        msg.extend_from_slice(&0i32.to_be_bytes()); // table OID
+        msg.extend_from_slice(&0i16.to_be_bytes()); // column attribute number
+        msg.extend_from_slice(&23i32.to_be_bytes()); // type OID (int4)
+        msg.extend_from_slice(&4i16.to_be_bytes()); // type length
+        msg.extend_from_slice(&(-1i32).to_be_bytes()); // type modifier
+        msg.extend_from_slice(&0i16.to_be_bytes()); // format code (text)
+    }
+    msg
+}
+
+// Helper to create NoData message (response to Describe when no rows returned)
+fn no_data_msg() -> Vec<u8> {
+    vec![b'n', 0, 0, 0, 4]
+}
+
 #[test]
 fn test_insert_parse_complete_count_zero() {
     let buffer = BytesMut::from(&bind_complete_msg()[..]);
@@ -475,5 +520,151 @@ fn test_insert_close_complete_after_last_only_ready_for_query() {
 
     assert_eq!(inserted, 1);
     let expected = [close_complete_msg(), ready_for_query_msg(b'I')].concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+// Tests for ParseComplete insertion before ParameterDescription (Describe flow)
+
+#[test]
+fn test_insert_parse_complete_before_parameter_description() {
+    // Simulate Describe response: ParameterDescription + RowDescription + ReadyForQuery
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1));
+    buffer.extend_from_slice(&row_description_msg(1));
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 1);
+
+    assert_eq!(inserted, 1);
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(1),
+        row_description_msg(1),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_before_parameter_description_with_existing_parse() {
+    // ParseComplete already present before ParameterDescription
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parse_complete_msg());
+    buffer.extend_from_slice(&parameter_description_msg(2));
+    buffer.extend_from_slice(&row_description_msg(1));
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_bind_complete(buffer.clone(), 1);
+
+    // ParseComplete already present, no insertion needed
+    assert_eq!(inserted, 0);
+    assert_eq!(result.as_ref(), buffer.as_ref());
+}
+
+#[test]
+fn test_insert_parse_complete_before_no_data() {
+    // Simulate Describe response for statement that returns no rows: NoData + ReadyForQuery
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&no_data_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 1);
+
+    assert_eq!(inserted, 1);
+    let expected = [
+        parse_complete_msg(),
+        no_data_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_before_no_data_with_existing_parse() {
+    // ParseComplete already present before NoData
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parse_complete_msg());
+    buffer.extend_from_slice(&no_data_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_bind_complete(buffer.clone(), 1);
+
+    // ParseComplete already present, no insertion needed
+    assert_eq!(inserted, 0);
+    assert_eq!(result.as_ref(), buffer.as_ref());
+}
+
+#[test]
+fn test_insert_parse_complete_mixed_describe_and_bind() {
+    // Simulate mixed scenario: Describe response followed by Bind response
+    // This can happen in pipelined queries
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1)); // Needs ParseComplete
+    buffer.extend_from_slice(&row_description_msg(1));
+    buffer.extend_from_slice(&bind_complete_msg()); // Needs ParseComplete
+    buffer.extend_from_slice(&command_complete_msg("SELECT 1"));
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 2);
+
+    assert_eq!(inserted, 2);
+    let expected = [
+        parse_complete_msg(), // Inserted before ParameterDescription
+        parameter_description_msg(1),
+        row_description_msg(1),
+        parse_complete_msg(), // Inserted before BindComplete
+        bind_complete_msg(),
+        command_complete_msg("SELECT 1"),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_parameter_description_in_second_chunk() {
+    // Simulate scenario where ParameterDescription comes in a separate chunk
+    // This is the bug scenario: first chunk has other messages, second has ParameterDescription
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(0)); // No params
+    buffer.extend_from_slice(&row_description_msg(2));
+
+    let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 1);
+
+    assert_eq!(inserted, 1);
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(0),
+        row_description_msg(2),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_multiple_describes() {
+    // Multiple Describe responses in pipeline
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1)); // First Describe - needs ParseComplete
+    buffer.extend_from_slice(&row_description_msg(1));
+    buffer.extend_from_slice(&parameter_description_msg(2)); // Second Describe - needs ParseComplete
+    buffer.extend_from_slice(&no_data_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_bind_complete(buffer, 2);
+
+    assert_eq!(inserted, 2);
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(1),
+        row_description_msg(1),
+        parse_complete_msg(),
+        parameter_description_msg(2),
+        no_data_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
     assert_eq!(result.as_ref(), &expected[..]);
 }
