@@ -112,7 +112,7 @@ jobs:
           cd /tmp && tar xf rust.tar.gz && ./rust-*-x86_64-unknown-linux-gnu/install.sh
 
       - name: Import GPG key and verify passphrase
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'release' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PRIVATE_KEY_PASSWORD }}
@@ -160,7 +160,7 @@ jobs:
           ls -la rust-*.tar.gz
 
       - name: Build source packages for each Ubuntu version
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'release' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PRIVATE_KEY_PASSWORD }}
