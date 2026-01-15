@@ -1358,6 +1358,20 @@ pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String
         .insert(session_name.clone(), messages);
 }
 
+#[when(regex = r#"^we send Sync to session "([^"]+)" without waiting$"#)]
+pub async fn send_sync_to_session_without_waiting(
+    world: &mut DoormanWorld,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_sync().await.expect("Failed to send Sync");
+    // Don't wait for response - just send the Sync
+}
+
 #[when(regex = r#"^we close session "([^"]+)"$"#)]
 pub async fn close_session(world: &mut DoormanWorld, session_name: String) {
     world
