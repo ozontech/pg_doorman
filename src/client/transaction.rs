@@ -475,7 +475,9 @@ where
                             // Want to limit buffer size
                             if self.buffer.len() > BUFFER_FLUSH_THRESHOLD {
                                 // Forward the data to the server,
-                                server.send_and_flush(&self.buffer).await?;
+                                self.send_and_receive_loop(None, server)
+                                    .await
+                                    .inspect_err(|_| self.buffer.clear())?;
                                 self.buffer.clear();
                             }
                         }
@@ -487,7 +489,9 @@ where
                             // We may already have some copy data in the buffer, add this message to buffer
                             self.buffer.put(&message[..]);
 
-                            server.send_and_flush(&self.buffer).await?;
+                            self.send_and_receive_loop(None, server)
+                                .await
+                                .inspect_err(|_| self.buffer.clear())?;
 
                             // Clear the buffer
                             self.buffer.clear();
