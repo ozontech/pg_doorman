@@ -446,7 +446,9 @@ where
                                 server.set_async_mode(false);
                             }
 
-                            self.send_and_receive_loop(None, server).await?;
+                            self.send_and_receive_loop(None, server)
+                                .await
+                                .inspect_err(|_| self.buffer.clear())?;
 
                             self.stats.query();
                             server.stats.query(
