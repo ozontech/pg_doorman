@@ -4,6 +4,16 @@ title: Changelog
 
 # Changelog
 
+### 3.0.4 <small>Jan 15, 2026</small> { id="3.0.4" }
+
+**Bug Fixes:**
+
+- Fixed buffer handling for async clients using pipeline protocol (Flush command): when a client disconnects unexpectedly during batch operations, the server connection is now properly cleaned up before returning to the pool. This prevents the next client from receiving corrupted data or "prepared statement already exists" errors.
+
+**Testing:**
+
+- Added .NET client test for pipeline disconnect scenario (`pipeline_disconnect.cs`) to verify proper handling of client crashes during batch operations.
+
 ### 3.0.3 <small>Jan 15, 2026</small> { id="3.0.3" }
 
 **Bug Fixes:**
