@@ -176,3 +176,23 @@ Feature: .NET client tests
     And the command output should contain "Test 4 complete"
     And the command output should contain "Test 5 complete"
     And the command output should contain "describe_flow_cached complete"
+
+  @dotnet-aggressive-mixed
+  Scenario: Run .NET aggressive mixed tests (batch + prepared statements + extended protocol)
+    When I run shell command:
+      """
+      export DATABASE_URL="Host=127.0.0.1;Port=${DOORMAN_PORT};Database=example_db;Username=example_user_1;Password=test"
+      tests/dotnet/run_test.sh aggressive_mixed aggressive_mixed.cs
+      """
+    Then the command should succeed
+    And the command output should contain "Test 1 complete"
+    And the command output should contain "Test 2 complete"
+    And the command output should contain "Test 3 complete"
+    And the command output should contain "Test 4 complete"
+    And the command output should contain "Test 5 complete"
+    And the command output should contain "Test 6 complete"
+    And the command output should contain "Test 7 complete"
+    And the command output should contain "Test 8 complete"
+    And the command output should contain "Test 9 complete"
+    And the command output should contain "Test 10 complete"
+    And the command output should contain "aggressive_mixed complete"
