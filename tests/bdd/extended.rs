@@ -1359,10 +1359,7 @@ pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String
 }
 
 #[when(regex = r#"^we send Sync to session "([^"]+)" without waiting$"#)]
-pub async fn send_sync_to_session_without_waiting(
-    world: &mut DoormanWorld,
-    session_name: String,
-) {
+pub async fn send_sync_to_session_without_waiting(world: &mut DoormanWorld, session_name: String) {
     let conn = world
         .named_sessions
         .get_mut(&session_name)

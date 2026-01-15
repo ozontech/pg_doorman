@@ -532,9 +532,8 @@ where
                 self.release();
                 server.stats.wait_idle();
             } // release server.
-
             if !self.client_last_messages_in_tx.is_empty() {
-                self.stats.idle_write(); // go to idle_read if success.
+                self.stats.idle_write();
                 write_all_flush(&mut self.write, &self.client_last_messages_in_tx).await?;
                 self.client_last_messages_in_tx.clear();
             }

@@ -365,6 +365,18 @@ impl Server {
         self.is_aborted = false;
         self.in_copy_mode = false;
         self.use_savepoint = false;
+
+        // Clear server-level prepared statement cache when returning to pool.
+        // This ensures the next client will send Parse messages to the server,
+        // getting real ParseComplete responses instead of fake ones.
+        // The prepared statements remain on PostgreSQL server and will be reused
+        // (PostgreSQL will return "prepared statement already exists" error,
+        // which we handle by doing DEALLOCATE + Parse retry).
+        self.registering_prepared_statement.clear();
+        if let Some(ref mut cache) = self.prepared_statement_cache {
+            cache.clear();
+        }
+
         Ok(())
     }
 
