@@ -4,6 +4,17 @@ title: Changelog
 
 # Changelog
 
+### 3.0.3 <small>Jan 15, 2026</small> { id="3.0.3" }
+
+**Bug Fixes:**
+
+- Improved handling of Describe flow for cached prepared statements: added a separate counter (`pending_parse_complete_for_describe`) to correctly insert ParseComplete messages before ParameterDescription or NoData responses when Parse was skipped due to caching.
+
+**Testing:**
+
+- Added comprehensive .NET client tests for Describe flow with cached prepared statements (`describe_flow_cached.cs`).
+- Added aggressive mixed tests combining batch operations, prepared statements, and extended protocol (`aggressive_mixed.cs`).
+
 ### 3.0.2 <small>Jan 14, 2026</small> { id="3.0.2" }
 
 **Bug Fixes:**

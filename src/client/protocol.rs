@@ -287,6 +287,8 @@ where
 
         match self.prepared_statements.get(&lookup_key) {
             Some((rewritten_parse, _)) => {
+                // Clone what we need before any mutable borrows
+                let rewritten_parse = rewritten_parse.clone();
                 let describe = describe.rename(&rewritten_parse.name);
 
                 debug!(
@@ -299,6 +301,18 @@ where
                 if !self.async_client {
                     self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
                         .await?;
+                }
+
+                // If Parse was skipped (pending_parse_complete > 0), we need to insert ParseComplete
+                // before ParameterDescription in the response. We use a separate counter for this
+                // because we can't send Parse again (statement already exists on server).
+                if self.pending_parse_complete > 0 {
+                    debug!(
+                        "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
+                        rewritten_parse.name
+                    );
+                    self.pending_parse_complete_for_describe += 1;
+                    self.pending_parse_complete -= 1;
                 }
 
                 // Add directly to buffer
@@ -348,5 +362,6 @@ where
         self.buffer.clear();
         self.pending_close_complete = 0;
         self.pending_parse_complete = 0;
+        self.pending_parse_complete_for_describe = 0;
     }
 }

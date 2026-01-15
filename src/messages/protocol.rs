@@ -149,8 +149,9 @@ where
 }
 
 /// Create a simple query message.
+#[inline]
 pub fn simple_query(query: &str) -> BytesMut {
-    let mut bytes = BytesMut::new();
+    let mut bytes = BytesMut::with_capacity(1 + 4 + query.len() + 1);
     bytes.put_u8(b'Q');
     bytes.put_i32(4 + query.len() as i32 + 1);
     bytes.put_slice(query.as_bytes());
@@ -523,8 +524,9 @@ pub fn data_row_nullable(row: &Vec<Option<String>>) -> BytesMut {
 }
 
 /// Create a command complete message.
+#[inline]
 pub fn command_complete(command: &str) -> BytesMut {
-    let mut res = BytesMut::new();
+    let mut res = BytesMut::with_capacity(1 + 4 + command.len() + 1);
     res.put_u8(b'C');
     res.put_i32(command.len() as i32 + 4 + 1);
     res.put_slice(command.as_bytes());
@@ -558,24 +560,27 @@ pub fn notify(channel: &str, payload: String) -> BytesMut {
 }
 
 /// Create a flush message.
+#[inline]
 pub fn flush() -> BytesMut {
-    let mut bytes = BytesMut::new();
+    let mut bytes = BytesMut::with_capacity(5);
     bytes.put_u8(b'H');
     bytes.put_i32(4);
     bytes
 }
 
 /// Create a sync message.
+#[inline]
 pub fn sync() -> BytesMut {
-    let mut bytes = BytesMut::new();
+    let mut bytes = BytesMut::with_capacity(5);
     bytes.put_u8(b'S');
     bytes.put_i32(4);
     bytes
 }
 
 /// Create a parse complete message.
+#[inline]
 pub fn parse_complete() -> BytesMut {
-    let mut bytes = BytesMut::new();
+    let mut bytes = BytesMut::with_capacity(5);
     bytes.put_u8(b'1');
     bytes.put_i32(4);
     bytes
@@ -594,8 +599,10 @@ pub fn check_query_response() -> BytesMut {
 }
 
 /// Create a deallocate response message.
+#[inline]
 pub fn deallocate_response() -> BytesMut {
-    let mut bytes = BytesMut::new();
+    // ParseComplete(5) + CommandComplete("DEALLOCATE" = 10 + 1 + 4 + 1 = 16) + ReadyForQuery(6) = 27
+    let mut bytes = BytesMut::with_capacity(27);
     bytes.put(parse_complete());
     bytes.put(command_complete("DEALLOCATE"));
     bytes.put(ready_for_query(false));
@@ -603,37 +610,32 @@ pub fn deallocate_response() -> BytesMut {
 }
 
 /// Create a ready for query message.
+#[inline]
 pub fn ready_for_query(in_transaction: bool) -> BytesMut {
-    let mut bytes = BytesMut::new();
+    let mut bytes = BytesMut::with_capacity(6);
     bytes.put_u8(b'Z');
     bytes.put_i32(5);
-    if in_transaction {
-        bytes.put_u8(b'T');
-    } else {
-        bytes.put_u8(b'I');
-    }
-
+    bytes.put_u8(if in_transaction { b'T' } else { b'I' });
     bytes
 }
 
 /// Create a server parameter message.
+#[inline]
 pub fn server_parameter_message(key: &str, value: &str) -> BytesMut {
-    let mut server_info = BytesMut::new();
+    let mut server_info = BytesMut::with_capacity(1 + 4 + key.len() + 1 + value.len() + 1);
     server_info.put_u8(b'S');
     server_info.put_i32(4 + key.len() as i32 + 1 + value.len() as i32 + 1);
     server_info.put_slice(key.as_bytes());
-    server_info.put_bytes(0, 1);
+    server_info.put_u8(0);
     server_info.put_slice(value.as_bytes());
-    server_info.put_bytes(0, 1);
-
+    server_info.put_u8(0);
     server_info
 }
 
 // Helper to check if message type needs ParseComplete before it
-// '2' = BindComplete, 't' = ParameterDescription, 'n' = NoData
 #[inline]
 fn needs_parse_complete(msg_type: u8) -> bool {
-    msg_type == b'2' || msg_type == b't' || msg_type == b'n'
+    msg_type == b'2'
 }
 
 /// Insert ParseComplete messages before BindComplete, ParameterDescription, or NoData messages
@@ -777,10 +779,10 @@ pub fn insert_close_complete_after_last_close_complete(
         ]) as usize;
 
         if msg_type == b'3' {
-            last_close_complete_pos = Some(pos + 1 + 4 + (msg_len - 4));
+            last_close_complete_pos = Some(pos + 1 + msg_len);
         }
 
-        pos += 1 + 4 + (msg_len - 4);
+        pos += 1 + msg_len;
     }
 
     let insert_size = CLOSE_COMPLETE_SIZE * count as usize;

@@ -52,6 +52,10 @@ pub struct Client<S, T> {
     /// Counter for pending ParseComplete messages (for cached prepared statements)
     pub(crate) pending_parse_complete: u32,
 
+    /// Counter for pending ParseComplete messages specifically for Describe flow
+    /// (when Parse was skipped but Describe needs ParseComplete before ParameterDescription)
+    pub(crate) pending_parse_complete_for_describe: u32,
+
     /// Address
     pub(crate) addr: std::net::SocketAddr,
 
