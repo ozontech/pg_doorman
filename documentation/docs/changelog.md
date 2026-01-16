@@ -8,13 +8,7 @@ title: Changelog
 
 **Testing:**
 
-- **Integration fuzz testing framework**: Added comprehensive BDD-based fuzz tests (`@fuzz` tag) that verify pg_doorman's resilience to malformed PostgreSQL protocol messages. Tests include:
-    - Broken message headers (invalid length, negative length, truncated messages)
-    - Invalid message types (unknown types, server-only messages sent by client, null bytes)
-    - Gigantic message length claims (256MB+)
-    - Protocol violations (Execute without Bind, Bind to nonexistent statement)
-    - Random garbage data attacks
-    - Connection abort scenarios (client disconnects after Parse/Bind/Execute)
+- **Integration fuzz testing framework**: Added comprehensive BDD-based fuzz tests (`@fuzz` tag) that verify pg_doorman's resilience to malformed PostgreSQL protocol messages.
 - All fuzz tests connect and authenticate first, then send malformed data to test post-authentication resilience.
 
 **CI/CD:**
