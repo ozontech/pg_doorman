@@ -639,15 +639,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#3.0.6" class="md-nav__link">
-    <span class="md-ellipsis">
-      3.0.6 Jan 16, 2026
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#3.0.5" class="md-nav__link">
     <span class="md-ellipsis">
       3.0.5 Jan 16, 2026
@@ -1073,15 +1064,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#3.0.6" class="md-nav__link">
-    <span class="md-ellipsis">
-      3.0.6 Jan 16, 2026
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#3.0.5" class="md-nav__link">
     <span class="md-ellipsis">
       3.0.5 Jan 16, 2026
@@ -1335,7 +1317,11 @@
 
 
 <h1 id="changelog">Changelog</h1>
-<h3 id="3.0.6">3.0.6 <small>Jan 16, 2026</small></h3>
+<h3 id="3.0.5">3.0.5 <small>Jan 16, 2026</small></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed panic (<code>capacity overflow</code>) in startup message handling when receiving malformed messages with invalid length (less than 8 bytes or exceeding 10MB). Now gracefully rejects such connections with <code>ClientBadStartup</code> error.</li>
+</ul>
 <p><strong>Testing:</strong></p>
 <ul>
 <li><strong>Integration fuzz testing framework</strong>: Added comprehensive BDD-based fuzz tests (<code>@fuzz</code> tag) that verify pg_doorman's resilience to malformed PostgreSQL protocol messages.</li>
@@ -1344,11 +1330,6 @@
 <p><strong>CI/CD:</strong></p>
 <ul>
 <li>Added dedicated fuzz test job in GitHub Actions workflow (without retries, as fuzz tests should not be flaky).</li>
-</ul>
-<h3 id="3.0.5">3.0.5 <small>Jan 16, 2026</small></h3>
-<p><strong>Bug Fixes:</strong></p>
-<ul>
-<li>Fixed panic (<code>capacity overflow</code>) in startup message handling when receiving malformed messages with invalid length (less than 8 bytes or exceeding 10MB). Now gracefully rejects such connections with <code>ClientBadStartup</code> error.</li>
 </ul>
 <h3 id="3.0.4">3.0.4 <small>Jan 16, 2026</small></h3>
 <p><strong>New Features:</strong></p>
