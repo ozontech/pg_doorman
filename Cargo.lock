@@ -1748,7 +1748,7 @@ checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
 name = "pg_doorman"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "ahash",
  "arc-swap",

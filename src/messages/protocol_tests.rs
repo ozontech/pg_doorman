@@ -477,3 +477,211 @@ fn test_insert_close_complete_after_last_only_ready_for_query() {
     let expected = [close_complete_msg(), ready_for_query_msg(b'I')].concat();
     assert_eq!(result.as_ref(), &expected[..]);
 }
+
+// ============================================================================
+// Tests for insert_parse_complete_before_parameter_description
+// ============================================================================
+
+use super::protocol::insert_parse_complete_before_parameter_description;
+
+// Helper to create ParameterDescription message ('t')
+// Format: 't' + len(4) + num_params(2) + param_oids(4 * num_params)
+fn parameter_description_msg(num_params: u16) -> Vec<u8> {
+    let mut msg = Vec::new();
+    msg.push(b't');
+    let len = 4 + 2 + (num_params as usize * 4);
+    msg.extend_from_slice(&(len as i32).to_be_bytes());
+    msg.extend_from_slice(&num_params.to_be_bytes());
+    for _ in 0..num_params {
+        msg.extend_from_slice(&23i32.to_be_bytes()); // INT4 OID
+    }
+    msg
+}
+
+// Helper to create NoData message ('n')
+fn no_data_msg() -> Vec<u8> {
+    vec![b'n', 0, 0, 0, 4]
+}
+
+// Helper to create RowDescription message ('T')
+fn row_description_msg() -> Vec<u8> {
+    // Minimal RowDescription with 0 columns
+    vec![b'T', 0, 0, 0, 6, 0, 0]
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_count_zero() {
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer.clone(), 0);
+
+    assert_eq!(inserted, 0);
+    assert_eq!(result.as_ref(), buffer.as_ref());
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_single() {
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(2));
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 1);
+
+    assert_eq!(inserted, 1);
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(2),
+        row_description_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_before_no_data_single() {
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&no_data_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 1);
+
+    assert_eq!(inserted, 1);
+    let expected = [
+        parse_complete_msg(),
+        no_data_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_multiple() {
+    // Simulate multiple Describe responses: [t, T, t, T, Z]
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1));
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&parameter_description_msg(2));
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 2);
+
+    assert_eq!(inserted, 2);
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(1),
+        row_description_msg(),
+        parse_complete_msg(),
+        parameter_description_msg(2),
+        row_description_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_mixed_t_and_n() {
+    // Simulate mixed responses: [t, T, n, Z] (one with results, one without)
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1));
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&no_data_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 2);
+
+    assert_eq!(inserted, 2);
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(1),
+        row_description_msg(),
+        parse_complete_msg(),
+        no_data_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_count_exceeds_available() {
+    // Request 5 insertions but only 2 't'/'n' messages available
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1));
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&no_data_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 5);
+
+    assert_eq!(inserted, 2); // Only 2 available
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(1),
+        row_description_msg(),
+        parse_complete_msg(),
+        no_data_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_empty_buffer() {
+    let buffer = BytesMut::new();
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 1);
+
+    assert_eq!(inserted, 0);
+    assert_eq!(result.len(), 0);
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_no_t_or_n() {
+    // Buffer with only RowDescription and ReadyForQuery (no 't' or 'n')
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer.clone(), 1);
+
+    assert_eq!(inserted, 0);
+    assert_eq!(result.as_ref(), buffer.as_ref());
+}
+
+#[test]
+fn test_insert_parse_complete_before_param_desc_complex_scenario() {
+    // Simulate real Describe flow for 3 cached prepared statements:
+    // Server responds with [t, T, t, T, t, n, Z] for 3 Describe commands
+    let mut buffer = BytesMut::new();
+    buffer.extend_from_slice(&parameter_description_msg(1)); // Describe 1: has params
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&parameter_description_msg(0)); // Describe 2: no params
+    buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&parameter_description_msg(2)); // Describe 3: has params, no results
+    buffer.extend_from_slice(&no_data_msg());
+    buffer.extend_from_slice(&ready_for_query_msg(b'I'));
+
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 3);
+
+    assert_eq!(inserted, 3);
+    let expected = [
+        parse_complete_msg(),
+        parameter_description_msg(1),
+        row_description_msg(),
+        parse_complete_msg(),
+        parameter_description_msg(0),
+        row_description_msg(),
+        parse_complete_msg(),
+        parameter_description_msg(2),
+        no_data_msg(),
+        ready_for_query_msg(b'I'),
+    ]
+    .concat();
+    assert_eq!(result.as_ref(), &expected[..]);
+}

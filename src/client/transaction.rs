@@ -11,7 +11,8 @@ use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
     error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, read_message, ready_for_query, write_all_flush,
+    insert_parse_complete_before_bind_complete, insert_parse_complete_before_parameter_description,
+    read_message, ready_for_query, write_all_flush,
 };
 use crate::pool::{ConnectionPool, CANCELED_PIDS};
 use crate::server::Server;
@@ -635,44 +636,13 @@ where
 
             // Insert pending ParseComplete messages for Describe flow
             // (before each ParameterDescription 't' or NoData 'n')
-            // We need to insert ONE ParseComplete before EACH 't' or 'n', not all at once
             if self.pending_parse_complete_for_describe > 0 && !server.data_available {
-                let bytes = response.as_ref();
-                let mut insert_positions = Vec::new();
-
-                // Find all ParameterDescription ('t') or NoData ('n') messages
-                let mut pos = 0;
-                while pos + 5 <= bytes.len() && insert_positions.len() < self.pending_parse_complete_for_describe as usize {
-                    let msg_type = bytes[pos];
-                    if msg_type == b't' || msg_type == b'n' {
-                        insert_positions.push(pos);
-                    }
-                    let msg_len = i32::from_be_bytes([
-                        bytes[pos + 1],
-                        bytes[pos + 2],
-                        bytes[pos + 3],
-                        bytes[pos + 4],
-                    ]) as usize;
-                    pos += 1 + msg_len;
-                }
-
-                if !insert_positions.is_empty() {
-                    let count = insert_positions.len();
-                    let mut new_response = BytesMut::with_capacity(response.len() + count * 5);
-                    let mut last_pos = 0;
-
-                    // Insert ParseComplete before each found position
-                    for insert_at in insert_positions {
-                        new_response.extend_from_slice(&bytes[last_pos..insert_at]);
-                        new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                        last_pos = insert_at;
-                    }
-
-                    // Append remaining bytes
-                    new_response.extend_from_slice(&bytes[last_pos..]);
-                    response = new_response;
-                    self.pending_parse_complete_for_describe -= count as u32;
-                }
+                let (new_response, inserted) = insert_parse_complete_before_parameter_description(
+                    response,
+                    self.pending_parse_complete_for_describe,
+                );
+                response = new_response;
+                self.pending_parse_complete_for_describe -= inserted;
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server
