@@ -47,8 +47,14 @@ where
         Err(_) => return Err(Error::ClientBadStartup),
     };
 
+    // Validate message length: minimum is 8 bytes (4 for length field + 4 for protocol code).
+    // Also reject negative or excessively large lengths to prevent overflow/DoS.
+    if !(8..=8 * 1024).contains(&len) {
+        return Err(Error::ClientBadStartup);
+    }
+
     // Get the rest of the message.
-    let mut startup = vec![0u8; len as usize - 4];
+    let mut startup = vec![0u8; (len - 4) as usize];
     match stream.read_exact(&mut startup).await {
         Ok(_) => (),
         Err(_) => return Err(Error::ClientBadStartup),

@@ -1,5 +1,7 @@
 mod doorman_helper;
 mod extended;
+mod fuzz_client;
+mod fuzz_helper;
 mod odyssey_helper;
 mod pg_connection;
 mod pgbench_helper;
