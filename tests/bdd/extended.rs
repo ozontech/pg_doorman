@@ -1276,6 +1276,7 @@ pub async fn compare_named_backend_pid_with_initial(
 // Steps for prepared statements cache tests
 
 #[when(regex = r#"^we send Parse "([^"]*)" with query "([^"]+)" to session "([^"]+)"$"#)]
+#[then(regex = r#"^we send Parse "([^"]*)" with query "([^"]+)" to session "([^"]+)"$"#)]
 pub async fn send_parse_to_session(
     world: &mut DoormanWorld,
     name: String,
@@ -1293,6 +1294,9 @@ pub async fn send_parse_to_session(
 }
 
 #[when(
+    regex = r#"^we send Bind "([^"]*)" to "([^"]*)" with params "([^"]*)" to session "([^"]+)"$"#
+)]
+#[then(
     regex = r#"^we send Bind "([^"]*)" to "([^"]*)" with params "([^"]*)" to session "([^"]+)"$"#
 )]
 pub async fn send_bind_to_session(
@@ -1323,6 +1327,7 @@ pub async fn send_bind_to_session(
 }
 
 #[when(regex = r#"^we send Execute "([^"]*)" to session "([^"]+)"$"#)]
+#[then(regex = r#"^we send Execute "([^"]*)" to session "([^"]+)"$"#)]
 pub async fn send_execute_to_session(
     world: &mut DoormanWorld,
     portal: String,
@@ -1339,6 +1344,7 @@ pub async fn send_execute_to_session(
 }
 
 #[when(regex = r#"^we send Sync to session "([^"]+)"$"#)]
+#[then(regex = r#"^we send Sync to session "([^"]+)"$"#)]
 pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String) {
     let conn = world
         .named_sessions

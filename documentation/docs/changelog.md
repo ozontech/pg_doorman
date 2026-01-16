@@ -4,6 +4,29 @@ title: Changelog
 
 # Changelog
 
+### 3.0.6 <small>Jan 16, 2026</small> { id="3.0.6" }
+
+**Testing:**
+
+- **Integration fuzz testing framework**: Added comprehensive BDD-based fuzz tests (`@fuzz` tag) that verify pg_doorman's resilience to malformed PostgreSQL protocol messages. Tests include:
+    - Broken message headers (invalid length, negative length, truncated messages)
+    - Invalid message types (unknown types, server-only messages sent by client, null bytes)
+    - Gigantic message length claims (256MB+)
+    - Protocol violations (Execute without Bind, Bind to nonexistent statement)
+    - Random garbage data attacks
+    - Connection abort scenarios (client disconnects after Parse/Bind/Execute)
+- All fuzz tests connect and authenticate first, then send malformed data to test post-authentication resilience.
+
+**CI/CD:**
+
+- Added dedicated fuzz test job in GitHub Actions workflow (without retries, as fuzz tests should not be flaky).
+
+### 3.0.5 <small>Jan 16, 2026</small> { id="3.0.5" }
+
+**Bug Fixes:**
+
+- Fixed panic (`capacity overflow`) in startup message handling when receiving malformed messages with invalid length (less than 8 bytes or exceeding 10MB). Now gracefully rejects such connections with `ClientBadStartup` error.
+
 ### 3.0.4 <small>Jan 16, 2026</small> { id="3.0.4" }
 
 **New Features:**

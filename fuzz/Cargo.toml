@@ -1,0 +1,29 @@
+[package]
+name = "pg_doorman-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1.10"
+
+[dependencies.pg_doorman]
+path = ".."
+
+[[bin]]
+name = "fuzz_target_1"
+path = "fuzz_targets/fuzz_target_1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parse_startup"
+path = "fuzz_targets/fuzz_parse_startup.rs"
+test = false
+doc = false
+bench = false
