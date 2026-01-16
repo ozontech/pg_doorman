@@ -634,18 +634,18 @@ where
             }
 
             // Insert pending ParseComplete messages for Describe flow
-            // (before ParameterDescription 't' or NoData 'n')
+            // (before each ParameterDescription 't' or NoData 'n')
+            // We need to insert ONE ParseComplete before EACH 't' or 'n', not all at once
             if self.pending_parse_complete_for_describe > 0 && !server.data_available {
                 let bytes = response.as_ref();
+                let mut insert_positions = Vec::new();
 
-                // Find first ParameterDescription ('t') or NoData ('n') message
+                // Find all ParameterDescription ('t') or NoData ('n') messages
                 let mut pos = 0;
-                let mut insert_pos = None;
-                while pos + 5 <= bytes.len() {
+                while pos + 5 <= bytes.len() && insert_positions.len() < self.pending_parse_complete_for_describe as usize {
                     let msg_type = bytes[pos];
                     if msg_type == b't' || msg_type == b'n' {
-                        insert_pos = Some(pos);
-                        break;
+                        insert_positions.push(pos);
                     }
                     let msg_len = i32::from_be_bytes([
                         bytes[pos + 1],
@@ -656,16 +656,22 @@ where
                     pos += 1 + msg_len;
                 }
 
-                if let Some(insert_at) = insert_pos {
-                    let count = self.pending_parse_complete_for_describe as usize;
+                if !insert_positions.is_empty() {
+                    let count = insert_positions.len();
                     let mut new_response = BytesMut::with_capacity(response.len() + count * 5);
-                    new_response.extend_from_slice(&bytes[..insert_at]);
-                    for _ in 0..count {
+                    let mut last_pos = 0;
+
+                    // Insert ParseComplete before each found position
+                    for insert_at in insert_positions {
+                        new_response.extend_from_slice(&bytes[last_pos..insert_at]);
                         new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                        last_pos = insert_at;
                     }
-                    new_response.extend_from_slice(&bytes[insert_at..]);
+
+                    // Append remaining bytes
+                    new_response.extend_from_slice(&bytes[last_pos..]);
                     response = new_response;
-                    self.pending_parse_complete_for_describe = 0;
+                    self.pending_parse_complete_for_describe -= count as u32;
                 }
             }
 
@@ -684,11 +690,16 @@ where
 
             // Fast path: early release check before expensive operations
             // This is the most common case in transaction mode
+            // Don't use fast_release when there are pending prepared statement operations
+            // to avoid protocol violations if client disconnects before receiving the response
             if can_fast_release
                 && !server.is_data_available()
                 && !server.in_transaction()
                 && !server.in_copy_mode()
                 && !server.is_async()
+                && self.pending_parse_complete == 0
+                && self.pending_parse_complete_for_describe == 0
+                && self.pending_close_complete == 0
             {
                 self.client_last_messages_in_tx.put(&response[..]);
                 break;
