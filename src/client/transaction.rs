@@ -16,6 +16,7 @@ use crate::messages::{
 use crate::pool::{ConnectionPool, CANCELED_PIDS};
 use crate::server::Server;
 use crate::utils::comments::SqlCommentParser;
+use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 
 /// Buffer flush threshold in bytes (8 KiB).
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
@@ -568,6 +569,9 @@ where
             .send_and_flush_timeout(message, Duration::from_secs(5))
             .await?;
 
+        // Debug log: client -> server
+        log_client_to_server(&self.addr.to_string(), server.get_process_id(), message);
+
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
 
@@ -591,6 +595,9 @@ where
                     return Err(err);
                 }
             };
+
+            // Debug log: server -> client
+            log_server_to_client(&self.addr.to_string(), server.get_process_id(), &response);
 
             // Insert pending ParseComplete messages before BindComplete
             // If no BindComplete found, insert at the beginning of response
