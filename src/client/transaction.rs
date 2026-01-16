@@ -697,6 +697,12 @@ where
             // Write response to client
             self.stats.active_write();
             if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
+                warn!(
+                    "Write to client {} failed: {:?}, draining server [{}] data",
+                    self.addr,
+                    err_write,
+                    server.get_process_id()
+                );
                 server.wait_available().await;
                 if server.is_async() || server.in_copy_mode() {
                     server.mark_bad(
