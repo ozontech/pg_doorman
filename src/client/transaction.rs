@@ -96,6 +96,7 @@ where
             match code {
                 // Terminate
                 'X' => {
+                    debug!("Client {} sent Terminate [X]", self.addr);
                     self.stats.disconnect();
                     return Ok(());
                 }
@@ -193,6 +194,7 @@ where
                 Err(err) => return self.process_error(err).await,
             };
             if message[0] as char == 'X' {
+                debug!("Client {} sent Terminate [X]", self.addr);
                 self.stats.disconnect();
                 return Ok(());
             }

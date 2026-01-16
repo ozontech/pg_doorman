@@ -176,8 +176,11 @@ pub fn extract_message_types(buffer: &[u8]) -> String {
 
         let msg_type = buffer[pos] as char;
 
-        // Validate message type is a printable ASCII character
-        if !msg_type.is_ascii_alphabetic() && msg_type != '1' && msg_type != '2' && msg_type != '3' {
+        // Validate message type is a valid PostgreSQL protocol message type
+        // Frontend messages: B, C, c, d, D, E, F, f, H, P, p, Q, S, X
+        // Backend messages: 1, 2, 3, A, C, c, d, D, E, G, H, I, K, n, N, R, s, S, t, T, V, W, Z
+        // We accept any printable ASCII character to be flexible
+        if !msg_type.is_ascii_graphic() {
             // Invalid message type, stop parsing
             break;
         }
