@@ -1,5 +1,6 @@
 pub mod comments;
 pub mod core_affinity;
+pub mod debug_messages;
 pub mod rate_limit;
 
 /// Format chrono::Duration to be more human-friendly.

@@ -11,11 +11,13 @@ use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
     error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, read_message, ready_for_query, write_all_flush,
+    insert_parse_complete_before_bind_complete, insert_parse_complete_before_parameter_description,
+    read_message, ready_for_query, write_all_flush,
 };
 use crate::pool::{ConnectionPool, CANCELED_PIDS};
 use crate::server::Server;
 use crate::utils::comments::SqlCommentParser;
+use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 
 /// Buffer flush threshold in bytes (8 KiB).
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
@@ -95,6 +97,7 @@ where
             match code {
                 // Terminate
                 'X' => {
+                    debug!("Client {} sent Terminate [X]", self.addr);
                     self.stats.disconnect();
                     return Ok(());
                 }
@@ -192,6 +195,7 @@ where
                 Err(err) => return self.process_error(err).await,
             };
             if message[0] as char == 'X' {
+                debug!("Client {} sent Terminate [X]", self.addr);
                 self.stats.disconnect();
                 return Ok(());
             }
@@ -568,6 +572,9 @@ where
             .send_and_flush_timeout(message, Duration::from_secs(5))
             .await?;
 
+        // Debug log: client -> server
+        log_client_to_server(&self.addr.to_string(), server.get_process_id(), message);
+
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
 
@@ -628,39 +635,14 @@ where
             }
 
             // Insert pending ParseComplete messages for Describe flow
-            // (before ParameterDescription 't' or NoData 'n')
+            // (before each ParameterDescription 't' or NoData 'n')
             if self.pending_parse_complete_for_describe > 0 && !server.data_available {
-                let bytes = response.as_ref();
-
-                // Find first ParameterDescription ('t') or NoData ('n') message
-                let mut pos = 0;
-                let mut insert_pos = None;
-                while pos + 5 <= bytes.len() {
-                    let msg_type = bytes[pos];
-                    if msg_type == b't' || msg_type == b'n' {
-                        insert_pos = Some(pos);
-                        break;
-                    }
-                    let msg_len = i32::from_be_bytes([
-                        bytes[pos + 1],
-                        bytes[pos + 2],
-                        bytes[pos + 3],
-                        bytes[pos + 4],
-                    ]) as usize;
-                    pos += 1 + msg_len;
-                }
-
-                if let Some(insert_at) = insert_pos {
-                    let count = self.pending_parse_complete_for_describe as usize;
-                    let mut new_response = BytesMut::with_capacity(response.len() + count * 5);
-                    new_response.extend_from_slice(&bytes[..insert_at]);
-                    for _ in 0..count {
-                        new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                    }
-                    new_response.extend_from_slice(&bytes[insert_at..]);
-                    response = new_response;
-                    self.pending_parse_complete_for_describe = 0;
-                }
+                let (new_response, inserted) = insert_parse_complete_before_parameter_description(
+                    response,
+                    self.pending_parse_complete_for_describe,
+                );
+                response = new_response;
+                self.pending_parse_complete_for_describe -= inserted;
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server
@@ -673,13 +655,21 @@ where
                 self.pending_close_complete -= inserted;
             }
 
+            // Debug log: server -> client (after all modifications to show what client actually receives)
+            log_server_to_client(&self.addr.to_string(), server.get_process_id(), &response);
+
             // Fast path: early release check before expensive operations
             // This is the most common case in transaction mode
+            // Don't use fast_release when there are pending prepared statement operations
+            // to avoid protocol violations if client disconnects before receiving the response
             if can_fast_release
                 && !server.is_data_available()
                 && !server.in_transaction()
                 && !server.in_copy_mode()
                 && !server.is_async()
+                && self.pending_parse_complete == 0
+                && self.pending_parse_complete_for_describe == 0
+                && self.pending_close_complete == 0
             {
                 self.client_last_messages_in_tx.put(&response[..]);
                 break;
@@ -688,6 +678,12 @@ where
             // Write response to client
             self.stats.active_write();
             if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
+                warn!(
+                    "Write to client {} failed: {:?}, draining server [{}] data",
+                    self.addr,
+                    err_write,
+                    server.get_process_id()
+                );
                 server.wait_available().await;
                 if server.is_async() || server.in_copy_mode() {
                     server.mark_bad(

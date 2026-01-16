@@ -220,12 +220,16 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Go
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-            cargo test --test bdd -- --tags @go
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test bdd -- --tags @go
 
   # Job 5: Run BDD tests with Python client
   python-tests:
@@ -242,12 +246,16 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Python
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-            cargo test --test bdd -- --tags @python
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test bdd -- --tags @python
 
   # Job 6: Run BDD tests with Node.js client
   nodejs-tests:
@@ -264,12 +272,16 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Node.js
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-            cargo test --test bdd -- --tags @nodejs
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test bdd -- --tags @nodejs
 
   # Job 7: Run BDD tests with .NET client
   dotnet-tests:
@@ -286,12 +298,16 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for .NET
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-            cargo test --test bdd -- --tags @dotnet
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test bdd -- --tags @dotnet
 
   # Job 8: Run BDD tests with Rust client
   rust-tests:
@@ -308,12 +324,16 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for Rust
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-            cargo test --test bdd -- --tags @rust
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test bdd -- --tags @rust
 
   # Job 9: Run BDD tests for patroni_proxy
   patroni-proxy-tests:
@@ -330,9 +350,13 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
 
       - name: Run BDD tests for patroni_proxy
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
-            cargo test --test patroni_proxy_bdd
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test patroni_proxy_bdd

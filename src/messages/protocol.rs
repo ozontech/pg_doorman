@@ -813,6 +813,56 @@ pub fn insert_close_complete_after_last_close_complete(
     }
 }
 
+/// Insert ParseComplete messages before each ParameterDescription ('t') or NoData ('n') message.
+/// This is used for the Describe flow when Parse was skipped due to caching.
+/// Returns (modified_buffer, inserted_count).
+pub fn insert_parse_complete_before_parameter_description(
+    buffer: BytesMut,
+    count: u32,
+) -> (BytesMut, u32) {
+    if count == 0 {
+        return (buffer, 0);
+    }
+
+    let bytes = buffer.as_ref();
+    let mut insert_positions = Vec::new();
+
+    // Find all ParameterDescription ('t') or NoData ('n') messages
+    let mut pos = 0;
+    while pos + 5 <= bytes.len() && insert_positions.len() < count as usize {
+        let msg_type = bytes[pos];
+        if msg_type == b't' || msg_type == b'n' {
+            insert_positions.push(pos);
+        }
+        let msg_len = i32::from_be_bytes([
+            bytes[pos + 1],
+            bytes[pos + 2],
+            bytes[pos + 3],
+            bytes[pos + 4],
+        ]) as usize;
+        pos += 1 + msg_len;
+    }
+
+    if insert_positions.is_empty() {
+        return (buffer, 0);
+    }
+
+    let inserted_count = insert_positions.len();
+    let mut result = BytesMut::with_capacity(buffer.len() + inserted_count * PARSE_COMPLETE_SIZE);
+    let mut last_pos = 0;
+
+    // Insert ParseComplete before each found position
+    for insert_at in insert_positions {
+        result.extend_from_slice(&bytes[last_pos..insert_at]);
+        result.extend_from_slice(&PARSE_COMPLETE_MSG);
+        last_pos = insert_at;
+    }
+
+    // Append remaining bytes
+    result.extend_from_slice(&bytes[last_pos..]);
+    (result, inserted_count as u32)
+}
+
 /// Insert CloseComplete messages before ReadyForQuery in the response buffer.
 /// This ensures proper message ordering in the PostgreSQL extended protocol.
 pub fn insert_close_complete_before_ready_for_query(mut buffer: BytesMut, count: u32) -> BytesMut {

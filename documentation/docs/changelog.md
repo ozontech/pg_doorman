@@ -4,6 +4,18 @@ title: Changelog
 
 # Changelog
 
+### 3.0.4 <small>Jan 16, 2026</small> { id="3.0.4" }
+
+**New Features:**
+
+- **Enhanced DEBUG logging for PostgreSQL protocol messages**: Added grouped debug logging that displays message types in a compact format (e.g., `[P(stmt1),B,D,E,S]` or `[3xD,C,Z]`). Messages are buffered and flushed every 100ms or 100 messages to reduce log noise.
+- **Protocol violation detection**: Added real-time protocol state tracking that detects and warns about protocol violations (e.g., receiving ParseComplete when no Parse was pending). Helps diagnose client-server synchronization issues.
+
+**Bug Fixes:**
+
+- Fixed potential protocol violation when client disconnects during batch operations with cached prepared statements: disabled fast_release optimization when there are pending prepared statement operations.
+- Fixed ParseComplete insertion for Describe flow: now correctly inserts one ParseComplete before each ParameterDescription ('t') or NoData ('n') message instead of inserting all at once.
+
 ### 3.0.3 <small>Jan 15, 2026</small> { id="3.0.3" }
 
 **Bug Fixes:**
