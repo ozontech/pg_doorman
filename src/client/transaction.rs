@@ -598,9 +598,6 @@ where
                 }
             };
 
-            // Debug log: server -> client
-            log_server_to_client(&self.addr.to_string(), server.get_process_id(), &response);
-
             // Insert pending ParseComplete messages before BindComplete
             // If no BindComplete found, insert at the beginning of response
             if self.pending_parse_complete > 0 {
@@ -681,6 +678,9 @@ where
                 response = new_response;
                 self.pending_close_complete -= inserted;
             }
+
+            // Debug log: server -> client (after all modifications to show what client actually receives)
+            log_server_to_client(&self.addr.to_string(), server.get_process_id(), &response);
 
             // Fast path: early release check before expensive operations
             // This is the most common case in transaction mode

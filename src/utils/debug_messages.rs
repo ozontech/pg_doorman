@@ -1,7 +1,7 @@
-use log::debug;
+use log::{debug, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Maximum number of messages to buffer before flushing
@@ -12,6 +12,230 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Maximum iterations when parsing messages to prevent infinite loops
 const MAX_PARSE_ITERATIONS: usize = 10000;
+
+/// Protocol state for tracking expected responses
+#[derive(Debug, Clone, Default)]
+struct ProtocolState {
+    /// Number of pending Parse commands (expecting ParseComplete '1')
+    pending_parse: u32,
+    /// Number of pending Bind commands (expecting BindComplete '2')
+    pending_bind: u32,
+    /// Number of pending Describe commands (expecting 't'/'T'/'n')
+    pending_describe: u32,
+    /// Number of pending Execute commands (expecting DataRow/CommandComplete)
+    pending_execute: u32,
+    /// Number of pending Sync commands (expecting ReadyForQuery 'Z')
+    pending_sync: u32,
+    /// Number of pending Close commands (expecting CloseComplete '3')
+    pending_close: u32,
+    /// Whether we're in a simple query (Q) - expecting results then Z
+    in_simple_query: bool,
+    /// Whether we're receiving DataRows (after Execute or Query)
+    receiving_data: bool,
+}
+
+impl ProtocolState {
+    /// Reset state (e.g., after connection reset or error)
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Check if we have any pending operations
+    fn has_pending(&self) -> bool {
+        self.pending_parse > 0
+            || self.pending_bind > 0
+            || self.pending_describe > 0
+            || self.pending_execute > 0
+            || self.pending_sync > 0
+            || self.pending_close > 0
+            || self.in_simple_query
+    }
+
+    /// Process a client->server message and update expected responses
+    fn process_client_message(&mut self, msg_type: char) {
+        match msg_type {
+            'P' => self.pending_parse += 1,
+            'B' => self.pending_bind += 1,
+            'D' => self.pending_describe += 1, // Describe from client
+            'E' => {
+                self.pending_execute += 1;
+                self.receiving_data = true;
+            }
+            'C' => self.pending_close += 1, // Close from client
+            'S' => self.pending_sync += 1,
+            'H' => {} // Flush - no response expected
+            'Q' => {
+                self.in_simple_query = true;
+                self.receiving_data = true;
+            }
+            'X' => self.reset(), // Terminate - reset state
+            _ => {}
+        }
+    }
+
+    /// Process a server->client message and check for protocol violations
+    /// Returns a warning message if a violation is detected
+    fn process_server_message(&mut self, msg_type: char) -> Option<String> {
+        match msg_type {
+            '1' => {
+                // ParseComplete
+                if self.pending_parse > 0 {
+                    self.pending_parse -= 1;
+                    None
+                } else {
+                    Some("ParseComplete('1') received but no Parse was pending".to_string())
+                }
+            }
+            '2' => {
+                // BindComplete
+                if self.pending_bind > 0 {
+                    self.pending_bind -= 1;
+                    None
+                } else {
+                    Some("BindComplete('2') received but no Bind was pending".to_string())
+                }
+            }
+            '3' => {
+                // CloseComplete
+                if self.pending_close > 0 {
+                    self.pending_close -= 1;
+                    None
+                } else {
+                    Some("CloseComplete('3') received but no Close was pending".to_string())
+                }
+            }
+            't' | 'T' | 'n' => {
+                // ParameterDescription, RowDescription, NoData - responses to Describe
+                // Also T can come after Execute/Query
+                if self.pending_describe > 0 {
+                    if msg_type == 'T' || msg_type == 'n' {
+                        // RowDescription or NoData completes the Describe
+                        self.pending_describe -= 1;
+                    }
+                    // 't' (ParameterDescription) is followed by T or n
+                    None
+                } else if self.receiving_data || self.in_simple_query {
+                    // T can also come as part of query results
+                    None
+                } else {
+                    Some(format!(
+                        "{}('{}') received unexpectedly (no Describe/Execute pending)",
+                        match msg_type {
+                            't' => "ParameterDescription",
+                            'T' => "RowDescription",
+                            'n' => "NoData",
+                            _ => "Unknown",
+                        },
+                        msg_type
+                    ))
+                }
+            }
+            'D' => {
+                // DataRow - expected after Execute or Query
+                if self.receiving_data || self.in_simple_query {
+                    None
+                } else {
+                    Some("DataRow('D') received but not expecting data (no Execute/Query pending)".to_string())
+                }
+            }
+            'C' => {
+                // CommandComplete - ends Execute or Query result set
+                if self.pending_execute > 0 {
+                    self.pending_execute -= 1;
+                    if self.pending_execute == 0 && !self.in_simple_query {
+                        self.receiving_data = false;
+                    }
+                    None
+                } else if self.in_simple_query {
+                    // Multiple commands in simple query
+                    None
+                } else {
+                    Some(
+                        "CommandComplete('C') received but no Execute/Query was pending".to_string(),
+                    )
+                }
+            }
+            's' => {
+                // PortalSuspended - Execute with row limit
+                if self.pending_execute > 0 || self.receiving_data {
+                    None
+                } else {
+                    Some("PortalSuspended('s') received but no Execute was pending".to_string())
+                }
+            }
+            'Z' => {
+                // ReadyForQuery - ends transaction/sync
+                if self.pending_sync > 0 {
+                    self.pending_sync -= 1;
+                }
+                if self.in_simple_query {
+                    self.in_simple_query = false;
+                    self.receiving_data = false;
+                }
+                // Z resets the receiving state
+                self.receiving_data = false;
+                None
+            }
+            'E' => {
+                // ErrorResponse - can come anytime, resets pending state until Sync
+                // Don't reset completely, wait for Z
+                self.receiving_data = false;
+                None
+            }
+            'I' => {
+                // EmptyQueryResponse
+                if self.pending_execute > 0 {
+                    self.pending_execute -= 1;
+                    None
+                } else if self.in_simple_query {
+                    None
+                } else {
+                    Some("EmptyQueryResponse('I') received unexpectedly".to_string())
+                }
+            }
+            // Other messages that don't affect protocol state tracking
+            'S' | 'K' | 'N' | 'A' | 'G' | 'H' | 'W' | 'V' | 'R' | 'c' | 'd' | 'v' => None,
+            _ => None,
+        }
+    }
+
+    /// Get a summary of pending operations for debugging
+    fn pending_summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self.pending_parse > 0 {
+            parts.push(format!("{}xParse", self.pending_parse));
+        }
+        if self.pending_bind > 0 {
+            parts.push(format!("{}xBind", self.pending_bind));
+        }
+        if self.pending_describe > 0 {
+            parts.push(format!("{}xDescribe", self.pending_describe));
+        }
+        if self.pending_execute > 0 {
+            parts.push(format!("{}xExecute", self.pending_execute));
+        }
+        if self.pending_sync > 0 {
+            parts.push(format!("{}xSync", self.pending_sync));
+        }
+        if self.pending_close > 0 {
+            parts.push(format!("{}xClose", self.pending_close));
+        }
+        if self.in_simple_query {
+            parts.push("SimpleQuery".to_string());
+        }
+        if parts.is_empty() {
+            "none".to_string()
+        } else {
+            parts.join(",")
+        }
+    }
+}
+
+/// Global protocol state tracker per server connection (server_pid -> state)
+/// We track by server_pid to detect when a new client gets a "dirty" connection
+/// that still has pending operations from a previous client.
+static PROTOCOL_STATES: Lazy<Mutex<HashMap<i32, ProtocolState>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Buffered debug message for grouping
 #[derive(Clone, Debug)]
@@ -103,13 +327,79 @@ impl DebugMessageBuffer {
 static DEBUG_BUFFER: Lazy<Mutex<DebugMessageBuffer>> =
     Lazy::new(|| Mutex::new(DebugMessageBuffer::new()));
 
-/// Log a client->server message with grouping
+/// Extracts raw message types (just the type characters) from a PostgreSQL protocol buffer.
+/// Used for protocol state tracking.
+fn extract_raw_message_types(buffer: &[u8]) -> Vec<char> {
+    let mut types = Vec::new();
+    let mut pos = 0;
+    let mut iterations = 0;
+
+    while pos + 5 <= buffer.len() {
+        iterations += 1;
+        if iterations > MAX_PARSE_ITERATIONS {
+            break;
+        }
+
+        let msg_type = buffer[pos] as char;
+
+        if !msg_type.is_ascii_graphic() {
+            break;
+        }
+
+        let len = i32::from_be_bytes([
+            buffer[pos + 1],
+            buffer[pos + 2],
+            buffer[pos + 3],
+            buffer[pos + 4],
+        ]);
+
+        if len < 4 {
+            break;
+        }
+
+        let len = len as usize;
+
+        if pos + 1 + len > buffer.len() {
+            break;
+        }
+
+        types.push(msg_type);
+        pos += 1 + len;
+    }
+
+    types
+}
+
+/// Log a client->server message with grouping and protocol analysis
 pub fn log_client_to_server(client_addr: &str, server_pid: i32, buffer: &[u8]) {
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }
 
     let message_types = extract_message_types(buffer);
+
+    // Update protocol state for this server connection
+    {
+        let mut states = PROTOCOL_STATES.lock();
+        let state = states.entry(server_pid).or_default();
+
+        // Check if server has pending operations from a previous client
+        // This can happen when a client disconnects without completing the protocol
+        if state.has_pending() {
+            let pending = state.pending_summary();
+            warn!(
+                "PROTOCOL WARNING {} -> Server [{}]: Server has pending operations from previous client: {} (new request: {})",
+                client_addr, server_pid, pending, message_types
+            );
+        }
+
+        // Extract raw message types and update state
+        let raw_types = extract_raw_message_types(buffer);
+        for msg_type in raw_types {
+            state.process_client_message(msg_type);
+        }
+    }
+
     let msg = BufferedMessage {
         direction: "->".to_string(),
         client_addr: client_addr.to_string(),
@@ -124,13 +414,39 @@ pub fn log_client_to_server(client_addr: &str, server_pid: i32, buffer: &[u8]) {
     }
 }
 
-/// Log a server->client message with grouping
+/// Log a server->client message with grouping and protocol violation detection
 pub fn log_server_to_client(client_addr: &str, server_pid: i32, buffer: &[u8]) {
     if !log::log_enabled!(log::Level::Debug) {
         return;
     }
 
     let message_types = extract_message_types(buffer);
+
+    // Check for protocol violations based on server connection state
+    let violations: Vec<String>;
+    let pending_before: String;
+    {
+        let mut states = PROTOCOL_STATES.lock();
+        let state = states.entry(server_pid).or_default();
+
+        pending_before = state.pending_summary();
+
+        // Extract raw message types and check for violations
+        let raw_types = extract_raw_message_types(buffer);
+        violations = raw_types
+            .iter()
+            .filter_map(|&msg_type| state.process_server_message(msg_type))
+            .collect();
+    }
+
+    // Log violations as warnings
+    for violation in &violations {
+        warn!(
+            "PROTOCOL VIOLATION {} <-> Server [{}]: {} (pending: {})",
+            client_addr, server_pid, violation, pending_before
+        );
+    }
+
     let msg = BufferedMessage {
         direction: "<-".to_string(),
         client_addr: client_addr.to_string(),
@@ -142,6 +458,24 @@ pub fn log_server_to_client(client_addr: &str, server_pid: i32, buffer: &[u8]) {
     guard.add(msg);
     if guard.should_flush() {
         guard.flush();
+    }
+}
+
+/// Clean up protocol state for a disconnected client
+/// Note: We don't remove the state because the server connection may be reused
+/// by another client. The state will be naturally cleaned up when the server
+/// connection is closed or when ReadyForQuery resets the state.
+pub fn cleanup_protocol_state(client_addr: &str, server_pid: i32) {
+    let states = PROTOCOL_STATES.lock();
+    if let Some(state) = states.get(&server_pid) {
+        if state.has_pending() {
+            warn!(
+                "Client {} disconnected with pending protocol state: {} (server [{}])",
+                client_addr,
+                state.pending_summary(),
+                server_pid
+            );
+        }
     }
 }
 
