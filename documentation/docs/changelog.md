@@ -4,7 +4,11 @@ title: Changelog
 
 # Changelog
 
-### 3.0.6 <small>Jan 16, 2026</small> { id="3.0.6" }
+### 3.0.5 <small>Jan 16, 2026</small> { id="3.0.5" }
+
+**Bug Fixes:**
+
+- Fixed panic (`capacity overflow`) in startup message handling when receiving malformed messages with invalid length (less than 8 bytes or exceeding 10MB). Now gracefully rejects such connections with `ClientBadStartup` error.
 
 **Testing:**
 
@@ -14,12 +18,6 @@ title: Changelog
 **CI/CD:**
 
 - Added dedicated fuzz test job in GitHub Actions workflow (without retries, as fuzz tests should not be flaky).
-
-### 3.0.5 <small>Jan 16, 2026</small> { id="3.0.5" }
-
-**Bug Fixes:**
-
-- Fixed panic (`capacity overflow`) in startup message handling when receiving malformed messages with invalid length (less than 8 bytes or exceeding 10MB). Now gracefully rejects such connections with `ClientBadStartup` error.
 
 ### 3.0.4 <small>Jan 16, 2026</small> { id="3.0.4" }
 
