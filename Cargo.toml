@@ -71,6 +71,7 @@ tempfile = "3"
 portpicker = "0.1"
 tokio-postgres = "0.7"
 criterion = "0.5"
+pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
 
 [[bin]]
 name = "pg_doorman"
