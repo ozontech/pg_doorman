@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(stats.prepared_cache_size.load(Ordering::Relaxed), 0);
 
         // Check address
-        assert_eq!(stats.address_name(), "pool_name-0");
+        assert_eq!(stats.address_name(), "pool_name");
         assert_eq!(stats.pool_name(), "pool_name");
         assert_eq!(stats.username(), "username");
     }
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(stats.connect_time(), now);
 
         // Check that address is set correctly
-        assert_eq!(stats.address_name(), "pool_name-0");
+        assert_eq!(stats.address_name(), "pool_name");
         assert_eq!(stats.pool_name(), "pool_name");
         assert_eq!(stats.username(), "username");
 
@@ -605,7 +605,6 @@ mod tests {
         let address = crate::config::Address {
             host: "test_host".to_string(),
             port: 5432,
-            virtual_pool_id: 0,
             database: "test_db".to_string(),
             username: "test_user".to_string(),
             password: "test_password".to_string(),
@@ -641,7 +640,6 @@ mod tests {
         let address = Address {
             host: "test_host".to_string(),
             port: 5432,
-            virtual_pool_id: 0,
             database: "test_db".to_string(),
             username: "test_user".to_string(),
             password: "test_password".to_string(),
@@ -898,8 +896,8 @@ mod tests {
         // Test username
         assert_eq!(stats.username(), "test_user");
 
-        // Test address_name
-        assert_eq!(stats.address_name(), "test_pool-0");
+        // Test address_name (same as pool_name when no virtual pool suffix)
+        assert_eq!(stats.address_name(), "test_pool");
 
         // Test connect_time
         let connect_time = stats.connect_time();

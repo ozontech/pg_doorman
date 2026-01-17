@@ -300,6 +300,68 @@ impl PoolStats {
         }
     }
 
+    /// Creates a new PoolStats instance with pre-calculated percentiles from HDR histograms.
+    ///
+    /// This constructor is optimized for use with HDR histograms where percentiles
+    /// are calculated in O(1) time directly from the histogram.
+    ///
+    /// # Arguments
+    ///
+    /// * `identifier` - Identifier for the pool (database name, username)
+    /// * `mode` - Operating mode of the pool (session, transaction, statement)
+    /// * `query_percentile` - Pre-calculated query time percentiles
+    /// * `xact_percentile` - Pre-calculated transaction time percentiles
+    ///
+    /// # Returns
+    ///
+    /// A new PoolStats instance with percentiles already set
+    pub fn new_with_percentiles(
+        identifier: PoolIdentifier,
+        mode: PoolMode,
+        query_percentile: Percentile,
+        xact_percentile: Percentile,
+    ) -> Self {
+        PoolStats {
+            identifier,
+            mode,
+            cl_idle: 0,
+            cl_active: 0,
+            cl_waiting: 0,
+            cl_cancel_req: 0,
+            sv_active: 0,
+            sv_idle: 0,
+            sv_used: 0,
+            sv_login: 0,
+            maxwait: 0,
+            avg_query_count: 0,
+            avg_xact_count: 0,
+            avg_wait_time: 0,
+            avg_wait_time_vp_ms: Vec::new(),
+            bytes_received: 0,
+            bytes_sent: 0,
+            xact_time: 0,
+            query_time: 0,
+            wait_time: 0,
+            errors: 0,
+            // Empty vectors - percentiles are pre-calculated
+            xact: Vec::new(),
+            queries: Vec::new(),
+            percentile_updated: true, // Already calculated
+            xact_percentile,
+            query_percentile,
+            total_xact_count: 0,
+            total_query_count: 0,
+            total_received: 0,
+            total_sent: 0,
+            total_xact_time_microseconds: 0,
+            total_query_time_microseconds: 0,
+            avg_recv: 0,
+            avg_sent: 0,
+            avg_xact_time_microsecons: 0,
+            avg_query_time_microseconds: 0,
+        }
+    }
+
     /// Constructs a lookup table of pool statistics by aggregating data from various sources.
     ///
     /// This method collects statistics from all pools, clients, and servers, and aggregates
@@ -479,23 +541,18 @@ impl PoolStats {
             // Get address stats for this pool
             let address = pool.address().stats.clone();
 
-            // Collect query execution times
-            let mut queries = Vec::new();
-            {
-                let lock = address.query_times_us.lock();
-                queries.extend(lock.iter())
-            }
+            // Get percentiles directly from HDR histograms (O(1) operation)
+            let (query_p50, query_p90, query_p95, query_p99) = address.get_query_percentiles();
+            let (xact_p50, xact_p90, xact_p95, xact_p99) = address.get_xact_percentiles();
 
-            // Collect transaction execution times
-            let mut xact = Vec::new();
-            {
-                let lock = address.xact_times_us.lock();
-                xact.extend(lock.iter())
-            }
-
-            // Create a new PoolStats instance for this virtual pool
+            // Create a new PoolStats instance for this pool with pre-calculated percentiles
             let mut current =
-                PoolStats::new(identifier.clone(), pool.settings.pool_mode, queries, xact);
+                PoolStats::new_with_percentiles(
+                    identifier.clone(),
+                    pool.settings.pool_mode,
+                    Percentile { p50: query_p50, p90: query_p90, p95: query_p95, p99: query_p99 },
+                    Percentile { p50: xact_p50, p90: xact_p90, p95: xact_p95, p99: xact_p99 },
+                );
 
             // Load average statistics
             current.avg_xact_count = address.averages.xact_count.load(Ordering::Relaxed);
