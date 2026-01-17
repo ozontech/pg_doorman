@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use crate::admin::handle_admin;
+use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
 use crate::client::core::Client;
 use crate::client::util::{CLIENT_COUNTER, QUERY_DEALLOCATE};
 use crate::errors::Error;
@@ -199,7 +200,7 @@ where
                 self.stats.disconnect();
                 return Ok(());
             }
-            if self.shutdown.try_recv().is_ok() && !self.admin {
+            if SHUTDOWN_IN_PROGRESS.load(Ordering::Relaxed) && !self.admin {
                 warn!(
                     "Dropping client {:?} because connection pooler is shutting down",
                     self.addr
@@ -254,7 +255,7 @@ where
                 _ => (),
             }
 
-            {
+            let shutdown_in_progress = {
                 // start server.
                 // Grab a server from the pool.
                 let connecting_at = Instant::now();
@@ -324,6 +325,9 @@ where
                 // cancel a query later.
                 server.claim(self.process_id, self.secret_key);
                 self.connected_to_server = true;
+
+                // Signal that client is now in transaction (has server connection)
+                CLIENTS_IN_TRANSACTIONS.fetch_add(1, Ordering::Relaxed);
 
                 // Update statistics
                 self.stats.active_idle();
@@ -526,7 +530,12 @@ where
                         }
                     }
                 }
-                if !server.is_async() {
+                // Check if shutdown is in progress - if so, mark server as bad to release PG connection
+                // and prepare to send error to client on next query
+                let shutdown_in_progress = SHUTDOWN_IN_PROGRESS.load(Ordering::Relaxed);
+                if shutdown_in_progress {
+                    server.mark_bad("graceful shutdown - releasing server connection");
+                } else if !server.is_async() {
                     server.checkin_cleanup().await?;
                 }
                 server
@@ -535,14 +544,27 @@ where
                 // The server is no longer bound to us, we can't cancel it's queries anymore.
                 self.release();
                 server.stats.wait_idle();
-            } // release server.
+                shutdown_in_progress
+            }; // release server.
 
             if !self.client_last_messages_in_tx.is_empty() {
                 self.stats.idle_write(); // go to idle_read if success.
                 write_all_flush(&mut self.write, &self.client_last_messages_in_tx).await?;
                 self.client_last_messages_in_tx.clear();
             }
+
+            // Signal that client finished transaction (released server connection)
+            CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
             self.connected_to_server = false;
+
+            // If shutdown is in progress, send error to client and exit
+            if shutdown_in_progress {
+                error_response_terminal(&mut self.write, "pooler is shut down now", "58006")
+                    .await?;
+                self.stats.disconnect();
+                return Ok(());
+            }
+
             if wait_rollback_from_client {
                 // release from server and wait rollback from client;
                 self.wait_rollback().await?;

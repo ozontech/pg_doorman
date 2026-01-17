@@ -1,4 +1,4 @@
-@rust @daemon
+@rust @daemon @binary-upgrade-grac-shutdown
 Feature: Daemon mode with PID file synchronization
   pg_doorman should properly daemonize and write PID file before parent exits.
   This ensures proper integration with supervisor programs that rely on PID files.

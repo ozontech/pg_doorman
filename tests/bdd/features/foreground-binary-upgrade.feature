@@ -1,4 +1,4 @@
-@rust @foreground-upgrade
+@rust @foreground-upgrade @binary-upgrade-grac-shutdown
 Feature: Foreground mode binary upgrade
   pg_doorman should support binary upgrade in foreground mode by passing
   the listener socket to the new process via --inherit-fd argument.
@@ -87,3 +87,49 @@ Feature: Foreground mode binary upgrade
     And we send SimpleQuery "COMMIT" to session "original"
     # Close sessions
     When we close session "new"
+
+  @grac-shutdown-debug
+  Scenario: Graceful shutdown rejects new queries after transaction completes
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      pool_mode = "transaction"
+      shutdown_timeout = 5000
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      [pools.example_db.users.0]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    # Wait for pg_doorman to be fully ready
+    When we sleep 1000ms
+    # Open session one and start a transaction
+    And we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "one"
+    # Store backend PID for comparison
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "one_backend"
+    # Send SIGINT to trigger graceful shutdown
+    And we send SIGINT to foreground pg_doorman
+    # Wait for new process to start and be ready
+    And we sleep 500ms
+    # Open session two - should get a different backend (new connection through new process or different backend)
+    And we create session "two" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "two" and store backend_pid as "two_backend"
+    # Verify session two has different backend PID
+    Then stored PID "two_backend" should be different from "one_backend"
+    # Session one can still execute queries in active transaction
+    When we send SimpleQuery "SELECT 1" to session "one"
+    # Commit the transaction in session one - after commit, pooler sends error and closes connection
+    And we send SimpleQuery "COMMIT" to session "one" expecting error after ready
+    Then session "one" should receive error containing "pooler is shut down now" with code "58006"
+    # Close session one (connection already closed by pooler)
+    When we close session "one"
+    # Close session two
+    When we close session "two"

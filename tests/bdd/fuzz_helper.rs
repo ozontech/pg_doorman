@@ -85,18 +85,14 @@ pub async fn fuzzer_sends_gigantic_length(world: &mut DoormanWorld) {
 pub async fn fuzzer_sends_execute_without_bind(world: &mut DoormanWorld) {
     let addr = get_doorman_addr(world);
     let client = FuzzClient::new(&addr);
-    let _ = client
-        .send_execute_without_bind(FUZZ_USER, FUZZ_DB)
-        .await;
+    let _ = client.send_execute_without_bind(FUZZ_USER, FUZZ_DB).await;
 }
 
 #[when("fuzzer connects, authenticates, and sends Bind to nonexistent statement")]
 pub async fn fuzzer_sends_bind_nonexistent(world: &mut DoormanWorld) {
     let addr = get_doorman_addr(world);
     let client = FuzzClient::new(&addr);
-    let _ = client
-        .send_bind_nonexistent(FUZZ_USER, FUZZ_DB)
-        .await;
+    let _ = client.send_bind_nonexistent(FUZZ_USER, FUZZ_DB).await;
 }
 
 // ============================================================================
@@ -170,4 +166,3 @@ pub async fn fuzzer_sends_n_bytes_random(world: &mut DoormanWorld, size: usize) 
     let client = FuzzClient::new(&addr);
     let _ = client.send_random_garbage(FUZZ_USER, FUZZ_DB, size).await;
 }
-

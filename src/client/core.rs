@@ -4,7 +4,6 @@ use ahash::AHashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::BufReader;
-use tokio::sync::broadcast::Receiver;
 
 use crate::client::buffer_pool::PooledBuffer;
 use crate::messages::{error_response, Parse};
@@ -94,9 +93,6 @@ pub struct Client<S, T> {
 
     /// Server startup and session parameters that we're going to track
     pub(crate) server_parameters: ServerParameters,
-
-    /// Used to notify clients about an impending shutdown
-    pub(crate) shutdown: Receiver<()>,
 
     /// Whether prepared statements are enabled for this client
     pub(crate) prepared_statements_enabled: bool,

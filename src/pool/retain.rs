@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use log::info;
+
 use crate::config::get_config;
 
 use super::{get_all_pools, ConnectionPool};
@@ -24,6 +26,31 @@ impl ConnectionPool {
             true
         })
     }
+
+    /// Drain all idle connections from the pool during graceful shutdown.
+    /// This immediately closes all idle connections and marks remaining ones for removal.
+    pub fn drain_idle_connections(&self) -> usize {
+        let status_before = self.database.status();
+        let idle_before = status_before.available;
+
+        // Close all idle connections by returning false for all
+        self.database.retain(|_, _| false);
+
+        let status_after = self.database.status();
+        let closed = idle_before.saturating_sub(status_after.available);
+
+        if closed > 0 {
+            info!(
+                "[pool: {}][user: {}] drained {} idle connection{}",
+                self.address.pool_name,
+                self.address.username,
+                closed,
+                if closed == 1 { "" } else { "s" }
+            );
+        }
+
+        closed
+    }
 }
 
 pub async fn retain_connections() {
@@ -37,4 +64,21 @@ pub async fn retain_connections() {
         }
         count.store(0, Ordering::Relaxed);
     }
+}
+
+/// Drain all idle connections from all pools during graceful shutdown.
+/// Returns the total number of connections drained.
+pub fn drain_all_pools() -> usize {
+    let mut total_drained = 0;
+    for (_, pool) in get_all_pools() {
+        total_drained += pool.drain_idle_connections();
+    }
+    if total_drained > 0 {
+        info!(
+            "Graceful shutdown: drained {} idle connection{} from all pools",
+            total_drained,
+            if total_drained == 1 { "" } else { "s" }
+        );
+    }
+    total_drained
 }

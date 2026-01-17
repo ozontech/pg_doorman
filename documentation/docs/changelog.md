@@ -4,6 +4,17 @@ title: Changelog
 
 # Changelog
 
+### 3.1.0 <small>Jan 17, 2026</small> { id="3.1.0" }
+
+**New Features:**
+
+- **Foreground mode binary upgrade**: Added support for binary upgrade in foreground mode by passing the listener socket to the new process via `--inherit-fd` argument. This enables zero-downtime upgrades without requiring daemon mode.
+- **Improved graceful shutdown behavior**: 
+  - During graceful shutdown, only clients with active transactions are now counted (instead of all connected clients), allowing faster shutdown when clients are idle.
+  - After a client completes their transaction during shutdown, they receive a proper PostgreSQL protocol error (`58006 - pooler is shut down now`) instead of a connection reset.
+  - Server connections are immediately released (marked as bad) after transaction completion during shutdown to conserve PostgreSQL connections.
+  - All idle connections are immediately drained from pools when graceful shutdown starts, releasing PostgreSQL connections faster.
+
 ### 3.0.5 <small>Jan 16, 2026</small> { id="3.0.5" }
 
 **Bug Fixes:**

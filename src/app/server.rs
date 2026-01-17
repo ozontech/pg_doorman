@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::process;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use log::{debug, error, info, warn};
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpSocket;
@@ -14,7 +13,6 @@ use tokio::net::TcpSocket;
 use tokio::signal::unix::{signal as unix_signal, SignalKind};
 #[cfg(windows)]
 use tokio::signal::windows as win_signal;
-use tokio::sync::broadcast;
 use tokio::{runtime::Builder, sync::mpsc};
 
 #[cfg(not(windows))]
@@ -34,7 +32,14 @@ use crate::utils::format_duration;
 
 use crate::app::tls::init_tls;
 
-pub static CURRENT_CLIENT_COUNT: Lazy<Arc<AtomicI64>> = Lazy::new(|| Arc::new(AtomicI64::new(0)));
+/// Global counter for clients currently connected to the pg_doorman
+pub static CURRENT_CLIENT_COUNT: AtomicI64 = AtomicI64::new(0);
+
+/// Global flag indicating graceful shutdown is in progress
+pub static SHUTDOWN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Global counter for clients currently in transactions (holding server connections)
+pub static CLIENTS_IN_TRANSACTIONS: AtomicI64 = AtomicI64::new(0);
 
 pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::Error>> {
     if args.daemon {
@@ -250,11 +255,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         #[cfg(not(windows))]
         let mut sighup_signal = unix_signal(SignalKind::hangup()).unwrap();
 
-        let (shutdown_tx, _) = broadcast::channel::<()>(1);
-        let (drain_tx, mut drain_rx) = mpsc::channel::<i32>(2048);
         let (exit_tx, mut exit_rx) = mpsc::channel::<()>(1);
         let mut admin_only = false;
-        let mut total_clients = 0;
 
         let tls_rate_limiter = tls_state.rate_limiter.clone();
         let tls_acceptor = tls_state.acceptor.clone();
@@ -285,10 +287,14 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     get_config().show();
                 },
 
-                // Initiate graceful shutdown sequence on sig int
+                // Initiate graceful shutdown sequence and run binary upgrade in background
                 // kill -SIGINT $(pgrep pg_doorman)
                 _ = interrupt_signal.recv() => {
                     info!("Got SIGINT, starting graceful shutdown");
+                    SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
+
+                    // Drain all idle connections from pools to release PostgreSQL connections
+                    retain::drain_all_pools();
 
                     #[cfg(not(windows))]
                     if !admin_only {
@@ -413,31 +419,43 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
                     admin_only = true;
 
-                    // Broadcast that client tasks need to finish
-                    let _ = shutdown_tx.send(());
                     let exit_tx = exit_tx.clone();
-                    let _ = drain_tx.send(0).await;
+                    let shutdown_timeout = config.general.shutdown_timeout;
 
                     tokio::task::spawn(async move {
-                        info!("waiting for {} client{}", total_clients, if total_clients == 1 { "" } else { "s" });
+                        let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
+                        info!("waiting for {} client{} in transactions", clients_in_tx, if clients_in_tx == 1 { "" } else { "s" });
 
-                        let mut interval = tokio::time::interval(Duration::from_millis(config.general.shutdown_timeout));
+                        let mut interval = tokio::time::interval(Duration::from_millis(shutdown_timeout));
+                        let start = std::time::Instant::now();
+                        let timeout_duration = Duration::from_millis(shutdown_timeout);
 
-                        // First tick fires immediately.
-                        interval.tick().await;
+                        loop {
+                            interval.tick().await;
 
-                        // Second one in the interval time.
-                        interval.tick().await;
+                            // Drain all idle connections from pools to release PostgreSQL connections
+                            retain::drain_all_pools();
 
-                        // We're done waiting.
-                        error!("Graceful shutdown timed out. {total_clients} active clients being closed");
+                            let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
+                            let clients_total = CURRENT_CLIENT_COUNT.load(Ordering::Relaxed);
+                            if clients_total == 0 {
+                                info!("All clients disconnected, shutting down");
+                                let _ = exit_tx.send(()).await;
+                                return;
+                            }
 
-                        let _ = exit_tx.send(()).await;
+                            if start.elapsed() >= timeout_duration {
+                                error!("Graceful shutdown timed out. {} active clients in transactions being closed", clients_in_tx);
+                                let _ = exit_tx.send(()).await;
+                                return;
+                            }
+                        }
                     });
                 },
 
                 _ = term_signal.recv() => {
-                    info!("Got SIGTERM, closing with {total_clients} clients active");
+                    let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
+                    info!("Got SIGTERM, closing with {} clients in transactions", clients_in_tx);
                     break;
                 },
 
@@ -457,8 +475,6 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     }
                     let tls_rate_limiter = tls_rate_limiter.clone();
                     let tls_acceptor = tls_acceptor.clone();
-                    let shutdown_rx = shutdown_tx.subscribe();
-                    let drain_tx = drain_tx.clone();
                     let client_server_map = client_server_map.clone();
                     let config = get_config();
 
@@ -473,7 +489,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         if current_clients as u64 > max_connections {
                             warn!("Client {addr:?}: too many clients already");
                            match crate::client::client_entrypoint_too_many_clients_already(
-                                socket, client_server_map, shutdown_rx, drain_tx).await {
+                                socket, client_server_map).await {
                                 Ok(()) => (),
                                 Err(err) => {
                                     error!("Client {addr:?}: disconnected with error: {err}");
@@ -487,8 +503,6 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         match crate::client::client_entrypoint(
                             socket,
                             client_server_map,
-                            shutdown_rx,
-                            drain_tx,
                             admin_only,
                             tls_acceptor,
                             tls_rate_limiter,
@@ -524,15 +538,6 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
                 _ = exit_rx.recv() => {
                     break;
-                }
-
-                client_ping = drain_rx.recv() => {
-                    let client_ping = client_ping.unwrap();
-                    total_clients += client_ping;
-
-                    if total_clients == 0 && admin_only {
-                        let _ = exit_tx.send(()).await;
-                    }
                 }
 
             }

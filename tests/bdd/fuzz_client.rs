@@ -116,7 +116,12 @@ impl FuzzClient {
 
     /// Random garbage data
     /// Connects and authenticates first, then sends malformed message.
-    pub async fn send_random_garbage(&self, user: &str, db: &str, size: usize) -> tokio::io::Result<()> {
+    pub async fn send_random_garbage(
+        &self,
+        user: &str,
+        db: &str,
+        size: usize,
+    ) -> tokio::io::Result<()> {
         let mut stream = self.connect_and_auth(user, db).await?;
         let mut rng = rand::rng();
         let data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
@@ -143,7 +148,9 @@ impl FuzzClient {
         let portal = b"\0"; // unnamed portal
         let execute_len = 4 + portal.len() + 4; // +4 for max_rows
         stream.write_all(&[b'E']).await?;
-        stream.write_all(&(execute_len as i32).to_be_bytes()).await?;
+        stream
+            .write_all(&(execute_len as i32).to_be_bytes())
+            .await?;
         stream.write_all(portal).await?;
         stream.write_all(&0i32.to_be_bytes()).await?; // max_rows = 0 (all)
 

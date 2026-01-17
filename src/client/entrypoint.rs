@@ -2,8 +2,6 @@ use log::{error, info};
 use std::sync::atomic::Ordering;
 use tokio::io::split;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast::Receiver;
-use tokio::sync::mpsc::Sender;
 
 use crate::config::get_config;
 use crate::errors::Error;
@@ -19,8 +17,6 @@ use super::startup::{get_startup, startup_tls, ClientConnectionType};
 pub async fn client_entrypoint_too_many_clients_already(
     mut stream: TcpStream,
     client_server_map: ClientServerMap,
-    shutdown: Receiver<()>,
-    drain: Sender<i32>,
 ) -> Result<(), Error> {
     let addr = match stream.peer_addr() {
         Ok(addr) => addr,
@@ -50,19 +46,12 @@ pub async fn client_entrypoint_too_many_clients_already(
             configure_tcp_socket_for_cancel(&stream);
             let (read, write) = split(stream);
             // Continue with cancel query request.
-            return match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
-            {
+            return match Client::cancel(read, write, addr, bytes, client_server_map).await {
                 Ok(mut client) => {
                     info!("Client {addr:?} issued a cancel query request");
-                    if !client.is_admin() {
-                        let _ = drain.send(1).await;
-                    }
                     let result = client.handle().await;
-                    if !client.is_admin() {
-                        let _ = drain.send(-1).await;
-                        if result.is_err() {
-                            client.disconnect_stats();
-                        }
+                    if !client.is_admin() && result.is_err() {
+                        client.disconnect_stats();
                     }
                     result
                 }
@@ -76,12 +65,9 @@ pub async fn client_entrypoint_too_many_clients_already(
 }
 
 /// Client entrypoint.
-#[allow(clippy::too_many_arguments)]
 pub async fn client_entrypoint(
     mut stream: TcpStream,
     client_server_map: ClientServerMap,
-    shutdown: Receiver<()>,
-    drain: Sender<i32>,
     admin_only: bool,
     tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
     tls_rate_limiter: Option<RateLimiter>,
@@ -113,32 +99,16 @@ pub async fn client_entrypoint(
                 }
 
                 // Negotiate TLS.
-                match startup_tls(
-                    stream,
-                    client_server_map,
-                    shutdown,
-                    admin_only,
-                    tls_acceptor,
-                )
-                .await
-                {
+                match startup_tls(stream, client_server_map, admin_only, tls_acceptor).await {
                     Ok(mut client) => {
                         if log_client_connections {
                             info!("Client {addr:?} connected (TLS)");
                         }
 
-                        if !client.is_admin() {
-                            let _ = drain.send(1).await;
-                        }
-
                         let result = client.handle().await;
 
-                        if !client.is_admin() {
-                            let _ = drain.send(-1).await;
-
-                            if result.is_err() {
-                                client.disconnect_stats();
-                            }
+                        if !client.is_admin() && result.is_err() {
+                            client.disconnect_stats();
                         }
 
                         result
@@ -166,7 +136,6 @@ pub async fn client_entrypoint(
                             addr,
                             bytes,
                             client_server_map,
-                            shutdown,
                             admin_only,
                             false,
                         )
@@ -176,18 +145,11 @@ pub async fn client_entrypoint(
                                 if log_client_connections {
                                     info!("Client {addr:?} connected (plain)");
                                 }
-                                if !client.is_admin() {
-                                    let _ = drain.send(1).await;
-                                }
 
                                 let result = client.handle().await;
 
-                                if !client.is_admin() {
-                                    let _ = drain.send(-1).await;
-
-                                    if result.is_err() {
-                                        client.disconnect_stats();
-                                    }
+                                if !client.is_admin() && result.is_err() {
+                                    client.disconnect_stats();
                                 }
 
                                 result
@@ -228,7 +190,6 @@ pub async fn client_entrypoint(
                 addr,
                 bytes,
                 client_server_map,
-                shutdown,
                 admin_only,
                 false,
             )
@@ -238,18 +199,11 @@ pub async fn client_entrypoint(
                     if log_client_connections {
                         info!("Client {addr:?} connected (plain)");
                     }
-                    if !client.is_admin() {
-                        let _ = drain.send(1).await;
-                    }
 
                     let result = client.handle().await;
 
-                    if !client.is_admin() {
-                        let _ = drain.send(-1).await;
-
-                        if result.is_err() {
-                            client.disconnect_stats();
-                        }
+                    if !client.is_admin() && result.is_err() {
+                        client.disconnect_stats();
                     }
 
                     result
@@ -270,22 +224,14 @@ pub async fn client_entrypoint(
             let (read, write) = split(stream);
 
             // Continue with cancel query request.
-            match Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await {
+            match Client::cancel(read, write, addr, bytes, client_server_map).await {
                 Ok(mut client) => {
                     info!("Cancel request received from {addr:?}; forwarding to the backend");
 
-                    if !client.is_admin() {
-                        let _ = drain.send(1).await;
-                    }
-
                     let result = client.handle().await;
 
-                    if !client.is_admin() {
-                        let _ = drain.send(-1).await;
-
-                        if result.is_err() {
-                            client.disconnect_stats();
-                        }
+                    if !client.is_admin() && result.is_err() {
+                        client.disconnect_stats();
                     }
                     result
                 }

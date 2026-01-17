@@ -185,9 +185,25 @@ async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
     }
 }
 
-/// Stop pg_doorman process
+/// Stop pg_doorman process (only if still running)
 pub fn stop_doorman(child: &mut Child) {
-    stop_process(child);
+    // Check if process has already exited
+    match child.try_wait() {
+        Ok(Some(_status)) => {
+            // Process already exited, just clean up pipes
+            drop(child.stdout.take());
+            drop(child.stderr.take());
+            return;
+        }
+        Ok(None) => {
+            // Process still running, stop it
+            stop_process(child);
+        }
+        Err(_) => {
+            // Error checking status, try to stop anyway
+            stop_process(child);
+        }
+    }
 }
 
 /// Stop pg_doorman daemon by PID
@@ -304,8 +320,7 @@ async fn wait_for_daemon_port_ready(port: u16) {
 /// Check if PID file contains correct daemon PID
 #[then(regex = r#"PID file "([^"]+)" should contain running daemon PID"#)]
 pub async fn verify_pid_file(_world: &mut DoormanWorld, pid_path: String) {
-    let pid_content =
-        std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
+    let pid_content = std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
     let pid: u32 = pid_content
         .trim()
         .parse()
@@ -321,22 +336,22 @@ pub async fn verify_pid_file(_world: &mut DoormanWorld, pid_path: String) {
 /// Store current daemon PID for later comparison
 #[when(regex = r#"we store daemon PID from "([^"]+)" as "([^"]+)""#)]
 pub async fn store_daemon_pid(world: &mut DoormanWorld, pid_path: String, name: String) {
-    let pid_content =
-        std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
+    let pid_content = std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
     let pid: i32 = pid_content
         .trim()
         .parse()
         .expect("PID file should contain valid number");
 
-    world.named_backend_pids.insert((name, "daemon_pid".to_string()), pid);
+    world
+        .named_backend_pids
+        .insert((name, "daemon_pid".to_string()), pid);
 }
 
 /// Send SIGINT to daemon for graceful reload (binary-upgrade)
 /// This only sends the signal, use "we wait for new daemon" step to wait for the new daemon
 #[when(regex = r#"we send SIGINT to daemon from PID file "([^"]+)""#)]
 pub async fn send_sigint_to_daemon(_world: &mut DoormanWorld, pid_path: String) {
-    let pid_content =
-        std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
+    let pid_content = std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
     let pid: i32 = pid_content
         .trim()
         .parse()
@@ -350,8 +365,7 @@ pub async fn send_sigint_to_daemon(_world: &mut DoormanWorld, pid_path: String) 
 /// Verify that daemon PID has changed after graceful reload
 #[then(regex = r#"PID file "([^"]+)" should contain different PID than stored "([^"]+)""#)]
 pub async fn verify_pid_changed(_world: &mut DoormanWorld, pid_path: String, name: String) {
-    let pid_content =
-        std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
+    let pid_content = std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
     let current_pid: i32 = pid_content
         .trim()
         .parse()
@@ -388,7 +402,11 @@ pub async fn verify_session_connected(world: &mut DoormanWorld, session_name: St
 /// Verify that two stored PIDs are different
 /// PIDs are stored as (session_name, pid_name) -> pid in named_backend_pids
 #[then(regex = r#"stored PID "([^"]+)" should be different from "([^"]+)"#)]
-pub async fn verify_stored_pids_different(world: &mut DoormanWorld, pid1_name: String, pid2_name: String) {
+pub async fn verify_stored_pids_different(
+    world: &mut DoormanWorld,
+    pid1_name: String,
+    pid2_name: String,
+) {
     // Find PID by pid_name (second element of the key tuple)
     let pid1 = world
         .named_backend_pids
@@ -420,7 +438,9 @@ pub async fn store_foreground_pid(world: &mut DoormanWorld, name: String) {
         .expect("pg_doorman process not running")
         .id() as i32;
 
-    world.named_backend_pids.insert((name, "foreground_pid".to_string()), pid);
+    world
+        .named_backend_pids
+        .insert((name, "foreground_pid".to_string()), pid);
 }
 
 /// Send SIGINT to foreground pg_doorman for binary upgrade
@@ -441,10 +461,10 @@ pub async fn send_sigint_to_foreground(world: &mut DoormanWorld) {
 #[when("we wait for foreground binary upgrade to complete")]
 pub async fn wait_for_foreground_binary_upgrade(world: &mut DoormanWorld) {
     let port = world.doorman_port.expect("doorman_port not set");
-    
+
     // Wait a bit for the new process to start and signal readiness
     sleep(Duration::from_millis(2000)).await;
-    
+
     // Verify the port is still accessible (new process is listening)
     for _ in 0..20 {
         if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
@@ -452,7 +472,7 @@ pub async fn wait_for_foreground_binary_upgrade(world: &mut DoormanWorld) {
         }
         sleep(Duration::from_millis(250)).await;
     }
-    
+
     panic!(
         "pg_doorman failed to complete binary upgrade on port {} (timeout 5s)",
         port
@@ -463,7 +483,7 @@ pub async fn wait_for_foreground_binary_upgrade(world: &mut DoormanWorld) {
 #[then(regex = r#"foreground pg_doorman PID should be different from stored "([^"]+)""#)]
 pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: String) {
     let port = world.doorman_port.expect("doorman_port not set");
-    
+
     let old_pid = world
         .named_backend_pids
         .get(&(name.clone(), "foreground_pid".to_string()))
@@ -472,27 +492,42 @@ pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: Strin
     // The old process should have exited or be in graceful shutdown
     // We need to find the new process listening on the port
     // Since we can't easily get the new PID, we verify the old process is no longer the main listener
-    
+
     // Wait a bit and check if old process is still running
     sleep(Duration::from_millis(500)).await;
-    
+
     // Check if port is still accessible
     assert!(
         std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok(),
         "New pg_doorman should be listening on port {}",
         port
     );
-    
+
     // The old process should eventually exit after graceful shutdown
     // For now, we just verify the service is still available
     // In a real scenario, the old process exits after all clients disconnect
-    
+
     // Note: We can't easily verify PID change in foreground mode without additional tracking
     // because the child process is not tracked by our test harness
     // The key verification is that the service remains available after SIGINT
-    
+
     println!(
         "Binary upgrade completed: old PID was {}, service still available on port {}",
         old_pid, port
+    );
+}
+
+/// Verify that stored foreground pg_doorman PID no longer exists (process terminated)
+#[then(regex = r#"stored foreground PID "([^"]+)" should not exist"#)]
+pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: String) {
+    let pid = world
+        .named_backend_pids
+        .get(&(name.clone(), "foreground_pid".to_string()))
+        .expect("Stored foreground PID not found");
+
+    assert!(
+        !is_process_running(*pid as u32),
+        "Process with PID {} should not exist, but it is still running",
+        pid
     );
 }

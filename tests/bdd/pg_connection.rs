@@ -332,6 +332,43 @@ impl PgConnection {
         Ok(messages)
     }
 
+    /// Read messages until ReadyForQuery, then continue reading any additional messages
+    /// (like ErrorResponse sent after transaction completion during shutdown)
+    pub async fn read_all_messages_until_ready_and_more(
+        &mut self,
+    ) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {
+        let mut messages = Vec::new();
+        // First, read until ReadyForQuery
+        loop {
+            let (msg_type, data) = self.read_message().await?;
+            if msg_type != 'S' && msg_type != 'K' {
+                messages.push((msg_type, data.clone()));
+            }
+            if msg_type == 'Z' {
+                break;
+            }
+        }
+        // Then try to read any additional messages with a short timeout
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_millis(500), self.read_message())
+                .await
+            {
+                Ok(Ok((msg_type, data))) => {
+                    if msg_type != 'S' && msg_type != 'K' {
+                        messages.push((msg_type, data));
+                    }
+                    // If we got ErrorResponse or another ReadyForQuery, we're done
+                    if msg_type == 'E' || msg_type == 'Z' {
+                        break;
+                    }
+                }
+                Ok(Err(_)) => break, // Connection error - stop reading
+                Err(_) => break,     // Timeout - no more messages
+            }
+        }
+        Ok(messages)
+    }
+
     pub async fn read_partial_messages(&mut self) -> tokio::io::Result<Vec<(char, Vec<u8>)>> {
         let mut messages = Vec::new();
         // Read messages until we get at least one, but don't wait for ReadyForQuery
