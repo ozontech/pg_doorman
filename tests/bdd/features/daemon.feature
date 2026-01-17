@@ -1,4 +1,4 @@
-@rust @daemon @binary-upgrade-grac-shutdown
+@binary-upgrade-grac-shutdown
 Feature: Daemon mode with PID file synchronization
   pg_doorman should properly daemonize and write PID file before parent exits.
   This ensures proper integration with supervisor programs that rely on PID files.
@@ -132,3 +132,50 @@ Feature: Daemon mode with PID file synchronization
     And we send SimpleQuery "COMMIT" to session "original"
     # Close new session
     When we close session "new"
+
+  @daemon-grac-shutdown-debug
+  Scenario: Graceful shutdown rejects new queries after transaction completes in daemon mode
+    Given pg_doorman started in daemon mode with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      daemon_pid_file = "/tmp/pg_doorman_pid_scenario_5"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      pool_mode = "transaction"
+      shutdown_timeout = 5000
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      [pools.example_db.users.0]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    # Wait for daemon to be fully ready
+    When we sleep 1000ms
+    # Open session one and start a transaction
+    And we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "one"
+    # Store backend PID for comparison
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "one_backend"
+    # Send SIGINT to trigger graceful shutdown
+    And we send SIGINT to daemon from PID file "/tmp/pg_doorman_pid_scenario_5"
+    # Wait for new daemon to start and be ready
+    And we sleep 2000ms
+    # Open session two - should get a different backend (new connection through new daemon)
+    And we create session "two" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "two" and store backend_pid as "two_backend"
+    # Verify session two has different backend PID
+    Then stored PID "two_backend" should be different from "one_backend"
+    # Session one can still execute queries in active transaction
+    When we send SimpleQuery "SELECT 1" to session "one"
+    # Commit the transaction in session one - after commit, pooler sends error and closes connection
+    And we send SimpleQuery "COMMIT" to session "one" expecting error after ready
+    Then session "one" should receive error containing "pooler is shut down now" with code "58006"
+    # Close session one (connection already closed by pooler)
+    When we close session "one"
+    # Close session two
+    When we close session "two"

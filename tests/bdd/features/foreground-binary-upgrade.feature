@@ -1,4 +1,4 @@
-@rust @foreground-upgrade @binary-upgrade-grac-shutdown
+@binary-upgrade-grac-shutdown
 Feature: Foreground mode binary upgrade
   pg_doorman should support binary upgrade in foreground mode by passing
   the listener socket to the new process via --inherit-fd argument.
