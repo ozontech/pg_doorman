@@ -108,6 +108,7 @@ struct PoolInner {
 }
 
 impl PoolInner {
+    #[inline(always)]
     fn return_object(&self, inner: ObjectInner) {
         let mut slots = self.slots.lock();
         match self.config.queue_mode {
@@ -169,6 +170,7 @@ impl Pool {
     }
 
     /// Retrieves an Object from this Pool or waits for one to become available.
+    #[inline(always)]
     pub async fn get(&self) -> Result<Object, PoolError> {
         self.timeout_get(&self.timeouts()).await
     }
@@ -353,6 +355,7 @@ impl Pool {
     }
 
     /// Get current timeout configuration.
+    #[inline(always)]
     pub fn timeouts(&self) -> Timeouts {
         self.inner.config.timeouts
     }
