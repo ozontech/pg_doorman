@@ -4,10 +4,12 @@ use std::{
     ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Weak,
     },
     time::Instant,
 };
+
+use parking_lot::Mutex;
 
 use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
 
@@ -107,7 +109,7 @@ struct PoolInner {
 
 impl PoolInner {
     fn return_object(&self, inner: ObjectInner) {
-        let mut slots = self.slots.lock().unwrap();
+        let mut slots = self.slots.lock();
         match self.config.queue_mode {
             QueueMode::Fifo => slots.vec.push_back(inner),
             QueueMode::Lifo => slots.vec.push_front(inner),
@@ -118,7 +120,7 @@ impl PoolInner {
 
 impl fmt::Debug for PoolInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let slots = self.slots.lock().unwrap();
+        let slots = self.slots.lock();
         f.debug_struct("PoolInner")
             .field("server_pool", &self.server_pool)
             .field("slots_size", &slots.size)
@@ -228,7 +230,7 @@ impl Pool {
         // Try to get an existing object from the pool
         loop {
             let obj_inner = {
-                let mut slots = self.inner.slots.lock().unwrap();
+                let mut slots = self.inner.slots.lock();
                 slots.vec.pop_front()
             };
 
@@ -265,7 +267,7 @@ impl Pool {
                         }
                         Err(_) => {
                             // Object is bad, try again
-                            let mut slots = self.inner.slots.lock().unwrap();
+                            let mut slots = self.inner.slots.lock();
                             slots.size = slots.size.saturating_sub(1);
                             continue;
                         }
@@ -296,7 +298,7 @@ impl Pool {
         };
 
         {
-            let mut slots = self.inner.slots.lock().unwrap();
+            let mut slots = self.inner.slots.lock();
             slots.size += 1;
         }
 
@@ -312,7 +314,7 @@ impl Pool {
 
     /// Resizes the pool.
     pub fn resize(&self, max_size: usize) {
-        let mut slots = self.inner.slots.lock().unwrap();
+        let mut slots = self.inner.slots.lock();
         let old_max_size = slots.max_size;
         slots.max_size = max_size;
 
@@ -344,7 +346,7 @@ impl Pool {
 
     /// Retains only the objects specified by the given function.
     pub fn retain(&self, f: impl Fn(&Server, Metrics) -> bool) {
-        let mut guard = self.inner.slots.lock().unwrap();
+        let mut guard = self.inner.slots.lock();
         let len_before = guard.vec.len();
         guard.vec.retain_mut(|obj| f(&obj.obj, obj.metrics));
         guard.size -= len_before - guard.vec.len();
@@ -369,7 +371,7 @@ impl Pool {
     /// Retrieves Status of this Pool.
     #[must_use]
     pub fn status(&self) -> Status {
-        let slots = self.inner.slots.lock().unwrap();
+        let slots = self.inner.slots.lock();
         let users = self.inner.users.load(Ordering::Relaxed);
         let (available, waiting) = if users < slots.size {
             (slots.size - users, 0)
