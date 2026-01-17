@@ -337,9 +337,30 @@ impl<T> Daemonize<T> {
             set_sid()?;
             libc::umask(self.umask.inner);
 
-            if perform_fork()?.is_some() {
-                exit(0)
-            };
+            // Create a pipe for synchronization between first child and daemon (second child).
+            // This ensures the first child waits until the daemon has written the PID file
+            // before exiting, which allows the original parent to exit only after the PID file
+            // is ready. This is required for proper supervisor integration.
+            let mut pipe_fds: [libc::c_int; 2] = [0; 2];
+            check_err(libc::pipe(pipe_fds.as_mut_ptr()), ErrorKind::Pipe)?;
+            let pipe_read_fd = pipe_fds[0];
+            let pipe_write_fd = pipe_fds[1];
+
+            match perform_fork()? {
+                Some(_) => {
+                    // First child: close write end and wait for daemon to signal readiness
+                    libc::close(pipe_write_fd);
+                    let mut buf: [u8; 1] = [0];
+                    // Block until daemon writes to pipe (or pipe is closed on error)
+                    libc::read(pipe_read_fd, buf.as_mut_ptr() as *mut libc::c_void, 1);
+                    libc::close(pipe_read_fd);
+                    exit(0)
+                }
+                None => {
+                    // Daemon (second child): close read end, will write after PID file is ready
+                    libc::close(pipe_read_fd);
+                }
+            }
 
             let pid_file_fd = self
                 .pid_file
@@ -388,6 +409,15 @@ impl<T> Daemonize<T> {
             if let Some(pid_file_fd) = pid_file_fd {
                 write_pid_file(pid_file_fd)?;
             }
+
+            // Signal to first child that daemon is ready (PID file written)
+            let ready_signal: [u8; 1] = [1];
+            libc::write(
+                pipe_write_fd,
+                ready_signal.as_ptr() as *const libc::c_void,
+                1,
+            );
+            libc::close(pipe_write_fd);
 
             Ok(privileged_action_result)
         }

@@ -28,6 +28,13 @@ pub struct Args {
 
     #[arg(short, long, default_value_t = false, env, help = "run as daemon")]
     pub daemon: bool,
+
+    #[arg(
+        long,
+        env,
+        help = "inherit listener file descriptor from parent process (for binary upgrade in foreground mode)"
+    )]
+    pub inherit_fd: Option<i32>,
 }
 
 #[derive(Subcommand, Debug)]

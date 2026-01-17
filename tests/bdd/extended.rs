@@ -1607,6 +1607,76 @@ pub async fn send_simple_query_to_session_expecting_error(
         .insert(session_name.clone(), messages);
 }
 
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" expecting error after ready$"#
+)]
+pub async fn send_simple_query_to_session_expecting_error_after_ready(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    // Read all messages until ReadyForQuery AND any additional messages after (like ErrorResponse)
+    let messages = conn
+        .read_all_messages_until_ready_and_more()
+        .await
+        .expect("Failed to read messages");
+
+    world
+        .session_messages
+        .insert(session_name.clone(), messages);
+}
+
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" expecting connection close$"#
+)]
+pub async fn send_simple_query_to_session_expecting_connection_close(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    // Try to send query - may fail if connection already closed
+    if conn.send_simple_query(&query).await.is_err() {
+        // Connection already closed - this is expected
+        return;
+    }
+
+    // Try to read response - should fail with connection reset or return error
+    match conn.read_all_messages_until_ready().await {
+        Ok(messages) => {
+            // Check if we got an error response (pooler shutdown message)
+            let has_error = messages.iter().any(|(msg_type, _)| *msg_type == 'E');
+            if has_error {
+                // Store messages for potential further inspection
+                world
+                    .session_messages
+                    .insert(session_name.clone(), messages);
+                return;
+            }
+            panic!(
+                "Expected connection close or error for session '{}', but got successful response",
+                session_name
+            );
+        }
+        Err(_) => {
+            // Connection closed - this is expected
+        }
+    }
+}
+
 #[then(regex = r#"^session "([^"]+)" should receive error containing "([^"]+)"$"#)]
 pub async fn session_should_receive_error_containing(
     world: &mut DoormanWorld,
@@ -1645,6 +1715,77 @@ pub async fn session_should_receive_error_containing(
         session_name,
         expected_text,
         error_msg
+    );
+}
+
+#[then(
+    regex = r#"^session "([^"]+)" should receive error containing "([^"]+)" with code "([^"]+)"$"#
+)]
+pub async fn session_should_receive_error_containing_with_code(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_text: String,
+    expected_code: String,
+) {
+    // Get messages from the stored session messages
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
+
+    // Find ErrorResponse in the messages
+    let mut found_error: Option<(String, String)> = None;
+    for (msg_type, data) in messages {
+        if *msg_type == 'E' {
+            // ErrorResponse - parse the error message and code
+            // Format: S<severity>\0 V<severity>\0 C<code>\0 M<message>\0 ... \0
+            let mut code = String::new();
+            let mut message = String::new();
+            let mut i = 0;
+            while i < data.len() {
+                let field_type = data[i] as char;
+                if field_type == '\0' {
+                    break;
+                }
+                i += 1;
+                let start = i;
+                while i < data.len() && data[i] != 0 {
+                    i += 1;
+                }
+                let value = String::from_utf8_lossy(&data[start..i]).to_string();
+                i += 1; // skip null terminator
+                match field_type {
+                    'C' => code = value,
+                    'M' => message = value,
+                    _ => {}
+                }
+            }
+            found_error = Some((message, code));
+            break;
+        }
+    }
+
+    let (error_msg, error_code) = found_error.unwrap_or_else(|| {
+        panic!(
+            "No ErrorResponse received from session '{}', expected error containing '{}' with code '{}'",
+            session_name, expected_text, expected_code
+        )
+    });
+
+    assert!(
+        error_msg
+            .to_lowercase()
+            .contains(&expected_text.to_lowercase()),
+        "Session '{}': expected error containing '{}', got '{}'",
+        session_name,
+        expected_text,
+        error_msg
+    );
+
+    assert_eq!(
+        error_code, expected_code,
+        "Session '{}': expected error code '{}', got '{}'",
+        session_name, expected_code, error_code
     );
 }
 

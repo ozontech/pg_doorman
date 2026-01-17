@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{split, AsyncReadExt, BufReader, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
-use tokio::sync::broadcast::Receiver;
 
 use crate::auth::authenticate;
 use crate::auth::hba::CheckResult;
@@ -93,7 +92,6 @@ where
 pub async fn startup_tls(
     stream: TcpStream,
     client_server_map: ClientServerMap,
-    shutdown: Receiver<()>,
     admin_only: bool,
     tls_acceptor: tokio_native_tls::TlsAcceptor,
 ) -> Result<
@@ -137,7 +135,6 @@ pub async fn startup_tls(
                 addr,
                 bytes,
                 client_server_map,
-                shutdown,
                 admin_only,
                 true,
             )
@@ -148,7 +145,7 @@ pub async fn startup_tls(
             CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             let (read, write) = split(stream);
             // Continue with cancel query request.
-            Client::cancel(read, write, addr, bytes, client_server_map, shutdown).await
+            Client::cancel(read, write, addr, bytes, client_server_map).await
         }
 
         Ok((ClientConnectionType::Tls, _)) => {
@@ -173,7 +170,6 @@ where
         addr: std::net::SocketAddr,
         bytes: BytesMut, // The rest of the startup message.
         client_server_map: ClientServerMap,
-        shutdown: Receiver<()>,
         admin_only: bool,
         use_tls: bool,
     ) -> Result<Client<S, T>, Error> {
@@ -381,7 +377,6 @@ where
             pool_name,
             username: std::mem::take(&mut client_identifier.username),
             server_parameters,
-            shutdown,
             prepared_statements_enabled,
             async_client: false,
             prepared_statements: AHashMap::new(),
@@ -401,7 +396,6 @@ where
         addr: std::net::SocketAddr,
         mut bytes: BytesMut, // The rest of the startup message.
         client_server_map: ClientServerMap,
-        shutdown: Receiver<()>,
     ) -> Result<Client<S, T>, Error> {
         let process_id = bytes.get_i32();
         let secret_key = bytes.get_i32();
@@ -424,7 +418,6 @@ where
             pool_name: String::from("undefined"),
             username: String::from("undefined"),
             server_parameters: ServerParameters::new(),
-            shutdown,
             prepared_statements_enabled: false,
             async_client: false,
             prepared_statements: AHashMap::new(),

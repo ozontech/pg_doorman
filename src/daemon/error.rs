@@ -32,6 +32,7 @@ pub enum ErrorKind {
     WritePid(Errno),
     WritePidUnspecifiedError,
     Chroot(Errno),
+    Pipe(Errno),
 }
 
 impl ErrorKind {
@@ -62,6 +63,7 @@ impl ErrorKind {
                 "unable to write self pid to pid file due to unknown reason"
             }
             ErrorKind::Chroot(_) => "unable to chroot into directory",
+            ErrorKind::Pipe(_) => "unable to create pipe for synchronization",
         }
     }
 
@@ -90,6 +92,7 @@ impl ErrorKind {
             ErrorKind::WritePid(errno) => Some(*errno),
             ErrorKind::WritePidUnspecifiedError => None,
             ErrorKind::Chroot(errno) => Some(*errno),
+            ErrorKind::Pipe(errno) => Some(*errno),
         }
     }
 }

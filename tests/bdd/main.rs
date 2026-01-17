@@ -92,6 +92,17 @@ fn main() {
                     }
                     w.doorman_process = None;
 
+                    // Stop daemon process if running (for daemon mode tests)
+                    // Read PID from file to handle binary-upgrade where PID changes
+                    if let Some(ref pid_path) = w.doorman_daemon_pid_file {
+                        if let Ok(pid_content) = std::fs::read_to_string(pid_path) {
+                            if let Ok(pid) = pid_content.trim().parse::<u32>() {
+                                doorman_helper::stop_doorman_daemon(pid);
+                            }
+                        }
+                    }
+                    w.doorman_daemon_pid_file = None;
+
                     if let Some(ref mut child) = w.pgbouncer_process {
                         pgbouncer_helper::stop_pgbouncer(child);
                     }

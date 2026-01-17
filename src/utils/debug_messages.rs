@@ -135,7 +135,10 @@ impl ProtocolState {
                 if self.receiving_data || self.in_simple_query {
                     None
                 } else {
-                    Some("DataRow('D') received but not expecting data (no Execute/Query pending)".to_string())
+                    Some(
+                        "DataRow('D') received but not expecting data (no Execute/Query pending)"
+                            .to_string(),
+                    )
                 }
             }
             'C' => {
@@ -151,7 +154,8 @@ impl ProtocolState {
                     None
                 } else {
                     Some(
-                        "CommandComplete('C') received but no Execute/Query was pending".to_string(),
+                        "CommandComplete('C') received but no Execute/Query was pending"
+                            .to_string(),
                     )
                 }
             }
