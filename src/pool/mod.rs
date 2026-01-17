@@ -20,7 +20,7 @@ mod types;
 
 pub use errors::{PoolError, RecycleError, RecycleResult};
 pub use inner::{Object, Pool, PoolBuilder};
-pub use types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
+pub use types::{Metrics, PoolConfig, Status, Timeouts};
 
 pub use crate::server::PreparedStatementCache;
 
@@ -231,11 +231,6 @@ impl ConnectionPool {
                         application_name,
                     );
 
-                    let queue_strategy = match config.general.server_round_robin {
-                        true => QueueMode::Fifo,
-                        false => QueueMode::Lifo,
-                    };
-
                     info!(
                         "[pool: {}][user: {}][vpid: {}]",
                         pool_name, user.username, virtual_pool_id
@@ -250,7 +245,6 @@ impl ConnectionPool {
                             create: Some(Duration::from_millis(config.general.connect_timeout)),
                             recycle: None,
                         },
-                        queue_mode: queue_strategy,
                     });
 
                     let pool = builder_config.build();

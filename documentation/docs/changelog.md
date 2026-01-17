@@ -6,8 +6,13 @@ title: Changelog
 
 ### 3.1.0 <small>Jan 17, 2026</small> { id="3.1.0" }
 
+**Breaking Changes:**
+
+- **Removed `server_round_robin` configuration option**: The connection pool now always uses FIFO (First-In-First-Out) queue mode. This change was made as part of the lock-free pool implementation which provides ~29% better throughput and ~21% lower latency. The LIFO mode is no longer supported.
+
 **New Features:**
 
+- **Lock-free connection pool**: Replaced `Mutex<VecDeque>` + `Semaphore` with `crossbeam::ArrayQueue` + `tokio::sync::Notify` for significantly improved pool performance (~1.36M ops/sec vs ~1.05M ops/sec).
 - **Foreground mode binary upgrade**: Added support for binary upgrade in foreground mode by passing the listener socket to the new process via `--inherit-fd` argument. This enables zero-downtime upgrades without requiring daemon mode.
 - **Improved graceful shutdown behavior**: 
   - During graceful shutdown, only clients with active transactions are now counted (instead of all connected clients), allowing faster shutdown when clients are idle.

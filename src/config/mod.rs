@@ -185,7 +185,6 @@ impl Config {
         );
         info!("Backlog: {}", self.general.backlog);
         info!("Max connections: {}", self.general.max_connections);
-        info!("Sever round robin: {}", self.general.server_round_robin);
         if self.general.hba.is_empty() {
             if let Some(pg_hba) = &self.general.pg_hba {
                 info!("HBA config:\n{pg_hba}\n");

@@ -8,10 +8,6 @@ pub struct PoolConfig {
 
     /// Timeouts of the pool.
     pub timeouts: Timeouts,
-
-    /// Queue mode of the pool.
-    /// Determines the order of objects being queued and dequeued.
-    pub queue_mode: QueueMode,
 }
 
 impl PoolConfig {
@@ -21,7 +17,6 @@ impl PoolConfig {
         Self {
             max_size,
             timeouts: Timeouts::default(),
-            queue_mode: QueueMode::default(),
         }
     }
 }
@@ -50,21 +45,6 @@ impl Timeouts {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-}
-
-/// Mode for dequeuing objects from a pool.
-#[derive(Clone, Copy, Debug)]
-pub enum QueueMode {
-    /// Dequeue the object that was least recently added (first in first out).
-    Fifo,
-    /// Dequeue the object that was most recently added (last in first out).
-    Lifo,
-}
-
-impl Default for QueueMode {
-    fn default() -> Self {
-        Self::Fifo
     }
 }
 

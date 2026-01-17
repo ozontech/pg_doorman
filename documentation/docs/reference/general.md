@@ -161,13 +161,6 @@ Server lifetime in milliseconds.
 
 Default: `300000` (5 min).
 
-### server_round_robin
-
-In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
-By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.
-
-Default: `false`.
-
 ### sync_server_parameters
 
 If enabled, we strive to restore the parameters (via query `SET`) that were set by the client (and application_name)

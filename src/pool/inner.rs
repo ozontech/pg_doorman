@@ -1,22 +1,20 @@
 use std::{
-    collections::VecDeque,
     fmt,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Weak,
     },
     time::Instant,
 };
 
-use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
+use crossbeam::queue::ArrayQueue;
+use tokio::sync::Notify;
 
 use super::errors::{PoolError, RecycleError, TimeoutType};
-use super::types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
+use super::types::{Metrics, PoolConfig, Status, Timeouts};
 use super::ServerPool;
 use crate::server::Server;
-
-const MAX_FAST_RETRY: i32 = 5;
 
 /// Internal object wrapper with metrics.
 #[derive(Debug)]
@@ -87,43 +85,45 @@ impl fmt::Debug for Object {
     }
 }
 
-/// Internal slots storage.
-#[derive(Debug)]
-struct Slots {
-    vec: VecDeque<ObjectInner>,
-    size: usize,
-    max_size: usize,
-}
-
-/// Internal pool state.
+/// Internal pool state with lock-free queue.
 struct PoolInner {
     server_pool: ServerPool,
-    slots: Mutex<Slots>,
+    /// Lock-free queue for available connections.
+    slots: ArrayQueue<ObjectInner>,
+    /// Current number of created connections (may be less than max_size).
+    size: AtomicUsize,
     /// Number of users currently holding or waiting for objects.
     users: AtomicUsize,
-    semaphore: Semaphore,
+    /// Number of connections currently checked out (in use).
+    in_use: AtomicUsize,
+    /// Notification for waiters when a connection becomes available.
+    notify: Notify,
+    /// Whether the pool is closed.
+    closed: AtomicBool,
     config: PoolConfig,
 }
 
 impl PoolInner {
     fn return_object(&self, inner: ObjectInner) {
-        let mut slots = self.slots.lock().unwrap();
-        match self.config.queue_mode {
-            QueueMode::Fifo => slots.vec.push_back(inner),
-            QueueMode::Lifo => slots.vec.push_front(inner),
-        }
-        self.semaphore.add_permits(1);
+        // Push back to queue (ArrayQueue is FIFO by default)
+        // For LIFO we would need a different approach, but ArrayQueue doesn't support it directly
+        // We'll handle queue_mode in a simplified way for now
+        let _ = self.slots.push(inner);
+        self.in_use.fetch_sub(1, Ordering::Release);
+        // Notify one waiter that a connection is available
+        self.notify.notify_one();
     }
 }
 
 impl fmt::Debug for PoolInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let slots = self.slots.lock().unwrap();
         f.debug_struct("PoolInner")
             .field("server_pool", &self.server_pool)
-            .field("slots_size", &slots.size)
-            .field("slots_max_size", &slots.max_size)
-            .field("users", &self.users)
+            .field("slots_len", &self.slots.len())
+            .field("size", &self.size.load(Ordering::Relaxed))
+            .field("in_use", &self.in_use.load(Ordering::Relaxed))
+            .field("users", &self.users.load(Ordering::Relaxed))
+            .field("closed", &self.closed.load(Ordering::Relaxed))
             .field("config", &self.config)
             .finish()
     }
@@ -154,13 +154,12 @@ impl Pool {
         Self {
             inner: Arc::new(PoolInner {
                 server_pool: builder.server_pool,
-                slots: Mutex::new(Slots {
-                    vec: VecDeque::with_capacity(builder.config.max_size),
-                    size: 0,
-                    max_size: builder.config.max_size,
-                }),
+                slots: ArrayQueue::new(builder.config.max_size),
+                size: AtomicUsize::new(0),
                 users: AtomicUsize::new(0),
-                semaphore: Semaphore::new(builder.config.max_size),
+                in_use: AtomicUsize::new(0),
+                notify: Notify::new(),
+                closed: AtomicBool::new(false),
                 config: builder.config,
             }),
         }
@@ -173,6 +172,11 @@ impl Pool {
 
     /// Retrieves an Object from this Pool using a different timeout than the configured one.
     pub async fn timeout_get(&self, timeouts: &Timeouts) -> Result<Object, PoolError> {
+        // Check if pool is closed
+        if self.inner.closed.load(Ordering::Acquire) {
+            return Err(PoolError::Closed);
+        }
+
         let _ = self.inner.users.fetch_add(1, Ordering::Relaxed);
         let _users_guard = scopeguard::guard((), |_| {
             let _ = self.inner.users.fetch_sub(1, Ordering::Relaxed);
@@ -183,171 +187,160 @@ impl Pool {
             None => false,
         };
 
-        let mut try_fast = 0;
-        let permit: SemaphorePermit<'_>;
+        let max_size = self.inner.config.max_size;
+        let start = Instant::now();
+
         loop {
-            if try_fast < MAX_FAST_RETRY && !non_blocking {
-                match self.inner.semaphore.try_acquire() {
-                    Ok(p) => {
-                        permit = p;
-                        break;
+            // Check if pool is closed
+            if self.inner.closed.load(Ordering::Acquire) {
+                return Err(PoolError::Closed);
+            }
+
+            // Fast path: try to get an existing object from the queue
+            if let Some(mut inner) = self.inner.slots.pop() {
+                // Recycle the object
+                let recycle_result = match timeouts.recycle {
+                    Some(duration) => {
+                        match tokio::time::timeout(
+                            duration,
+                            self.inner.server_pool.recycle(&mut inner.obj, &inner.metrics),
+                        )
+                        .await
+                        {
+                            Ok(r) => r,
+                            Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+                        }
+                    }
+                    None => {
+                        self.inner
+                            .server_pool
+                            .recycle(&mut inner.obj, &inner.metrics)
+                            .await
+                    }
+                };
+
+                match recycle_result {
+                    Ok(()) => {
+                        self.inner.in_use.fetch_add(1, Ordering::Acquire);
+                        return Ok(Object {
+                            inner: Some(inner),
+                            pool: Arc::downgrade(&self.inner),
+                        });
                     }
                     Err(_) => {
-                        try_fast += 1;
-                        tokio::task::yield_now().await;
+                        // Object is bad, decrement size and try again
+                        self.inner.size.fetch_sub(1, Ordering::Release);
                         continue;
                     }
                 }
             }
 
-            permit = if non_blocking {
-                self.inner.semaphore.try_acquire().map_err(|e| match e {
-                    TryAcquireError::Closed => PoolError::Closed,
-                    TryAcquireError::NoPermits => PoolError::Timeout(TimeoutType::Wait),
-                })?
-            } else {
-                match timeouts.wait {
-                    Some(duration) => {
-                        match tokio::time::timeout(duration, self.inner.semaphore.acquire()).await {
-                            Ok(Ok(p)) => p,
-                            Ok(Err(_)) => return Err(PoolError::Closed),
-                            Err(_) => return Err(PoolError::Timeout(TimeoutType::Wait)),
-                        }
-                    }
-                    None => self
-                        .inner
-                        .semaphore
-                        .acquire()
-                        .await
-                        .map_err(|_| PoolError::Closed)?,
-                }
-            };
-            break;
-        }
-
-        // Try to get an existing object from the pool
-        loop {
-            let obj_inner = {
-                let mut slots = self.inner.slots.lock().unwrap();
-                slots.vec.pop_front()
-            };
-
-            match obj_inner {
-                Some(mut inner) => {
-                    // Recycle the object
-                    let recycle_result = match timeouts.recycle {
+            // Try to create a new connection if we haven't reached max_size
+            let current_size = self.inner.size.load(Ordering::Acquire);
+            
+            if current_size < max_size {
+                // Try to reserve a slot for new connection
+                if self.inner.size.compare_exchange(
+                    current_size,
+                    current_size + 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ).is_ok() {
+                    // We reserved a slot, create new connection
+                    let obj = match timeouts.create {
                         Some(duration) => {
-                            match tokio::time::timeout(
-                                duration,
-                                self.inner.server_pool.recycle(&mut inner.obj, &inner.metrics),
-                            )
-                            .await
-                            {
-                                Ok(r) => r,
-                                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+                            match tokio::time::timeout(duration, self.inner.server_pool.create()).await {
+                                Ok(Ok(obj)) => obj,
+                                Ok(Err(e)) => {
+                                    // Failed to create, release the slot
+                                    self.inner.size.fetch_sub(1, Ordering::Release);
+                                    return Err(PoolError::Backend(e));
+                                }
+                                Err(_) => {
+                                    self.inner.size.fetch_sub(1, Ordering::Release);
+                                    return Err(PoolError::Timeout(TimeoutType::Create));
+                                }
                             }
                         }
-                        None => {
-                            self.inner
-                                .server_pool
-                                .recycle(&mut inner.obj, &inner.metrics)
-                                .await
-                        }
+                        None => match self.inner.server_pool.create().await {
+                            Ok(obj) => obj,
+                            Err(e) => {
+                                self.inner.size.fetch_sub(1, Ordering::Release);
+                                return Err(PoolError::Backend(e));
+                            }
+                        },
                     };
 
-                    match recycle_result {
-                        Ok(()) => {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                        Err(_) => {
-                            // Object is bad, try again
-                            let mut slots = self.inner.slots.lock().unwrap();
-                            slots.size = slots.size.saturating_sub(1);
-                            continue;
-                        }
-                    }
+                    self.inner.in_use.fetch_add(1, Ordering::Acquire);
+                    return Ok(Object {
+                        inner: Some(ObjectInner {
+                            obj,
+                            metrics: Metrics::default(),
+                        }),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
-                None => {
-                    // No existing object, create a new one
-                    break;
+                // CAS failed, another thread got the slot, retry
+                continue;
+            }
+
+            // Pool is full, need to wait
+            if non_blocking {
+                return Err(PoolError::Timeout(TimeoutType::Wait));
+            }
+
+            // Check timeout
+            if let Some(wait_duration) = timeouts.wait {
+                if start.elapsed() >= wait_duration {
+                    return Err(PoolError::Timeout(TimeoutType::Wait));
                 }
+                // Wait for notification with remaining timeout
+                let remaining = wait_duration.saturating_sub(start.elapsed());
+                match tokio::time::timeout(remaining, self.inner.notify.notified()).await {
+                    Ok(_) => continue, // Got notification, retry
+                    Err(_) => return Err(PoolError::Timeout(TimeoutType::Wait)),
+                }
+            } else {
+                // No timeout, wait indefinitely
+                self.inner.notify.notified().await;
             }
         }
-
-        // Create a new object
-        let obj = match timeouts.create {
-            Some(duration) => {
-                match tokio::time::timeout(duration, self.inner.server_pool.create()).await {
-                    Ok(Ok(obj)) => obj,
-                    Ok(Err(e)) => return Err(PoolError::Backend(e)),
-                    Err(_) => return Err(PoolError::Timeout(TimeoutType::Create)),
-                }
-            }
-            None => self
-                .inner
-                .server_pool
-                .create()
-                .await
-                .map_err(PoolError::Backend)?,
-        };
-
-        {
-            let mut slots = self.inner.slots.lock().unwrap();
-            slots.size += 1;
-        }
-
-        permit.forget();
-        Ok(Object {
-            inner: Some(ObjectInner {
-                obj,
-                metrics: Metrics::default(),
-            }),
-            pool: Arc::downgrade(&self.inner),
-        })
     }
 
     /// Resizes the pool.
+    /// Note: With lock-free ArrayQueue, resize is limited - we can only drain connections.
+    /// Growing requires recreating the pool.
     pub fn resize(&self, max_size: usize) {
-        let mut slots = self.inner.slots.lock().unwrap();
-        let old_max_size = slots.max_size;
-        slots.max_size = max_size;
-
-        // Shrink pool
-        if max_size < old_max_size {
-            while slots.vec.len() > max_size {
-                if slots.vec.pop_back().is_some() {
-                    slots.size = slots.size.saturating_sub(1);
+        // For shrinking, drain excess connections
+        let current_size = self.inner.size.load(Ordering::Acquire);
+        if max_size < current_size {
+            let to_remove = current_size - max_size;
+            for _ in 0..to_remove {
+                if self.inner.slots.pop().is_some() {
+                    self.inner.size.fetch_sub(1, Ordering::Release);
                 }
             }
-            // Reduce semaphore permits
-            let permits_to_remove = old_max_size - max_size;
-            let _ = self.inner.semaphore.try_acquire_many(permits_to_remove as u32);
-            // Reallocate vec
-            let mut vec = VecDeque::with_capacity(max_size);
-            for obj in slots.vec.drain(..) {
-                vec.push_back(obj);
-            }
-            slots.vec = vec;
         }
-
-        // Grow pool
-        if max_size > old_max_size {
-            let additional = max_size - old_max_size;
-            slots.vec.reserve_exact(additional);
-            self.inner.semaphore.add_permits(additional);
-        }
+        // Note: Growing is not supported with fixed-size ArrayQueue
+        // The pool would need to be recreated for that
     }
 
     /// Retains only the objects specified by the given function.
+    /// Note: With lock-free queue, this drains and re-adds matching objects.
     pub fn retain(&self, f: impl Fn(&Server, Metrics) -> bool) {
-        let mut guard = self.inner.slots.lock().unwrap();
-        let len_before = guard.vec.len();
-        guard.vec.retain_mut(|obj| f(&obj.obj, obj.metrics));
-        guard.size -= len_before - guard.vec.len();
+        // Drain all objects and re-add those that pass the filter
+        let mut to_keep = Vec::new();
+        while let Some(obj) = self.inner.slots.pop() {
+            if f(&obj.obj, obj.metrics) {
+                to_keep.push(obj);
+            } else {
+                self.inner.size.fetch_sub(1, Ordering::Release);
+            }
+        }
+        // Re-add kept objects
+        for obj in to_keep {
+            let _ = self.inner.slots.push(obj);
+        }
     }
 
     /// Get current timeout configuration.
@@ -357,28 +350,30 @@ impl Pool {
 
     /// Closes this Pool.
     pub fn close(&self) {
-        self.resize(0);
-        self.inner.semaphore.close();
+        self.inner.closed.store(true, Ordering::Release);
+        // Drain all connections
+        while self.inner.slots.pop().is_some() {
+            self.inner.size.fetch_sub(1, Ordering::Release);
+        }
+        // Wake up all waiters so they can see the pool is closed
+        self.inner.notify.notify_waiters();
     }
 
     /// Indicates whether this Pool has been closed.
     pub fn is_closed(&self) -> bool {
-        self.inner.semaphore.is_closed()
+        self.inner.closed.load(Ordering::Acquire)
     }
 
     /// Retrieves Status of this Pool.
     #[must_use]
     pub fn status(&self) -> Status {
-        let slots = self.inner.slots.lock().unwrap();
+        let size = self.inner.size.load(Ordering::Relaxed);
         let users = self.inner.users.load(Ordering::Relaxed);
-        let (available, waiting) = if users < slots.size {
-            (slots.size - users, 0)
-        } else {
-            (0, users - slots.size)
-        };
+        let available = self.inner.slots.len();
+        let waiting = users.saturating_sub(size);
         Status {
-            max_size: slots.max_size,
-            size: slots.size,
+            max_size: self.inner.config.max_size,
+            size,
             available,
             waiting,
         }
