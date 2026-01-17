@@ -1607,6 +1607,44 @@ pub async fn send_simple_query_to_session_expecting_error(
         .insert(session_name.clone(), messages);
 }
 
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" expecting connection close$"#)]
+pub async fn send_simple_query_to_session_expecting_connection_close(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    // Try to send query - may fail if connection already closed
+    if conn.send_simple_query(&query).await.is_err() {
+        // Connection already closed - this is expected
+        return;
+    }
+
+    // Try to read response - should fail with connection reset or return error
+    match conn.read_all_messages_until_ready().await {
+        Ok(messages) => {
+            // Check if we got an error response (pooler shutdown message)
+            let has_error = messages.iter().any(|(msg_type, _)| *msg_type == 'E');
+            if has_error {
+                // Store messages for potential further inspection
+                world.session_messages.insert(session_name.clone(), messages);
+                return;
+            }
+            panic!(
+                "Expected connection close or error for session '{}', but got successful response",
+                session_name
+            );
+        }
+        Err(_) => {
+            // Connection closed - this is expected
+        }
+    }
+}
+
 #[then(regex = r#"^session "([^"]+)" should receive error containing "([^"]+)"$"#)]
 pub async fn session_should_receive_error_containing(
     world: &mut DoormanWorld,

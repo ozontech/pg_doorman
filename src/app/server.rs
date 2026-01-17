@@ -18,7 +18,7 @@ use tokio::sync::broadcast;
 use tokio::{runtime::Builder, sync::mpsc};
 
 #[cfg(not(windows))]
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 #[cfg(not(windows))]
 use std::os::unix::process::CommandExt;
 
@@ -87,6 +87,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         })
         .build()?;
 
+    // Store inherit_fd before moving args into runtime
+    #[cfg(not(windows))]
+    let inherit_fd = args.inherit_fd;
+
     runtime.block_on(async move {
         // starting listener.
         let addr = format!("{}:{}", config.general.host, config.general.port)
@@ -94,46 +98,92 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             .unwrap()
             .next()
             .unwrap();
-        let listen_socket = if addr.is_ipv4() {
-            TcpSocket::new_v4().unwrap()
+
+        #[cfg(not(windows))]
+        let listener = if let Some(fd) = inherit_fd {
+            // Inherit listener from parent process (binary upgrade in foreground mode)
+            info!("Inheriting listener from parent process (fd={})", fd);
+            let std_listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
+            std_listener.set_nonblocking(true).expect("can't set nonblocking");
+            tokio::net::TcpListener::from_std(std_listener).expect("can't create TcpListener from inherited fd")
         } else {
-            TcpSocket::new_v6().unwrap()
-        };
-        listen_socket
-            .set_reuseaddr(true)
-            .expect("can't set reuseaddr");
-        listen_socket
-            .set_reuseport(true)
-            .expect("can't set reuseport");
-        listen_socket
-            .set_nodelay(true)
-            .expect("can't set nodelay");
-        listen_socket
-            .set_linger(Some(Duration::from_secs(0)))
-            .expect("can't set linger 0");
-        // IPTOS_LOWDELAY: u8 = 0x10;
-        if addr.is_ipv4() {
-            match listen_socket.set_tos(0x10) {
-                Ok(_) => (),
-                Err(err) => {
-                    warn!("Can't set IPTOS_LOWDELAY: {err:?}");
-                }
+            // Create new listener
+            let listen_socket = if addr.is_ipv4() {
+                TcpSocket::new_v4().unwrap()
+            } else {
+                TcpSocket::new_v6().unwrap()
             };
-        };
-        listen_socket.bind(addr).expect("can't bind");
-        // end configure listener.
-        let backlog = if config.general.backlog > 0 {
-            config.general.backlog
-        } else {
-            config.general.max_connections as u32
-        };
-        let listener = match listen_socket.listen(backlog) {
-            Ok(sock) => sock,
-            Err(err) => {
-                error!("Listener socket error: {err:?}");
-                std::process::exit(exitcode::CONFIG);
+            listen_socket
+                .set_reuseaddr(true)
+                .expect("can't set reuseaddr");
+            listen_socket
+                .set_reuseport(true)
+                .expect("can't set reuseport");
+            listen_socket
+                .set_nodelay(true)
+                .expect("can't set nodelay");
+            listen_socket
+                .set_linger(Some(Duration::from_secs(0)))
+                .expect("can't set linger 0");
+            // IPTOS_LOWDELAY: u8 = 0x10;
+            if addr.is_ipv4() {
+                match listen_socket.set_tos(0x10) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        warn!("Can't set IPTOS_LOWDELAY: {err:?}");
+                    }
+                };
+            };
+            listen_socket.bind(addr).expect("can't bind");
+            // end configure listener.
+            let backlog = if config.general.backlog > 0 {
+                config.general.backlog
+            } else {
+                config.general.max_connections as u32
+            };
+            match listen_socket.listen(backlog) {
+                Ok(sock) => sock,
+                Err(err) => {
+                    error!("Listener socket error: {err:?}");
+                    std::process::exit(exitcode::CONFIG);
+                }
             }
         };
+
+        #[cfg(windows)]
+        let listener = {
+            let listen_socket = if addr.is_ipv4() {
+                TcpSocket::new_v4().unwrap()
+            } else {
+                TcpSocket::new_v6().unwrap()
+            };
+            listen_socket
+                .set_reuseaddr(true)
+                .expect("can't set reuseaddr");
+            listen_socket
+                .set_reuseport(true)
+                .expect("can't set reuseport");
+            listen_socket
+                .set_nodelay(true)
+                .expect("can't set nodelay");
+            listen_socket
+                .set_linger(Some(Duration::from_secs(0)))
+                .expect("can't set linger 0");
+            listen_socket.bind(addr).expect("can't bind");
+            let backlog = if config.general.backlog > 0 {
+                config.general.backlog
+            } else {
+                config.general.max_connections as u32
+            };
+            match listen_socket.listen(backlog) {
+                Ok(sock) => sock,
+                Err(err) => {
+                    error!("Listener socket error: {err:?}");
+                    std::process::exit(exitcode::CONFIG);
+                }
+            }
+        };
+
         info!("Running on {addr}");
 
         config.show();
@@ -172,6 +222,21 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             });
         }
 
+        // Signal readiness to parent process (for binary upgrade in foreground mode)
+        #[cfg(not(windows))]
+        if let Ok(ready_fd_str) = std::env::var("PG_DOORMAN_READY_FD") {
+            if let Ok(ready_fd) = ready_fd_str.parse::<i32>() {
+                info!("Signaling readiness to parent process (fd={})", ready_fd);
+                let ready_signal: [u8; 1] = [1];
+                unsafe {
+                    libc::write(ready_fd, ready_signal.as_ptr() as *const libc::c_void, 1);
+                    libc::close(ready_fd);
+                }
+                // Remove the env var so it's not inherited by any future child processes
+                std::env::remove_var("PG_DOORMAN_READY_FD");
+            }
+        }
+
         #[cfg(windows)]
         let mut term_signal = win_signal::ctrl_close().unwrap();
         #[cfg(windows)]
@@ -194,8 +259,22 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         let tls_rate_limiter = tls_state.rate_limiter.clone();
         let tls_acceptor = tls_state.acceptor.clone();
 
+        // Wrap listener in Option to allow dropping it during foreground binary upgrade
+        // while still continuing the graceful shutdown process
+        let mut listener = Some(listener);
+
         info!("Waiting for dear clients");
         loop {
+            // Create accept future only if listener is available
+            let accept_future = async {
+                if let Some(ref l) = listener {
+                    l.accept().await
+                } else {
+                    // Listener was dropped (foreground binary upgrade), wait forever
+                    std::future::pending().await
+                }
+            };
+
             tokio::select! {
 
                 // Reload config:
@@ -211,29 +290,119 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 _ = interrupt_signal.recv() => {
                     info!("Got SIGINT, starting graceful shutdown");
 
-                    if args.daemon && !admin_only {
-                        // start daemon.
+                    #[cfg(not(windows))]
+                    if !admin_only {
+                        // Binary upgrade: start new process with inherited listener fd
                         let full_exe_args: Vec<_> = std::env::args().collect();
                         let exe_path = &full_exe_args[0];
-                        let exe_args = full_exe_args.iter().skip(1);
+                        // Filter out any existing --inherit-fd argument
+                        let exe_args: Vec<_> = full_exe_args.iter().skip(1)
+                            .filter(|arg| !arg.starts_with("--inherit-fd"))
+                            .collect();
                         core_affinity::clear_for_current();
-                        let mut child = {
-                            let mut cmd = process::Command::new(exe_path);
-                            cmd.args(exe_args)
-                                .stderr(process::Stdio::null())
-                                .stdout(process::Stdio::null())
-                                .current_dir(std::env::current_dir().unwrap());
-                            #[cfg(not(windows))]
-                            {
+
+                        let listener_fd = listener.as_ref().unwrap().as_raw_fd();
+
+                        if args.daemon {
+                            // Daemon mode: start new daemon process
+                            let mut child = {
+                                let mut cmd = process::Command::new(exe_path);
+                                cmd.args(&exe_args)
+                                    .stderr(process::Stdio::null())
+                                    .stdout(process::Stdio::null())
+                                    .current_dir(std::env::current_dir().unwrap());
                                 cmd.process_group(0);
+                                cmd.spawn().unwrap()
+                            };
+                            child.wait().unwrap();
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            unsafe {
+                                libc::close(listener_fd);
                             }
-                            cmd.spawn().unwrap()
-                        };
-                        child.wait().unwrap();
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                        #[cfg(not(windows))]
-                        unsafe {
-                            libc::close(listener.as_raw_fd());
+                        } else {
+                            // Foreground mode: start new process with inherited listener fd
+                            info!("Starting new process with inherited listener fd={}", listener_fd);
+
+                            // Create a pipe for readiness signaling
+                            let mut pipe_fds: [libc::c_int; 2] = [0; 2];
+                            if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+                                error!("Failed to create pipe for binary upgrade");
+                            } else {
+                                let pipe_read_fd = pipe_fds[0];
+                                let pipe_write_fd = pipe_fds[1];
+
+                                // Spawn child process with inherited listener fd and pipe write fd
+                                let child_result = unsafe {
+                                    let mut cmd = process::Command::new(exe_path);
+                                    cmd.args(&exe_args)
+                                        .arg("--inherit-fd")
+                                        .arg(listener_fd.to_string())
+                                        .env("PG_DOORMAN_READY_FD", pipe_write_fd.to_string())
+                                        .current_dir(std::env::current_dir().unwrap())
+                                        .pre_exec(move || {
+                                            // Clear FD_CLOEXEC for listener_fd and pipe_write_fd
+                                            // so they are inherited by the child
+                                            libc::fcntl(listener_fd, libc::F_SETFD, 0);
+                                            libc::fcntl(pipe_write_fd, libc::F_SETFD, 0);
+                                            Ok(())
+                                        });
+                                    cmd.spawn()
+                                };
+
+                                match child_result {
+                                    Ok(_child) => {
+                                        // Close write end in parent
+                                        unsafe { libc::close(pipe_write_fd); }
+
+                                        // Wait for child to signal readiness (or timeout)
+                                        // Use a simple blocking read with timeout via select
+                                        let mut buf: [u8; 1] = [0];
+                                        let mut read_fds: libc::fd_set = unsafe { std::mem::zeroed() };
+                                        unsafe {
+                                            libc::FD_ZERO(&mut read_fds);
+                                            libc::FD_SET(pipe_read_fd, &mut read_fds);
+                                        }
+                                        let mut timeout = libc::timeval {
+                                            tv_sec: 10,
+                                            tv_usec: 0,
+                                        };
+                                        let select_result = unsafe {
+                                            libc::select(
+                                                pipe_read_fd + 1,
+                                                &mut read_fds,
+                                                std::ptr::null_mut(),
+                                                std::ptr::null_mut(),
+                                                &mut timeout,
+                                            )
+                                        };
+
+                                        if select_result > 0 {
+                                            unsafe {
+                                                libc::read(pipe_read_fd, buf.as_mut_ptr() as *mut libc::c_void, 1);
+                                            }
+                                            info!("New process signaled readiness");
+                                        } else {
+                                            warn!("Timeout waiting for new process readiness");
+                                        }
+
+                                        unsafe {
+                                            libc::close(pipe_read_fd);
+                                        }
+                                        // Drop the listener to release the fd
+                                        // Setting to None prevents "Bad file descriptor" errors
+                                        // while allowing graceful shutdown to continue
+                                        listener = None;
+                                        info!("Foreground binary upgrade complete, listener released");
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to spawn new process: {}", e);
+                                        unsafe {
+                                            libc::close(pipe_read_fd);
+                                            libc::close(pipe_write_fd);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -273,7 +442,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 },
 
                 // new client.
-                new_client = listener.accept() => {
+                new_client = accept_future => {
                     let (mut socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),
                         Err(err) => {

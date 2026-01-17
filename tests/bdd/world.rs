@@ -38,6 +38,8 @@ pub struct DoormanWorld {
     pub ssl_key_file: Option<NamedTempFile>,
     /// Temporary SSL certificate file for pg_doorman
     pub ssl_cert_file: Option<NamedTempFile>,
+    /// Path to daemon PID file (for cleanup after binary-upgrade)
+    pub doorman_daemon_pid_file: Option<String>,
     /// Result of the last test command execution
     pub last_test_result: Option<TestCommandResult>,
     /// PostgreSQL connection
