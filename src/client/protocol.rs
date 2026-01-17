@@ -230,11 +230,10 @@ where
                 );
 
                 // Ensure prepared statement is on server
-                // Skip this for async clients - Parse is already in buffer and will be sent with Flush
-                if !self.async_client {
-                    self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
-                        .await?;
-                }
+                // For async clients, Parse may NOT be in buffer if client reuses cached prepared statement
+                // (e.g., asyncpg sends only Bind without Parse for cached statements)
+                self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
+                    .await?;
 
                 // Add directly to buffer
                 self.buffer.put(&message[..]);
@@ -297,11 +296,10 @@ where
                 );
 
                 // Ensure prepared statement is on server
-                // Skip this for async clients - Parse is already in buffer and will be sent with Flush
-                if !self.async_client {
-                    self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
-                        .await?;
-                }
+                // For async clients, Parse may NOT be in buffer if client reuses cached prepared statement
+                // (e.g., asyncpg sends only Describe without Parse for cached statements)
+                self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
+                    .await?;
 
                 // If Parse was skipped (pending_parse_complete > 0), we need to insert ParseComplete
                 // before ParameterDescription in the response. We use a separate counter for this
