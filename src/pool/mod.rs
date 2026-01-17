@@ -375,7 +375,7 @@ impl ServerPool {
         );
         let stats = Arc::new(ServerStats::new(
             self.address.clone(),
-            tokio::time::Instant::now(),
+            crate::utils::clock::recent(),
         ));
 
         stats.register(stats.clone());

@@ -27,8 +27,6 @@ pub mod address;
 pub mod client;
 /// Connection counters (internal)
 mod connections;
-/// Percentile calculation utilities (internal)
-mod percenitle;
 /// Statistics for connection pools
 pub mod pool;
 /// Utilities for printing statistics (internal)

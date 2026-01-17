@@ -1,4 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::utils::clock;
 
 /// Pool configuration.
 #[derive(Clone, Copy, Debug)]
@@ -89,9 +91,9 @@ pub struct Status {
 #[must_use]
 pub struct Metrics {
     /// The instant when this object was created.
-    pub created: Instant,
+    pub created: quanta::Instant,
     /// The instant when this object was last used.
-    pub recycled: Option<Instant>,
+    pub recycled: Option<quanta::Instant>,
     /// The number of times the object was recycled.
     pub recycle_count: usize,
 }
@@ -111,7 +113,7 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            created: Instant::now(),
+            created: clock::recent(),
             recycled: None,
             recycle_count: 0,
         }

@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 use crate::pool::get_all_pools;
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE, CLIENT_STATE_WAITING};
-use crate::stats::percenitle::percentile_of_sorted;
 use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE, SERVER_STATE_LOGIN};
 use crate::stats::ClientStats;
 use crate::stats::ServerStats;
@@ -105,22 +104,10 @@ pub struct PoolStats {
     /// Total number of errors encountered
     pub errors: u64,
 
-    //
-    // Percentile calculation data
-    // ------------------------------------------------------------------------------------------
-    /// Raw query execution times for percentile calculations
-    queries: Vec<u64>,
-
-    /// Raw transaction execution times for percentile calculations
-    xact: Vec<u64>,
-
-    /// Flag indicating if percentiles have been calculated
-    percentile_updated: bool,
-
-    /// Percentile statistics for transaction execution times
+    /// Percentile statistics for transaction execution times (from HDR histogram)
     pub xact_percentile: Percentile,
 
-    /// Percentile statistics for query execution times
+    /// Percentile statistics for query execution times (from HDR histogram)
     pub query_percentile: Percentile,
 
     //
@@ -158,45 +145,6 @@ pub struct PoolStats {
 }
 
 #[derive(Debug, Clone)]
-/// A wrapper struct that combines pool statistics with client-specific information.
-///
-/// This struct provides a way to associate pool statistics with client-specific
-/// aggregated information. It serves as a container for `PoolStats` and can be
-/// extended in the future to include additional client-specific metrics.
-pub struct PoolClientStats {
-    /// The underlying pool statistics
-    pub pool_stats: PoolStats,
-}
-
-impl PoolClientStats {
-    /// Creates a new PoolClientStats instance with the specified parameters.
-    ///
-    /// This constructor initializes a new pool client statistics tracker by creating
-    /// a new PoolStats instance with the provided parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `identifier` - Virtual identifier for the pool
-    /// * `mode` - Operating mode of the pool (session, transaction, statement)
-    /// * `queries` - Vector of query execution times in microseconds
-    /// * `xact` - Vector of transaction execution times in microseconds
-    ///
-    /// # Returns
-    ///
-    /// A new PoolClientStats instance
-    pub fn new(
-        identifier: PoolIdentifier,
-        mode: PoolMode,
-        queries: Vec<u64>,
-        xact: Vec<u64>,
-    ) -> Self {
-        PoolClientStats {
-            pool_stats: PoolStats::new(identifier, mode, queries, xact),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 /// Stores percentile statistics for performance metrics.
 ///
 /// This struct holds various percentile values (p50, p90, p95, p99) for a set of measurements,
@@ -217,89 +165,6 @@ pub struct Percentile {
 }
 
 impl PoolStats {
-    /// Creates a new PoolStats instance with the specified parameters.
-    ///
-    /// This constructor initializes a new pool statistics tracker with the provided
-    /// pool identifier, mode, and performance data. All counters are initialized to zero,
-    /// and the percentile statistics are initialized with default values.
-    ///
-    /// # Arguments
-    ///
-    /// * `identifier` - Virtual identifier for the pool (database name, username, virtual pool ID)
-    /// * `mode` - Operating mode of the pool (session, transaction, statement)
-    /// * `queries` - Vector of query execution times in microseconds for percentile calculations
-    /// * `xact` - Vector of transaction execution times in microseconds for percentile calculations
-    ///
-    /// # Returns
-    ///
-    /// A new PoolStats instance with all counters initialized to zero
-    pub fn new(
-        identifier: PoolIdentifier,
-        mode: PoolMode,
-        queries: Vec<u64>,
-        xact: Vec<u64>,
-    ) -> Self {
-        PoolStats {
-            // Basic pool identification
-            identifier,
-            mode,
-
-            // Client connection state counters
-            cl_idle: 0,
-            cl_active: 0,
-            cl_waiting: 0,
-            cl_cancel_req: 0,
-
-            // Server connection state counters
-            sv_active: 0,
-            sv_idle: 0,
-            sv_used: 0,
-            sv_login: 0,
-
-            // Performance metrics
-            maxwait: 0,
-            avg_query_count: 0,
-            avg_xact_count: 0,
-            avg_wait_time: 0,
-            avg_wait_time_vp_ms: Vec::new(),
-            bytes_received: 0,
-            bytes_sent: 0,
-            xact_time: 0,
-            query_time: 0,
-            wait_time: 0,
-            errors: 0,
-
-            // Percentile calculation data
-            xact,
-            queries,
-            percentile_updated: false,
-            xact_percentile: Percentile {
-                p99: 0,
-                p95: 0,
-                p90: 0,
-                p50: 0,
-            },
-            query_percentile: Percentile {
-                p99: 0,
-                p95: 0,
-                p90: 0,
-                p50: 0,
-            },
-
-            // Aggregated statistics for SHOW STATS command
-            total_xact_count: 0,
-            total_query_count: 0,
-            total_received: 0,
-            total_sent: 0,
-            total_xact_time_microseconds: 0,
-            total_query_time_microseconds: 0,
-            avg_recv: 0,
-            avg_sent: 0,
-            avg_xact_time_microsecons: 0,
-            avg_query_time_microseconds: 0,
-        }
-    }
-
     /// Creates a new PoolStats instance with pre-calculated percentiles from HDR histograms.
     ///
     /// This constructor is optimized for use with HDR histograms where percentiles
@@ -343,10 +208,7 @@ impl PoolStats {
             query_time: 0,
             wait_time: 0,
             errors: 0,
-            // Empty vectors - percentiles are pre-calculated
-            xact: Vec::new(),
-            queries: Vec::new(),
-            percentile_updated: true, // Already calculated
+            // Percentiles from HDR histogram
             xact_percentile,
             query_percentile,
             total_xact_count: 0,
@@ -381,19 +243,14 @@ impl PoolStats {
         let client_map = super::get_client_stats();
         let server_map = super::get_server_stats();
 
-        // Initialize statistics for each virtual pool
+        // Initialize statistics for each virtual pool (percentiles are calculated from HDR histograms)
         Self::initialize_virtual_pool_stats(&mut virtual_map);
 
         // Update client and server state counters
         Self::update_client_server_states(&mut virtual_map, &client_map, &server_map);
 
         // Get pool statistics (no aggregation needed since virtual pools were removed)
-        let mut map = Self::aggregate_pool_stats(virtual_map);
-
-        // Calculate percentiles for query and transaction times
-        Self::calculate_percentiles(&mut map);
-
-        map
+        Self::aggregate_pool_stats(virtual_map)
     }
 
     pub fn generate_show_pools_header() -> Vec<(&'static str, DataType)> {
@@ -681,59 +538,6 @@ impl PoolStats {
         pool_map
     }
 
-    /// Calculates percentiles for query and transaction times.
-    ///
-    /// This helper method iterates through all pools and calculates various percentiles
-    /// (p50, p90, p95, p99) for both query and transaction execution times. These
-    /// percentiles provide insights into the distribution of performance metrics.
-    ///
-    /// # Arguments
-    ///
-    /// * `map` - A mutable reference to the map of pool statistics
-    fn calculate_percentiles(map: &mut HashMap<PoolIdentifier, PoolStats>) {
-        // Iterate through all pools
-        for (id, _stat) in get_all_pools() {
-            // Try to find the pool in the map
-            if let Some(pool_stats) = map.get_mut(&PoolIdentifier {
-                db: id.db.clone(),
-                user: id.user.clone(),
-            }) {
-                // Skip if percentiles have already been calculated
-                if pool_stats.percentile_updated {
-                    continue;
-                }
-
-                // Calculate query percentiles
-                {
-                    // Get a mutable slice of query times and sort it
-                    let times = pool_stats.queries.as_mut_slice();
-                    times.sort();
-
-                    // Calculate percentiles using the percentile_of_sorted function
-                    pool_stats.query_percentile.p50 = percentile_of_sorted(times, 50.0);
-                    pool_stats.query_percentile.p90 = percentile_of_sorted(times, 90.0);
-                    pool_stats.query_percentile.p95 = percentile_of_sorted(times, 95.0);
-                    pool_stats.query_percentile.p99 = percentile_of_sorted(times, 99.0);
-                }
-
-                // Calculate transaction percentiles
-                {
-                    // Get a mutable slice of transaction times and sort it
-                    let times = pool_stats.xact.as_mut_slice();
-                    times.sort();
-
-                    // Calculate percentiles using the percentile_of_sorted function
-                    pool_stats.xact_percentile.p50 = percentile_of_sorted(times, 50.0);
-                    pool_stats.xact_percentile.p90 = percentile_of_sorted(times, 90.0);
-                    pool_stats.xact_percentile.p95 = percentile_of_sorted(times, 95.0);
-                    pool_stats.xact_percentile.p99 = percentile_of_sorted(times, 99.0);
-                }
-
-                // Mark percentiles as updated
-                pool_stats.percentile_updated = true;
-            }
-        }
-    }
 }
 
 impl IntoIterator for PoolStats {

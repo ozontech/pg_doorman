@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use bytes::{BufMut, BytesMut};
-use tokio::time::Instant;
 
 use crate::config::{get_config, VERSION};
 use crate::errors::Error;
@@ -312,10 +311,7 @@ where
             client.transaction_count.load(Ordering::Relaxed).to_string(),
             client.query_count.load(Ordering::Relaxed).to_string(),
             client.error_count.load(Ordering::Relaxed).to_string(),
-            Instant::now()
-                .duration_since(client.connect_time())
-                .as_secs()
-                .to_string(),
+            client.connect_time().elapsed().as_secs().to_string(),
         ];
         res.put(data_row(&row));
     }
@@ -388,7 +384,7 @@ where
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
     for (_, server) in new_map {
-        let application_name = server.application_name.read();
+        let application_name = server.application_name.lock();
         let row = vec![
             format!("{:#010X}", server.server_id()),
             server.process_id().to_string(),
@@ -401,10 +397,7 @@ where
             server.query_count.load(Ordering::Relaxed).to_string(),
             server.bytes_sent.load(Ordering::Relaxed).to_string(),
             server.bytes_received.load(Ordering::Relaxed).to_string(),
-            Instant::now()
-                .duration_since(server.connect_time())
-                .as_secs()
-                .to_string(),
+            server.connect_time().elapsed().as_secs().to_string(),
             server
                 .prepared_hit_count
                 .load(Ordering::Relaxed)

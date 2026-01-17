@@ -1,3 +1,4 @@
+pub mod clock;
 pub mod comments;
 pub mod core_affinity;
 pub mod debug_messages;

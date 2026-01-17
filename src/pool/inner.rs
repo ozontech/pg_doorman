@@ -6,8 +6,9 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc, Weak,
     },
-    time::Instant,
 };
+
+use crate::utils::clock;
 
 use parking_lot::Mutex;
 
@@ -48,7 +49,7 @@ impl Drop for Object {
     fn drop(&mut self) {
         if let Some(mut inner) = self.inner.take() {
             if let Some(pool) = self.pool.upgrade() {
-                inner.metrics.recycled = Some(Instant::now());
+                inner.metrics.recycled = Some(clock::recent());
                 inner.metrics.recycle_count += 1;
                 pool.return_object(inner);
             }

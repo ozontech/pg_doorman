@@ -351,7 +351,7 @@ where
             client_identifier.username.as_str(),
             &pool_name,
             addr.to_string().as_str(),
-            tokio::time::Instant::now(),
+            crate::utils::clock::recent(),
             use_tls,
         ));
 
