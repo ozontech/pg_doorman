@@ -9,8 +9,10 @@ pub(crate) mod startup_cancel;
 pub(crate) mod startup_error;
 pub(crate) mod stream;
 
+mod prepared_statement_cache;
 mod server_backend;
 
 pub use parameters::ServerParameters;
+pub use prepared_statement_cache::PreparedStatementCache;
 pub use server_backend::Server;
 pub use stream::StreamInner;

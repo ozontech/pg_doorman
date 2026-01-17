@@ -1,6 +1,5 @@
 use arc_swap::ArcSwap;
-use deadpool::{managed, Runtime};
-use log::{error, info};
+use log::info;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
@@ -15,8 +14,15 @@ use crate::messages::Parse;
 use crate::server::{Server, ServerParameters};
 use crate::stats::{AddressStats, ServerStats};
 
-mod prepared_statement_cache;
-pub use prepared_statement_cache::PreparedStatementCache;
+mod errors;
+mod inner;
+mod types;
+
+pub use errors::{PoolError, RecycleError, RecycleResult};
+pub use inner::{Object, Pool, PoolBuilder};
+pub use types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
+
+pub use crate::server::PreparedStatementCache;
 
 pub mod retain;
 
@@ -129,7 +135,7 @@ impl Default for PoolSettings {
 #[derive(Clone, Debug)]
 pub struct ConnectionPool {
     /// The pool.
-    pub database: managed::Pool<ServerPool>,
+    pub database: Pool,
 
     /// The address (host, port)
     pub address: Address,
@@ -226,8 +232,8 @@ impl ConnectionPool {
                     );
 
                     let queue_strategy = match config.general.server_round_robin {
-                        true => managed::QueueMode::Fifo,
-                        false => managed::QueueMode::Lifo,
+                        true => QueueMode::Fifo,
+                        false => QueueMode::Lifo,
                     };
 
                     info!(
@@ -235,26 +241,19 @@ impl ConnectionPool {
                         pool_name, user.username, virtual_pool_id
                     );
 
-                    let mut builder_config = managed::Pool::builder(manager);
-                    builder_config = builder_config.config(managed::PoolConfig {
+                    let mut builder_config = Pool::builder(manager);
+                    builder_config = builder_config.config(PoolConfig {
                         max_size: (user.pool_size / config.general.virtual_pool_count as u32)
                             as usize,
-                        timeouts: managed::Timeouts {
+                        timeouts: Timeouts {
                             wait: Some(Duration::from_millis(config.general.query_wait_timeout)),
                             create: Some(Duration::from_millis(config.general.connect_timeout)),
                             recycle: None,
                         },
                         queue_mode: queue_strategy,
                     });
-                    builder_config = builder_config.runtime(Runtime::Tokio1);
 
-                    let pool = match builder_config.build() {
-                        Ok(p) => p,
-                        Err(err) => {
-                            error!("error build pool: {err:?}");
-                            return Err(Error::BadConfig(format!("error build pool: {err:?}")));
-                        }
-                    };
+                    let pool = builder_config.build();
 
                     let pool = ConnectionPool {
                         database: pool,
@@ -294,7 +293,7 @@ impl ConnectionPool {
 
     /// Get pool state for a particular shard server as reported by pooler.
     #[inline(always)]
-    pub fn pool_state(&self) -> managed::Status {
+    pub fn pool_state(&self) -> Status {
         self.database.status()
     }
 
@@ -403,14 +402,9 @@ impl ServerPool {
             application_name,
         }
     }
-}
-
-impl managed::Manager for ServerPool {
-    type Type = Server;
-    type Error = Error;
 
     /// Attempts to create a new connection.
-    async fn create(&self) -> Result<Self::Type, Self::Error> {
+    pub async fn create(&self) -> Result<Server, Error> {
         let mut guard = self.open_new_server.lock().await;
         *guard += 1;
         info!(
@@ -455,13 +449,10 @@ impl managed::Manager for ServerPool {
         }
     }
 
-    async fn recycle(
-        &self,
-        conn: &mut Server,
-        _: &managed::Metrics,
-    ) -> managed::RecycleResult<Error> {
+    /// Checks if the connection can be recycled.
+    pub async fn recycle(&self, conn: &mut Server, _: &Metrics) -> RecycleResult {
         if conn.is_bad() {
-            return Err(managed::RecycleError::StaticMessage("Bad connection"));
+            return Err(RecycleError::StaticMessage("Bad connection"));
         }
         Ok(())
     }
