@@ -33,7 +33,7 @@ pub type ServerPort = u16;
 
 pub type ClientServerMap =
     Arc<Mutex<HashMap<(ProcessId, SecretKey), (ProcessId, SecretKey, ServerHost, ServerPort)>>>;
-pub type PoolMap = HashMap<PoolIdentifierVirtual, ConnectionPool>;
+pub type PoolMap = HashMap<PoolIdentifier, ConnectionPool>;
 
 /// The connection pool, globally available.
 /// This is atomic and safe and read-optimized.
@@ -45,59 +45,35 @@ pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
 pub type PreparedStatementCacheType = Arc<Mutex<PreparedStatementCache>>;
 pub type ServerParametersType = Arc<tokio::sync::Mutex<ServerParameters>>;
 
-/// An identifier for a PgDoorman pool,
-/// a virtual database pool.
+/// An identifier for a PgDoorman pool.
 #[derive(Hash, Debug, Clone, PartialEq, Eq, Default)]
-pub struct PoolIdentifierVirtual {
+pub struct PoolIdentifier {
     // The name of the database clients want to connect to.
     pub db: String,
 
     // The username the client connects with. Each user gets its own pool.
     pub user: String,
-
-    // Virtual pool ID
-    pub virtual_pool_id: u16,
 }
 
-/// An identifier for a PgDoorman pool,
-/// a real database visible to clients.
-/// Used for statistics.
-#[derive(Hash, Debug, Clone, PartialEq, Eq, Default)]
-pub struct StatsPoolIdentifier {
-    pub db: String,
-    pub user: String,
-}
-
-impl StatsPoolIdentifier {
-    pub fn contains(self, p: PoolIdentifierVirtual) -> bool {
-        self.db == p.db && self.user == p.user
-    }
-}
-
-impl PoolIdentifierVirtual {
+impl PoolIdentifier {
     /// Create a new user/pool identifier.
-    pub fn new(db: &str, user: &str, virtual_pool_id: u16) -> PoolIdentifierVirtual {
-        PoolIdentifierVirtual {
+    pub fn new(db: &str, user: &str) -> PoolIdentifier {
+        PoolIdentifier {
             db: db.to_string(),
             user: user.to_string(),
-            virtual_pool_id,
         }
     }
 }
 
-impl Display for PoolIdentifierVirtual {
+impl Display for PoolIdentifier {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}@{}", self.user, self.db)
     }
 }
 
-impl From<&Address> for PoolIdentifierVirtual {
-    fn from(address: &Address) -> PoolIdentifierVirtual {
-        PoolIdentifierVirtual::new(
-            &address.database,
-            &address.username,
-            address.virtual_pool_id,
-        )
+impl From<&Address> for PoolIdentifier {
+    fn from(address: &Address) -> PoolIdentifier {
+        PoolIdentifier::new(&address.database, &address.username)
     }
 }
 
@@ -168,122 +144,108 @@ impl ConnectionPool {
 
             // There is one pool per database/user pair.
             for user in pool_config.users.values() {
-                for virtual_pool_id in 0..config.general.virtual_pool_count {
-                    let old_pool_ref = get_pool(pool_name, &user.username, virtual_pool_id);
-                    let identifier =
-                        PoolIdentifierVirtual::new(pool_name, &user.username, virtual_pool_id);
+                let old_pool_ref = get_pool(pool_name, &user.username);
+                let identifier = PoolIdentifier::new(pool_name, &user.username);
 
-                    if let Some(pool) = old_pool_ref {
-                        // If the pool hasn't changed, get existing reference and insert it into the new_pools.
-                        // We replace all pools at the end, but if the reference is kept, the pool won't get re-created (bb8).
-                        if pool.config_hash == new_pool_hash_value {
-                            info!(
-                                "[pool: {}][user: {}] has not changed",
-                                pool_name, user.username
-                            );
-                            new_pools.insert(identifier.clone(), pool.clone());
-                            continue;
-                        }
+                if let Some(pool) = old_pool_ref {
+                    // If the pool hasn't changed, get existing reference and insert it into the new_pools.
+                    // We replace all pools at the end, but if the reference is kept, the pool won't get re-created (bb8).
+                    if pool.config_hash == new_pool_hash_value {
+                        info!(
+                            "[pool: {}][user: {}] has not changed",
+                            pool_name, user.username
+                        );
+                        new_pools.insert(identifier.clone(), pool.clone());
+                        continue;
                     }
-
-                    info!(
-                        "Creating new pool {}@{}-{}",
-                        user.username, pool_name, virtual_pool_id
-                    );
-
-                    // real database name on postgresql server.
-                    let server_database = pool_config
-                        .server_database
-                        .clone()
-                        .unwrap_or(pool_name.clone().to_string());
-
-                    let address = Address {
-                        database: pool_name.clone(),
-                        host: pool_config.server_host.clone(),
-                        port: pool_config.server_port,
-                        virtual_pool_id,
-                        username: user.username.clone(),
-                        password: user.password.clone(),
-                        pool_name: pool_name.clone(),
-                        stats: Arc::new(AddressStats::default()),
-                    };
-
-                    let prepared_statements_cache_size = match config.general.prepared_statements {
-                        true => pool_config
-                            .prepared_statements_cache_size
-                            .unwrap_or(config.general.prepared_statements_cache_size),
-                        false => 0,
-                    };
-
-                    let application_name = pool_config
-                        .application_name
-                        .clone()
-                        .unwrap_or_else(|| "pg_doorman".to_string());
-
-                    let manager = ServerPool::new(
-                        address.clone(),
-                        user.clone(),
-                        server_database.as_str(),
-                        client_server_map.clone(),
-                        pool_config.cleanup_server_connections,
-                        pool_config.log_client_parameter_status_changes,
-                        prepared_statements_cache_size,
-                        application_name,
-                    );
-
-                    let queue_strategy = match config.general.server_round_robin {
-                        true => QueueMode::Fifo,
-                        false => QueueMode::Lifo,
-                    };
-
-                    info!(
-                        "[pool: {}][user: {}][vpid: {}]",
-                        pool_name, user.username, virtual_pool_id
-                    );
-
-                    let mut builder_config = Pool::builder(manager);
-                    builder_config = builder_config.config(PoolConfig {
-                        max_size: (user.pool_size / config.general.virtual_pool_count as u32)
-                            as usize,
-                        timeouts: Timeouts {
-                            wait: Some(Duration::from_millis(config.general.query_wait_timeout)),
-                            create: Some(Duration::from_millis(config.general.connect_timeout)),
-                            recycle: None,
-                        },
-                        queue_mode: queue_strategy,
-                    });
-
-                    let pool = builder_config.build();
-
-                    let pool = ConnectionPool {
-                        database: pool,
-                        address,
-                        config_hash: new_pool_hash_value,
-                        original_server_parameters: Arc::new(tokio::sync::Mutex::new(
-                            ServerParameters::new(),
-                        )),
-                        settings: PoolSettings {
-                            pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
-                            user: user.clone(),
-                            db: pool_name.clone(),
-                            idle_timeout_ms: config.general.idle_timeout,
-                            life_time_ms: config.general.server_lifetime,
-                            sync_server_parameters: config.general.sync_server_parameters,
-                        },
-                        prepared_statement_cache: match config.general.prepared_statements {
-                            false => None,
-                            true => Some(Arc::new(Mutex::new(PreparedStatementCache::new(
-                                config.general.prepared_statements_cache_size,
-                            )))),
-                        },
-                    };
-
-                    // There is one pool per database/user pair.
-                    new_pools.insert(
-                        PoolIdentifierVirtual::new(pool_name, &user.username, virtual_pool_id),
-                        pool,
-                    );
                 }
+
+                info!("Creating new pool {}@{}", user.username, pool_name);
+
+                // real database name on postgresql server.
+                let server_database = pool_config
+                    .server_database
+                    .clone()
+                    .unwrap_or(pool_name.clone().to_string());
+
+                let address = Address {
+                    database: pool_name.clone(),
+                    host: pool_config.server_host.clone(),
+                    port: pool_config.server_port,
+                    username: user.username.clone(),
+                    password: user.password.clone(),
+                    pool_name: pool_name.clone(),
+                    stats: Arc::new(AddressStats::default()),
+                };
+
+                let prepared_statements_cache_size = match config.general.prepared_statements {
+                    true => pool_config
+                        .prepared_statements_cache_size
+                        .unwrap_or(config.general.prepared_statements_cache_size),
+                    false => 0,
+                };
+
+                let application_name = pool_config
+                    .application_name
+                    .clone()
+                    .unwrap_or_else(|| "pg_doorman".to_string());
+
+                let manager = ServerPool::new(
+                    address.clone(),
+                    user.clone(),
+                    server_database.as_str(),
+                    client_server_map.clone(),
+                    pool_config.cleanup_server_connections,
+                    pool_config.log_client_parameter_status_changes,
+                    prepared_statements_cache_size,
+                    application_name,
+                );
+
+                let queue_strategy = match config.general.server_round_robin {
+                    true => QueueMode::Fifo,
+                    false => QueueMode::Lifo,
+                };
+
+                info!("[pool: {}][user: {}]", pool_name, user.username);
+
+                let mut builder_config = Pool::builder(manager);
+                builder_config = builder_config.config(PoolConfig {
+                    max_size: user.pool_size as usize,
+                    timeouts: Timeouts {
+                        wait: Some(Duration::from_millis(config.general.query_wait_timeout)),
+                        create: Some(Duration::from_millis(config.general.connect_timeout)),
+                        recycle: None,
+                    },
+                    queue_mode: queue_strategy,
+                });
+
+                let pool = builder_config.build();
+
+                let pool = ConnectionPool {
+                    database: pool,
+                    address,
+                    config_hash: new_pool_hash_value,
+                    original_server_parameters: Arc::new(tokio::sync::Mutex::new(
+                        ServerParameters::new(),
+                    )),
+                    settings: PoolSettings {
+                        pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
+                        user: user.clone(),
+                        db: pool_name.clone(),
+                        idle_timeout_ms: config.general.idle_timeout,
+                        life_time_ms: config.general.server_lifetime,
+                        sync_server_parameters: config.general.sync_server_parameters,
+                    },
+                    prepared_statement_cache: match config.general.prepared_statements {
+                        false => None,
+                        true => Some(Arc::new(Mutex::new(PreparedStatementCache::new(
+                            prepared_statements_cache_size,
+                        )))),
+                    },
+                };
+
+                // There is one pool per database/user pair.
+                new_pools.insert(PoolIdentifier::new(pool_name, &user.username), pool);
             }
         }
 
@@ -459,13 +421,13 @@ impl ServerPool {
 }
 
 /// Get the connection pool
-pub fn get_pool(db: &str, user: &str, virtual_pool_id: u16) -> Option<ConnectionPool> {
+pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
     (*(*POOLS.load()))
-        .get(&PoolIdentifierVirtual::new(db, user, virtual_pool_id))
+        .get(&PoolIdentifier::new(db, user))
         .cloned()
 }
 
 /// Get a pointer to all configured pools.
-pub fn get_all_pools() -> HashMap<PoolIdentifierVirtual, ConnectionPool> {
+pub fn get_all_pools() -> HashMap<PoolIdentifier, ConnectionPool> {
     (*(*POOLS.load())).clone()
 }

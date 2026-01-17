@@ -37,7 +37,6 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
     let address = Address {
         host: "127.0.0.1".to_string(),
         port: pg_port,
-        virtual_pool_id: 0,
         database: "postgres".to_string(),
         username: "postgres".to_string(),
         password: "".to_string(),

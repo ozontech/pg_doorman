@@ -14,13 +14,12 @@
 /// and SHOW STATS to provide insights into the pooler's operation and performance.
 use log::{debug, error, warn};
 
-use crate::config::get_config;
-use crate::{config::PoolMode, messages::DataType, pool::PoolIdentifierVirtual};
+use crate::{config::PoolMode, messages::DataType, pool::PoolIdentifier};
 use std::collections::HashMap;
 use std::sync::atomic::*;
 use std::sync::Arc;
 
-use crate::pool::{get_all_pools, StatsPoolIdentifier};
+use crate::pool::get_all_pools;
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE, CLIENT_STATE_WAITING};
 use crate::stats::percenitle::percentile_of_sorted;
 use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE, SERVER_STATE_LOGIN};
@@ -34,8 +33,8 @@ use crate::stats::ServerStats;
 /// connection states, performance metrics, and aggregated statistics. It is used to provide
 /// information for administrative commands like SHOW POOLS, SHOW POOLS EXTENDED, and SHOW STATS.
 pub struct PoolStats {
-    /// Virtual identifier for the pool (database name, username, and virtual pool ID)
-    pub identifier: PoolIdentifierVirtual,
+    /// Identifier for the pool (database name and username)
+    pub identifier: PoolIdentifier,
 
     /// Operating mode of the pool (session, transaction, statement)
     pub mode: PoolMode,
@@ -186,7 +185,7 @@ impl PoolClientStats {
     ///
     /// A new PoolClientStats instance
     pub fn new(
-        identifier: PoolIdentifierVirtual,
+        identifier: PoolIdentifier,
         mode: PoolMode,
         queries: Vec<u64>,
         xact: Vec<u64>,
@@ -235,7 +234,7 @@ impl PoolStats {
     ///
     /// A new PoolStats instance with all counters initialized to zero
     pub fn new(
-        identifier: PoolIdentifierVirtual,
+        identifier: PoolIdentifier,
         mode: PoolMode,
         queries: Vec<u64>,
         xact: Vec<u64>,
@@ -314,9 +313,9 @@ impl PoolStats {
     /// # Returns
     ///
     /// A HashMap mapping pool identifiers to their aggregated statistics
-    pub fn construct_pool_lookup() -> HashMap<StatsPoolIdentifier, PoolStats> {
+    pub fn construct_pool_lookup() -> HashMap<PoolIdentifier, PoolStats> {
         // Initialize maps and get client/server statistics
-        let mut virtual_map: HashMap<PoolIdentifierVirtual, PoolStats> = HashMap::new();
+        let mut virtual_map: HashMap<PoolIdentifier, PoolStats> = HashMap::new();
         let client_map = super::get_client_stats();
         let server_map = super::get_server_stats();
 
@@ -326,8 +325,8 @@ impl PoolStats {
         // Update client and server state counters
         Self::update_client_server_states(&mut virtual_map, &client_map, &server_map);
 
-        // Aggregate statistics from virtual pools into logical pools
-        let mut map = Self::aggregate_virtual_pool_stats(virtual_map);
+        // Get pool statistics (no aggregation needed since virtual pools were removed)
+        let mut map = Self::aggregate_pool_stats(virtual_map);
 
         // Calculate percentiles for query and transaction times
         Self::calculate_percentiles(&mut map);
@@ -475,7 +474,7 @@ impl PoolStats {
     /// # Arguments
     ///
     /// * `virtual_map` - A mutable reference to the map of virtual pool statistics
-    fn initialize_virtual_pool_stats(virtual_map: &mut HashMap<PoolIdentifierVirtual, PoolStats>) {
+    fn initialize_virtual_pool_stats(virtual_map: &mut HashMap<PoolIdentifier, PoolStats>) {
         for (identifier, pool) in get_all_pools() {
             // Get address stats for this pool
             let address = pool.address().stats.clone();
@@ -549,176 +548,80 @@ impl PoolStats {
         }
     }
 
-    /// Updates client and server state counters in the virtual pool statistics.
+    /// Updates client and server state counters in the pool statistics.
     ///
     /// This helper method iterates through all clients and servers and updates the
-    /// corresponding state counters in the virtual pool statistics. It also updates
+    /// corresponding state counters in the pool statistics. It also updates
     /// the maximum wait time for each pool based on client wait times.
     ///
     /// # Arguments
     ///
-    /// * `virtual_map` - A mutable reference to the map of virtual pool statistics
+    /// * `pool_map` - A mutable reference to the map of pool statistics
     /// * `client_map` - A reference to the map of client statistics
     /// * `server_map` - A reference to the map of server statistics
     fn update_client_server_states(
-        virtual_map: &mut HashMap<PoolIdentifierVirtual, PoolStats>,
+        pool_map: &mut HashMap<PoolIdentifier, PoolStats>,
         client_map: &HashMap<i32, Arc<ClientStats>>,
         server_map: &HashMap<i32, Arc<ServerStats>>,
     ) {
-        // Iterate through all virtual pools
-        for virtual_pool_id in 0..get_config().general.virtual_pool_count {
-            // Update client state counters
-            for client in client_map.values() {
-                // Try to find the virtual pool for this client
-                match virtual_map.get_mut(&PoolIdentifierVirtual {
-                    db: client.pool_name(),
-                    user: client.username(),
-                    virtual_pool_id,
-                }) {
-                    Some(pool_stats) => {
-                        // Update client state counter based on client state
-                        match client.state() {
-                            CLIENT_STATE_ACTIVE => pool_stats.cl_active += 1,
-                            CLIENT_STATE_IDLE => pool_stats.cl_idle += 1,
-                            CLIENT_STATE_WAITING => pool_stats.cl_waiting += 1,
-                            _ => error!("unknown client state"),
-                        };
+        // Update client state counters
+        for client in client_map.values() {
+            // Try to find the pool for this client
+            match pool_map.get_mut(&PoolIdentifier {
+                db: client.pool_name(),
+                user: client.username(),
+            }) {
+                Some(pool_stats) => {
+                    // Update client state counter based on client state
+                    match client.state() {
+                        CLIENT_STATE_ACTIVE => pool_stats.cl_active += 1,
+                        CLIENT_STATE_IDLE => pool_stats.cl_idle += 1,
+                        CLIENT_STATE_WAITING => pool_stats.cl_waiting += 1,
+                        _ => error!("unknown client state"),
+                    };
 
-                        // Update maximum wait time
-                        let max_wait = client.max_wait_time.load(Ordering::Relaxed);
-                        pool_stats.maxwait = std::cmp::max(pool_stats.maxwait, max_wait);
-                    }
-                    None => debug!("Client from an obsolete pool"),
+                    // Update maximum wait time
+                    let max_wait = client.max_wait_time.load(Ordering::Relaxed);
+                    pool_stats.maxwait = std::cmp::max(pool_stats.maxwait, max_wait);
                 }
+                None => debug!("Client from an obsolete pool"),
             }
+        }
 
-            // Update server state counters
-            for server in server_map.values() {
-                // Try to find the virtual pool for this server
-                match virtual_map.get_mut(&PoolIdentifierVirtual {
-                    db: server.pool_name(),
-                    user: server.username(),
-                    virtual_pool_id,
-                }) {
-                    Some(pool_stats) => {
-                        // Update server state counter based on server state
-                        match server.state() {
-                            SERVER_STATE_ACTIVE => pool_stats.sv_active += 1,
-                            SERVER_STATE_IDLE => pool_stats.sv_idle += 1,
-                            SERVER_STATE_LOGIN => pool_stats.sv_login += 1,
-                            _ => error!("unknown server state"),
-                        }
+        // Update server state counters
+        for server in server_map.values() {
+            // Try to find the pool for this server
+            match pool_map.get_mut(&PoolIdentifier {
+                db: server.pool_name(),
+                user: server.username(),
+            }) {
+                Some(pool_stats) => {
+                    // Update server state counter based on server state
+                    match server.state() {
+                        SERVER_STATE_ACTIVE => pool_stats.sv_active += 1,
+                        SERVER_STATE_IDLE => pool_stats.sv_idle += 1,
+                        SERVER_STATE_LOGIN => pool_stats.sv_login += 1,
+                        _ => error!("unknown server state"),
                     }
-                    None => warn!("Server from an obsolete pool"),
                 }
+                None => warn!("Server from an obsolete pool"),
             }
         }
     }
 
-    /// Aggregates statistics from virtual pools into logical pools.
-    ///
-    /// This helper method combines statistics from virtual pools with the same database
-    /// and username into a single logical pool. It aggregates various metrics like
-    /// transaction and query counts, bytes sent/received, and wait times.
+    /// Returns pool statistics map (no aggregation needed since virtual pools were removed).
     ///
     /// # Arguments
     ///
-    /// * `virtual_map` - A map of virtual pool statistics
+    /// * `pool_map` - A map of pool statistics
     ///
     /// # Returns
     ///
-    /// A HashMap mapping logical pool identifiers to their aggregated statistics
-    fn aggregate_virtual_pool_stats(
-        virtual_map: HashMap<PoolIdentifierVirtual, PoolStats>,
-    ) -> HashMap<StatsPoolIdentifier, PoolStats> {
-        // Create a new map for logical pool statistics
-        let mut map: HashMap<StatsPoolIdentifier, PoolStats> = HashMap::new();
-
-        // Iterate through all virtual pool statistics
-        for (id, virtual_pool_stat) in virtual_map {
-            // Create a logical pool identifier (without virtual_pool_id)
-            let db_name = id.db.clone();
-            let user_name = id.user.clone();
-            let stats_pool_id = StatsPoolIdentifier {
-                db: db_name.clone(),
-                user: user_name.clone(),
-            };
-
-            // Clone query and transaction times for potential use
-            let queries = virtual_pool_stat.queries.clone();
-            let xact = virtual_pool_stat.xact.clone();
-
-            // Check if this logical pool already exists in the map
-            let mut exists_in_map = true;
-
-            // If the logical pool exists, update its statistics
-            match map.get_mut(&stats_pool_id) {
-                Some(current) => {
-                    // Combine query and transaction time histories
-                    current.xact.extend(xact.clone());
-                    current.queries.extend(queries.clone());
-
-                    // Aggregate average counters
-                    current.avg_query_count += virtual_pool_stat.avg_query_count;
-                    current.avg_xact_count += virtual_pool_stat.avg_xact_count;
-
-                    // Aggregate throughput statistics
-                    current.bytes_received += virtual_pool_stat.bytes_received;
-                    current.bytes_sent += virtual_pool_stat.bytes_sent;
-
-                    // Aggregate time statistics
-                    current.xact_time += virtual_pool_stat.xact_time;
-                    current.query_time += virtual_pool_stat.query_time;
-                    current.wait_time += virtual_pool_stat.wait_time;
-
-                    // Aggregate error count
-                    current.errors += virtual_pool_stat.errors;
-
-                    // Calculate average wait time if there are transactions
-                    if virtual_pool_stat.avg_xact_count > 0 {
-                        // Simple average of wait times
-                        current.avg_wait_time =
-                            (current.avg_wait_time + virtual_pool_stat.avg_wait_time) / 2;
-
-                        // Store wait time in milliseconds for reporting
-                        current
-                            .avg_wait_time_vp_ms
-                            .push(virtual_pool_stat.avg_wait_time as f64 / 1_000f64);
-                    }
-
-                    // Aggregate statistics for SHOW STATS command
-                    current.total_xact_count += virtual_pool_stat.total_xact_count;
-                    current.total_query_count += virtual_pool_stat.total_query_count;
-                    current.total_received += virtual_pool_stat.total_received;
-                    current.total_sent += virtual_pool_stat.total_sent;
-                    current.total_xact_time_microseconds +=
-                        virtual_pool_stat.total_xact_time_microseconds;
-                    current.total_query_time_microseconds +=
-                        virtual_pool_stat.total_query_time_microseconds;
-
-                    // Aggregate average throughput
-                    current.avg_recv += virtual_pool_stat.avg_recv;
-                    current.avg_sent += virtual_pool_stat.avg_sent;
-
-                    // Calculate weighted average for time metrics
-                    // TODO: Consider transaction count weight for more accurate averages
-                    current.avg_xact_time_microsecons = (current.avg_xact_time_microsecons
-                        + virtual_pool_stat.avg_xact_time_microsecons)
-                        / 2;
-                    current.avg_query_time_microseconds = (current.avg_query_time_microseconds
-                        + virtual_pool_stat.avg_query_time_microseconds)
-                        / 2;
-                }
-                None => exists_in_map = false,
-            }
-
-            // If the logical pool doesn't exist, add it to the map
-            if !exists_in_map {
-                map.insert(stats_pool_id, virtual_pool_stat);
-            }
-        }
-
-        map
+    /// The same HashMap (identity function for backward compatibility)
+    fn aggregate_pool_stats(
+        pool_map: HashMap<PoolIdentifier, PoolStats>,
+    ) -> HashMap<PoolIdentifier, PoolStats> {
+        pool_map
     }
 
     /// Calculates percentiles for query and transaction times.
@@ -730,11 +633,11 @@ impl PoolStats {
     /// # Arguments
     ///
     /// * `map` - A mutable reference to the map of pool statistics
-    fn calculate_percentiles(map: &mut HashMap<StatsPoolIdentifier, PoolStats>) {
+    fn calculate_percentiles(map: &mut HashMap<PoolIdentifier, PoolStats>) {
         // Iterate through all pools
         for (id, _stat) in get_all_pools() {
             // Try to find the pool in the map
-            if let Some(pool_stats) = map.get_mut(&StatsPoolIdentifier {
+            if let Some(pool_stats) = map.get_mut(&PoolIdentifier {
                 db: id.db.clone(),
                 user: id.user.clone(),
             }) {

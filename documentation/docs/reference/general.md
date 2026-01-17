@@ -98,7 +98,6 @@ Default: `true`.
 
 The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
 The more workers there are, the faster the system works, but only up to a certain limit (cpu count).
-If you already have a lot of workers, you should consider increasing the number of virtual pools.
 
 Default: `4`.
 
@@ -108,14 +107,7 @@ Automatically assign workers to different CPUs (man 3 cpu_set).
 
 Default: `false`.
 
-### virtual_pool_count
-
-Increasing the number of virtual pools can help deal with internal latches that occur when processing very large numbers of fast queries.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.
-
-Default: `1`.
-
-### tokio_global_queue_interval 
+### tokio_global_queue_interval
 
 [Tokio runtime settings](https://docs.rs/tokio/latest/tokio/).
 It is strongly recommended not to change this parameter if you do not understand what you are doing.

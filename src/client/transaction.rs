@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
 use crate::client::core::Client;
-use crate::client::util::{CLIENT_COUNTER, QUERY_DEALLOCATE};
+use crate::client::util::QUERY_DEALLOCATE;
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
@@ -173,14 +173,13 @@ where
             return Server::cancel(&address, port, process_id, secret_key).await;
         }
         self.stats.register(self.stats.clone());
-        let client_counter = CLIENT_COUNTER.fetch_add(1, Ordering::Relaxed);
         // Get a pool instance referenced by the most up-to-date
         // pointer. This ensures we always read the latest config
         // when starting a query.
         let mut pool: Option<ConnectionPool> = if self.admin {
             None
         } else {
-            Some(self.get_pool(client_counter).await?)
+            Some(self.get_pool().await?)
         };
 
         let mut tx_counter = 0;
@@ -571,7 +570,7 @@ where
             }
             // change pool.
             if tx_counter % 10 == 0 && self.transaction_mode {
-                pool = Some(self.get_pool(client_counter).await?);
+                pool = Some(self.get_pool().await?);
             }
             tx_counter += 1;
 

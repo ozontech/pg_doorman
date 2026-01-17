@@ -115,36 +115,6 @@ async fn test_validate_valid_config() {
     assert!(result.is_ok());
 }
 
-// Test pool_size less than virtual_pool_count
-#[tokio::test]
-async fn test_validate_pool_size_less_than_virtual_pool_count() {
-    let mut config = Config::default();
-
-    // Set virtual_pool_count to 10
-    config.general.virtual_pool_count = 10;
-
-    // Add a pool with a user whose pool_size is less than virtual_pool_count
-    let mut pool = Pool::default();
-    let user = User {
-        username: "test_user".to_string(),
-        password: "test_password".to_string(),
-        pool_size: 5, // Less than virtual_pool_count
-        ..User::default()
-    };
-    pool.users.insert("0".to_string(), user);
-    config.pools.insert("test_pool".to_string(), pool);
-
-    // Validate should fail
-    let result = config.validate().await;
-    assert!(result.is_err());
-    if let Err(Error::BadConfig(msg)) = result {
-        assert!(msg.contains("pool_size"));
-        assert!(msg.contains("virtual_pool_count"));
-    } else {
-        panic!("Expected BadConfig error about pool_size and virtual_pool_count");
-    }
-}
-
 // Test TLS rate limit less than 100 (but not 0)
 #[tokio::test]
 async fn test_validate_tls_rate_limit_less_than_100() {

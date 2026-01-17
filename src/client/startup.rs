@@ -5,7 +5,6 @@ use std::ffi::CStr;
 use std::str;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::io::{split, AsyncReadExt, BufReader, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
@@ -381,9 +380,7 @@ where
             async_client: false,
             prepared_statements: AHashMap::new(),
             last_anonymous_prepared_hash: None,
-            virtual_pool_count: config.general.virtual_pool_count,
             client_last_messages_in_tx: PooledBuffer::new(),
-            created_at: Instant::now(),
             max_memory_usage: config.general.max_memory_usage,
             pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
         })
@@ -424,8 +421,6 @@ where
             last_anonymous_prepared_hash: None,
             connected_to_server: false,
             client_last_messages_in_tx: PooledBuffer::new(),
-            virtual_pool_count: get_config().general.virtual_pool_count,
-            created_at: Instant::now(),
             max_memory_usage: 128 * 1024 * 1024,
             pooler_check_query_request_vec: Vec::new(),
         })

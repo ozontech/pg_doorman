@@ -1755,6 +1755,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "pam-client"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1883,6 +1892,7 @@ dependencies = [
  "socket2",
  "stringprep",
  "syslog",
+ "tdigest",
  "tempfile",
  "tikv-jemallocator",
  "tokio",
@@ -2802,6 +2812,15 @@ checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "tdigest"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c45d225a08ebccf0e0c7d46db4066ea8ab05b29d3750ecc1a04f1675978bf3c8"
+dependencies = [
+ "ordered-float",
 ]
 
 [[package]]
