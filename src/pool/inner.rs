@@ -190,10 +190,10 @@ impl Pool {
 
     /// Retrieves an Object from this Pool using a different timeout than the configured one.
     pub async fn timeout_get(&self, timeouts: &Timeouts) -> Result<Object, PoolError> {
-        let _ = self.inner.users.fetch_add(1, Ordering::Relaxed);
-        let _users_guard = scopeguard::guard((), |_| {
-            let _ = self.inner.users.fetch_sub(1, Ordering::Relaxed);
-        });
+        self.inner.users.fetch_add(1, Ordering::Relaxed);
+        scopeguard::defer! {
+            self.inner.users.fetch_sub(1, Ordering::Relaxed);
+        }
 
         let mut try_fast = 0;
         let permit: SemaphorePermit<'_>;

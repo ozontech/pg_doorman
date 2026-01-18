@@ -375,6 +375,7 @@ fn extract_raw_message_types(buffer: &[u8]) -> Vec<char> {
 }
 
 /// Log a client->server message with grouping and protocol analysis
+#[inline(always)]
 pub fn log_client_to_server(client_addr: &str, server_pid: i32, buffer: &[u8]) {
     if !log::log_enabled!(log::Level::Debug) {
         return;

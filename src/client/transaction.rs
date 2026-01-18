@@ -17,7 +17,7 @@ use crate::messages::{
     insert_parse_complete_before_bind_complete, insert_parse_complete_before_parameter_description,
     read_message, ready_for_query, write_all_flush,
 };
-use crate::pool::{ConnectionPool, CANCELED_PIDS};
+use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
 use crate::utils::comments::SqlCommentParser;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
@@ -28,6 +28,16 @@ const BUFFER_FLUSH_THRESHOLD: usize = 8192;
 
 // Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
 const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
+
+/// Action to take after processing a message in the transaction loop
+enum TransactionAction {
+    /// Continue processing messages in the transaction loop
+    Continue,
+    /// Break out of the transaction loop (release server)
+    Break,
+    /// Break and wait for ROLLBACK from client (aborted transaction)
+    BreakWaitRollback,
+}
 
 impl<S, T> Client<S, T>
 where
@@ -52,6 +62,7 @@ where
 
     /// Complete transaction statistics and check if server should be released
     /// Returns true if the transaction loop should break (server should be released)
+    #[inline(always)]
     fn complete_transaction_if_needed(&mut self, server: &Server, check_async: bool) -> bool {
         if !server.in_transaction() {
             self.stats.transaction();
@@ -144,54 +155,216 @@ where
         }
     }
 
+    /// Handle cancel mode - when client wants to cancel a previously issued query.
+    /// Opens a new separate connection to the server, sends the backend_id
+    /// and secret_key and then closes it for security reasons.
+    async fn handle_cancel_mode(&self) -> Result<(), Error> {
+        let (process_id, secret_key, address, port) = {
+            match self
+                .client_server_map
+                .get(&(self.process_id, self.secret_key))
+            {
+                // We found the server the client is using for its query
+                // that it wants to cancel.
+                Some(entry) => {
+                    let (process_id, secret_key, address, port) = entry.value();
+                    {
+                        let mut cancel_guard = CANCELED_PIDS.lock();
+                        cancel_guard.insert(*process_id);
+                    }
+                    (*process_id, *secret_key, address.clone(), *port)
+                }
+
+                // The client doesn't know / got the wrong server,
+                // we're closing the connection for security reasons.
+                None => return Ok(()),
+            }
+        };
+
+        Server::cancel(&address, port, process_id, secret_key).await
+    }
+
+    /// Check for pooler health check and DEALLOCATE queries, handle them without server.
+    /// Returns `Ok(true)` if query was handled (caller should continue to next iteration),
+    /// `Ok(false)` if query needs normal processing.
+    #[inline]
+    async fn handle_fast_query_check(&mut self, message: &BytesMut) -> Result<bool, Error> {
+        if message[0] != b'Q' {
+            return Ok(false);
+        }
+
+        // Check for pooler health check query
+        if message.len() == self.pooler_check_query_request_vec.len()
+            && self.pooler_check_query_request_vec.as_slice() == &message[..]
+        {
+            write_all_flush(&mut self.write, &check_query_response()).await?;
+            return Ok(true);
+        }
+
+        // Check for DEALLOCATE ALL query
+        if message.len() < 40 && message.len() > QUERY_DEALLOCATE.len() + 5 {
+            let query = &message[5..QUERY_DEALLOCATE.len() + 5];
+            if QUERY_DEALLOCATE == query {
+                write_all_flush(&mut self.write, &deallocate_response()).await?;
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Handle simple query (Q message).
+    /// Returns the action to take after processing.
+    #[inline]
+    async fn handle_simple_query(
+        &mut self,
+        message: &BytesMut,
+        server: &mut Server,
+        query_start_at: quanta::Instant,
+    ) -> Result<TransactionAction, Error> {
+        self.send_and_receive_loop(Some(message), server).await?;
+        self.stats.query();
+        server.stats.query(
+            query_start_at.elapsed().as_micros() as u64,
+            self.server_parameters.get_application_name(),
+        );
+
+        if server.in_aborted() {
+            return Ok(TransactionAction::BreakWaitRollback);
+        }
+
+        if self.complete_transaction_if_needed(server, false) {
+            self.stats.idle_read();
+            return Ok(TransactionAction::Break);
+        }
+
+        Ok(TransactionAction::Continue)
+    }
+
+    /// Handle Sync (S) or Flush (H) message.
+    /// Returns the action to take after processing.
+    #[inline]
+    async fn handle_sync_flush(
+        &mut self,
+        message: &BytesMut,
+        server: &mut Server,
+        query_start_at: quanta::Instant,
+        code: char,
+    ) -> Result<TransactionAction, Error> {
+        // Add the sync/flush message to buffer
+        self.buffer.put(&message[..]);
+
+        if code == 'H' {
+            // For Flush, enter async mode
+            server.set_async_mode(true);
+            // Mark this client as async client forever
+            self.async_client = true;
+            debug!("Client requested flush, going async");
+        } else {
+            // For Sync, exit async mode
+            server.set_async_mode(false);
+        }
+
+        self.send_and_receive_loop(None, server).await?;
+
+        self.stats.query();
+        server.stats.query(
+            query_start_at.elapsed().as_micros() as u64,
+            self.server_parameters.get_application_name(),
+        );
+
+        self.buffer.clear();
+
+        if self.complete_transaction_if_needed(server, true) {
+            return Ok(TransactionAction::Break);
+        }
+        if server.in_aborted() {
+            return Ok(TransactionAction::BreakWaitRollback);
+        }
+
+        Ok(TransactionAction::Continue)
+    }
+
+    /// Handle CopyData (d) message.
+    /// Returns the action to take after processing.
+    #[inline]
+    async fn handle_copy_data(
+        &mut self,
+        message: &BytesMut,
+        server: &mut Server,
+    ) -> Result<TransactionAction, Error> {
+        self.ensure_copy_mode(server)?;
+        self.buffer.put(&message[..]);
+
+        // Want to limit buffer size
+        if self.buffer.len() > BUFFER_FLUSH_THRESHOLD {
+            // Forward the data to the server
+            server.send_and_flush(&self.buffer).await?;
+            self.buffer.clear();
+        }
+
+        Ok(TransactionAction::Continue)
+    }
+
+    /// Handle CopyDone (c) or CopyFail (f) message.
+    /// Returns the action to take after processing.
+    async fn handle_copy_done_fail(
+        &mut self,
+        message: &BytesMut,
+        server: &mut Server,
+    ) -> Result<TransactionAction, Error> {
+        self.ensure_copy_mode(server)?;
+        // We may already have some copy data in the buffer, add this message to buffer
+        self.buffer.put(&message[..]);
+
+        server.send_and_flush(&self.buffer).await?;
+
+        // Clear the buffer
+        self.buffer.clear();
+
+        let response = server
+            .recv(&mut self.write, Some(&mut self.server_parameters))
+            .await?;
+
+        self.stats.active_write();
+        match write_all_flush(&mut self.write, &response).await {
+            Ok(_) => self.stats.active_idle(),
+            Err(err) => {
+                server.wait_available().await;
+                server.mark_bad(
+                    format!(
+                        "flush to client {} response after copy done: {:?}",
+                        self.addr, err
+                    )
+                    .as_str(),
+                );
+                return Err(err);
+            }
+        };
+
+        if self.complete_transaction_if_needed(server, false) {
+            return Ok(TransactionAction::Break);
+        }
+
+        Ok(TransactionAction::Continue)
+    }
+
     /// Handle a connected and authenticated client.
     pub async fn handle(&mut self) -> Result<(), Error> {
         // The client wants to cancel a query it has issued previously.
         if self.cancel_mode {
-            let (process_id, secret_key, address, port) = {
-                match self
-                    .client_server_map
-                    .get(&(self.process_id, self.secret_key))
-                {
-                    // We found the server the client is using for its query
-                    // that it wants to cancel.
-                    Some(entry) => {
-                        let (process_id, secret_key, address, port) = entry.value();
-                        {
-                            let mut cancel_guard = CANCELED_PIDS.lock();
-                            cancel_guard.insert(*process_id);
-                        }
-                        (*process_id, *secret_key, address.clone(), *port)
-                    }
-
-                    // The client doesn't know / got the wrong server,
-                    // we're closing the connection for security reasons.
-                    None => return Ok(()),
-                }
-            };
-
-            // Opens a new separate connection to the server, sends the backend_id
-            // and secret_key and then closes it for security reasons. No other interactions
-            // take place.
-            return Server::cancel(&address, port, process_id, secret_key).await;
+            return self.handle_cancel_mode().await;
         }
         self.stats.register(self.stats.clone());
-        // Get a pool instance referenced by the most up-to-date
-        // pointer. This ensures we always read the latest config
-        // when starting a query.
-        let mut pool: Option<ConnectionPool> = if self.admin {
-            None
-        } else {
-            Some(self.get_pool().await?)
+        let pool = match self.admin {
+            true => None,
+            false => Some(self.get_pool().await?),
         };
 
-        let mut tx_counter = 0;
         let mut query_start_at: quanta::Instant;
         let mut wait_rollback_from_client: bool;
         loop {
             wait_rollback_from_client = false;
-            // Read a complete message from the client, which normally would be
-            // either a `Q` (query) or `P` (prepare, extended protocol).
             self.stats.idle_read();
             let message = match read_message(&mut self.read, self.max_memory_usage).await {
                 Ok(message) => message,
@@ -214,47 +387,18 @@ where
             }
             // Handle admin database queries.
             if self.admin {
-                match handle_admin(&mut self.write, message, self.client_server_map.clone()).await {
-                    Ok(_) => (),
-                    Err(err) => {
-                        self.stats.disconnect();
-                        return Err(err);
-                    }
-                }
+                handle_admin(&mut self.write, message, self.client_server_map.clone())
+                    .await
+                    .inspect_err(|_| self.stats.disconnect())?;
                 continue;
             }
 
             query_start_at = now();
             let current_pool = pool.as_ref().unwrap();
 
-            match message[0] as char {
-                'Q' => {
-                    if self.pooler_check_query_request_vec.as_slice() == &message[..] {
-                        // This is the first message in the transaction, since we are responding with 'IZ',
-                        // then we can not expect a server connection and immediately send answer and exit transaction loop.
-                        write_all_flush(&mut self.write, &check_query_response()).await?;
-                        continue;
-                    }
-                    if message.len() < 40 && message.len() > QUERY_DEALLOCATE.len() + 5 {
-                        // Do not pass simple query with deallocate, as it will run on an unknown server.
-                        let query = &message[5..QUERY_DEALLOCATE.len() + 5];
-                        if QUERY_DEALLOCATE == query {
-                            write_all_flush(&mut self.write, &deallocate_response()).await?;
-                            continue;
-                        }
-                    }
-                }
-                // Extended protocol messages (P, B, D, E, C) now go through to get a server connection
-                // and are processed immediately without buffering in extended_protocol_data_buffer.
-                // The server handles error states according to PostgreSQL protocol:
-                // - If Parse fails, server enters "error in extended query" state
-                // - All subsequent P, B, D, E, C are ignored until Sync
-                // - On Sync, server sends ReadyForQuery and exits error state
-                'P' | 'B' | 'D' | 'E' | 'C' | 'S' | 'H' => {
-                    // Fall through to get server connection
-                }
-
-                _ => (),
+            // Handle fast queries (pooler check, DEALLOCATE) without server
+            if self.handle_fast_query_check(&message).await? {
+                continue;
             }
 
             let shutdown_in_progress = {
@@ -378,24 +522,12 @@ where
                     // This reads the first byte without advancing the internal pointer and mutating the bytes
                     let code = *message.first().unwrap() as char;
 
-                    match code {
+                    // Process message and get action
+                    let action = match code {
                         // Query
                         'Q' => {
-                            self.send_and_receive_loop(Some(&message), server).await?;
-                            self.stats.query();
-                            server.stats.query(
-                                query_start_at.elapsed().as_micros() as u64,
-                                self.server_parameters.get_application_name(),
-                            );
-                            if server.in_aborted() {
-                                wait_rollback_from_client = true;
-                                break;
-                            }
-
-                            if self.complete_transaction_if_needed(server, false) {
-                                self.stats.idle_read();
-                                break;
-                            }
+                            self.handle_simple_query(&message, server, query_start_at)
+                                .await?
                         }
 
                         // Terminate
@@ -412,12 +544,14 @@ where
                         'P' => {
                             self.process_parse_immediate(message, current_pool, server)
                                 .await?;
+                            TransactionAction::Continue
                         }
 
                         // Bind
                         'B' => {
                             self.process_bind_immediate(message, current_pool, server)
                                 .await?;
+                            TransactionAction::Continue
                         }
 
                         // Describe
@@ -425,110 +559,52 @@ where
                         'D' => {
                             self.process_describe_immediate(message, current_pool, server)
                                 .await?;
+                            TransactionAction::Continue
                         }
 
                         // Execute
                         // Execute a prepared statement prepared in `P` and bound in `B`.
                         'E' => {
                             self.buffer.put(&message[..]);
+                            TransactionAction::Continue
                         }
 
                         // Close
                         // Close the prepared statement.
                         'C' => {
                             self.process_close_immediate(message)?;
+                            TransactionAction::Continue
                         }
 
-                        // Sync
+                        // Sync or Flush
                         // Frontend (client) is asking for the query result now.
                         'S' | 'H' => {
-                            // Add the sync/flush message to buffer
-                            self.buffer.put(&message[..]);
-
-                            if code == 'H' {
-                                // For Flush, enter async mode
-                                server.set_async_mode(true);
-                                // Mark this client as async client forever
-                                self.async_client = true;
-                                debug!("Client requested flush, going async");
-                            } else {
-                                // For Sync, exit async mode
-                                server.set_async_mode(false);
-                            }
-
-                            self.send_and_receive_loop(None, server).await?;
-
-                            self.stats.query();
-                            server.stats.query(
-                                query_start_at.elapsed().as_micros() as u64,
-                                self.server_parameters.get_application_name(),
-                            );
-
-                            self.buffer.clear();
-
-                            if self.complete_transaction_if_needed(server, true) {
-                                break;
-                            }
-                            if server.in_aborted() {
-                                wait_rollback_from_client = true;
-                                break;
-                            }
+                            self.handle_sync_flush(&message, server, query_start_at, code)
+                                .await?
                         }
 
                         // CopyData
-                        'd' => {
-                            self.ensure_copy_mode(server)?;
-                            self.buffer.put(&message[..]);
-
-                            // Want to limit buffer size
-                            if self.buffer.len() > BUFFER_FLUSH_THRESHOLD {
-                                // Forward the data to the server,
-                                server.send_and_flush(&self.buffer).await?;
-                                self.buffer.clear();
-                            }
-                        }
+                        'd' => self.handle_copy_data(&message, server).await?,
 
                         // CopyDone or CopyFail
                         // Copy is done, successfully or not.
-                        'c' | 'f' => {
-                            self.ensure_copy_mode(server)?;
-                            // We may already have some copy data in the buffer, add this message to buffer
-                            self.buffer.put(&message[..]);
-
-                            server.send_and_flush(&self.buffer).await?;
-
-                            // Clear the buffer
-                            self.buffer.clear();
-
-                            let response = server
-                                .recv(&mut self.write, Some(&mut self.server_parameters))
-                                .await?;
-
-                            self.stats.active_write();
-                            match write_all_flush(&mut self.write, &response).await {
-                                Ok(_) => self.stats.active_idle(),
-                                Err(err) => {
-                                    server.wait_available().await;
-                                    server.mark_bad(
-                                        format!(
-                                            "flush to client {} response after copy done: {:?}",
-                                            self.addr, err
-                                        )
-                                        .as_str(),
-                                    );
-                                    return Err(err);
-                                }
-                            };
-
-                            if self.complete_transaction_if_needed(server, false) {
-                                break;
-                            }
-                        }
+                        'c' | 'f' => self.handle_copy_done_fail(&message, server).await?,
 
                         // Some unexpected message. We either did not implement the protocol correctly
                         // or this is not a Postgres client we're talking to.
                         _ => {
                             error!("Unexpected code: {code}");
+                            TransactionAction::Continue
+                        }
+                    };
+
+                    // Handle the action returned by message processor
+                    match action {
+                        TransactionAction::Continue => {}
+                        TransactionAction::Break => break,
+                        TransactionAction::BreakWaitRollback => {
+                            wait_rollback_from_client = true;
+                            break;
                         }
                     }
                 }
@@ -571,11 +647,6 @@ where
                 // release from server and wait rollback from client;
                 self.wait_rollback().await?;
             }
-            // change pool.
-            if tx_counter % 10 == 0 && self.transaction_mode {
-                pool = Some(self.get_pool().await?);
-            }
-            tx_counter += 1;
 
             self.stats.idle_read();
             // capacity растет - вырастает rss у процесса.
