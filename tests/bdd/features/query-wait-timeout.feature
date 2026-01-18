@@ -17,7 +17,7 @@ Feature: Query wait timeout when pool is exhausted
       admin_username = "admin"
       admin_password = "admin"
       pg_hba.content = "host all all 127.0.0.1/32 trust"
-      query_wait_timeout = 1000
+      query_wait_timeout = "100ms"
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -40,7 +40,7 @@ Feature: Query wait timeout when pool is exhausted
     And we send SimpleQuery "select pg_sleep(2)" to session "two" without waiting
     And we send SimpleQuery "select pg_sleep(2)" to session "three" without waiting
     # Wait a bit to ensure all connections are busy
-    And we sleep 100ms
+    And we sleep 150ms
     # Fourth connection should timeout waiting for a connection from the pool
     When we create session "four" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "select 1" to session "four" expecting error
