@@ -42,10 +42,10 @@ fn update_memory_metrics() {
 
 fn update_connection_metrics() {
     let connection_types = [
-        ("plain", &*PLAIN_CONNECTION_COUNTER),
-        ("tls", &*TLS_CONNECTION_COUNTER),
-        ("cancel", &*CANCEL_CONNECTION_COUNTER),
-        ("total", &*TOTAL_CONNECTION_COUNTER),
+        ("plain", &PLAIN_CONNECTION_COUNTER),
+        ("tls", &TLS_CONNECTION_COUNTER),
+        ("cancel", &CANCEL_CONNECTION_COUNTER),
+        ("total", &TOTAL_CONNECTION_COUNTER),
     ];
 
     for (conn_type, counter) in &connection_types {

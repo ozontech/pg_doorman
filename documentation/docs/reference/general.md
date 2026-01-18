@@ -32,6 +32,14 @@ The maximum number of clients that can connect to the pooler simultaneously. Whe
 
 Default: `8192`.
 
+### max_concurrent_creates
+
+Maximum number of server connections that can be created concurrently per pool. This setting uses a semaphore to limit parallel connection creation, which significantly improves performance during cold start and burst scenarios.
+
+Higher values allow faster pool warm-up but may increase load on the PostgreSQL server during connection storms. Lower values provide more gradual connection creation.
+
+Default: `4`.
+
 ### tls_mode
 
 The TLS mode for incoming connections. It can be one of the following:
@@ -98,6 +106,10 @@ Default: `true`.
 
 The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
 The more workers there are, the faster the system works, but only up to a certain limit (cpu count).
+
+This parameter also controls the number of shards in internal concurrent hash maps (DashMap).
+The shard count is calculated as `worker_threads * 4` rounded up to the nearest power of 2 (minimum 4 shards).
+This is important for Kubernetes deployments where CPU count detection may be incorrect, causing unnecessary overhead.
 
 Default: `4`.
 

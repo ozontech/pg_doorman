@@ -66,6 +66,11 @@ pub struct General {
     #[serde(default = "General::default_max_connections")]
     pub max_connections: u64,
 
+    /// Maximum number of server connections that can be created concurrently.
+    /// Uses a semaphore to limit parallel connection creation instead of serializing with mutex.
+    #[serde(default = "General::default_max_concurrent_creates")]
+    pub max_concurrent_creates: usize,
+
     #[serde(default = "General::default_server_lifetime")]
     pub server_lifetime: u64,
 
@@ -197,6 +202,12 @@ impl General {
         8 * 1024
     }
 
+    /// Default maximum number of concurrent server connection creates.
+    /// Allows up to 4 connections to be created in parallel per pool.
+    pub fn default_max_concurrent_creates() -> usize {
+        4
+    }
+
     pub fn default_backlog() -> u32 {
         0
     }
@@ -319,6 +330,7 @@ impl Default for General {
             message_size_to_be_stream: Self::default_message_size_to_be_stream(),
             max_memory_usage: Self::default_max_memory_usage(),
             max_connections: Self::default_max_connections(),
+            max_concurrent_creates: Self::default_max_concurrent_creates(),
             worker_threads: Self::default_worker_threads(),
             worker_cpu_affinity_pinning: Self::default_worker_cpu_affinity_pinning(),
             worker_stack_size: Self::default_worker_stack_size(),

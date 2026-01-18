@@ -59,7 +59,7 @@ pub async fn retain_connections() {
     let count = Arc::new(AtomicUsize::new(0));
     loop {
         interval.tick().await;
-        for (_, pool) in get_all_pools() {
+        for (_, pool) in get_all_pools().iter() {
             pool.retain_pool_connections(count.clone(), 1);
         }
         count.store(0, Ordering::Relaxed);
@@ -70,7 +70,7 @@ pub async fn retain_connections() {
 /// Returns the total number of connections drained.
 pub fn drain_all_pools() -> usize {
     let mut total_drained = 0;
-    for (_, pool) in get_all_pools() {
+    for (_, pool) in get_all_pools().iter() {
         total_drained += pool.drain_idle_connections();
     }
     if total_drained > 0 {

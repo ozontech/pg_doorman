@@ -15,6 +15,7 @@
 use log::{debug, error, warn};
 
 use crate::{config::PoolMode, messages::DataType, pool::PoolIdentifier};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::*;
 use std::sync::Arc;
@@ -296,45 +297,45 @@ impl PoolStats {
         ]
     }
 
-    pub fn generate_show_pools_extended_row(&self) -> Vec<String> {
+    pub fn generate_show_pools_extended_row(&self) -> Vec<Cow<'_, str>> {
         vec![
-            self.identifier.db.clone(),
-            self.identifier.user.clone(),
-            self.cl_active.to_string(),
-            self.cl_waiting.to_string(),
-            self.sv_active.to_string(),
-            self.sv_idle.to_string(),
-            self.sv_used.to_string(),
-            self.sv_login.to_string(),
-            (self.maxwait as f64 / 1_000_000f64).to_string(),
-            (self.maxwait % 1_000_000).to_string(),
-            self.mode.to_string(),
-            self.bytes_received.to_string(),
-            self.bytes_sent.to_string(),
-            self.query_percentile.p99.to_string(),
-            self.xact_percentile.p99.to_string(),
-            self.query_percentile.p95.to_string(),
-            self.xact_percentile.p95.to_string(),
-            self.query_percentile.p50.to_string(),
-            self.xact_percentile.p50.to_string(),
+            Cow::Borrowed(&self.identifier.db),
+            Cow::Borrowed(&self.identifier.user),
+            Cow::Owned(self.cl_active.to_string()),
+            Cow::Owned(self.cl_waiting.to_string()),
+            Cow::Owned(self.sv_active.to_string()),
+            Cow::Owned(self.sv_idle.to_string()),
+            Cow::Owned(self.sv_used.to_string()),
+            Cow::Owned(self.sv_login.to_string()),
+            Cow::Owned((self.maxwait as f64 / 1_000_000f64).to_string()),
+            Cow::Owned((self.maxwait % 1_000_000).to_string()),
+            Cow::Owned(self.mode.to_string()),
+            Cow::Owned(self.bytes_received.to_string()),
+            Cow::Owned(self.bytes_sent.to_string()),
+            Cow::Owned(self.query_percentile.p99.to_string()),
+            Cow::Owned(self.xact_percentile.p99.to_string()),
+            Cow::Owned(self.query_percentile.p95.to_string()),
+            Cow::Owned(self.xact_percentile.p95.to_string()),
+            Cow::Owned(self.query_percentile.p50.to_string()),
+            Cow::Owned(self.xact_percentile.p50.to_string()),
         ]
     }
 
-    pub fn generate_show_pools_row(&self) -> Vec<String> {
+    pub fn generate_show_pools_row(&self) -> Vec<Cow<'_, str>> {
         vec![
-            self.identifier.db.clone(),
-            self.identifier.user.clone(),
-            self.mode.to_string(),
-            self.cl_idle.to_string(),
-            self.cl_active.to_string(),
-            self.cl_waiting.to_string(),
-            self.cl_cancel_req.to_string(),
-            self.sv_active.to_string(),
-            self.sv_idle.to_string(),
-            self.sv_used.to_string(),
-            self.sv_login.to_string(),
-            (self.maxwait / 1_000_000).to_string(),
-            (self.maxwait % 1_000_000).to_string(),
+            Cow::Borrowed(&self.identifier.db),
+            Cow::Borrowed(&self.identifier.user),
+            Cow::Owned(self.mode.to_string()),
+            Cow::Owned(self.cl_idle.to_string()),
+            Cow::Owned(self.cl_active.to_string()),
+            Cow::Owned(self.cl_waiting.to_string()),
+            Cow::Owned(self.cl_cancel_req.to_string()),
+            Cow::Owned(self.sv_active.to_string()),
+            Cow::Owned(self.sv_idle.to_string()),
+            Cow::Owned(self.sv_used.to_string()),
+            Cow::Owned(self.sv_login.to_string()),
+            Cow::Owned((self.maxwait / 1_000_000).to_string()),
+            Cow::Owned((self.maxwait % 1_000_000).to_string()),
         ]
     }
 
@@ -361,26 +362,26 @@ impl PoolStats {
         ]
     }
 
-    pub fn generate_show_stats_row(&self) -> Vec<String> {
+    pub fn generate_show_stats_row(&self) -> Vec<Cow<'_, str>> {
         vec![
-            self.identifier.db.clone(),
-            self.identifier.user.clone(),
-            self.total_xact_count.to_string(),
-            self.total_query_count.to_string(),
-            self.total_received.to_string(),
-            self.total_sent.to_string(),
-            self.total_xact_time_microseconds.to_string(),
-            self.total_query_time_microseconds.to_string(),
-            self.wait_time.to_string(),
-            self.errors.to_string(),
-            self.avg_xact_count.to_string(),
-            self.avg_query_count.to_string(),
-            self.avg_recv.to_string(),
-            self.avg_sent.to_string(),
-            self.errors.to_string(),
-            self.avg_xact_time_microsecons.to_string(),
-            self.avg_query_time_microseconds.to_string(),
-            self.avg_wait_time.to_string(),
+            Cow::Borrowed(&self.identifier.db),
+            Cow::Borrowed(&self.identifier.user),
+            Cow::Owned(self.total_xact_count.to_string()),
+            Cow::Owned(self.total_query_count.to_string()),
+            Cow::Owned(self.total_received.to_string()),
+            Cow::Owned(self.total_sent.to_string()),
+            Cow::Owned(self.total_xact_time_microseconds.to_string()),
+            Cow::Owned(self.total_query_time_microseconds.to_string()),
+            Cow::Owned(self.wait_time.to_string()),
+            Cow::Owned(self.errors.to_string()),
+            Cow::Owned(self.avg_xact_count.to_string()),
+            Cow::Owned(self.avg_query_count.to_string()),
+            Cow::Owned(self.avg_recv.to_string()),
+            Cow::Owned(self.avg_sent.to_string()),
+            Cow::Owned(self.errors.to_string()),
+            Cow::Owned(self.avg_xact_time_microsecons.to_string()),
+            Cow::Owned(self.avg_query_time_microseconds.to_string()),
+            Cow::Owned(self.avg_wait_time.to_string()),
         ]
     }
 
@@ -394,7 +395,7 @@ impl PoolStats {
     ///
     /// * `virtual_map` - A mutable reference to the map of virtual pool statistics
     fn initialize_virtual_pool_stats(virtual_map: &mut HashMap<PoolIdentifier, PoolStats>) {
-        for (identifier, pool) in get_all_pools() {
+        for (identifier, pool) in get_all_pools().iter() {
             // Get address stats for this pool
             let address = pool.address().stats.clone();
 

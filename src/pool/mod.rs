@@ -1,11 +1,14 @@
 use arc_swap::ArcSwap;
+use dashmap::DashMap;
 use log::info;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 use crate::config::{get_config, Address, General, PoolMode, User};
 use crate::errors::Error;
@@ -32,7 +35,7 @@ pub type ServerHost = String;
 pub type ServerPort = u16;
 
 pub type ClientServerMap =
-    Arc<Mutex<HashMap<(ProcessId, SecretKey), (ProcessId, SecretKey, ServerHost, ServerPort)>>>;
+    Arc<DashMap<(ProcessId, SecretKey), (ProcessId, SecretKey, ServerHost, ServerPort)>>;
 pub type PoolMap = HashMap<PoolIdentifier, ConnectionPool>;
 
 /// The connection pool, globally available.
@@ -42,7 +45,7 @@ pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(Ha
 pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
-pub type PreparedStatementCacheType = Arc<Mutex<PreparedStatementCache>>;
+pub type PreparedStatementCacheType = Arc<PreparedStatementCache>;
 pub type ServerParametersType = Arc<tokio::sync::Mutex<ServerParameters>>;
 
 /// An identifier for a PgDoorman pool.
@@ -199,6 +202,7 @@ impl ConnectionPool {
                     pool_config.log_client_parameter_status_changes,
                     prepared_statements_cache_size,
                     application_name,
+                    config.general.max_concurrent_creates,
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -238,9 +242,10 @@ impl ConnectionPool {
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
                         false => None,
-                        true => Some(Arc::new(Mutex::new(PreparedStatementCache::new(
+                        true => Some(Arc::new(PreparedStatementCache::new(
                             prepared_statements_cache_size,
-                        )))),
+                            config.general.worker_threads,
+                        ))),
                     },
                 };
 
@@ -271,13 +276,9 @@ impl ConnectionPool {
     #[inline(always)]
     pub fn register_parse_to_cache(&self, hash: u64, parse: &Parse) -> Option<Arc<Parse>> {
         // We should only be calling this function if the cache is enabled
-        match self.prepared_statement_cache {
-            Some(ref prepared_statement_cache) => {
-                let mut cache = prepared_statement_cache.lock();
-                Some(cache.get_or_insert(parse, hash))
-            }
-            None => None,
-        }
+        self.prepared_statement_cache
+            .as_ref()
+            .map(|cache| cache.get_or_insert(parse, hash))
     }
 
     /// Promote a prepared statement hash in the LRU
@@ -285,8 +286,7 @@ impl ConnectionPool {
     pub fn promote_prepared_statement_hash(&self, hash: &u64) {
         // We should only be calling this function if the cache is enabled
         if let Some(ref prepared_statement_cache) = self.prepared_statement_cache {
-            let mut cache = prepared_statement_cache.lock();
-            cache.promote(hash);
+            prepared_statement_cache.promote(hash);
         }
     }
 
@@ -311,7 +311,6 @@ impl ConnectionPool {
 }
 
 /// Wrapper for the connection pool.
-#[derive(Debug)]
 pub struct ServerPool {
     /// Server address.
     address: Address,
@@ -336,8 +335,32 @@ pub struct ServerPool {
     /// Prepared statement cache size
     prepared_statement_cache_size: usize,
 
-    /// Lock to limit of server connections creating concurrently.
-    open_new_server: Arc<tokio::sync::Mutex<u64>>,
+    /// Semaphore to limit concurrent server connection creation.
+    create_semaphore: Arc<Semaphore>,
+
+    /// Counter for total connections created (for logging).
+    connection_counter: AtomicU64,
+}
+
+impl std::fmt::Debug for ServerPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerPool")
+            .field("address", &self.address)
+            .field("user", &self.user)
+            .field("database", &self.database)
+            .field("cleanup_connections", &self.cleanup_connections)
+            .field("application_name", &self.application_name)
+            .field(
+                "log_client_parameter_status_changes",
+                &self.log_client_parameter_status_changes,
+            )
+            .field("prepared_statement_cache_size", &self.prepared_statement_cache_size)
+            .field(
+                "connection_counter",
+                &self.connection_counter.load(Ordering::Relaxed),
+            )
+            .finish()
+    }
 }
 
 impl ServerPool {
@@ -351,6 +374,7 @@ impl ServerPool {
         log_client_parameter_status_changes: bool,
         prepared_statement_cache_size: usize,
         application_name: String,
+        max_concurrent_creates: usize,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -360,18 +384,24 @@ impl ServerPool {
             cleanup_connections,
             log_client_parameter_status_changes,
             prepared_statement_cache_size,
-            open_new_server: Arc::new(tokio::sync::Mutex::new(0)),
+            create_semaphore: Arc::new(Semaphore::new(max_concurrent_creates)),
+            connection_counter: AtomicU64::new(0),
             application_name,
         }
     }
 
     /// Attempts to create a new connection.
+    /// Uses a semaphore to limit concurrent connection creation instead of serializing with mutex.
     pub async fn create(&self) -> Result<Server, Error> {
-        let mut guard = self.open_new_server.lock().await;
-        *guard += 1;
+        // Acquire semaphore permit to limit concurrent creates
+        let _permit = self.create_semaphore.acquire().await.map_err(|_| {
+            Error::ServerStartupReadParameters("Semaphore closed".to_string())
+        })?;
+
+        let conn_num = self.connection_counter.fetch_add(1, Ordering::Relaxed) + 1;
         info!(
             "Creating a new server connection to {}[#{}]",
-            self.address, guard
+            self.address, conn_num
         );
         let stats = Arc::new(ServerStats::new(
             self.address.clone(),
@@ -395,16 +425,13 @@ impl ServerPool {
         .await
         {
             Ok(conn) => {
-                // max rate limit 1 server connection per 10 ms.
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                drop(guard);
+                // Permit is released automatically when _permit goes out of scope
                 conn.stats.idle(0);
                 Ok(conn)
             }
             Err(err) => {
-                // if server feels bad sleep more.
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                drop(guard);
+                // Brief backoff on error to avoid hammering a failing server
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 stats.disconnect();
                 Err(err)
             }
@@ -428,6 +455,7 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
 }
 
 /// Get a pointer to all configured pools.
-pub fn get_all_pools() -> HashMap<PoolIdentifier, ConnectionPool> {
-    (*(*POOLS.load())).clone()
+/// Returns an Arc to avoid cloning the entire HashMap on each call.
+pub fn get_all_pools() -> Arc<PoolMap> {
+    POOLS.load_full()
 }

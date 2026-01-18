@@ -445,8 +445,7 @@ impl Server {
 
     /// Claim this server as mine for the purposes of query cancellation.
     pub fn claim(&mut self, process_id: i32, secret_key: i32) {
-        let mut guard = self.client_server_map.lock();
-        guard.insert(
+        self.client_server_map.insert(
             (process_id, secret_key),
             (
                 self.process_id,

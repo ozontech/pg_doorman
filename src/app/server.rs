@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::process;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
@@ -6,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use log::{debug, error, info, warn};
-use parking_lot::Mutex;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpSocket;
 #[cfg(not(windows))]
@@ -194,7 +192,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         config.show();
 
         // Tracks which client is connected to which server for query cancellation.
-        let client_server_map: ClientServerMap = Arc::new(Mutex::new(HashMap::new()));
+        let client_server_map: ClientServerMap =
+            Arc::new(crate::utils::dashmap::new_dashmap(config.general.worker_threads));
 
         // Statistics reporting.
         REPORTER.store(Arc::new(Reporter::default()));

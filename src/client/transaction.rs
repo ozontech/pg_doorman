@@ -149,13 +149,11 @@ where
         // The client wants to cancel a query it has issued previously.
         if self.cancel_mode {
             let (process_id, secret_key, address, port) = {
-                let guard = self.client_server_map.lock();
-
-                match guard.get(&(self.process_id, self.secret_key)) {
-                    // Drop the mutex as soon as possible.
+                match self.client_server_map.get(&(self.process_id, self.secret_key)) {
                     // We found the server the client is using for its query
                     // that it wants to cancel.
-                    Some((process_id, secret_key, address, port)) => {
+                    Some(entry) => {
+                        let (process_id, secret_key, address, port) = entry.value();
                         {
                             let mut cancel_guard = CANCELED_PIDS.lock();
                             cancel_guard.insert(*process_id);
