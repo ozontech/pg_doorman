@@ -177,9 +177,10 @@ general:
   # Default: false
   worker_cpu_affinity_pinning: false
 
-  # Stack size for each worker thread (in bytes).
-  # Default: 8388608 (8 MB)
-  worker_stack_size: 8388608
+  # Stack size for each worker thread.
+  # Supports human-readable format: "8MB", "8M", or 8388608 (bytes)
+  # Default: "8MB" (8388608 bytes)
+  worker_stack_size: "8MB"
 
   # Tokio runtime settings (advanced, change only if you understand the implications).
   # Default: 5
@@ -204,8 +205,9 @@ general:
   sync_server_parameters: false
 
   # Data responses larger than this value are transmitted in chunks.
-  # Default: 1048576 (1 MB)
-  message_size_to_be_stream: 1048576
+  # Supports human-readable format: "1MB", "1M", or 1048576 (bytes)
+  # Default: "1MB" (1048576 bytes)
+  message_size_to_be_stream: "1MB"
 
   # Query that won't be sent to server (used for connection health checks).
   # Default: ";"
