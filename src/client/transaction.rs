@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::utils::clock::recent;
+use crate::utils::clock::{now, recent};
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
@@ -223,7 +223,7 @@ where
                 continue;
             }
 
-            query_start_at = recent();
+            query_start_at = now();
             let current_pool = pool.as_ref().unwrap();
 
             match message[0] as char {

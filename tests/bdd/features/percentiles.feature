@@ -30,67 +30,56 @@ Feature: HDR Histogram percentiles for query and transaction times
       pool_mode = "transaction"
       """
 
-  @percentiles-basic
-  Scenario: Percentiles are calculated from query execution times
+  @percentiles-values
+  Scenario: Percentiles reflect actual query time distribution with correct values
     # Create a session and execute queries with known sleep times
+    # Distribution: 8x 100ms (fast) + 2x 200ms (slow)
+    # Expected: p50 ≈ 100ms (100000us), p99 ≈ 200ms (200000us)
     When we create session "test" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    # Execute several queries with pg_sleep to create measurable latencies
-    # 100ms sleep = 100000 microseconds
+    # Fast queries (100ms each)
     And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
     And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
     And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
     And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
     And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
-    # Wait for stats to be collected (stats period is 15 seconds, but we need at least one cycle)
-    And we sleep 16000ms
-    # Check that percentiles are reported in SHOW POOLS_EXTENDED
+    And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "test"
+    # Slow queries (200ms each) - these should affect p99
+    And we send SimpleQuery "SELECT pg_sleep(0.2)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.2)" to session "test"
+    # Check percentiles immediately (before stats period resets histograms)
+    # Percentiles are calculated from HDR histogram which is updated in real-time
     And we create admin session "admin" to pg_doorman as "admin" with password "admin"
     And we execute "show pools_extended" on admin session "admin" and store response
-    # The query_0.99 column should contain a value > 0 (at least 100000 microseconds for 100ms sleep)
-    # Since we executed 100ms sleeps, p99 should be around 100000 microseconds
+    # Verify response contains our pool
     Then admin session "admin" response should contain "example_db"
+    # p99 (query_0.99) should be around 200ms = 200000 microseconds (allow 150000-300000 range)
+    And admin session "admin" column "query_0.99" should be between 150000 and 300000
+    # p50 (query_0.5) should be around 100ms = 100000 microseconds (allow 80000-180000 range)
+    And admin session "admin" column "query_0.5" should be between 80000 and 180000
 
-  @percentiles-distribution
-  Scenario: Percentiles reflect actual query time distribution
-    # Create a session and execute queries with varying sleep times
+  @percentiles-different-times
+  Scenario: Percentiles correctly distinguish between fast and slow queries
     When we create session "test" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    # Execute queries with different sleep times to create a distribution
-    # Fast queries (10ms)
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.01)" to session "test"
-    # Slow query (200ms) - this should affect p99
-    And we send SimpleQuery "SELECT pg_sleep(0.2)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.2)" to session "test"
-    # Wait for stats collection
-    And we sleep 16000ms
+    # Execute queries with different sleep times: 50ms and 150ms
+    # 9x 50ms (fast) + 1x 150ms (slow)
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    And we send SimpleQuery "SELECT pg_sleep(0.05)" to session "test"
+    # One slow query
+    And we send SimpleQuery "SELECT pg_sleep(0.15)" to session "test"
     # Check percentiles
     And we create admin session "admin" to pg_doorman as "admin" with password "admin"
     And we execute "show pools_extended" on admin session "admin" and store response
-    Then admin session "admin" response should contain "example_user_1"
-
-  @percentiles-reset
-  Scenario: Percentiles are reset after stats period
-    When we create session "test" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    # Execute slow queries
-    And we send SimpleQuery "SELECT pg_sleep(0.15)" to session "test"
-    And we send SimpleQuery "SELECT pg_sleep(0.15)" to session "test"
-    # Wait for first stats period
-    And we sleep 16000ms
-    # Now execute fast queries
-    And we send SimpleQuery "SELECT 1" to session "test"
-    And we send SimpleQuery "SELECT 1" to session "test"
-    And we send SimpleQuery "SELECT 1" to session "test"
-    And we send SimpleQuery "SELECT 1" to session "test"
-    And we send SimpleQuery "SELECT 1" to session "test"
-    # Wait for second stats period - percentiles should now reflect fast queries
-    And we sleep 16000ms
-    # Check that stats are available
-    And we create admin session "admin" to pg_doorman as "admin" with password "admin"
-    And we execute "show pools_extended" on admin session "admin" and store response
     Then admin session "admin" response should contain "example_db"
+    # p50 should be around 50ms = 50000 microseconds (allow 30000-80000 range)
+    And admin session "admin" column "query_0.5" should be between 30000 and 80000
+    # p99 should be around 150ms = 150000 microseconds (allow 100000-200000 range)
+    And admin session "admin" column "query_0.99" should be between 100000 and 200000

@@ -118,12 +118,15 @@ impl Reporter {
     /// If a client with the same ID is already registered, a warning is logged and
     /// the registration is ignored to prevent overwriting existing statistics.
     fn client_register(&self, client_id: i32, stats: Arc<ClientStats>) {
-        if CLIENT_STATS.read().get(&client_id).is_some() {
-            warn!("Client {client_id:?} was double registered!");
-            return;
+        use std::collections::hash_map::Entry;
+        match CLIENT_STATS.write().entry(client_id) {
+            Entry::Occupied(_) => {
+                warn!("Client {client_id:?} was double registered!");
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(stats);
+            }
         }
-
-        CLIENT_STATS.write().insert(client_id, stats);
     }
 
     /// Unregisters a client from the statistics system.
@@ -211,19 +214,23 @@ impl Collector {
                     for stats in server_stats.values() {
                         if !stats.check_address_stat_average_is_updated_status() {
                             stats.address_stats().update_averages();
-                            stats.address_stats().reset_current_counts();
                             stats.set_address_stat_average_is_updated_status(true);
                         }
                     }
+                }
 
-                    // Reset the update status flags for the next cycle
+                // Print all collected statistics (reads percentiles from histograms)
+                print_all_stats();
+
+                // Now reset counters and histograms for the next period
+                {
+                    let server_stats = SERVER_STATS.read();
                     for stats in server_stats.values() {
+                        stats.address_stats().reset_current_counts();
+                        stats.address_stats().reset_histograms();
                         stats.set_address_stat_average_is_updated_status(false);
                     }
                 }
-
-                // Print all collected statistics
-                print_all_stats();
             }
         });
     }
