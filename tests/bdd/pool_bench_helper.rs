@@ -30,8 +30,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
     let pg_port = world.pg_port.expect("PostgreSQL must be running");
 
     // Create empty client-server map (use default 4 worker_threads for tests)
-    let client_server_map: ClientServerMap =
-        Arc::new(pg_doorman::utils::dashmap::new_dashmap(4));
+    let client_server_map: ClientServerMap = Arc::new(pg_doorman::utils::dashmap::new_dashmap(4));
 
     // Create Address for the PostgreSQL server
     let address = Address {
@@ -62,7 +61,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         false, // log_client_parameter_status_changes
         0,     // prepared_statement_cache_size
         "pool_bench".to_string(),
-        4,     // max_concurrent_creates
+        4, // max_concurrent_creates
     );
 
     // Create Pool with configuration
@@ -73,7 +72,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
             create: Some(Duration::from_secs(10)),
             recycle: None,
         },
-        queue_mode: QueueMode::Fifo,
+        queue_mode: QueueMode::Lifo,
     };
 
     let pool = Pool::builder(server_pool).config(config).build();
@@ -82,18 +81,34 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
 }
 
 #[when(regex = r#"^I benchmark pool\.get with (\d+) iterations and save as "([^"]+)"$"#)]
-async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iterations: usize, name: String) {
+async fn benchmark_pool_get_iterations_named(
+    world: &mut DoormanWorld,
+    iterations: usize,
+    name: String,
+) {
     // Single client sequential benchmark
     benchmark_pool_get_impl(world, 1, iterations, name).await;
 }
 
-#[when(regex = r#"^I benchmark pool\.get with (\d+) concurrent clients and (\d+) iterations per client and save as "([^"]+)"$"#)]
-async fn benchmark_pool_get_concurrent(world: &mut DoormanWorld, clients: usize, iterations_per_client: usize, name: String) {
+#[when(
+    regex = r#"^I benchmark pool\.get with (\d+) concurrent clients and (\d+) iterations per client and save as "([^"]+)"$"#
+)]
+async fn benchmark_pool_get_concurrent(
+    world: &mut DoormanWorld,
+    clients: usize,
+    iterations_per_client: usize,
+    name: String,
+) {
     benchmark_pool_get_impl(world, clients, iterations_per_client, name).await;
 }
 
 /// Internal implementation for pool.get benchmarks supporting both single and concurrent clients
-async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, iterations_per_client: usize, name: String) {
+async fn benchmark_pool_get_impl(
+    world: &mut DoormanWorld,
+    clients: usize,
+    iterations_per_client: usize,
+    name: String,
+) {
     let internal_pool = world
         .internal_pool
         .as_ref()
@@ -104,7 +119,10 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
 
     // Warm-up: create initial connections
     {
-        let _obj = pool.get().await.expect("Failed to get connection for warm-up");
+        let _obj = pool
+            .get()
+            .await
+            .expect("Failed to get connection for warm-up");
     }
 
     // Start CPU profiler with pprof only if PPROF=1 is set
@@ -136,7 +154,7 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
         // Concurrent clients benchmark using tokio tasks
         let pool = pool.clone();
         let mut handles = Vec::with_capacity(clients);
-        
+
         for _ in 0..clients {
             let pool = pool.clone();
             handles.push(tokio::spawn(async move {
@@ -151,7 +169,7 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
                 latencies
             }));
         }
-        
+
         // Collect results from all clients
         let mut all_latencies = Vec::with_capacity(total_iterations);
         for handle in handles {
@@ -171,7 +189,7 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
         // For concurrent clients, run again with wall-clock timing
         let pool = pool.clone();
         let mut handles = Vec::with_capacity(clients);
-        
+
         let start = Instant::now();
         for _ in 0..clients {
             let pool = pool.clone();
@@ -187,7 +205,7 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
                 latencies
             }));
         }
-        
+
         let mut all_latencies = Vec::with_capacity(total_iterations);
         for handle in handles {
             let client_latencies = handle.await.expect("Client task failed");
@@ -219,14 +237,17 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
 
     // Print pprof CPU timing breakdown only if profiling was enabled
     let total_samples = if let Some(guard) = guard {
-        let report = guard.report().build().expect("Failed to build pprof report");
-        
+        let report = guard
+            .report()
+            .build()
+            .expect("Failed to build pprof report");
+
         println!("\n--- CPU Profile (pprof) Top Functions ---");
-        
+
         // Aggregate samples by function name across all stack frames
         let mut func_samples: HashMap<String, usize> = HashMap::new();
         let mut total_samples: usize = 0;
-        
+
         for (frames, count) in report.data.iter() {
             total_samples += *count as usize;
             // Iterate through all stack frames to find meaningful function names
@@ -234,11 +255,11 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
                 for symbol in symbols.iter() {
                     let name = symbol.name();
                     // Skip backtrace/profiler internal functions
-                    if name.contains("backtrace::") 
-                        || name.contains("pprof::") 
+                    if name.contains("backtrace::")
+                        || name.contains("pprof::")
                         || name.contains("__pthread")
                         || name.contains("_sigtramp")
-                        || name.starts_with("_") 
+                        || name.starts_with("_")
                     {
                         continue;
                     }
@@ -246,11 +267,11 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
                 }
             }
         }
-        
+
         // Sort by sample count
         let mut frame_times: Vec<(String, usize)> = func_samples.into_iter().collect();
         frame_times.sort_by(|a, b| b.1.cmp(&a.1));
-        
+
         println!("Total CPU samples: {}", total_samples);
         println!("| Function | Samples | % |");
         println!("|----------|---------|---|");
@@ -269,7 +290,7 @@ async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, itera
             println!("| {} | {} | {:.1}% |", display_name, count, pct);
         }
         println!("==========================================\n");
-        
+
         total_samples
     } else {
         println!("(pprof profiling disabled, set PPROF=1 to enable)\n");
@@ -306,7 +327,7 @@ async fn print_benchmark_results_to_stdout(world: &mut DoormanWorld) {
     println!("\n=== All Benchmark Results ===");
     println!("| Test | Throughput | p50 | p95 | p99 |");
     println!("|------|------------|-----|-----|-----|");
-    
+
     // Find main test names (without _pXX_ns suffix)
     let mut test_names: Vec<String> = world
         .bench_results
@@ -315,12 +336,21 @@ async fn print_benchmark_results_to_stdout(world: &mut DoormanWorld) {
         .cloned()
         .collect();
     test_names.sort();
-    
+
     for test_name in &test_names {
         let ops = world.bench_results.get(test_name.as_str()).unwrap_or(&0.0);
-        let p50 = world.bench_results.get(&format!("{}_p50_ns", test_name)).unwrap_or(&0.0);
-        let p95 = world.bench_results.get(&format!("{}_p95_ns", test_name)).unwrap_or(&0.0);
-        let p99 = world.bench_results.get(&format!("{}_p99_ns", test_name)).unwrap_or(&0.0);
+        let p50 = world
+            .bench_results
+            .get(&format!("{}_p50_ns", test_name))
+            .unwrap_or(&0.0);
+        let p95 = world
+            .bench_results
+            .get(&format!("{}_p95_ns", test_name))
+            .unwrap_or(&0.0);
+        let p99 = world
+            .bench_results
+            .get(&format!("{}_p99_ns", test_name))
+            .unwrap_or(&0.0);
         println!(
             "| {} | {:.0} ops/sec | {:.0} ns | {:.0} ns | {:.0} ns |",
             test_name, ops, p50, p95, p99

@@ -154,13 +154,15 @@ where
 
     /// Release the server from the client: it can't cancel its queries anymore.
     pub fn release(&self) {
-        self.client_server_map.remove(&(self.process_id, self.secret_key));
+        self.client_server_map
+            .remove(&(self.process_id, self.secret_key));
     }
 }
 
 impl<S, T> Drop for Client<S, T> {
     fn drop(&mut self) {
-        self.client_server_map.remove(&(self.process_id, self.secret_key));
+        self.client_server_map
+            .remove(&(self.process_id, self.secret_key));
 
         // Update server stats if the client was connected to a server
         if self.connected_to_server {

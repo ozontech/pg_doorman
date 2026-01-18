@@ -679,7 +679,8 @@ impl Server {
                             )),
                         },
                         registering_prepared_statement: VecDeque::new(),
-                        max_message_size: config.general.message_size_to_be_stream.as_bytes() as i32,
+                        max_message_size: config.general.message_size_to_be_stream.as_bytes()
+                            as i32,
                     };
                     server.stats.update_process_id(process_id);
 

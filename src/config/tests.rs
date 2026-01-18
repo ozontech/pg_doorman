@@ -309,7 +309,10 @@ async fn test_validate_valid_tls_mode_disable() {
 #[test]
 fn test_config_format_detect_toml() {
     assert_eq!(ConfigFormat::detect("config.toml"), ConfigFormat::Toml);
-    assert_eq!(ConfigFormat::detect("/path/to/config.toml"), ConfigFormat::Toml);
+    assert_eq!(
+        ConfigFormat::detect("/path/to/config.toml"),
+        ConfigFormat::Toml
+    );
     assert_eq!(ConfigFormat::detect("CONFIG.TOML"), ConfigFormat::Toml);
 }
 
@@ -317,8 +320,14 @@ fn test_config_format_detect_toml() {
 fn test_config_format_detect_yaml() {
     assert_eq!(ConfigFormat::detect("config.yaml"), ConfigFormat::Yaml);
     assert_eq!(ConfigFormat::detect("config.yml"), ConfigFormat::Yaml);
-    assert_eq!(ConfigFormat::detect("/path/to/config.yaml"), ConfigFormat::Yaml);
-    assert_eq!(ConfigFormat::detect("/path/to/config.yml"), ConfigFormat::Yaml);
+    assert_eq!(
+        ConfigFormat::detect("/path/to/config.yaml"),
+        ConfigFormat::Yaml
+    );
+    assert_eq!(
+        ConfigFormat::detect("/path/to/config.yml"),
+        ConfigFormat::Yaml
+    );
     assert_eq!(ConfigFormat::detect("CONFIG.YAML"), ConfigFormat::Yaml);
     assert_eq!(ConfigFormat::detect("CONFIG.YML"), ConfigFormat::Yaml);
 }
@@ -370,13 +379,19 @@ async fn test_yaml_config_parsing() {
     let config = get_config();
     assert_eq!(config.pools.len(), 1);
     assert_eq!(config.pools["example_db"].idle_timeout, Some(40000));
-    assert_eq!(config.pools["example_db"].users[0].username, "example_user_1");
+    assert_eq!(
+        config.pools["example_db"].users[0].username,
+        "example_user_1"
+    );
     assert_eq!(config.pools["example_db"].users[0].pool_size, 40);
     assert_eq!(
         config.pools["example_db"].users[0].pool_mode,
         Some(PoolMode::Transaction)
     );
-    assert_eq!(config.pools["example_db"].users[1].username, "example_user_2");
+    assert_eq!(
+        config.pools["example_db"].users[1].username,
+        "example_user_2"
+    );
     assert_eq!(config.pools["example_db"].users[1].pool_size, 20);
 }
 
@@ -430,7 +445,8 @@ fn test_parse_config_content_toml() {
 [include]
 files = []
 "#;
-    let result: GeneralWithInclude = parse_config_content(toml_content, ConfigFormat::Toml).unwrap();
+    let result: GeneralWithInclude =
+        parse_config_content(toml_content, ConfigFormat::Toml).unwrap();
     assert!(result.include.files.is_empty());
 }
 
@@ -440,7 +456,8 @@ fn test_parse_config_content_yaml() {
 include:
   files: []
 "#;
-    let result: GeneralWithInclude = parse_config_content(yaml_content, ConfigFormat::Yaml).unwrap();
+    let result: GeneralWithInclude =
+        parse_config_content(yaml_content, ConfigFormat::Yaml).unwrap();
     assert!(result.include.files.is_empty());
 }
 
@@ -484,9 +501,15 @@ pool_size = 20
     let config = get_config();
     assert_eq!(config.pools.len(), 1);
     assert_eq!(config.pools["example_db"].users.len(), 2);
-    assert_eq!(config.pools["example_db"].users[0].username, "legacy_user_1");
+    assert_eq!(
+        config.pools["example_db"].users[0].username,
+        "legacy_user_1"
+    );
     assert_eq!(config.pools["example_db"].users[0].pool_size, 30);
-    assert_eq!(config.pools["example_db"].users[1].username, "legacy_user_2");
+    assert_eq!(
+        config.pools["example_db"].users[1].username,
+        "legacy_user_2"
+    );
     assert_eq!(config.pools["example_db"].users[1].pool_size, 20);
 }
 
@@ -567,12 +590,12 @@ pool_size = 40
 
     let config = get_config();
     assert_eq!(config.pools.len(), 2);
-    
+
     // Check legacy pool
     assert_eq!(config.pools["legacy_pool"].users.len(), 1);
     assert_eq!(config.pools["legacy_pool"].users[0].username, "legacy_user");
     assert_eq!(config.pools["legacy_pool"].users[0].pool_size, 30);
-    
+
     // Check new pool
     assert_eq!(config.pools["new_pool"].users.len(), 1);
     assert_eq!(config.pools["new_pool"].users[0].username, "new_user");
@@ -612,7 +635,7 @@ server_password = "real_server_password"
 
     let config = get_config();
     let user = &config.pools["example_db"].users[0];
-    
+
     assert_eq!(user.username, "full_user");
     assert_eq!(user.password, "md5abcdef1234567890abcdef12345678");
     assert_eq!(user.pool_size, 50);
@@ -620,7 +643,10 @@ server_password = "real_server_password"
     assert_eq!(user.pool_mode, Some(PoolMode::Session));
     assert_eq!(user.server_lifetime, Some(3600000));
     assert_eq!(user.server_username, Some("real_server_user".to_string()));
-    assert_eq!(user.server_password, Some("real_server_password".to_string()));
+    assert_eq!(
+        user.server_password,
+        Some("real_server_password".to_string())
+    );
 }
 
 /// Test that duplicate usernames are rejected in legacy TOML format
@@ -653,7 +679,7 @@ pool_size = 20
 
     let file_path = temp_file.path().to_str().unwrap();
     let result = parse(file_path).await;
-    
+
     assert!(result.is_err());
     if let Err(Error::BadConfig(msg)) = result {
         assert!(msg.contains("duplicate username"));
@@ -692,7 +718,7 @@ pool_size = 20
 
     let file_path = temp_file.path().to_str().unwrap();
     let result = parse(file_path).await;
-    
+
     assert!(result.is_err());
     if let Err(Error::BadConfig(msg)) = result {
         assert!(msg.contains("duplicate username"));
@@ -767,7 +793,7 @@ pools:
 
     let file_path = temp_file.path().to_str().unwrap();
     let result = parse(file_path).await;
-    
+
     assert!(result.is_err());
     if let Err(Error::BadConfig(msg)) = result {
         assert!(msg.contains("duplicate username"));

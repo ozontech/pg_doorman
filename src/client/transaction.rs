@@ -149,7 +149,10 @@ where
         // The client wants to cancel a query it has issued previously.
         if self.cancel_mode {
             let (process_id, secret_key, address, port) = {
-                match self.client_server_map.get(&(self.process_id, self.secret_key)) {
+                match self
+                    .client_server_map
+                    .get(&(self.process_id, self.secret_key))
+                {
                     // We found the server the client is using for its query
                     // that it wants to cancel.
                     Some(entry) => {

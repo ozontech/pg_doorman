@@ -195,33 +195,25 @@ impl Pool {
             let _ = self.inner.users.fetch_sub(1, Ordering::Relaxed);
         });
 
-        let non_blocking = match timeouts.wait {
-            Some(t) => t.as_nanos() == 0,
-            None => false,
-        };
-
         let mut try_fast = 0;
         let permit: SemaphorePermit<'_>;
         loop {
-            if try_fast < MAX_FAST_RETRY && !non_blocking {
-                match self.inner.semaphore.try_acquire() {
-                    Ok(p) => {
-                        permit = p;
-                        break;
-                    }
-                    Err(_) => {
-                        try_fast += 1;
-                        // Short spin before yielding - gives chance for permit
-                        // to be released on another hyperthread
-                        for _ in 0..4 {
-                            std::hint::spin_loop();
-                        }
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
+            if try_fast < MAX_FAST_RETRY {
+                if let Ok(p) = self.inner.semaphore.try_acquire() {
+                    permit = p;
+                    break;
                 }
+                try_fast += 1;
+                // Short spin before yielding - gives chance for permit
+                // to be released on another hyperthread
+                for _ in 0..4 {
+                    std::hint::spin_loop();
+                }
+                tokio::task::yield_now().await;
+                continue;
             }
 
+            let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
             permit = if non_blocking {
                 self.inner.semaphore.try_acquire().map_err(|e| match e {
                     TryAcquireError::Closed => PoolError::Closed,
@@ -261,7 +253,9 @@ impl Pool {
                         Some(duration) => {
                             match tokio::time::timeout(
                                 duration,
-                                self.inner.server_pool.recycle(&mut inner.obj, &inner.metrics),
+                                self.inner
+                                    .server_pool
+                                    .recycle(&mut inner.obj, &inner.metrics),
                             )
                             .await
                             {
@@ -347,7 +341,10 @@ impl Pool {
             }
             // Reduce semaphore permits
             let permits_to_remove = old_max_size - max_size;
-            let _ = self.inner.semaphore.try_acquire_many(permits_to_remove as u32);
+            let _ = self
+                .inner
+                .semaphore
+                .try_acquire_many(permits_to_remove as u32);
             // Reallocate vec
             let mut vec = VecDeque::with_capacity(max_size);
             for obj in slots.vec.drain(..) {

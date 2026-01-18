@@ -2245,9 +2245,7 @@ pub async fn verify_admin_response_contains(
     );
 }
 
-#[then(
-    regex = r#"^admin session "([^"]+)" column "([^"]+)" should be between (\d+) and (\d+)$"#
-)]
+#[then(regex = r#"^admin session "([^"]+)" column "([^"]+)" should be between (\d+) and (\d+)$"#)]
 pub async fn verify_admin_column_in_range(
     world: &mut DoormanWorld,
     session_name: String,
@@ -2298,10 +2296,7 @@ pub async fn verify_admin_column_in_range(
 
     // Get value from first data row
     if lines.len() < 2 {
-        panic!(
-            "Admin session '{}': no data rows in response",
-            session_name
-        );
+        panic!("Admin session '{}': no data rows in response", session_name);
     }
 
     let values: Vec<&str> = if use_pipe {
