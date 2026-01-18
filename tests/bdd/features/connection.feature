@@ -12,23 +12,22 @@ Feature: Connection through pg_doorman
     And self-signed SSL certificates are generated
     And pg_doorman started with config:
       """
-      [general]
-      host = "127.0.0.1"
-      port = ${DOORMAN_PORT}
-      connect_timeout = 5000
-      admin_username = "admin"
-      admin_password = "admin"
-      tls_private_key = "${DOORMAN_SSL_KEY}"
-      tls_certificate = "${DOORMAN_SSL_CERT}"
-
-      [pools.postgres]
-      server_host = "127.0.0.1"
-      server_port = ${PG_PORT}
-      pool_mode = "transaction"
-
-      [pools.postgres.users.0]
-      username = "postgres"
-      password = "md53175bce1d3201d16594cebf9d7eb3f9d"
-      pool_size = 10
+      general:
+        host: "127.0.0.1"
+        port: ${DOORMAN_PORT}
+        connect_timeout: 5000
+        admin_username: "admin"
+        admin_password: "admin"
+        tls_private_key: "${DOORMAN_SSL_KEY}"
+        tls_certificate: "${DOORMAN_SSL_CERT}"
+      pools:
+        postgres:
+          server_host: "127.0.0.1"
+          server_port: ${PG_PORT}
+          pool_mode: "transaction"
+          users:
+            - username: "postgres"
+              password: "md53175bce1d3201d16594cebf9d7eb3f9d"
+              pool_size: 10
       """
     Then psql connection to pg_doorman as user "postgres" to database "postgres" with password "postgres" succeeds

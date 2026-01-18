@@ -12,21 +12,21 @@ Feature: Admin console SHOW commands
     And fixtures from "tests/fixture.sql" applied
     And pg_doorman started with config:
       """
-      [general]
-      host = "127.0.0.1"
-      port = ${DOORMAN_PORT}
-      admin_username = "admin"
-      admin_password = "admin"
-      pg_hba.content = "host all all 127.0.0.1/32 trust"
-
-      [pools.example_db]
-      server_host = "127.0.0.1"
-      server_port = ${PG_PORT}
-
-      [pools.example_db.users.0]
-      username = "example_user_1"
-      password = ""
-      pool_size = 10
+      general:
+        host: "127.0.0.1"
+        port: ${DOORMAN_PORT}
+        admin_username: "admin"
+        admin_password: "admin"
+        pg_hba:
+          content: "host all all 127.0.0.1/32 trust"
+      pools:
+        example_db:
+          server_host: "127.0.0.1"
+          server_port: ${PG_PORT}
+          users:
+            - username: "example_user_1"
+              password: ""
+              pool_size: 10
       """
 
   @admin-commands-config

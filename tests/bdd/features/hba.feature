@@ -33,7 +33,7 @@ Feature: HBA authentication tests
       server_port = ${PG_PORT}
       pool_mode = "session"
 
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_nopassword"
       password = ""
       pool_size = 40

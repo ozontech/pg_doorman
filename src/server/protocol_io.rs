@@ -119,7 +119,7 @@ where
 
     // Stream the large message directly
     match proxy_copy_data_with_timeout(
-        Duration::from_millis(get_config().general.proxy_copy_data_timeout),
+        get_config().general.proxy_copy_data_timeout.as_std(),
         &mut server.stream,
         client_stream,
         message_len as usize - mem::size_of::<i32>(),

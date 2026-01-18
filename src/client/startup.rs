@@ -381,7 +381,7 @@ where
             prepared_statements: AHashMap::new(),
             last_anonymous_prepared_hash: None,
             client_last_messages_in_tx: PooledBuffer::new(),
-            max_memory_usage: config.general.max_memory_usage,
+            max_memory_usage: config.general.max_memory_usage.as_bytes(),
             pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
         })
     }

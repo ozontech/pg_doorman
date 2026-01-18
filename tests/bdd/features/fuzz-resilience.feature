@@ -27,7 +27,7 @@ Feature: Fuzz resilience - pg_doorman handles malformed messages gracefully
       server_port = ${PG_PORT}
       pool_mode = "transaction"
 
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_1"
       password = ""
       pool_size = 1

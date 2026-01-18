@@ -30,6 +30,26 @@ pub fn create_temp_file(content: &str) -> NamedTempFile {
     file
 }
 
+/// Create a temporary config file with appropriate extension (.yaml or .toml)
+/// based on content format detection
+pub fn create_config_file(content: &str) -> NamedTempFile {
+    // Detect config format: YAML starts with "general:" (after trimming), TOML with "[general]"
+    let suffix = if content.trim_start().starts_with("general:") {
+        ".yaml"
+    } else {
+        ".toml"
+    };
+
+    let mut file = tempfile::Builder::new()
+        .suffix(suffix)
+        .tempfile()
+        .expect("Failed to create temp config file");
+    file.write_all(content.as_bytes())
+        .expect("Failed to write content to temp config file");
+    file.flush().expect("Failed to flush temp config file");
+    file
+}
+
 /// Set file permissions (unix only)
 #[cfg(unix)]
 pub fn set_file_permissions(path: &std::path::Path, mode: u32) {

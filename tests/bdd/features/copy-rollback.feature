@@ -23,7 +23,7 @@ Feature: COPY with lock timeout and session reuse
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
 
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_1"
       password = ""
       pool_size = 1

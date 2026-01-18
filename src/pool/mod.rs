@@ -103,8 +103,8 @@ impl Default for PoolSettings {
             pool_mode: PoolMode::Transaction,
             user: User::default(),
             db: String::default(),
-            idle_timeout_ms: General::default_idle_timeout(),
-            life_time_ms: General::default_server_lifetime(),
+            idle_timeout_ms: General::default_idle_timeout().as_millis(),
+            life_time_ms: General::default_server_lifetime().as_millis(),
             sync_server_parameters: General::default_sync_server_parameters(),
         }
     }
@@ -146,7 +146,7 @@ impl ConnectionPool {
             let new_pool_hash_value = pool_config.hash_value();
 
             // There is one pool per database/user pair.
-            for user in pool_config.users.values() {
+            for user in &pool_config.users {
                 let old_pool_ref = get_pool(pool_name, &user.username);
                 let identifier = PoolIdentifier::new(pool_name, &user.username);
 
@@ -216,8 +216,8 @@ impl ConnectionPool {
                 builder_config = builder_config.config(PoolConfig {
                     max_size: user.pool_size as usize,
                     timeouts: Timeouts {
-                        wait: Some(Duration::from_millis(config.general.query_wait_timeout)),
-                        create: Some(Duration::from_millis(config.general.connect_timeout)),
+                        wait: Some(config.general.query_wait_timeout.as_std()),
+                        create: Some(config.general.connect_timeout.as_std()),
                         recycle: None,
                     },
                     queue_mode: queue_strategy,
@@ -236,8 +236,8 @@ impl ConnectionPool {
                         pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
                         user: user.clone(),
                         db: pool_name.clone(),
-                        idle_timeout_ms: config.general.idle_timeout,
-                        life_time_ms: config.general.server_lifetime,
+                        idle_timeout_ms: config.general.idle_timeout.as_millis(),
+                        life_time_ms: config.general.server_lifetime.as_millis(),
                         sync_server_parameters: config.general.sync_server_parameters,
                     },
                     prepared_statement_cache: match config.general.prepared_statements {

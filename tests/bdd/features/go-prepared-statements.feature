@@ -33,7 +33,7 @@ Feature: Go prepared statements tests
       server_port = ${PG_PORT}
       pool_mode = "transaction"
 
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_1"
       password = "md58a67a0c805a5ee0384ea28e0dea557b6"
       pool_size = 40

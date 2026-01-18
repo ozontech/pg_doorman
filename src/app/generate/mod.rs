@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::error::Error;
 
 use crate::app::args::GenerateConfig;
@@ -78,7 +77,7 @@ pub fn generate_config_with_client(
     result.general.server_tls = config.ssl;
 
     // Store users with their authentication details
-    let mut users = BTreeMap::new();
+    let mut users = Vec::new();
     {
         // Query pg_shadow to get username and password hashes (requires superuser privileges)
         let rows = client.query(
@@ -90,8 +89,8 @@ pub fn generate_config_with_client(
             let passwd: String = row.get(1);
             // Create user configuration for each PostgreSQL user
             let user = crate::config::User {
-                username: usename.clone(),
-                password: passwd.clone(),
+                username: usename,
+                password: passwd,
                 pool_size: config.pool_size,
                 min_pool_size: None,
                 pool_mode: None,
@@ -100,7 +99,7 @@ pub fn generate_config_with_client(
                 server_password: None,
                 auth_pam_service: None,
             };
-            users.insert(usename, user);
+            users.push(user);
         }
     }
 

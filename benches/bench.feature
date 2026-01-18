@@ -34,7 +34,7 @@ Feature: Benchmarking environment setup with SSL
       server_port = ${PG_PORT}
       pool_mode = "transaction"
 
-      [pools.postgres.users.0]
+      [[pools.postgres.users]]
       username = "postgres"
       password = ""
       pool_size = 40

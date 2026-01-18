@@ -4,6 +4,131 @@ title: General Settings
 
 # Settings
 
+## Configuration File Format
+
+pg_doorman supports two configuration file formats:
+
+* **YAML** (`.yaml`, `.yml`) - The primary and recommended format for new configurations.
+* **TOML** (`.toml`) - Supported for backward compatibility with existing configurations.
+
+The format is automatically detected based on the file extension. Both formats support the same configuration options and can be used interchangeably.
+
+### Example YAML Configuration (Recommended)
+
+```yaml
+general:
+  host: "0.0.0.0"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin"
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "myuser"
+        password: "mypassword"
+        pool_size: 40
+```
+
+### Example TOML Configuration (Legacy)
+
+```toml
+[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin"
+
+[pools.mydb]
+server_host = "localhost"
+server_port = 5432
+pool_mode = "transaction"
+
+[[pools.mydb.users]]
+username = "myuser"
+password = "mypassword"
+pool_size = 40
+```
+
+### Generate Command
+
+The `generate` command can output configuration in either format. The format is determined by the output file extension:
+
+```bash
+# Generate YAML configuration (recommended)
+pg_doorman generate --output config.yaml
+
+# Generate TOML configuration (for backward compatibility)
+pg_doorman generate --output config.toml
+```
+
+### Include Files
+
+Include files can be in either format, and you can mix formats. For example, a YAML main config can include TOML files and vice versa:
+
+```yaml
+include:
+  files:
+    - "pools.yaml"
+    - "users.toml"
+```
+
+## Human-Readable Values
+
+pg_doorman supports human-readable formats for duration and byte size values, while maintaining backward compatibility with numeric values.
+
+### Duration Format
+
+Duration values can be specified as:
+
+* **Plain numbers**: interpreted as milliseconds (e.g., `5000` = 5 seconds)
+* **String with suffix**:
+    * `ms` - milliseconds (e.g., `"100ms"`)
+    * `s` - seconds (e.g., `"5s"` = 5000 milliseconds)
+    * `m` - minutes (e.g., `"5m"` = 300000 milliseconds)
+    * `h` - hours (e.g., `"1h"` = 3600000 milliseconds)
+    * `d` - days (e.g., `"1d"` = 86400000 milliseconds)
+
+**Examples:**
+```yaml
+general:
+  # All these are equivalent (3 seconds):
+  # connect_timeout: 3000      # backward compatible (milliseconds)
+  # connect_timeout: "3s"      # human-readable
+  # connect_timeout: "3000ms"  # explicit milliseconds
+  connect_timeout: "3s"
+  idle_timeout: "5m"         # 5 minutes
+  server_lifetime: "1h"      # 1 hour
+```
+
+### Byte Size Format
+
+Byte size values can be specified as:
+
+* **Plain numbers**: interpreted as bytes (e.g., `1048576` = 1 MB)
+* **String with suffix** (case-insensitive):
+    * `B` - bytes (e.g., `"1024B"`)
+    * `K` or `KB` - kilobytes (e.g., `"1K"` or `"1KB"` = 1024 bytes)
+    * `M` or `MB` - megabytes (e.g., `"1M"` or `"1MB"` = 1048576 bytes)
+    * `G` or `GB` - gigabytes (e.g., `"1G"` or `"1GB"` = 1073741824 bytes)
+
+Note: Uses binary prefixes (1 KB = 1024 bytes, not 1000 bytes).
+
+**Examples:**
+```yaml
+general:
+  # All these are equivalent (256 MB):
+  # max_memory_usage: 268435456  # backward compatible (bytes)
+  # max_memory_usage: "256MB"    # human-readable
+  # max_memory_usage: "256M"     # short form
+  max_memory_usage: "256MB"
+  unix_socket_buffer_size: "1MB" # 1 MB
+  worker_stack_size: "8MB"       # 8 MB
+```
+
 ## General Settings
 
 ### host

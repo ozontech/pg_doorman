@@ -6,9 +6,8 @@ use serde_derive::{Deserialize, Serialize};
 use std::mem;
 
 use super::tls;
+use super::{ByteSize, Duration, Include};
 use crate::auth::hba::PgHba;
-
-use super::Include;
 
 /// General configuration.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -26,13 +25,13 @@ pub struct General {
     pub tokio_event_interval: u32,
 
     #[serde(default = "General::default_connect_timeout")]
-    pub connect_timeout: u64,
+    pub connect_timeout: Duration,
 
     #[serde(default = "General::default_query_wait_timeout")]
-    pub query_wait_timeout: u64,
+    pub query_wait_timeout: Duration,
 
     #[serde(default = "General::default_idle_timeout")]
-    pub idle_timeout: u64,
+    pub idle_timeout: Duration,
 
     #[serde(default = "General::default_tcp_keepalives_idle")]
     pub tcp_keepalives_idle: u64,
@@ -46,7 +45,7 @@ pub struct General {
     pub tcp_no_delay: bool,
 
     #[serde(default = "General::default_unix_socket_buffer_size")]
-    pub unix_socket_buffer_size: usize,
+    pub unix_socket_buffer_size: ByteSize,
 
     #[serde(default)] // True
     pub log_client_connections: bool,
@@ -55,13 +54,13 @@ pub struct General {
     pub log_client_disconnections: bool,
 
     #[serde(default = "General::default_shutdown_timeout")] // 10_000
-    pub shutdown_timeout: u64,
+    pub shutdown_timeout: Duration,
 
     #[serde(default = "General::default_message_size_to_be_stream")] // 1024 * 1024
-    pub message_size_to_be_stream: u32,
+    pub message_size_to_be_stream: ByteSize,
 
-    #[serde(default = "General::default_max_memory_usage")] // 1m
-    pub max_memory_usage: u64,
+    #[serde(default = "General::default_max_memory_usage")] // 256m
+    pub max_memory_usage: ByteSize,
 
     #[serde(default = "General::default_max_connections")]
     pub max_connections: u64,
@@ -72,10 +71,10 @@ pub struct General {
     pub max_concurrent_creates: usize,
 
     #[serde(default = "General::default_server_lifetime")]
-    pub server_lifetime: u64,
+    pub server_lifetime: Duration,
 
     #[serde(default = "General::default_retain_connections_time")]
-    pub retain_connections_time: u64,
+    pub retain_connections_time: Duration,
 
     #[serde(default = "General::default_server_round_robin")] // False
     pub server_round_robin: bool,
@@ -87,14 +86,14 @@ pub struct General {
     pub worker_threads: usize,
 
     #[serde(default = "General::default_proxy_copy_data_timeout")] // 15_000
-    pub proxy_copy_data_timeout: u64,
+    pub proxy_copy_data_timeout: Duration,
 
     // worker_cpu_affinity_pinning: пытаемся пинить каждый worker на CPU, начиная со второго CPU.
     #[serde(default = "General::default_worker_cpu_affinity_pinning")]
     pub worker_cpu_affinity_pinning: bool,
     // worker_stack_size: размера стэка каждого воркера.
     #[serde(default = "General::default_worker_stack_size")] // 8388608
-    pub worker_stack_size: usize,
+    pub worker_stack_size: ByteSize,
     // tcp backlog.
     #[serde(default = "General::default_backlog")]
     pub backlog: u32,
@@ -162,40 +161,40 @@ impl General {
     pub fn default_tls_rate_limit_per_second() -> usize {
         0
     }
-    pub fn default_server_lifetime() -> u64 {
-        1000 * 60 * 5 // 5 min
+    pub fn default_server_lifetime() -> Duration {
+        Duration::from_mins(5) // 5 min
     }
 
-    pub fn default_retain_connections_time() -> u64 {
-        60_000 // 60 seconds
+    pub fn default_retain_connections_time() -> Duration {
+        Duration::from_secs(60) // 60 seconds
     }
 
-    pub fn default_connect_timeout() -> u64 {
-        3_000
+    pub fn default_connect_timeout() -> Duration {
+        Duration::from_millis(3_000)
     }
 
-    pub fn default_query_wait_timeout() -> u64 {
-        5000
+    pub fn default_query_wait_timeout() -> Duration {
+        Duration::from_millis(5000)
     }
 
     pub fn default_tcp_so_linger() -> u64 {
         0 // 0 seconds
     }
 
-    pub fn default_unix_socket_buffer_size() -> usize {
-        1024 * 1024 // 1mb
+    pub fn default_unix_socket_buffer_size() -> ByteSize {
+        ByteSize::from_mb(1) // 1mb
     }
 
     pub fn default_worker_cpu_affinity_pinning() -> bool {
         false
     }
 
-    pub fn default_worker_stack_size() -> usize {
-        8 * 1024 * 1024
+    pub fn default_worker_stack_size() -> ByteSize {
+        ByteSize::from_mb(8) // 8mb
     }
 
-    pub fn default_max_memory_usage() -> u64 {
-        256 * 1024 * 1024
+    pub fn default_max_memory_usage() -> ByteSize {
+        ByteSize::from_mb(256) // 256mb
     }
 
     pub fn default_max_connections() -> u64 {
@@ -235,20 +234,20 @@ impl General {
         5 // 5 seconds
     }
 
-    pub fn default_idle_timeout() -> u64 {
-        300_000_000 // 5 minutes
+    pub fn default_idle_timeout() -> Duration {
+        Duration::from_millis(300_000_000) // 5000 minutes
     }
 
-    pub fn default_shutdown_timeout() -> u64 {
-        10_000
+    pub fn default_shutdown_timeout() -> Duration {
+        Duration::from_secs(10) // 10 seconds
     }
 
-    pub fn default_proxy_copy_data_timeout() -> u64 {
-        15_000
+    pub fn default_proxy_copy_data_timeout() -> Duration {
+        Duration::from_secs(15) // 15 seconds
     }
 
-    pub fn default_message_size_to_be_stream() -> u32 {
-        1024 * 1024
+    pub fn default_message_size_to_be_stream() -> ByteSize {
+        ByteSize::from_mb(1) // 1mb
     }
 
     pub fn default_worker_threads() -> usize {

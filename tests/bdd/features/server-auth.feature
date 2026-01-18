@@ -33,14 +33,14 @@ Feature: Server authentication tests
       server_port = ${PG_PORT}
       pool_mode = "transaction"
 
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_1"
       password = "md58a67a0c805a5ee0384ea28e0dea557b6"
       server_username = "example_user_1"
       server_password = "test"
       pool_size = 10
 
-      [pools.example_db.users.1]
+      [[pools.example_db.users]]
       username = "example_user_bad"
       password = ""
       server_username = "example_user_1"
@@ -88,14 +88,14 @@ Feature: Server authentication tests
       server_port = ${PG_PORT}
       pool_mode = "transaction"
 
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_scram"
       password = "SCRAM-SHA-256$4096:p2j/1lMdQF6r1dD9I9f7PQ==$H3xt5yh7lwSq9zUPYwHovRu3FyUCCXchG/skydJRa9o=:5xU6Wj/GNg3UnN2uQIx3ezx7uZyzGeM5NrvSJRIxnlw="
       server_username = "example_user_2"
       server_password = "test"
       pool_size = 10
 
-      [pools.example_db.users.1]
+      [[pools.example_db.users]]
       username = "example_user_scram_bad"
       password = ""
       server_username = "example_user_2"

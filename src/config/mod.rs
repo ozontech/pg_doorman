@@ -21,6 +21,8 @@ use crate::pool::{ClientServerMap, ConnectionPool};
 
 // Sub-modules
 mod address;
+mod byte_size;
+mod duration;
 mod general;
 mod include;
 mod pool;
@@ -34,6 +36,8 @@ mod tests;
 
 // Re-exports
 pub use address::{Address, PoolMode};
+pub use byte_size::ByteSize;
+pub use duration::Duration;
 pub use general::General;
 pub use include::{GeneralWithInclude, Include, ServerConfig};
 pub use pool::Pool;
@@ -42,6 +46,58 @@ pub use talos::Talos;
 pub use user::User;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Configuration file format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigFormat {
+    Toml,
+    Yaml,
+}
+
+impl ConfigFormat {
+    /// Detect configuration format from file path extension.
+    /// Returns Yaml for .yaml/.yml files, Toml for everything else.
+    pub fn detect(path: &str) -> Self {
+        let path_lower = path.to_lowercase();
+        if path_lower.ends_with(".yaml") || path_lower.ends_with(".yml") {
+            ConfigFormat::Yaml
+        } else {
+            ConfigFormat::Toml
+        }
+    }
+}
+
+/// Parse configuration content based on format.
+fn parse_config_content<T: serde::de::DeserializeOwned>(
+    contents: &str,
+    format: ConfigFormat,
+) -> Result<T, Error> {
+    match format {
+        ConfigFormat::Toml => {
+            toml::from_str(contents).map_err(|err| Error::BadConfig(format!("TOML parse error: {err}")))
+        }
+        ConfigFormat::Yaml => {
+            serde_yaml::from_str(contents)
+                .map_err(|err| Error::BadConfig(format!("YAML parse error: {err}")))
+        }
+    }
+}
+
+/// Convert configuration content to TOML string for merging.
+/// This allows mixing YAML and TOML files in include.files.
+fn content_to_toml_string(contents: &str, format: ConfigFormat) -> Result<String, Error> {
+    match format {
+        ConfigFormat::Toml => Ok(contents.to_string()),
+        ConfigFormat::Yaml => {
+            // Parse YAML to serde_json::Value as intermediate format
+            let yaml_value: serde_json::Value = serde_yaml::from_str(contents)
+                .map_err(|err| Error::BadConfig(format!("YAML parse error: {err}")))?;
+            // Convert JSON value to TOML string
+            toml::to_string_pretty(&yaml_value)
+                .map_err(|err| Error::BadConfig(format!("YAML to TOML conversion error: {err}")))
+        }
+    }
+}
 
 /// Globally available configuration.
 static CONFIG: Lazy<ArcSwap<Config>> = Lazy::new(|| ArcSwap::from_pointee(Config::default()));
@@ -124,7 +180,7 @@ impl From<&Config> for std::collections::HashMap<String, String> {
                     (
                         format!("pools.{pool_name:?}.users"),
                         pool.users
-                            .values()
+                            .iter()
                             .map(|user| &user.username)
                             .cloned()
                             .collect::<Vec<String>>()
@@ -221,19 +277,19 @@ impl Config {
             info!(
                 "[pool: {}] Connect timeout: {}ms",
                 pool_name,
-                pool.connect_timeout.unwrap_or(self.general.connect_timeout)
+                pool.connect_timeout.unwrap_or(self.general.connect_timeout.as_millis())
             );
             info!(
                 "[pool: {}] Idle timeout: {}ms",
                 pool_name,
-                pool.idle_timeout.unwrap_or(self.general.idle_timeout)
+                pool.idle_timeout.unwrap_or(self.general.idle_timeout.as_millis())
             );
             info!(
                 "[pool: {}] Server lifetime: {}ms",
                 pool_name,
-                pool.server_lifetime.unwrap_or(self.general.server_lifetime)
+                pool.server_lifetime.unwrap_or(self.general.server_lifetime.as_millis())
             );
-            for (user_index, user) in &pool.users {
+            for (user_index, user) in pool.users.iter().enumerate() {
                 info!(
                     "[pool: {}] User {}: {}",
                     pool_name, user_index, user.username
@@ -362,43 +418,36 @@ async fn load_file(path: &str) -> Result<String, Error> {
 }
 
 /// Parse the configuration file located at the path.
+/// Supports both TOML (.toml) and YAML (.yaml, .yml) formats.
+/// Format is auto-detected based on file extension.
 pub async fn parse(path: &str) -> Result<(), Error> {
+    let format = ConfigFormat::detect(path);
+
     // parse only include.files = ["./path/to/file",...]
     let include_only_config_contents = load_file(path).await?;
-    let include_config: GeneralWithInclude = match toml::from_str(&include_only_config_contents) {
-        Ok(config) => config,
-        Err(err) => {
-            return Err(Error::BadConfig(format!(
-                "Could not parse config file {path}: {err}"
-            )));
-        }
-    };
+    let include_config: GeneralWithInclude =
+        parse_config_content(&include_only_config_contents, format)?;
 
-    // merge main with include files via serge-toml-merge.
-    let mut config_merged = match load_file(path).await?.parse() {
-        Ok(value) => value,
-        Err(err) => {
-            return Err(Error::BadConfig(format!(
-                "Could not toml parse file {path}: {err:?}"
-            )));
-        }
-    };
+    // merge main with include files via serde-toml-merge.
+    // Convert to TOML string first (for YAML files), then parse to toml::Value
+    let main_toml_str = content_to_toml_string(&include_only_config_contents, format)?;
+    let mut config_merged: toml::Value = main_toml_str.parse().map_err(|err| {
+        Error::BadConfig(format!("Could not parse config file {path}: {err:?}"))
+    })?;
+
     for file in include_config.include.files {
         info!("Merge config with include file: {file}");
         let include_file_content = load_file(file.as_str()).await?;
-        let include_file_value = match include_file_content.parse() {
-            Ok(value) => value,
-            Err(err) => {
-                return Err(Error::BadConfig(format!(
-                    "Could not toml parse file {file}: {err:?}"
-                )));
-            }
-        };
+        let include_format = ConfigFormat::detect(&file);
+        let include_toml_str = content_to_toml_string(&include_file_content, include_format)?;
+        let include_file_value: toml::Value = include_toml_str.parse().map_err(|err| {
+            Error::BadConfig(format!("Could not parse include file {file}: {err:?}"))
+        })?;
         config_merged = match serde_toml_merge::merge(config_merged, include_file_value) {
             Ok(value) => value,
             Err(err) => {
                 return Err(Error::BadConfig(format!(
-                    "Could merge config file {file}: {err:?}"
+                    "Could not merge config file {file}: {err:?}"
                 )));
             }
         };

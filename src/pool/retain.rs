@@ -54,8 +54,8 @@ impl ConnectionPool {
 }
 
 pub async fn retain_connections() {
-    let retain_time_ms = get_config().general.retain_connections_time;
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(retain_time_ms));
+    let retain_time = get_config().general.retain_connections_time.as_std();
+    let mut interval = tokio::time::interval(retain_time);
     let count = Arc::new(AtomicUsize::new(0));
     loop {
         interval.tick().await;

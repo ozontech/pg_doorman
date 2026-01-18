@@ -73,7 +73,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         .thread_name("worker-pg-doorman")
         .global_queue_interval(config.general.tokio_global_queue_interval)
         .event_interval(config.general.tokio_event_interval)
-        .thread_stack_size(config.general.worker_stack_size)
+        .thread_stack_size(config.general.worker_stack_size.as_usize())
         .max_blocking_threads(16 * config.general.worker_threads)
         .on_thread_start(move || {
             if worker_cpu_affinity_pinning {
@@ -419,15 +419,14 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     admin_only = true;
 
                     let exit_tx = exit_tx.clone();
-                    let shutdown_timeout = config.general.shutdown_timeout;
+                    let shutdown_timeout = config.general.shutdown_timeout.as_std();
 
                     tokio::task::spawn(async move {
                         let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
                         info!("waiting for {} client{} in transactions", clients_in_tx, if clients_in_tx == 1 { "" } else { "s" });
 
-                        let mut interval = tokio::time::interval(Duration::from_millis(shutdown_timeout));
+                        let mut interval = tokio::time::interval(shutdown_timeout);
                         let start = std::time::Instant::now();
-                        let timeout_duration = Duration::from_millis(shutdown_timeout);
 
                         loop {
                             interval.tick().await;
@@ -443,7 +442,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                 return;
                             }
 
-                            if start.elapsed() >= timeout_duration {
+                            if start.elapsed() >= shutdown_timeout {
                                 error!("Graceful shutdown timed out. {} active clients in transactions being closed", clients_in_tx);
                                 let _ = exit_tx.send(()).await;
                                 return;

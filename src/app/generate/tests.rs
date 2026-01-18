@@ -17,7 +17,7 @@ pub fn generate_config_with_client<
     result.general.server_tls = config.ssl;
 
     // Store users with their authentication details
-    let mut users_map = BTreeMap::new();
+    let mut users_vec = Vec::new();
 
     // Process users if available
     match users {
@@ -25,8 +25,8 @@ pub fn generate_config_with_client<
             for (username, password) in user_list {
                 // Create user configuration for each PostgreSQL user
                 let user = crate::config::User {
-                    username: username.clone(),
-                    password: password.clone(),
+                    username,
+                    password,
                     pool_size: config.pool_size,
                     min_pool_size: None,
                     pool_mode: None,
@@ -35,7 +35,7 @@ pub fn generate_config_with_client<
                     server_password: None,
                     auth_pam_service: None,
                 };
-                users_map.insert(username, user);
+                users_vec.push(user);
             }
         }
         Err(e) => return Err(Box::new(e)),
@@ -71,7 +71,7 @@ pub fn generate_config_with_client<
                         server_port: config.port,
                         server_database: Some(db_name.to_string()),
                         prepared_statements_cache_size: None,
-                        users: users_map.clone(),
+                        users: users_vec.clone(),
                     },
                 );
             }
@@ -133,11 +133,11 @@ fn test_generate_config_with_default_parameters() {
     let postgres_pool = config_result.pools.get("postgres").unwrap();
     assert_eq!(postgres_pool.pool_mode, PoolMode::Transaction);
     assert_eq!(postgres_pool.users.len(), 2);
-    assert!(postgres_pool.users.contains_key("postgres"));
-    assert!(postgres_pool.users.contains_key("testuser"));
+    assert!(postgres_pool.users.iter().any(|u| u.username == "postgres"));
+    assert!(postgres_pool.users.iter().any(|u| u.username == "testuser"));
 
     // Verify user details
-    let postgres_user = postgres_pool.users.get("postgres").unwrap();
+    let postgres_user = postgres_pool.users.iter().find(|u| u.username == "postgres").unwrap();
     assert_eq!(postgres_user.username, "postgres");
     assert_eq!(postgres_user.password, "md5abcdef1234567890");
     assert_eq!(postgres_user.pool_size, 40);
@@ -194,7 +194,7 @@ fn test_generate_config_with_custom_parameters() {
     assert_eq!(testdb_pool.server_port, 5433);
 
     // Verify user details
-    let testuser = testdb_pool.users.get("testuser").unwrap();
+    let testuser = testdb_pool.users.iter().find(|u| u.username == "testuser").unwrap();
     assert_eq!(testuser.username, "testuser");
     assert_eq!(testuser.pool_size, 20);
 }
