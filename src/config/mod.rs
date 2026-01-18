@@ -251,18 +251,6 @@ impl Config {
         // Validate Talos
         self.talos.validate().await?;
 
-        // Validate pools
-        for (pool_name, pool) in self.pools.iter() {
-            for (user_index, user) in pool.users.iter() {
-                if user.pool_size < self.general.virtual_pool_count as u32 {
-                    return Err(Error::BadConfig(format!(
-                        "pool_size of {} for user {} in pool {} is less than virtual_pool_count of {}",
-                        user.pool_size, user_index, pool_name, self.general.virtual_pool_count
-                    )));
-                }
-            }
-        }
-
         if self.general.tls_rate_limit_per_second < 100
             && self.general.tls_rate_limit_per_second != 0
         {

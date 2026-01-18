@@ -189,12 +189,7 @@ where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
 {
-    let virtual_pool_id = 0;
-    let mut pool = match get_pool(
-        pool_name,
-        client_identifier.username.as_str(),
-        virtual_pool_id,
-    ) {
+    let mut pool = match get_pool(pool_name, client_identifier.username.as_str()) {
         Some(pool) => pool,
         None => {
             error_response(

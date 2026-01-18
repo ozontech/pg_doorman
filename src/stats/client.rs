@@ -2,7 +2,8 @@ use super::{get_reporter, Reporter};
 use iota::iota;
 use std::sync::atomic::*;
 use std::sync::Arc;
-use tokio::time::Instant;
+
+use crate::utils::clock;
 
 // Client state constants used to track the current activity state of a client.
 //
@@ -48,7 +49,7 @@ pub struct ClientStats {
     /// IP address of the client
     ipaddr: String,
     /// Timestamp when the client connected
-    connect_time: Instant,
+    connect_time: quanta::Instant,
     /// Whether the client is using TLS/SSL encryption
     use_tls: bool,
 
@@ -90,7 +91,7 @@ impl Default for ClientStats {
     fn default() -> Self {
         ClientStats {
             client_id: 0,
-            connect_time: Instant::now(),
+            connect_time: clock::recent(),
             application_name: String::new(),
             username: String::new(),
             pool_name: String::new(),
@@ -163,7 +164,7 @@ impl ClientStats {
         username: &str,
         pool_name: &str,
         ipaddr: &str,
-        connect_time: Instant,
+        connect_time: quanta::Instant,
         use_tls: bool,
     ) -> Self {
         Self {
@@ -327,7 +328,7 @@ impl ClientStats {
 
     /// Returns the client connection timestamp.
     #[inline(always)]
-    pub fn connect_time(&self) -> Instant {
+    pub fn connect_time(&self) -> quanta::Instant {
         self.connect_time
     }
 
@@ -403,7 +404,7 @@ mod tests {
     #[test]
     fn test_client_stats_new() {
         // Test that ClientStats::new initializes with the provided values
-        let now = Instant::now();
+        let now = clock::recent();
         let stats = ClientStats::new(
             42,          // client_id
             "test_app",  // application_name
@@ -437,7 +438,7 @@ mod tests {
     fn test_client_lifecycle_methods() {
         // Create a ClientStats with a unique client_id
         let client_id = 12345;
-        let now = Instant::now();
+        let now = clock::recent();
         let stats = ClientStats::new(
             client_id,
             "test_app",
@@ -563,7 +564,7 @@ mod tests {
     #[test]
     fn test_accessor_methods() {
         // Create a ClientStats with specific values
-        let now = Instant::now();
+        let now = clock::recent();
         let stats = ClientStats::new(
             42,          // client_id
             "test_app",  // application_name

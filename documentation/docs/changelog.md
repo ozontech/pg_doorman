@@ -4,7 +4,7 @@ title: Changelog
 
 # Changelog
 
-### 3.1.0 <small>Jan 17, 2026</small> { id="3.1.0" }
+### 3.1.0 <small>Jan 18, 2026</small> { id="3.1.0" }
 
 **New Features:**
 
@@ -14,6 +14,12 @@ title: Changelog
   - After a client completes their transaction during shutdown, they receive a proper PostgreSQL protocol error (`58006 - pooler is shut down now`) instead of a connection reset.
   - Server connections are immediately released (marked as bad) after transaction completion during shutdown to conserve PostgreSQL connections.
   - All idle connections are immediately drained from pools when graceful shutdown starts, releasing PostgreSQL connections faster.
+
+**Performance:**
+
+- **Statistics module optimization**: Major refactoring of the `src/stats` module for improved performance:
+  - Replaced `VecDeque` with HDR histograms (`hdrhistogram` crate) for percentile calculations — O(1) percentile queries instead of O(n log n) sorting, ~95% memory reduction for latency tracking.
+  - Histograms are now reset after each stats period (15 seconds) to provide accurate rolling window percentiles.
 
 ### 3.0.5 <small>Jan 16, 2026</small> { id="3.0.5" }
 

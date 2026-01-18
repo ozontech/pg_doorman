@@ -84,6 +84,8 @@ pub struct DoormanWorld {
     pub bench_start_time: Option<chrono::DateTime<chrono::Utc>>,
     /// Benchmark end time (set when generating markdown table)
     pub bench_end_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Internal pool for direct Pool.get benchmarking
+    pub internal_pool: Option<crate::pool_bench_helper::InternalPool>,
 }
 
 impl DoormanWorld {

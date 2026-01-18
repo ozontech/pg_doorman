@@ -2,7 +2,6 @@ use crate::errors::Error;
 /// Handle clients by pretending to be a PostgreSQL server.
 use ahash::AHashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::io::BufReader;
 
 use crate::client::buffer_pool::PooledBuffer;
@@ -112,9 +111,6 @@ pub struct Client<S, T> {
     pub(crate) client_last_messages_in_tx: PooledBuffer,
 
     pub(crate) pooler_check_query_request_vec: Vec<u8>,
-
-    pub(crate) created_at: Instant,
-    pub(crate) virtual_pool_count: u16,
 }
 
 impl<S, T> Client<S, T>
@@ -130,19 +126,10 @@ where
         self.stats.disconnect();
     }
 
-    fn get_virtual_pool_id(&mut self, client_counter: usize) -> u16 {
-        let counter = client_counter as u64 + (self.created_at.elapsed().as_secs());
-        (counter % self.virtual_pool_count as u64) as u16
-    }
-
     /// Retrieve connection pool, if it exists.
     /// Return an error to the client otherwise.
-    pub(crate) async fn get_pool(
-        &mut self,
-        client_counter: usize,
-    ) -> Result<ConnectionPool, Error> {
-        let virtual_pool_id = self.get_virtual_pool_id(client_counter);
-        match get_pool(&self.pool_name, &self.username, virtual_pool_id) {
+    pub(crate) async fn get_pool(&mut self) -> Result<ConnectionPool, Error> {
+        match get_pool(&self.pool_name, &self.username) {
             Some(pool) => Ok(pool),
             None => {
                 error_response(

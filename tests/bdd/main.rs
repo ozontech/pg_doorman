@@ -6,6 +6,7 @@ mod odyssey_helper;
 mod pg_connection;
 mod pgbench_helper;
 mod pgbouncer_helper;
+mod pool_bench_helper;
 mod postgres_helper;
 mod service_helper;
 mod shell_helper;

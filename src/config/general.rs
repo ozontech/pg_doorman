@@ -19,9 +19,6 @@ pub struct General {
     #[serde(default = "General::default_port")]
     pub port: u16,
 
-    #[serde(default = "General::default_virtual_pool_count")]
-    pub virtual_pool_count: u16,
-
     #[serde(default = "General::default_tokio_global_queue_interval")]
     pub tokio_global_queue_interval: u32,
 
@@ -147,10 +144,6 @@ impl General {
 
     pub fn default_port() -> u16 {
         5432
-    }
-
-    pub fn default_virtual_pool_count() -> u16 {
-        1
     }
 
     pub fn default_tokio_global_queue_interval() -> u32 {
@@ -316,7 +309,6 @@ impl Default for General {
         General {
             host: Self::default_host(),
             port: Self::default_port(),
-            virtual_pool_count: Self::default_virtual_pool_count(),
             tokio_global_queue_interval: Self::default_tokio_global_queue_interval(),
             tokio_event_interval: Self::default_tokio_event_interval(),
             connect_timeout: General::default_connect_timeout(),

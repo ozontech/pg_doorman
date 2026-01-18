@@ -4,7 +4,7 @@
 use log::error;
 use std::sync::atomic::Ordering;
 
-use crate::pool::StatsPoolIdentifier;
+use crate::pool::PoolIdentifier;
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
 use crate::stats::pool::PoolStats;
@@ -121,7 +121,7 @@ fn update_server_metrics() {
     }
 }
 
-fn update_pool_avg_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
+fn update_pool_avg_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     let avg_metrics = [
         (
             &SHOW_POOLS_WAIT_TIME_AVG,
@@ -149,7 +149,7 @@ fn update_pool_avg_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) 
     }
 }
 
-fn update_pool_server_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
+fn update_pool_server_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     let server_states = [("active", stats.sv_active), ("idle", stats.sv_idle)];
 
     for (state, value) in server_states {
@@ -173,7 +173,7 @@ fn reset_pool_metrics() {
     SHOW_POOLS_QUERIES_TOTAL_TIME.reset();
 }
 
-fn update_client_state_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
+fn update_client_state_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     let states = [
         ("idle", stats.cl_idle),
         ("waiting", stats.cl_waiting),
@@ -188,7 +188,7 @@ fn update_client_state_metrics(identifier: &StatsPoolIdentifier, stats: &PoolSta
     }
 }
 
-fn update_byte_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
+fn update_byte_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     let labels_recv: [&str; 3] = ["received", identifier.user.as_str(), identifier.db.as_str()];
     SHOW_POOLS_BYTES
         .with_label_values(&labels_recv)
@@ -199,7 +199,7 @@ fn update_byte_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
         .set(stats.bytes_sent as f64);
 }
 
-fn update_percentile_metrics(identifier: &StatsPoolIdentifier, stats: &PoolStats) {
+fn update_percentile_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     const PERCENTILES: &[&str] = &["99", "95", "90", "50"];
 
     for percentile in PERCENTILES {

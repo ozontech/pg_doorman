@@ -10,6 +10,7 @@ result
 /vendor-licenses.json
 /vendor-licenses.txt
 .output*
+.bench*
 
 # Python-generated files
 __pycache__/

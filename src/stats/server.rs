@@ -1,11 +1,11 @@
 use super::AddressStats;
 use super::{get_reporter, Reporter};
 use crate::config::Address;
+use crate::utils::clock;
 use iota::iota;
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use std::sync::atomic::*;
 use std::sync::Arc;
-use tokio::time::Instant;
 
 // Server state constants used to track the current activity state of a server connection.
 //
@@ -48,7 +48,7 @@ pub struct ServerStats {
     /// Address configuration for this server connection
     address: Address,
     /// Timestamp when the server connection was established
-    connect_time: Instant,
+    connect_time: quanta::Instant,
 
     /// Reporter instance used to register/unregister this server with the stats system
     reporter: Reporter,
@@ -56,7 +56,7 @@ pub struct ServerStats {
     /// Server state and activity data
     /// ------------------------------------------------------------------------------------------
     /// Name of the application using this server connection
-    pub application_name: RwLock<String>,
+    pub application_name: Mutex<String>,
     /// Packed state byte: high nibble = state (LOGIN/ACTIVE/IDLE), low nibble = wait (IDLE/READ/WRITE)
     state_wait: AtomicU8,
 
@@ -102,9 +102,9 @@ impl Default for ServerStats {
         ServerStats {
             server_id: 0,
             process_id: AtomicI32::new(0),
-            application_name: RwLock::new(String::new()),
+            application_name: Mutex::new(String::new()),
             address: Address::default(),
-            connect_time: Instant::now(),
+            connect_time: clock::recent(),
             state_wait: AtomicU8::new(Self::pack(SERVER_STATE_LOGIN, SERVER_WAIT_IDLE)),
             bytes_sent: AtomicU64::new(0),
             bytes_received: AtomicU64::new(0),
@@ -166,7 +166,7 @@ impl ServerStats {
     ///
     /// * `address` - Address configuration for this server connection
     /// * `connect_time` - Timestamp when the server connection was established
-    pub fn new(address: Address, connect_time: Instant) -> Self {
+    pub fn new(address: Address, connect_time: quanta::Instant) -> Self {
         Self {
             address,
             connect_time,
@@ -347,7 +347,7 @@ impl ServerStats {
     ///
     /// * `name` - The application name to set
     fn set_application(&self, name: String) {
-        let mut application_name = self.application_name.write();
+        let mut application_name = self.application_name.lock();
         *application_name = name;
     }
 
@@ -522,7 +522,7 @@ impl ServerStats {
     }
 
     /// Returns the server connection timestamp.
-    pub fn connect_time(&self) -> Instant {
+    pub fn connect_time(&self) -> quanta::Instant {
         self.connect_time
     }
 }
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(stats.wait(), SERVER_WAIT_IDLE);
 
         // Check application name
-        assert_eq!(*stats.application_name.read(), "");
+        assert_eq!(*stats.application_name.lock(), "");
 
         // Check counters
         assert_eq!(stats.bytes_sent.load(Ordering::Relaxed), 0);
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(stats.prepared_cache_size.load(Ordering::Relaxed), 0);
 
         // Check address
-        assert_eq!(stats.address_name(), "pool_name-0");
+        assert_eq!(stats.address_name(), "pool_name");
         assert_eq!(stats.pool_name(), "pool_name");
         assert_eq!(stats.username(), "username");
     }
@@ -568,7 +568,7 @@ mod tests {
     fn test_server_stats_new() {
         // Create a mock address
         let address = crate::config::Address::default();
-        let now = Instant::now();
+        let now = clock::recent();
 
         // Test that ServerStats::new initializes with the provided values
         let stats = ServerStats::new(address.clone(), now);
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(stats.connect_time(), now);
 
         // Check that address is set correctly
-        assert_eq!(stats.address_name(), "pool_name-0");
+        assert_eq!(stats.address_name(), "pool_name");
         assert_eq!(stats.pool_name(), "pool_name");
         assert_eq!(stats.username(), "username");
 
@@ -588,7 +588,7 @@ mod tests {
         assert_eq!(stats.process_id(), 0);
         assert_eq!(stats.state(), SERVER_STATE_LOGIN);
         assert_eq!(stats.wait(), SERVER_WAIT_IDLE);
-        assert_eq!(*stats.application_name.read(), "");
+        assert_eq!(*stats.application_name.lock(), "");
         assert_eq!(stats.bytes_sent.load(Ordering::Relaxed), 0);
         assert_eq!(stats.bytes_received.load(Ordering::Relaxed), 0);
         assert_eq!(stats.transaction_count.load(Ordering::Relaxed), 0);
@@ -605,7 +605,6 @@ mod tests {
         let address = crate::config::Address {
             host: "test_host".to_string(),
             port: 5432,
-            virtual_pool_id: 0,
             database: "test_db".to_string(),
             username: "test_user".to_string(),
             password: "test_password".to_string(),
@@ -614,7 +613,7 @@ mod tests {
         };
 
         // Create a ServerStats with a fixed server_id for testing
-        let now = Instant::now();
+        let now = clock::recent();
         let stats = ServerStats::new(address, now);
 
         // Set a known server_id for testing
@@ -641,7 +640,6 @@ mod tests {
         let address = Address {
             host: "test_host".to_string(),
             port: 5432,
-            virtual_pool_id: 0,
             database: "test_db".to_string(),
             username: "test_user".to_string(),
             password: "test_password".to_string(),
@@ -650,7 +648,7 @@ mod tests {
         };
 
         // Create a ServerStats with a fixed server_id for testing
-        let now = Instant::now();
+        let now = clock::recent();
         let stats = ServerStats::new(address.clone(), now);
 
         // Set a known server_id for testing
@@ -671,7 +669,7 @@ mod tests {
 
         // Check that the state was set to LOGIN and application name to "Undefined"
         assert_eq!(stats_arc.state(), SERVER_STATE_LOGIN);
-        assert_eq!(*stats_arc.application_name.read(), "Undefined");
+        assert_eq!(*stats_arc.application_name.lock(), "Undefined");
 
         // Disconnect the server
         stats_arc.disconnect();
@@ -687,12 +685,12 @@ mod tests {
         // Test login
         stats.login();
         assert_eq!(stats.state(), SERVER_STATE_LOGIN);
-        assert_eq!(*stats.application_name.read(), "Undefined");
+        assert_eq!(*stats.application_name.lock(), "Undefined");
 
         // Test active
         stats.active("TestApp".to_string());
         assert_eq!(stats.state(), SERVER_STATE_ACTIVE);
-        assert_eq!(*stats.application_name.read(), "TestApp");
+        assert_eq!(*stats.application_name.lock(), "TestApp");
 
         // Test idle
         stats.idle(100);
@@ -778,11 +776,11 @@ mod tests {
 
         // Test set_application (indirectly through active)
         stats.active("TestApp".to_string());
-        assert_eq!(*stats.application_name.read(), "TestApp");
+        assert_eq!(*stats.application_name.lock(), "TestApp");
 
         // Test set_undefined_application (indirectly through login)
         stats.login();
-        assert_eq!(*stats.application_name.read(), "Undefined");
+        assert_eq!(*stats.application_name.lock(), "Undefined");
     }
 
     #[test]
@@ -807,7 +805,7 @@ mod tests {
 
         // Test checkout_time
         stats.checkout_time(100, "TestApp".to_string());
-        assert_eq!(*stats.application_name.read(), "TestApp");
+        assert_eq!(*stats.application_name.lock(), "TestApp");
         assert_eq!(
             stats.address.stats.total.wait_time.load(Ordering::Relaxed),
             100
@@ -815,7 +813,7 @@ mod tests {
 
         // Test query
         stats.query(200, "QueryApp");
-        assert_eq!(*stats.application_name.read(), "QueryApp");
+        assert_eq!(*stats.application_name.lock(), "QueryApp");
         assert_eq!(stats.query_count.load(Ordering::Relaxed), 1);
         assert_eq!(
             stats
@@ -838,7 +836,7 @@ mod tests {
 
         // Test transaction
         stats.transaction("TransactionApp");
-        assert_eq!(*stats.application_name.read(), "TransactionApp");
+        assert_eq!(*stats.application_name.lock(), "TransactionApp");
         assert_eq!(stats.transaction_count.load(Ordering::Relaxed), 1);
         assert_eq!(
             stats.address.stats.total.xact_count.load(Ordering::Relaxed),
@@ -898,11 +896,11 @@ mod tests {
         // Test username
         assert_eq!(stats.username(), "test_user");
 
-        // Test address_name
-        assert_eq!(stats.address_name(), "test_pool-0");
+        // Test address_name (same as pool_name when no virtual pool suffix)
+        assert_eq!(stats.address_name(), "test_pool");
 
         // Test connect_time
         let connect_time = stats.connect_time();
-        assert!(connect_time <= Instant::now());
+        assert!(connect_time <= clock::recent());
     }
 }

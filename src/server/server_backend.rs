@@ -136,9 +136,8 @@ impl std::fmt::Display for Server {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "[{}]-vp-{}-{}@{}:{}/{}/{}",
+            "[{}]-{}@{}:{}/{}/{}",
             self.process_id,
-            self.address.virtual_pool_id,
             self.address.username,
             self.address.host,
             self.address.port,

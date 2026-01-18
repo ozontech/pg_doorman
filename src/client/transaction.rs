@@ -2,12 +2,14 @@ use bytes::{BufMut, BytesMut};
 use log::{debug, error, warn};
 use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::utils::clock::{now, recent};
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
 use crate::client::core::Client;
-use crate::client::util::{CLIENT_COUNTER, QUERY_DEALLOCATE};
+use crate::client::util::QUERY_DEALLOCATE;
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
@@ -173,18 +175,17 @@ where
             return Server::cancel(&address, port, process_id, secret_key).await;
         }
         self.stats.register(self.stats.clone());
-        let client_counter = CLIENT_COUNTER.fetch_add(1, Ordering::Relaxed);
         // Get a pool instance referenced by the most up-to-date
         // pointer. This ensures we always read the latest config
         // when starting a query.
         let mut pool: Option<ConnectionPool> = if self.admin {
             None
         } else {
-            Some(self.get_pool(client_counter).await?)
+            Some(self.get_pool().await?)
         };
 
         let mut tx_counter = 0;
-        let mut query_start_at: Instant;
+        let mut query_start_at: quanta::Instant;
         let mut wait_rollback_from_client: bool;
         loop {
             wait_rollback_from_client = false;
@@ -222,7 +223,7 @@ where
                 continue;
             }
 
-            query_start_at = Instant::now();
+            query_start_at = now();
             let current_pool = pool.as_ref().unwrap();
 
             match message[0] as char {
@@ -258,7 +259,7 @@ where
             let shutdown_in_progress = {
                 // start server.
                 // Grab a server from the pool.
-                let connecting_at = Instant::now();
+                let connecting_at = recent();
                 self.stats.waiting();
                 let mut conn = loop {
                     match current_pool.database.get().await {
@@ -319,7 +320,7 @@ where
                     connecting_at.elapsed().as_micros() as u64,
                     self.stats.application_name(),
                 );
-                let server_active_at = Instant::now();
+                let server_active_at = recent();
 
                 // Server is assigned to the client in case the client wants to
                 // cancel a query later.
@@ -571,7 +572,7 @@ where
             }
             // change pool.
             if tx_counter % 10 == 0 && self.transaction_mode {
-                pool = Some(self.get_pool(client_counter).await?);
+                pool = Some(self.get_pool().await?);
             }
             tx_counter += 1;
 

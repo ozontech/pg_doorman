@@ -1,5 +1,5 @@
+use hdrhistogram::Histogram;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
 use std::sync::atomic::*;
 
 /// Fields for tracking various statistics related to PostgreSQL connections by address.
@@ -33,6 +33,18 @@ pub struct AddressStatFields {
     pub errors: AtomicU64,
 }
 
+/// Maximum trackable time in microseconds for HDR histogram (10 minutes)
+const HISTOGRAM_MAX_VALUE_US: u64 = 10 * 60 * 1_000_000;
+
+/// Number of significant digits for HDR histogram precision (3 = 0.1% error)
+const HISTOGRAM_SIGFIG: u8 = 2;
+
+/// Creates a new HDR histogram for tracking latencies
+fn new_histogram() -> Histogram<u64> {
+    Histogram::<u64>::new_with_max(HISTOGRAM_MAX_VALUE_US, HISTOGRAM_SIGFIG)
+        .expect("Failed to create histogram")
+}
+
 /// Statistics for PostgreSQL connections grouped by address.
 ///
 /// This struct maintains three sets of statistics:
@@ -40,8 +52,8 @@ pub struct AddressStatFields {
 /// - `current`: Statistics for the current reporting period
 /// - `averages`: Average values calculated from the current period
 ///
-/// It also tracks transaction and query times for more detailed analysis.
-#[derive(Debug, Default)]
+/// It uses HDR histograms for efficient percentile calculations with minimal memory.
+#[derive(Debug)]
 pub struct AddressStats {
     /// Cumulative statistics since the start of the server
     pub total: AddressStatFields,
@@ -55,18 +67,25 @@ pub struct AddressStats {
     /// Flag indicating if the averages have been updated since the last reporting
     pub averages_updated: AtomicBool,
 
-    /// Recent transaction times in microseconds (most recent first)
-    pub xact_times_us: Mutex<VecDeque<u64>>,
+    /// HDR histogram for transaction times in microseconds (reset each period)
+    pub xact_histogram: Mutex<Histogram<u64>>,
 
-    /// Recent query times in microseconds (most recent first)
-    pub query_times_us: Mutex<VecDeque<u64>>,
+    /// HDR histogram for query times in microseconds (reset each period)
+    pub query_histogram: Mutex<Histogram<u64>>,
 }
 
-/// Expected capacity for query and transaction time history queues
-const QUERY_EXCEPTED_TIMES_CAPACITY: usize = 8 * 1024;
-
-/// Maximum capacity before truncation for query and transaction time history queues
-const QUERY_MAX_TIMES_CAPACITY: usize = 2 * QUERY_EXCEPTED_TIMES_CAPACITY;
+impl Default for AddressStats {
+    fn default() -> Self {
+        Self {
+            total: AddressStatFields::default(),
+            current: AddressStatFields::default(),
+            averages: AddressStatFields::default(),
+            averages_updated: AtomicBool::new(false),
+            xact_histogram: Mutex::new(new_histogram()),
+            query_histogram: Mutex::new(new_histogram()),
+        }
+    }
+}
 
 /// Implementation of IntoIterator for AddressStats to convert statistics into name-value pairs.
 ///
@@ -206,10 +225,10 @@ impl AddressStats {
         self.current.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
     }
 
-    /// Adds the specified time to the transaction time counter and records it in the history.
+    /// Adds the specified time to the transaction time counter and records it in the histogram.
     ///
-    /// This method also maintains a history of recent transaction times for detailed analysis.
-    /// If the history exceeds the maximum capacity, it is truncated to the expected capacity.
+    /// This method records transaction times in an HDR histogram for efficient percentile
+    /// calculations. Values exceeding the histogram maximum are clamped.
     ///
     /// # Arguments
     ///
@@ -229,22 +248,18 @@ impl AddressStats {
             .xact_time_microseconds
             .fetch_add(microseconds, Ordering::Relaxed);
 
-        // Record the transaction time in the history if we can acquire the lock
-        if let Some(mut times_history) = self.xact_times_us.try_lock() {
-            // Add the new time at the front (most recent)
-            times_history.push_front(microseconds);
-
-            // If the history exceeds the maximum capacity, truncate it
-            if times_history.len() > QUERY_MAX_TIMES_CAPACITY {
-                times_history.truncate(QUERY_EXCEPTED_TIMES_CAPACITY);
-            }
+        // Record the transaction time in the histogram if we can acquire the lock
+        if let Some(mut histogram) = self.xact_histogram.try_lock() {
+            // Clamp value to histogram max to avoid errors
+            let value = microseconds.min(HISTOGRAM_MAX_VALUE_US);
+            let _ = histogram.record(value);
         }
     }
 
-    /// Adds the specified time to the query time counter and records it in the history.
+    /// Adds the specified time to the query time counter and records it in the histogram.
     ///
-    /// This method also maintains a history of recent query times for detailed analysis.
-    /// If the history exceeds the maximum capacity, it is truncated to the expected capacity.
+    /// This method records query times in an HDR histogram for efficient percentile
+    /// calculations. Values exceeding the histogram maximum are clamped.
     ///
     /// # Arguments
     ///
@@ -259,15 +274,11 @@ impl AddressStats {
             .query_time_microseconds
             .fetch_add(microseconds, Ordering::Relaxed);
 
-        // Record the query time in the history if we can acquire the lock
-        if let Some(mut times_history) = self.query_times_us.try_lock() {
-            // Add the new time at the front (most recent)
-            times_history.push_front(microseconds);
-
-            // If the history exceeds the maximum capacity, truncate it
-            if times_history.len() > QUERY_MAX_TIMES_CAPACITY {
-                times_history.truncate(QUERY_EXCEPTED_TIMES_CAPACITY);
-            }
+        // Record the query time in the histogram if we can acquire the lock
+        if let Some(mut histogram) = self.query_histogram.try_lock() {
+            // Clamp value to histogram max to avoid errors
+            let value = microseconds.min(HISTOGRAM_MAX_VALUE_US);
+            let _ = histogram.record(value);
         }
     }
 
@@ -291,6 +302,44 @@ impl AddressStats {
     pub fn error(&self) {
         self.total.errors.fetch_add(1, Ordering::Relaxed);
         self.current.errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Returns transaction time percentiles (p50, p90, p95, p99) in microseconds.
+    ///
+    /// Uses HDR histogram for O(1) percentile calculation.
+    pub fn get_xact_percentiles(&self) -> (u64, u64, u64, u64) {
+        let histogram = self.xact_histogram.lock();
+        (
+            histogram.value_at_quantile(0.50),
+            histogram.value_at_quantile(0.90),
+            histogram.value_at_quantile(0.95),
+            histogram.value_at_quantile(0.99),
+        )
+    }
+
+    /// Returns query time percentiles (p50, p90, p95, p99) in microseconds.
+    ///
+    /// Uses HDR histogram for O(1) percentile calculation.
+    pub fn get_query_percentiles(&self) -> (u64, u64, u64, u64) {
+        let histogram = self.query_histogram.lock();
+        (
+            histogram.value_at_quantile(0.50),
+            histogram.value_at_quantile(0.90),
+            histogram.value_at_quantile(0.95),
+            histogram.value_at_quantile(0.99),
+        )
+    }
+
+    /// Resets the histograms for the new time window.
+    ///
+    /// Called at the end of each stats period (15 seconds) to start fresh.
+    pub fn reset_histograms(&self) {
+        if let Some(mut histogram) = self.xact_histogram.try_lock() {
+            histogram.reset();
+        }
+        if let Some(mut histogram) = self.query_histogram.try_lock() {
+            histogram.reset();
+        }
     }
 
     /// Updates the average statistics based on the current period's values.
@@ -475,8 +524,9 @@ mod tests {
 
         // Check other fields
         assert!(!stats.averages_updated.load(Ordering::Relaxed));
-        assert!(stats.xact_times_us.lock().is_empty());
-        assert!(stats.query_times_us.lock().is_empty());
+        // Check histograms are empty (len() == 0)
+        assert_eq!(stats.xact_histogram.lock().len(), 0);
+        assert_eq!(stats.query_histogram.lock().len(), 0);
     }
 
     #[test]
@@ -529,11 +579,10 @@ mod tests {
             150
         );
 
-        // Verify the time was recorded in the history
+        // Verify the time was recorded in the histogram
         {
-            let history = stats.xact_times_us.lock();
-            assert_eq!(history.len(), 1);
-            assert_eq!(history[0], 150);
+            let histogram = stats.xact_histogram.lock();
+            assert_eq!(histogram.len(), 1);
         }
 
         // Test xact_time_add with zero value (should be ignored)
@@ -561,34 +610,57 @@ mod tests {
             250
         );
 
-        // Verify the time was recorded in the history
+        // Verify the time was recorded in the histogram
         {
-            let history = stats.query_times_us.lock();
-            assert_eq!(history.len(), 1);
-            assert_eq!(history[0], 250);
+            let histogram = stats.query_histogram.lock();
+            assert_eq!(histogram.len(), 1);
         }
     }
 
     #[test]
-    fn test_history_truncation() {
+    fn test_histogram_percentiles() {
         let stats = AddressStats::default();
 
-        // Add more items than the maximum capacity
-        for i in 0..QUERY_MAX_TIMES_CAPACITY + 10 {
+        // Add values to create a known distribution
+        // Add 100 values: 1, 2, 3, ..., 100 microseconds
+        for i in 1..=100 {
+            stats.xact_time_add(i as u64);
+            stats.query_time_add_microseconds(i as u64);
+        }
+
+        // Verify percentiles for transactions
+        let (p50, p90, p95, p99) = stats.get_xact_percentiles();
+        // p50 should be around 50, p90 around 90, p95 around 95, p99 around 99
+        assert!(p50 >= 45 && p50 <= 55, "p50 xact should be ~50, got {}", p50);
+        assert!(p90 >= 85 && p90 <= 95, "p90 xact should be ~90, got {}", p90);
+        assert!(p95 >= 90 && p95 <= 100, "p95 xact should be ~95, got {}", p95);
+        assert!(p99 >= 95 && p99 <= 105, "p99 xact should be ~99, got {}", p99);
+
+        // Verify percentiles for queries
+        let (p50, p90, p95, p99) = stats.get_query_percentiles();
+        assert!(p50 >= 45 && p50 <= 55, "p50 query should be ~50, got {}", p50);
+        assert!(p90 >= 85 && p90 <= 95, "p90 query should be ~90, got {}", p90);
+        assert!(p95 >= 90 && p95 <= 100, "p95 query should be ~95, got {}", p95);
+        assert!(p99 >= 95 && p99 <= 105, "p99 query should be ~99, got {}", p99);
+    }
+
+    #[test]
+    fn test_histogram_reset() {
+        let stats = AddressStats::default();
+
+        // Add some values
+        for i in 1..=10 {
             stats.xact_time_add(i as u64);
         }
 
-        // Verify the history was truncated
-        {
-            let history = stats.xact_times_us.lock();
-            assert!(history.len() > QUERY_EXCEPTED_TIMES_CAPACITY);
+        // Verify histogram has data
+        assert_eq!(stats.xact_histogram.lock().len(), 10);
 
-            // Verify the most recent items were kept (they're at the front of the deque)
-            for i in 0..QUERY_EXCEPTED_TIMES_CAPACITY {
-                let expected = (QUERY_MAX_TIMES_CAPACITY + 9 - i) as u64;
-                assert_eq!(history[i], expected);
-            }
-        }
+        // Reset histograms
+        stats.reset_histograms();
+
+        // Verify histogram is empty
+        assert_eq!(stats.xact_histogram.lock().len(), 0);
     }
 
     #[test]

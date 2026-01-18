@@ -2103,20 +2103,41 @@ pub async fn execute_admin_query_and_store_response(
         .await
         .expect("Failed to send query");
 
-    // Read messages and collect all response content
+    // Read messages and collect all response content as structured table
     let mut response_content = String::new();
+    let mut headers: Vec<String> = Vec::new();
+    let mut is_first_row = true;
+
     loop {
         let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
 
         match msg_type {
             'T' => {
-                // RowDescription - skip
+                // RowDescription - parse column names
+                if data.len() >= 2 {
+                    let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
+                    let mut pos = 2;
+                    for _ in 0..field_count {
+                        // Read column name (null-terminated string)
+                        if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
+                            let col_name = String::from_utf8_lossy(&data[pos..pos + null_pos]);
+                            headers.push(col_name.to_string());
+                            pos += null_pos + 1;
+                            // Skip: table OID (4), column attr (2), type OID (4), type size (2), type mod (4), format (2) = 18 bytes
+                            pos += 18;
+                        }
+                    }
+                    // Write header line
+                    response_content.push_str(&headers.join("|"));
+                    response_content.push('\n');
+                }
             }
             'D' => {
                 // DataRow - extract text content
                 if data.len() >= 2 {
                     let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
                     let mut pos = 2;
+                    let mut row_values: Vec<String> = Vec::new();
                     for _ in 0..field_count {
                         if pos + 4 <= data.len() {
                             let field_len = i32::from_be_bytes([
@@ -2129,20 +2150,29 @@ pub async fn execute_admin_query_and_store_response(
                             if field_len > 0 && pos + field_len as usize <= data.len() {
                                 let value =
                                     String::from_utf8_lossy(&data[pos..pos + field_len as usize]);
-                                response_content.push_str(&value);
-                                response_content.push(' ');
+                                row_values.push(value.to_string());
                                 pos += field_len as usize;
+                            } else if field_len == -1 {
+                                // NULL value
+                                row_values.push(String::new());
+                            } else {
+                                row_values.push(String::new());
                             }
                         }
                     }
+                    if !is_first_row {
+                        response_content.push('\n');
+                    }
+                    response_content.push_str(&row_values.join("|"));
+                    is_first_row = false;
                 }
             }
             'C' => {
                 // CommandComplete - extract tag
                 if let Some(null_pos) = data.iter().position(|&b| b == 0) {
                     let tag = String::from_utf8_lossy(&data[..null_pos]);
+                    response_content.push('\n');
                     response_content.push_str(&tag);
-                    response_content.push(' ');
                 }
             }
             'A' => {
@@ -2212,6 +2242,102 @@ pub async fn verify_admin_response_contains(
         session_name,
         expected_text,
         response_content
+    );
+}
+
+#[then(
+    regex = r#"^admin session "([^"]+)" column "([^"]+)" should be between (\d+) and (\d+)$"#
+)]
+pub async fn verify_admin_column_in_range(
+    world: &mut DoormanWorld,
+    session_name: String,
+    column_name: String,
+    min_value: u64,
+    max_value: u64,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
+
+    let response_content = if let Some((_, data)) = messages.first() {
+        String::from_utf8_lossy(data).to_string()
+    } else {
+        panic!("No response content for session '{}'", session_name);
+    };
+
+    // Parse the response as a table (header row + data rows)
+    // Format can be either "col1|col2|col3\nval1|val2|val3\n..." or space-separated
+    let lines: Vec<&str> = response_content.lines().collect();
+    if lines.is_empty() {
+        panic!(
+            "Admin session '{}': empty response, cannot find column '{}'",
+            session_name, column_name
+        );
+    }
+
+    // Determine separator: if first line contains '|', use it; otherwise use whitespace
+    let use_pipe = lines[0].contains('|');
+
+    // Find column index in header
+    let headers: Vec<&str> = if use_pipe {
+        lines[0].split('|').map(|s| s.trim()).collect()
+    } else {
+        lines[0].split_whitespace().collect()
+    };
+
+    let col_idx = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case(&column_name))
+        .unwrap_or_else(|| {
+            panic!(
+                "Admin session '{}': column '{}' not found in headers: {:?}",
+                session_name, column_name, headers
+            )
+        });
+
+    // Get value from first data row
+    if lines.len() < 2 {
+        panic!(
+            "Admin session '{}': no data rows in response",
+            session_name
+        );
+    }
+
+    let values: Vec<&str> = if use_pipe {
+        lines[1].split('|').map(|s| s.trim()).collect()
+    } else {
+        lines[1].split_whitespace().collect()
+    };
+
+    if col_idx >= values.len() {
+        panic!(
+            "Admin session '{}': column index {} out of bounds for row: {:?}",
+            session_name, col_idx, values
+        );
+    }
+
+    let value_str = values[col_idx];
+    let value: u64 = value_str.parse().unwrap_or_else(|_| {
+        panic!(
+            "Admin session '{}': cannot parse '{}' as u64 for column '{}'",
+            session_name, value_str, column_name
+        )
+    });
+
+    assert!(
+        value >= min_value && value <= max_value,
+        "Admin session '{}': column '{}' value {} is not between {} and {}",
+        session_name,
+        column_name,
+        value,
+        min_value,
+        max_value
+    );
+
+    eprintln!(
+        "Admin session '{}': column '{}' = {} (expected between {} and {})",
+        session_name, column_name, value, min_value, max_value
     );
 }
 
