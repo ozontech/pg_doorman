@@ -865,15 +865,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#virtual_pool_count" class="md-nav__link">
-    <span class="md-ellipsis">
-      virtual_pool_count
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#tokio_global_queue_interval" class="md-nav__link">
     <span class="md-ellipsis">
       tokio_global_queue_interval
@@ -1386,15 +1377,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#virtual_pool_count" class="md-nav__link">
-    <span class="md-ellipsis">
-      virtual_pool_count
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#tokio_global_queue_interval" class="md-nav__link">
     <span class="md-ellipsis">
       tokio_global_queue_interval
@@ -1724,16 +1706,11 @@ Comment this out if you want to log to stdout.</p>
 <p>Default: <code>true</code>.</p>
 <h3 id="worker_threads">worker_threads</h3>
 <p>The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
-The more workers there are, the faster the system works, but only up to a certain limit (cpu count).
-If you already have a lot of workers, you should consider increasing the number of virtual pools.</p>
+The more workers there are, the faster the system works, but only up to a certain limit (cpu count).</p>
 <p>Default: <code>4</code>.</p>
 <h3 id="worker_cpu_affinity_pinning">worker_cpu_affinity_pinning</h3>
 <p>Automatically assign workers to different CPUs (man 3 cpu_set).</p>
 <p>Default: <code>false</code>.</p>
-<h3 id="virtual_pool_count">virtual_pool_count</h3>
-<p>Increasing the number of virtual pools can help deal with internal latches that occur when processing very large numbers of fast queries.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>1</code>.</p>
 <h3 id="tokio_global_queue_interval">tokio_global_queue_interval</h3>
 <p><a href="https://docs.rs/tokio/latest/tokio/">Tokio runtime settings</a>.
 It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>

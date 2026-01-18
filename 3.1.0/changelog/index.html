@@ -641,7 +641,7 @@
         <li class="md-nav__item">
   <a href="#3.1.0" class="md-nav__link">
     <span class="md-ellipsis">
-      3.1.0 Jan 17, 2026
+      3.1.0 Jan 18, 2026
     </span>
   </a>
   
@@ -1075,7 +1075,7 @@
         <li class="md-nav__item">
   <a href="#3.1.0" class="md-nav__link">
     <span class="md-ellipsis">
-      3.1.0 Jan 17, 2026
+      3.1.0 Jan 18, 2026
     </span>
   </a>
   
@@ -1335,7 +1335,7 @@
 
 
 <h1 id="changelog">Changelog</h1>
-<h3 id="3.1.0">3.1.0 <small>Jan 17, 2026</small></h3>
+<h3 id="3.1.0">3.1.0 <small>Jan 18, 2026</small></h3>
 <p><strong>New Features:</strong></p>
 <ul>
 <li><strong>Foreground mode binary upgrade</strong>: Added support for binary upgrade in foreground mode by passing the listener socket to the new process via <code>--inherit-fd</code> argument. This enables zero-downtime upgrades without requiring daemon mode.</li>
@@ -1344,6 +1344,12 @@
 <li>After a client completes their transaction during shutdown, they receive a proper PostgreSQL protocol error (<code>58006 - pooler is shut down now</code>) instead of a connection reset.</li>
 <li>Server connections are immediately released (marked as bad) after transaction completion during shutdown to conserve PostgreSQL connections.</li>
 <li>All idle connections are immediately drained from pools when graceful shutdown starts, releasing PostgreSQL connections faster.</li>
+</ul>
+<p><strong>Performance:</strong></p>
+<ul>
+<li><strong>Statistics module optimization</strong>: Major refactoring of the <code>src/stats</code> module for improved performance:</li>
+<li>Replaced <code>VecDeque</code> with HDR histograms (<code>hdrhistogram</code> crate) for percentile calculations — O(1) percentile queries instead of O(n log n) sorting, ~95% memory reduction for latency tracking.</li>
+<li>Histograms are now reset after each stats period (15 seconds) to provide accurate rolling window percentiles.</li>
 </ul>
 <h3 id="3.0.5">3.0.5 <small>Jan 16, 2026</small></h3>
 <p><strong>Bug Fixes:</strong></p>
