@@ -19,7 +19,7 @@ use super::types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
 use super::ServerPool;
 use crate::server::Server;
 
-const MAX_FAST_RETRY: i32 = 5;
+const MAX_FAST_RETRY: i32 = 10;
 
 /// Internal object wrapper with metrics.
 #[derive(Debug)]
@@ -111,11 +111,23 @@ struct PoolInner {
 impl PoolInner {
     #[inline(always)]
     fn return_object(&self, inner: ObjectInner) {
+        // Fast path: try to acquire lock without blocking
+        if let Some(mut slots) = self.slots.try_lock() {
+            match self.config.queue_mode {
+                QueueMode::Fifo => slots.vec.push_back(inner),
+                QueueMode::Lifo => slots.vec.push_front(inner),
+            }
+            drop(slots);
+            self.semaphore.add_permits(1);
+            return;
+        }
+        // Slow path: wait for lock
         let mut slots = self.slots.lock();
         match self.config.queue_mode {
             QueueMode::Fifo => slots.vec.push_back(inner),
             QueueMode::Lifo => slots.vec.push_front(inner),
         }
+        drop(slots);
         self.semaphore.add_permits(1);
     }
 }
@@ -199,6 +211,11 @@ impl Pool {
                     }
                     Err(_) => {
                         try_fast += 1;
+                        // Short spin before yielding - gives chance for permit
+                        // to be released on another hyperthread
+                        for _ in 0..4 {
+                            std::hint::spin_loop();
+                        }
                         tokio::task::yield_now().await;
                         continue;
                     }
