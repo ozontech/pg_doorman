@@ -475,7 +475,7 @@ pub fn row_description(columns: &Vec<(&str, DataType)>) -> BytesMut {
 }
 
 /// Create a data row message.
-pub fn data_row(row: &Vec<String>) -> BytesMut {
+pub fn data_row<S: AsRef<str>>(row: &[S]) -> BytesMut {
     let mut res = BytesMut::new();
     let mut data_row = BytesMut::new();
 
@@ -484,8 +484,9 @@ pub fn data_row(row: &Vec<String>) -> BytesMut {
 
     for value in row {
         // Column value
-        data_row.put_i32(value.len() as i32);
-        data_row.put_slice(value.as_bytes());
+        let s = value.as_ref();
+        data_row.put_i32(s.len() as i32);
+        data_row.put_slice(s.as_bytes());
     }
 
     res.put_u8(b'D');

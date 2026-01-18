@@ -445,8 +445,7 @@ impl Server {
 
     /// Claim this server as mine for the purposes of query cancellation.
     pub fn claim(&mut self, process_id: i32, secret_key: i32) {
-        let mut guard = self.client_server_map.lock();
-        guard.insert(
+        self.client_server_map.insert(
             (process_id, secret_key),
             (
                 self.process_id,
@@ -680,7 +679,7 @@ impl Server {
                             )),
                         },
                         registering_prepared_statement: VecDeque::new(),
-                        max_message_size: config.general.message_size_to_be_stream as i32,
+                        max_message_size: config.general.message_size_to_be_stream.as_bytes() as i32,
                     };
                     server.stats.update_process_id(process_id);
 

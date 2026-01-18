@@ -34,7 +34,7 @@ Feature: Benchmarking environment setup with SSL
       server_port = ${PG_PORT}
       pool_mode = "transaction"
 
-      [pools.postgres.users.0]
+      [[pools.postgres.users]]
       username = "postgres"
       password = ""
       pool_size = 40
@@ -66,14 +66,16 @@ Feature: Benchmarking environment setup with SSL
       verbose = 0
       log_connections = 0
       log_disconnections = 0
+      logfile = /dev/null
       """
     And odyssey started with config:
       """
       workers 4
       log_to_stdout no
+      log_file "/dev/null"
       log_format "%p %t %l [%i %s] (%c) %m\n"
       log_debug no
-      log_config yes
+      log_config no
       log_session no
       log_query no
       log_stats no

@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod comments;
 pub mod core_affinity;
+pub mod dashmap;
 pub mod debug_messages;
 pub mod rate_limit;
 

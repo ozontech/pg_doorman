@@ -8,6 +8,16 @@ title: Changelog
 
 **New Features:**
 
+- **YAML configuration support**: Added support for YAML configuration files (`.yaml`, `.yml`) as the primary and recommended format. The format is automatically detected based on file extension. TOML format remains fully supported for backward compatibility.
+  - The `generate` command now outputs YAML or TOML based on the output file extension.
+  - Include files can mix YAML and TOML formats.
+  - New array syntax for users in YAML: `users: [{ username: "user1", ... }]`
+- **TOML backward compatibility**: Full backward compatibility with legacy TOML format `[pools.*.users.0]` is maintained. Both the legacy map format and the new array format `[[pools.*.users]]` are supported.
+- **Username uniqueness validation**: Added validation to reject duplicate usernames within a pool, ensuring configuration correctness.
+- **Human-readable configuration values**: Duration and byte size parameters now support human-readable formats while maintaining backward compatibility with numeric values:
+  - Duration: `"3s"`, `"5m"`, `"1h"`, `"1d"` (or milliseconds: `3000`)
+  - Byte size: `"1MB"`, `"256M"`, `"1GB"` (or bytes: `1048576`)
+  - Example: `connect_timeout: "3s"` instead of `connect_timeout: 3000`
 - **Foreground mode binary upgrade**: Added support for binary upgrade in foreground mode by passing the listener socket to the new process via `--inherit-fd` argument. This enables zero-downtime upgrades without requiring daemon mode.
 - **Improved graceful shutdown behavior**: 
   - During graceful shutdown, only clients with active transactions are now counted (instead of all connected clients), allowing faster shutdown when clients are idle.

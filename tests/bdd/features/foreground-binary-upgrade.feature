@@ -23,7 +23,7 @@ Feature: Foreground mode binary upgrade
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_1"
       password = ""
       pool_size = 1
@@ -60,7 +60,7 @@ Feature: Foreground mode binary upgrade
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_1"
       password = ""
       pool_size = 1
@@ -103,7 +103,7 @@ Feature: Foreground mode binary upgrade
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
-      [pools.example_db.users.0]
+      [[pools.example_db.users]]
       username = "example_user_1"
       password = ""
       pool_size = 1

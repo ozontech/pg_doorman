@@ -7,7 +7,9 @@ Nice=-15
 User=postgres
 Group=postgres
 LimitNOFILE=10000
+# SIGNIT == grac shutdown + binary upgrade, please use HUP for online reload config.
 ExecReload=/bin/kill -SIGINT $MAINPID
+# SIGTERM == fast shutdown without grac shutdown.
 ExecStop=/bin/kill -SIGTERM $MAINPID
 SyslogIdentifier=pg_doorman
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml --daemon

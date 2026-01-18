@@ -1,0 +1,527 @@
+# pg_doorman YAML configuration
+# ============================================================================
+# IMPORTANT: Use ONLY ONE configuration file format (YAML or TOML), not both.
+# YAML format (.yaml, .yml) is recommended for new configurations.
+# TOML format (.toml) is supported for backward compatibility.
+# The format is automatically detected based on the file extension.
+# ============================================================================
+#
+# HUMAN-READABLE VALUES
+# ============================================================================
+# pg_doorman supports human-readable formats for duration and byte size values.
+# Both numeric values (for backward compatibility) and string formats are supported.
+#
+# Duration formats:
+#   - Plain numbers: interpreted as milliseconds (e.g., 5000 = 5 seconds)
+#   - "Nms" : milliseconds (e.g., "100ms")
+#   - "Ns"  : seconds (e.g., "5s" = 5000 milliseconds)
+#   - "Nm"  : minutes (e.g., "5m" = 300000 milliseconds)
+#   - "Nh"  : hours (e.g., "1h" = 3600000 milliseconds)
+#   - "Nd"  : days (e.g., "1d" = 86400000 milliseconds)
+#
+# Byte size formats:
+#   - Plain numbers: interpreted as bytes (e.g., 1048576 = 1 MB)
+#   - "NB"  : bytes (e.g., "1024B")
+#   - "NK" or "NKB" : kilobytes (e.g., "1K" or "1KB" = 1024 bytes)
+#   - "NM" or "NMB" : megabytes (e.g., "1M" or "1MB" = 1048576 bytes)
+#   - "NG" or "NGB" : gigabytes (e.g., "1G" or "1GB" = 1073741824 bytes)
+#
+# Examples:
+#   connect_timeout: "3s"        # instead of 3000
+#   idle_timeout: "5m"           # instead of 300000
+#   max_memory_usage: "256MB"    # instead of 268435456
+# ============================================================================
+
+# Include additional configuration files.
+# Files are merged in order, allowing modular configuration.
+include:
+  # files:
+  #   - "/etc/pg_doorman/pools.yaml"
+  #   - "/etc/pg_doorman/hba.yaml"
+
+# ============================================================================
+# GENERAL SETTINGS
+# ============================================================================
+general:
+  # --------------------------------------------------------------------------
+  # Network Settings
+  # --------------------------------------------------------------------------
+
+  # Listen host for incoming connections (IPv4 only).
+  # Default: "0.0.0.0"
+  host: "0.0.0.0"
+
+  # Listen port for incoming connections.
+  # Default: 5432
+  port: 6432
+
+  # TCP backlog for incoming connections.
+  # A value of zero sets max_connections as the TCP backlog value.
+  # Default: 0
+  backlog: 0
+
+  # --------------------------------------------------------------------------
+  # Connection Timeouts
+  # --------------------------------------------------------------------------
+
+  # Connection timeout to server.
+  # Supports human-readable format: "3s", "3000ms", or 3000 (milliseconds)
+  # Default: "3s" (3000 ms)
+  connect_timeout: "3s"
+
+  # Maximum time to wait for a query to complete.
+  # Analog of query_wait_timeout in PgBouncer.
+  # Supports human-readable format: "5s", "5000ms", or 5000 (milliseconds)
+  # Default: "5s" (5000 ms)
+  query_wait_timeout: "5s"
+
+  # Server idle timeout.
+  # Supports human-readable format: "5m", "300000ms", or 300000 (milliseconds)
+  # Default: "5m" (300000 ms)
+  idle_timeout: "5m"
+
+  # Server lifetime. Only applied to idle connections.
+  # Supports human-readable format: "5m", "300000ms", or 300000 (milliseconds)
+  # Default: "5m" (300000 ms)
+  server_lifetime: "5m"
+
+  # Time to retain idle connections before closing them.
+  # Supports human-readable format: "60s", "1m", or 60000 (milliseconds)
+  # Default: "60s" (60000 ms)
+  retain_connections_time: "60s"
+
+  # Graceful shutdown timeout.
+  # Supports human-readable format: "10s", "10000ms", or 10000 (milliseconds)
+  # Default: "10s" (10000 ms)
+  shutdown_timeout: "10s"
+
+  # Timeout for COPY data operations.
+  # Supports human-readable format: "15s", "15000ms", or 15000 (milliseconds)
+  # Default: "15s" (15000 ms)
+  proxy_copy_data_timeout: "15s"
+
+  # --------------------------------------------------------------------------
+  # TCP Settings
+  # --------------------------------------------------------------------------
+
+  # TCP keepalive settings (in seconds).
+  # Keepalive is enabled by default and overwrites OS defaults.
+  # Default: 5
+  tcp_keepalives_idle: 5
+  # Default: 5
+  tcp_keepalives_interval: 5
+  # Default: 5
+  tcp_keepalives_count: 5
+
+  # TCP SO_LINGER setting.
+  # By default, pg_doorman sends RST instead of keeping the connection open.
+  # Default: 0
+  tcp_so_linger: 0
+
+  # Enable TCP_NODELAY to disable Nagle's algorithm for lower latency.
+  # Default: true
+  tcp_no_delay: true
+
+  # Buffer size for read/write operations when connecting via unix socket.
+  # Supports human-readable format: "1MB", "1M", or 1048576 (bytes)
+  # Default: "1MB" (1048576 bytes)
+  unix_socket_buffer_size: "1MB"
+
+  # --------------------------------------------------------------------------
+  # Connection Limits
+  # --------------------------------------------------------------------------
+
+  # Maximum number of clients that can connect simultaneously.
+  # When reached, clients receive error code 53300: "sorry, too many clients already"
+  # Default: 8192
+  max_connections: 8192
+
+  # Maximum number of server connections that can be created concurrently.
+  # Uses a semaphore to limit parallel connection creation.
+  # Default: 4
+  max_concurrent_creates: 4
+
+  # Maximum memory usage for internal buffers.
+  # If exceeded, clients receive an error.
+  # Supports human-readable format: "256MB", "256M", or 268435456 (bytes)
+  # Default: "256MB" (268435456 bytes)
+  max_memory_usage: "256MB"
+
+  # --------------------------------------------------------------------------
+  # Logging
+  # --------------------------------------------------------------------------
+
+  # Log client connections for monitoring.
+  # Default: true
+  log_client_connections: true
+
+  # Log client disconnections for monitoring.
+  # Default: true
+  log_client_disconnections: true
+
+  # Syslog program name. When specified, pg_doorman sends messages to syslog.
+  # Comment out to log to stdout.
+  # Default: None
+  syslog_prog_name: "pg_doorman"
+
+  # --------------------------------------------------------------------------
+  # Worker Settings
+  # --------------------------------------------------------------------------
+
+  # Number of worker threads for async client handling.
+  # More workers = better performance, up to CPU count.
+  # Default: 4
+  worker_threads: 4
+
+  # Automatically pin workers to different CPUs.
+  # Default: false
+  worker_cpu_affinity_pinning: false
+
+  # Stack size for each worker thread.
+  # Supports human-readable format: "8MB", "8M", or 8388608 (bytes)
+  # Default: "8MB" (8388608 bytes)
+  worker_stack_size: "8MB"
+
+  # Tokio runtime settings (advanced, change only if you understand the implications).
+  # Default: 5
+  tokio_global_queue_interval: 5
+  # Default: 1
+  tokio_event_interval: 1
+
+  # --------------------------------------------------------------------------
+  # Pool Behavior
+  # --------------------------------------------------------------------------
+
+  # Server selection strategy in transaction pool mode.
+  # false = LRU (Least Recently Used) - better performance
+  # true = Round Robin
+  # Default: false
+  server_round_robin: false
+
+  # Sync server parameters (SET commands, application_name) across backends.
+  # Disabled by default due to performance impact.
+  # Consider using pool-level application_name instead.
+  # Default: false
+  sync_server_parameters: false
+
+  # Data responses larger than this value are transmitted in chunks.
+  # Supports human-readable format: "1MB", "1M", or 1048576 (bytes)
+  # Default: "1MB" (1048576 bytes)
+  message_size_to_be_stream: "1MB"
+
+  # Query that won't be sent to server (used for connection health checks).
+  # Default: ";"
+  pooler_check_query: ";"
+
+  # --------------------------------------------------------------------------
+  # Prepared Statements
+  # --------------------------------------------------------------------------
+
+  # Enable caching of prepared statements.
+  # Default: true
+  prepared_statements: true
+
+  # Cache size for prepared statements on the server side.
+  # Default: 8192
+  prepared_statements_cache_size: 8192
+
+  # --------------------------------------------------------------------------
+  # Admin Console
+  # --------------------------------------------------------------------------
+
+  # Admin username for the virtual admin database (pgdoorman).
+  # Default: "admin"
+  admin_username: "admin"
+
+  # Admin password for the virtual admin database.
+  # IMPORTANT: Change this in production!
+  # Default: "admin"
+  admin_password: "admin"
+
+  # --------------------------------------------------------------------------
+  # TLS Settings (Client-facing)
+  # --------------------------------------------------------------------------
+
+  # Path to the TLS certificate file for incoming client connections.
+  # Must be used together with tls_private_key.
+  # tls_certificate: "/etc/pg_doorman/server.crt"
+
+  # Path to the TLS private key file for incoming client connections.
+  # Must be used together with tls_certificate.
+  # tls_private_key: "/etc/pg_doorman/server.key"
+
+  # Path to the CA certificate for client certificate verification.
+  # Used with tls_mode: "verify-full"
+  # tls_ca_cert: "/etc/pg_doorman/ca.crt"
+
+  # TLS mode for incoming connections:
+  # - "allow"       : TLS allowed but not required (default)
+  # - "disable"     : TLS not allowed
+  # - "require"     : TLS required
+  # - "verify-full" : TLS required with client certificate verification
+  # Default: "allow"
+  tls_mode: "allow"
+
+  # Limit simultaneous TLS session creation attempts.
+  # Useful for applications with many connections at startup ("hot start").
+  # 0 = no limit
+  # Default: 0
+  tls_rate_limit_per_second: 0
+
+  # --------------------------------------------------------------------------
+  # TLS Settings (Server-facing)
+  # --------------------------------------------------------------------------
+
+  # Enable TLS for connections to PostgreSQL servers.
+  # Default: false
+  server_tls: false
+
+  # Verify server certificate when connecting to PostgreSQL.
+  # Default: false
+  verify_server_certificate: false
+
+  # --------------------------------------------------------------------------
+  # Daemon Mode
+  # --------------------------------------------------------------------------
+
+  # PID file path for daemon mode.
+  # Setting this enables daemon mode. Comment out for foreground mode with `-d`.
+  # Default: "/tmp/pg_doorman.pid"
+  daemon_pid_file: "/tmp/pg_doorman.pid"
+
+  # --------------------------------------------------------------------------
+  # Access Control (Legacy)
+  # --------------------------------------------------------------------------
+
+  # Simple IP-based access control list.
+  # List of IP networks allowed to connect (e.g., "10.0.0.0/8").
+  # Empty list allows all addresses.
+  # For more advanced access control, use pg_hba instead.
+  # Default: []
+  hba: []
+
+  # --------------------------------------------------------------------------
+  # Access Control (pg_hba - Recommended)
+  # --------------------------------------------------------------------------
+
+  # PostgreSQL-style pg_hba.conf rules for client authentication.
+  # Supports three formats:
+  #
+  # 1. Inline multiline string:
+  #    pg_hba: |
+  #      host all all 0.0.0.0/0 md5
+  #      hostssl all all 10.0.0.0/8 scram-sha-256
+  #      local all all trust
+  #
+  # 2. Path to external file:
+  #    pg_hba:
+  #      path: "/etc/pg_doorman/pg_hba.conf"
+  #
+  # 3. Inline content in map format:
+  #    pg_hba:
+  #      content: "host all all 127.0.0.1/32 trust"
+  #
+  # Rule format: TYPE DATABASE USER ADDRESS METHOD
+  # Types: local, host, hostssl, hostnossl
+  # Methods: trust, md5, scram-sha-256, reject
+  #
+  # Trust behavior: when a matching rule uses 'trust', pg_doorman accepts
+  # the connection without asking for a password, even if the user has
+  # an MD5 or SCRAM password configured.
+  #
+  # Example pg_hba rules:
+  # pg_hba: |
+  #   # Allow local connections without password
+  #   local all all trust
+  #   # Require SSL and SCRAM for internal network
+  #   hostssl all all 10.0.0.0/8 scram-sha-256
+  #   # Allow MD5 auth from anywhere
+  #   host all all 0.0.0.0/0 md5
+  #   # Reject all other connections
+  #   host all all 0.0.0.0/0 reject
+
+# ============================================================================
+# PROMETHEUS METRICS
+# ============================================================================
+prometheus:
+  # Enable Prometheus metrics exporter.
+  # Default: false
+  enabled: false
+
+  # Host for the metrics HTTP endpoint.
+  # Default: "0.0.0.0"
+  host: "0.0.0.0"
+
+  # Port for the metrics HTTP endpoint.
+  # Default: 9127
+  port: 9127
+
+# ============================================================================
+# TALOS AUTHENTICATION (Optional)
+# ============================================================================
+# Talos is an optional authentication mechanism using public key cryptography.
+# talos:
+#   # List of public key files for Talos authentication.
+#   keys:
+#     - "/etc/pg_doorman/talos/public-key-1.pem"
+#     - "/etc/pg_doorman/talos/public-key-2.pem"
+#   # List of databases that use Talos authentication.
+#   databases:
+#     - "talos_db1"
+#     - "talos_db2"
+
+# ============================================================================
+# CONNECTION POOLS
+# ============================================================================
+# Each pool represents a virtual database that clients can connect to.
+# Pool names are visible to clients as database names.
+pools:
+  # Example pool configuration
+  exampledb:
+    # --------------------------------------------------------------------------
+    # Server Connection Settings
+    # --------------------------------------------------------------------------
+
+    # PostgreSQL server host (IP address or unix socket directory).
+    # Examples: "127.0.0.1", "/var/run/postgresql"
+    # Default: "127.0.0.1"
+    server_host: "127.0.0.1"
+
+    # PostgreSQL server port.
+    # Default: 5432
+    server_port: 5432
+
+    # Actual database name on the PostgreSQL server.
+    # If not specified, the pool name is used.
+    # server_database: "actual_db_name"
+
+    # --------------------------------------------------------------------------
+    # Pool Settings
+    # --------------------------------------------------------------------------
+
+    # Pooling mode:
+    # - "transaction" : Server released after each transaction (recommended)
+    # - "session"     : Server released when client disconnects
+    # Default: "transaction"
+    pool_mode: "transaction"
+
+    # Override global connect_timeout for this pool (in milliseconds).
+    # connect_timeout: 5000
+
+    # Override global idle_timeout for this pool (in milliseconds).
+    # idle_timeout: 300000
+
+    # Override global server_lifetime for this pool (in milliseconds).
+    # server_lifetime: 300000
+
+    # Clean up server connections (reset state) when returning to pool.
+    # Default: true
+    cleanup_server_connections: true
+
+    # Override global prepared_statements_cache_size for this pool.
+    # prepared_statements_cache_size: 8192
+
+    # --------------------------------------------------------------------------
+    # Application Settings
+    # --------------------------------------------------------------------------
+
+    # Application name sent to PostgreSQL when opening connections.
+    # Useful when sync_server_parameters is disabled.
+    # application_name: "my_application"
+
+    # Log SET commands from clients.
+    # Default: false
+    log_client_parameter_status_changes: false
+
+    # --------------------------------------------------------------------------
+    # Users Configuration
+    # --------------------------------------------------------------------------
+    # Array of users allowed to connect to this pool.
+    # Each user must have a unique username within the pool.
+    users:
+      - # Username for client authentication.
+        username: "app_user"
+
+        # Password for client authentication.
+        # Supported formats:
+        # - MD5: "md5" + md5(password + username)
+        # - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
+        # - JWT public key: "jwt-pkey-fpath:/path/to/public.pem"
+        #
+        # Generate MD5: echo -n "passwordusername" | md5sum
+        # Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+        password: "md5dd9a0f26a4302744db881776a09bbfad"
+
+        # Maximum connections to PostgreSQL for this user.
+        # Default: 40
+        pool_size: 40
+
+        # Minimum connections to maintain in the pool.
+        # Must be <= pool_size.
+        # min_pool_size: 5
+
+        # Override pool-level pool_mode for this user.
+        # pool_mode: "session"
+
+        # Override pool-level server_lifetime for this user (in milliseconds).
+        # server_lifetime: 600000
+
+        # Server-side credentials (if different from client credentials).
+        # Both must be specified together.
+        # server_username: "actual_pg_user"
+        # server_password: "actual_pg_password"
+
+        # PAM service name for PAM authentication (requires 'pam' feature).
+        # auth_pam_service: "pg_doorman"
+
+  # --------------------------------------------------------------------------
+  # Additional Pool Examples
+  # --------------------------------------------------------------------------
+
+  # Example: Pool with multiple users
+  # multi_user_db:
+  #   server_host: "192.168.1.100"
+  #   server_port: 5432
+  #   pool_mode: "transaction"
+  #   users:
+  #     - username: "readonly_user"
+  #       password: "md5..."
+  #       pool_size: 20
+  #     - username: "readwrite_user"
+  #       password: "SCRAM-SHA-256$..."
+  #       pool_size: 10
+
+  # Example: Pool with unix socket connection
+  # local_db:
+  #   server_host: "/var/run/postgresql"
+  #   server_port: 5432
+  #   pool_mode: "session"
+  #   users:
+  #     - username: "local_user"
+  #       password: "md5..."
+  #       pool_size: 50
+
+  # Example: Pool with JWT authentication
+  # jwt_auth_db:
+  #   server_host: "127.0.0.1"
+  #   server_port: 5432
+  #   pool_mode: "transaction"
+  #   users:
+  #     - username: "jwt_user"
+  #       password: "jwt-pkey-fpath:/etc/pg_doorman/jwt/public.pem"
+  #       pool_size: 30
+  #       server_username: "actual_db_user"
+  #       server_password: "actual_password"
+
+  # Example: Pool with server-side credentials mapping
+  # mapped_db:
+  #   server_host: "db.example.com"
+  #   server_port: 5432
+  #   server_database: "production"
+  #   pool_mode: "transaction"
+  #   users:
+  #     - username: "app_user"
+  #       password: "md5..."
+  #       pool_size: 40
+  #       server_username: "pg_app_user"
+  #       server_password: "secure_password"

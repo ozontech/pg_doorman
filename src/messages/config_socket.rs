@@ -18,11 +18,11 @@ pub fn configure_unix_socket(stream: &UnixStream) {
         Ok(_) => {}
         Err(err) => error!("Could not configure unix_so_linger for socket: {err}"),
     }
-    match sock_ref.set_send_buffer_size(conf.general.unix_socket_buffer_size) {
+    match sock_ref.set_send_buffer_size(conf.general.unix_socket_buffer_size.as_usize()) {
         Ok(_) => {}
         Err(err) => error!("Could not configure set_send_buffer_size for socket: {err}"),
     }
-    match sock_ref.set_recv_buffer_size(conf.general.unix_socket_buffer_size) {
+    match sock_ref.set_recv_buffer_size(conf.general.unix_socket_buffer_size.as_usize()) {
         Ok(_) => {}
         Err(err) => error!("Could not configure set_recv_buffer_size for socket: {err}"),
     }

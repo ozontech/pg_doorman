@@ -1,13 +1,64 @@
 //! Connection pool configuration.
 
-use serde_derive::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use crate::errors::Error;
 
 use super::{PoolMode, User};
+
+/// Custom deserializer for users field that supports both formats:
+/// - Array format (recommended): `users: [{ username: "user1", ... }]`
+/// - Map format (legacy TOML): `users: { "0": { username: "user1", ... } }`
+fn deserialize_users<'de, D>(deserializer: D) -> Result<Vec<User>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct UsersVisitor;
+
+    impl<'de> Visitor<'de> for UsersVisitor {
+        type Value = Vec<User>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a sequence of users or a map with string keys")
+        }
+
+        fn visit_seq<S>(self, mut seq: S) -> Result<Vec<User>, S::Error>
+        where
+            S: SeqAccess<'de>,
+        {
+            let mut users = Vec::new();
+            while let Some(user) = seq.next_element()? {
+                users.push(user);
+            }
+            Ok(users)
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<Vec<User>, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut users = Vec::new();
+            while let Some((key, user)) = map.next_entry::<String, User>()? {
+                // Validate that key is a valid index (for legacy format)
+                if key.parse::<usize>().is_err() {
+                    return Err(de::Error::custom(format!(
+                        "invalid user key '{}': expected numeric index or use array format",
+                        key
+                    )));
+                }
+                users.push(user);
+            }
+            Ok(users)
+        }
+    }
+
+    deserializer.deserialize_any(UsersVisitor)
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Pool {
@@ -44,8 +95,8 @@ pub struct Pool {
 
     pub prepared_statements_cache_size: Option<usize>,
 
-    #[serde(default = "Pool::default_users")]
-    pub users: BTreeMap<String, User>,
+    #[serde(default = "Pool::default_users", deserialize_with = "deserialize_users")]
+    pub users: Vec<User>,
     // Note, don't put simple fields below these configs. There's a compatibility issue with TOML that makes it
     // incompatible to have simple fields in TOML after complex objects. See
     // https://users.rust-lang.org/t/why-toml-to-string-get-error-valueaftertable/85903
@@ -66,8 +117,8 @@ impl Pool {
         5432
     }
 
-    pub fn default_users() -> BTreeMap<String, User> {
-        BTreeMap::default()
+    pub fn default_users() -> Vec<User> {
+        Vec::new()
     }
     pub fn default_server_host() -> String {
         String::from("127.0.0.1")
@@ -78,7 +129,15 @@ impl Pool {
     }
 
     pub async fn validate(&mut self) -> Result<(), Error> {
-        for user in self.users.values() {
+        // Validate username uniqueness
+        let mut seen_usernames = HashSet::new();
+        for user in &self.users {
+            if !seen_usernames.insert(&user.username) {
+                return Err(Error::BadConfig(format!(
+                    "duplicate username '{}' in pool users",
+                    user.username
+                )));
+            }
             user.validate().await?;
         }
 
@@ -90,7 +149,7 @@ impl Default for Pool {
     fn default() -> Pool {
         Pool {
             pool_mode: Self::default_pool_mode(),
-            users: BTreeMap::default(),
+            users: Vec::new(),
             server_port: 5432,
             server_host: String::from("127.0.0.1"),
             server_database: None,

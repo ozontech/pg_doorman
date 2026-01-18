@@ -15,7 +15,7 @@ server_host = "postgres" # inside docker containers
 server_port = 5432
 pool_mode = "transaction"
 
-[pools.exampledb.users.0]
+[[pools.exampledb.users]]
 pool_size = 40
 username = "doorman"
 # password = "password"

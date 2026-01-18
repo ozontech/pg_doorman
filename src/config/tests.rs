@@ -18,13 +18,13 @@ server_host = "localhost"
 server_port = 5432
 idle_timeout = 40000
 
-[pools.example_db.users.0]
+[[pools.example_db.users]]
 username = "example_user_1"
 password = "password1"
 pool_size = 40
 pool_mode = "transaction"
 
-[pools.example_db.users.1]
+[[pools.example_db.users]]
 username = "example_user_2"
 password = "SCRAM-SHA-256$4096:p2j/1lMdQF6r1dD9I9f7PQ==$H3xt5yh7lwSq9zUPYwHovRu3FyUCCXchG/skydJRa9o=:5xU6Wj/GNg3UnN2uQIx3ezx7uZyzGeM5NrvSJRIxnlw="
 pool_size = 20
@@ -57,21 +57,21 @@ async fn test_config() {
     assert_eq!(get_config().pools.len(), 4);
     assert_eq!(get_config().pools["example_db"].idle_timeout, Some(40000));
     assert_eq!(
-        get_config().pools["example_db"].users["0"].username,
+        get_config().pools["example_db"].users[0].username,
         "example_user_1"
     );
     assert_eq!(
-        get_config().pools["example_db"].users["1"].password,
+        get_config().pools["example_db"].users[1].password,
         "SCRAM-SHA-256$4096:p2j/1lMdQF6r1dD9I9f7PQ==$H3xt5yh7lwSq9zUPYwHovRu3FyUCCXchG/skydJRa9o=:5xU6Wj/GNg3UnN2uQIx3ezx7uZyzGeM5NrvSJRIxnlw="
     );
-    assert_eq!(get_config().pools["example_db"].users["1"].pool_size, 20);
+    assert_eq!(get_config().pools["example_db"].users[1].pool_size, 20);
     assert_eq!(
-        get_config().pools["example_db"].users["1"].username,
+        get_config().pools["example_db"].users[1].username,
         "example_user_2"
     );
-    assert_eq!(get_config().pools["example_db"].users["0"].pool_size, 40);
+    assert_eq!(get_config().pools["example_db"].users[0].pool_size, 40);
     assert_eq!(
-        get_config().pools["example_db"].users["0"].pool_mode,
+        get_config().pools["example_db"].users[0].pool_mode,
         Some(PoolMode::Transaction)
     );
 }
@@ -100,7 +100,7 @@ async fn test_validate_valid_config() {
         pool_size: 50, // Greater than virtual_pool_count
         ..User::default()
     };
-    pool.users.insert("0".to_string(), user);
+    pool.users.push(user);
     config.pools.insert("test_pool".to_string(), pool);
 
     // Set valid TLS rate limit
@@ -300,4 +300,478 @@ async fn test_validate_valid_tls_mode_disable() {
         result.is_ok(),
         "Validation should pass for 'disable' mode without certificates"
     );
+}
+
+// ============================================================================
+// Tests for YAML configuration support
+// ============================================================================
+
+#[test]
+fn test_config_format_detect_toml() {
+    assert_eq!(ConfigFormat::detect("config.toml"), ConfigFormat::Toml);
+    assert_eq!(ConfigFormat::detect("/path/to/config.toml"), ConfigFormat::Toml);
+    assert_eq!(ConfigFormat::detect("CONFIG.TOML"), ConfigFormat::Toml);
+}
+
+#[test]
+fn test_config_format_detect_yaml() {
+    assert_eq!(ConfigFormat::detect("config.yaml"), ConfigFormat::Yaml);
+    assert_eq!(ConfigFormat::detect("config.yml"), ConfigFormat::Yaml);
+    assert_eq!(ConfigFormat::detect("/path/to/config.yaml"), ConfigFormat::Yaml);
+    assert_eq!(ConfigFormat::detect("/path/to/config.yml"), ConfigFormat::Yaml);
+    assert_eq!(ConfigFormat::detect("CONFIG.YAML"), ConfigFormat::Yaml);
+    assert_eq!(ConfigFormat::detect("CONFIG.YML"), ConfigFormat::Yaml);
+}
+
+#[test]
+fn test_config_format_detect_default_to_toml() {
+    // Unknown extensions should default to TOML
+    assert_eq!(ConfigFormat::detect("config.json"), ConfigFormat::Toml);
+    assert_eq!(ConfigFormat::detect("config"), ConfigFormat::Toml);
+    assert_eq!(ConfigFormat::detect("config.txt"), ConfigFormat::Toml);
+}
+
+// Helper function to create a temporary YAML config file for testing
+fn create_temp_yaml_config() -> NamedTempFile {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  example_db:
+    server_host: "localhost"
+    server_port: 5432
+    idle_timeout: 40000
+    users:
+      - username: "example_user_1"
+        password: "password1"
+        pool_size: 40
+        pool_mode: "transaction"
+      - username: "example_user_2"
+        password: "password2"
+        pool_size: 20
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+    temp_file
+}
+
+#[tokio::test]
+async fn test_yaml_config_parsing() {
+    let temp_file = create_temp_yaml_config();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.pools.len(), 1);
+    assert_eq!(config.pools["example_db"].idle_timeout, Some(40000));
+    assert_eq!(config.pools["example_db"].users[0].username, "example_user_1");
+    assert_eq!(config.pools["example_db"].users[0].pool_size, 40);
+    assert_eq!(
+        config.pools["example_db"].users[0].pool_mode,
+        Some(PoolMode::Transaction)
+    );
+    assert_eq!(config.pools["example_db"].users[1].username, "example_user_2");
+    assert_eq!(config.pools["example_db"].users[1].pool_size, 20);
+}
+
+#[tokio::test]
+async fn test_yaml_config_serialize() {
+    let temp_file = create_temp_yaml_config();
+    let file_path = temp_file.path().to_str().unwrap();
+
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    // Test that config can be serialized to YAML
+    let yaml_output = serde_yaml::to_string(&config).unwrap();
+    assert!(yaml_output.contains("example_db"));
+    assert!(yaml_output.contains("example_user_1"));
+
+    // Test that config can be serialized to TOML
+    let toml_output = toml::to_string_pretty(&config).unwrap();
+    assert!(toml_output.contains("example_db"));
+    assert!(toml_output.contains("example_user_1"));
+}
+
+#[test]
+fn test_content_to_toml_string_toml() {
+    let toml_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+"#;
+    let result = content_to_toml_string(toml_content, ConfigFormat::Toml).unwrap();
+    assert_eq!(result, toml_content);
+}
+
+#[test]
+fn test_content_to_toml_string_yaml() {
+    let yaml_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+"#;
+    let result = content_to_toml_string(yaml_content, ConfigFormat::Yaml).unwrap();
+    // Result should be valid TOML
+    assert!(result.contains("[general]"));
+    assert!(result.contains("host"));
+    assert!(result.contains("port"));
+}
+
+#[test]
+fn test_parse_config_content_toml() {
+    let toml_content = r#"
+[include]
+files = []
+"#;
+    let result: GeneralWithInclude = parse_config_content(toml_content, ConfigFormat::Toml).unwrap();
+    assert!(result.include.files.is_empty());
+}
+
+#[test]
+fn test_parse_config_content_yaml() {
+    let yaml_content = r#"
+include:
+  files: []
+"#;
+    let result: GeneralWithInclude = parse_config_content(yaml_content, ConfigFormat::Yaml).unwrap();
+    assert!(result.include.files.is_empty());
+}
+
+// ============================================================================
+// TOML Backward Compatibility Tests
+// ============================================================================
+// These tests verify that the old TOML format [pools.*.users.0] continues to work
+// after the migration to the new array format [[pools.*.users]]
+
+/// Test parsing legacy TOML format with [pools.*.users.0] syntax
+#[tokio::test]
+async fn test_toml_legacy_users_format() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[pools.example_db.users.0]
+username = "legacy_user_1"
+password = "password1"
+pool_size = 30
+
+[pools.example_db.users.1]
+username = "legacy_user_2"
+password = "password2"
+pool_size = 20
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".toml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.pools.len(), 1);
+    assert_eq!(config.pools["example_db"].users.len(), 2);
+    assert_eq!(config.pools["example_db"].users[0].username, "legacy_user_1");
+    assert_eq!(config.pools["example_db"].users[0].pool_size, 30);
+    assert_eq!(config.pools["example_db"].users[1].username, "legacy_user_2");
+    assert_eq!(config.pools["example_db"].users[1].pool_size, 20);
+}
+
+/// Test parsing new TOML format with [[pools.*.users]] syntax
+#[tokio::test]
+async fn test_toml_new_array_users_format() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "new_user_1"
+password = "password1"
+pool_size = 40
+
+[[pools.example_db.users]]
+username = "new_user_2"
+password = "password2"
+pool_size = 25
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".toml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.pools.len(), 1);
+    assert_eq!(config.pools["example_db"].users.len(), 2);
+    assert_eq!(config.pools["example_db"].users[0].username, "new_user_1");
+    assert_eq!(config.pools["example_db"].users[0].pool_size, 40);
+    assert_eq!(config.pools["example_db"].users[1].username, "new_user_2");
+    assert_eq!(config.pools["example_db"].users[1].pool_size, 25);
+}
+
+/// Test parsing mixed TOML formats - different pools using different user formats
+#[tokio::test]
+async fn test_toml_mixed_users_formats() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.legacy_pool]
+server_host = "localhost"
+server_port = 5432
+
+[pools.legacy_pool.users.0]
+username = "legacy_user"
+password = "password1"
+pool_size = 30
+
+[pools.new_pool]
+server_host = "localhost"
+server_port = 5433
+
+[[pools.new_pool.users]]
+username = "new_user"
+password = "password2"
+pool_size = 40
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".toml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.pools.len(), 2);
+    
+    // Check legacy pool
+    assert_eq!(config.pools["legacy_pool"].users.len(), 1);
+    assert_eq!(config.pools["legacy_pool"].users[0].username, "legacy_user");
+    assert_eq!(config.pools["legacy_pool"].users[0].pool_size, 30);
+    
+    // Check new pool
+    assert_eq!(config.pools["new_pool"].users.len(), 1);
+    assert_eq!(config.pools["new_pool"].users[0].username, "new_user");
+    assert_eq!(config.pools["new_pool"].users[0].pool_size, 40);
+}
+
+/// Test that legacy TOML format with multiple users preserves all user attributes
+#[tokio::test]
+async fn test_toml_legacy_format_all_user_attributes() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[pools.example_db.users.0]
+username = "full_user"
+password = "md5abcdef1234567890abcdef12345678"
+pool_size = 50
+min_pool_size = 5
+pool_mode = "session"
+server_lifetime = 3600000
+server_username = "real_server_user"
+server_password = "real_server_password"
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".toml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    let user = &config.pools["example_db"].users[0];
+    
+    assert_eq!(user.username, "full_user");
+    assert_eq!(user.password, "md5abcdef1234567890abcdef12345678");
+    assert_eq!(user.pool_size, 50);
+    assert_eq!(user.min_pool_size, Some(5));
+    assert_eq!(user.pool_mode, Some(PoolMode::Session));
+    assert_eq!(user.server_lifetime, Some(3600000));
+    assert_eq!(user.server_username, Some("real_server_user".to_string()));
+    assert_eq!(user.server_password, Some("real_server_password".to_string()));
+}
+
+/// Test that duplicate usernames are rejected in legacy TOML format
+#[tokio::test]
+async fn test_toml_legacy_format_duplicate_username_rejected() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[pools.example_db.users.0]
+username = "duplicate_user"
+password = "password1"
+pool_size = 30
+
+[pools.example_db.users.1]
+username = "duplicate_user"
+password = "password2"
+pool_size = 20
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".toml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    let result = parse(file_path).await;
+    
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("duplicate username"));
+    } else {
+        panic!("Expected BadConfig error about duplicate username");
+    }
+}
+
+/// Test that duplicate usernames are rejected in new TOML array format
+#[tokio::test]
+async fn test_toml_new_format_duplicate_username_rejected() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "duplicate_user"
+password = "password1"
+pool_size = 30
+
+[[pools.example_db.users]]
+username = "duplicate_user"
+password = "password2"
+pool_size = 20
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".toml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    let result = parse(file_path).await;
+    
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("duplicate username"));
+    } else {
+        panic!("Expected BadConfig error about duplicate username");
+    }
+}
+
+/// Test YAML format with array users (for comparison with TOML formats)
+#[tokio::test]
+async fn test_yaml_array_users_format() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  example_db:
+    server_host: "localhost"
+    server_port: 5432
+    users:
+      - username: "yaml_user_1"
+        password: "password1"
+        pool_size: 35
+      - username: "yaml_user_2"
+        password: "password2"
+        pool_size: 15
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.pools.len(), 1);
+    assert_eq!(config.pools["example_db"].users.len(), 2);
+    assert_eq!(config.pools["example_db"].users[0].username, "yaml_user_1");
+    assert_eq!(config.pools["example_db"].users[0].pool_size, 35);
+    assert_eq!(config.pools["example_db"].users[1].username, "yaml_user_2");
+    assert_eq!(config.pools["example_db"].users[1].pool_size, 15);
+}
+
+/// Test that duplicate usernames are rejected in YAML format
+#[tokio::test]
+async fn test_yaml_duplicate_username_rejected() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  example_db:
+    server_host: "localhost"
+    server_port: 5432
+    users:
+      - username: "duplicate_user"
+        password: "password1"
+        pool_size: 30
+      - username: "duplicate_user"
+        password: "password2"
+        pool_size: 20
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    let result = parse(file_path).await;
+    
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("duplicate username"));
+    } else {
+        panic!("Expected BadConfig error about duplicate username");
+    }
 }

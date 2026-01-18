@@ -937,9 +937,11 @@ pub async fn print_benchmark_results(world: &mut DoormanWorld) {
 pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     eprintln!("\n=== Generating Benchmark Markdown Table ===");
 
-    // Helper function to format ratio as percentage difference
+    // Helper function to format ratio as percentage difference or multiplier
     // 1.10 -> "+10%" (pg_doorman is 10% faster)
     // 0.90 -> "-10%" (pg_doorman is 10% slower)
+    // 2.50 -> "x2.5" (pg_doorman is 2.5x faster, used when difference > 100%)
+    // 0.40 -> "x0.4" (pg_doorman is 2.5x slower, used when difference > 100%)
     let format_ratio = |doorman: f64, competitor_tps: Option<f64>| -> String {
         match competitor_tps {
             Some(v) if v > 0.0 && doorman > 0.0 => {
@@ -947,6 +949,12 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
                 let percent = (ratio - 1.0) * 100.0;
                 if percent.abs() < 3.0 {
                     "≈0%".to_string()
+                } else if percent > 100.0 {
+                    // More than 2x faster - show as multiplier
+                    format!("x{:.1}", ratio)
+                } else if percent < -50.0 {
+                    // More than 2x slower - show as multiplier
+                    format!("x{:.1}", ratio)
                 } else if percent > 0.0 {
                     format!("+{:.0}%", percent)
                 } else {

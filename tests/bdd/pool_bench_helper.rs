@@ -4,7 +4,6 @@
 //! operation with real PostgreSQL connections.
 
 use cucumber::{given, then, when};
-use parking_lot::Mutex;
 use pprof::ProfilerGuardBuilder;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,8 +29,9 @@ pub struct InternalPool {
 async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: String) {
     let pg_port = world.pg_port.expect("PostgreSQL must be running");
 
-    // Create empty client-server map
-    let client_server_map: ClientServerMap = Arc::new(Mutex::new(HashMap::new()));
+    // Create empty client-server map (use default 4 worker_threads for tests)
+    let client_server_map: ClientServerMap =
+        Arc::new(pg_doorman::utils::dashmap::new_dashmap(4));
 
     // Create Address for the PostgreSQL server
     let address = Address {
@@ -62,6 +62,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         false, // log_client_parameter_status_changes
         0,     // prepared_statement_cache_size
         "pool_bench".to_string(),
+        4,     // max_concurrent_creates
     );
 
     // Create Pool with configuration

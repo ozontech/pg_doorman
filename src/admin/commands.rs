@@ -52,7 +52,7 @@ where
         shutdown_success = "f";
     }
 
-    res.put(data_row(&vec![shutdown_success.to_string()]));
+    res.put(data_row(&[shutdown_success.to_string()]));
 
     res.put(command_complete("SHUTDOWN"));
 

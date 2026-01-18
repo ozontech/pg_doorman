@@ -31,19 +31,19 @@ where
     let columns = vec![("list", DataType::Text), ("items", DataType::Int4)];
     let mut users = 1;
     let mut databases = 1;
-    for (_, _) in get_all_pools() {
+    for (_, _) in get_all_pools().iter() {
         databases += 1; // One db per pool
         users += 1; // One user per pool
     }
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-    res.put(data_row(&vec![
+    res.put(data_row(&[
         "databases".to_string(),
         databases.to_string(),
     ]));
-    res.put(data_row(&vec!["users".to_string(), users.to_string()]));
-    res.put(data_row(&vec!["pools".to_string(), databases.to_string()]));
-    res.put(data_row(&vec![
+    res.put(data_row(&["users".to_string(), users.to_string()]));
+    res.put(data_row(&["pools".to_string(), databases.to_string()]));
+    res.put(data_row(&[
         "free_clients".to_string(),
         client_stats
             .keys()
@@ -51,7 +51,7 @@ where
             .count()
             .to_string(),
     ]));
-    res.put(data_row(&vec![
+    res.put(data_row(&[
         "used_clients".to_string(),
         client_stats
             .keys()
@@ -59,11 +59,11 @@ where
             .count()
             .to_string(),
     ]));
-    res.put(data_row(&vec![
+    res.put(data_row(&[
         "login_clients".to_string(),
         "0".to_string(),
     ]));
-    res.put(data_row(&vec![
+    res.put(data_row(&[
         "free_servers".to_string(),
         server_stats
             .keys()
@@ -71,7 +71,7 @@ where
             .count()
             .to_string(),
     ]));
-    res.put(data_row(&vec![
+    res.put(data_row(&[
         "used_servers".to_string(),
         server_stats
             .keys()
@@ -79,10 +79,10 @@ where
             .count()
             .to_string(),
     ]));
-    res.put(data_row(&vec!["dns_names".to_string(), "0".to_string()]));
-    res.put(data_row(&vec!["dns_zones".to_string(), "0".to_string()]));
-    res.put(data_row(&vec!["dns_queries".to_string(), "0".to_string()]));
-    res.put(data_row(&vec!["dns_pending".to_string(), "0".to_string()]));
+    res.put(data_row(&["dns_names".to_string(), "0".to_string()]));
+    res.put(data_row(&["dns_zones".to_string(), "0".to_string()]));
+    res.put(data_row(&["dns_queries".to_string(), "0".to_string()]));
+    res.put(data_row(&["dns_pending".to_string(), "0".to_string()]));
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
     res.put_i32(5);
@@ -97,7 +97,7 @@ where
 {
     let mut res = BytesMut::new();
     res.put(row_description(&vec![("version", DataType::Text)]));
-    res.put(data_row(&vec![format!("PgDoorman {}", VERSION)]));
+    res.put(data_row(&[format!("PgDoorman {}", VERSION)]));
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
     res.put_i32(5);
@@ -162,7 +162,7 @@ where
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
     for item in help_items {
-        res.put(data_row(&vec![item.to_string()]));
+        res.put(data_row(&[item.to_string()]));
     }
     res.put(command_complete("SHOW"));
     // ReadyForQuery
@@ -193,12 +193,12 @@ where
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-    for (_, pool) in get_all_pools() {
+    for (_, pool) in get_all_pools().iter() {
         let pool_config = pool.settings.clone();
         let database_name = &pool.address().database;
         let address = pool.address();
         let pool_state = pool.pool_state();
-        res.put(data_row(&vec![
+        res.put(data_row(&[
             address.name(),                                          // name
             address.host.to_string(),                                // host
             address.port.to_string(),                                // port
@@ -431,9 +431,9 @@ where
         ("name", DataType::Text),
         ("pool_mode", DataType::Text),
     ]));
-    for (user_pool, pool) in get_all_pools() {
+    for (user_pool, pool) in get_all_pools().iter() {
         let pool_config = &pool.settings;
-        res.put(data_row(&vec![
+        res.put(data_row(&[
             user_pool.user.clone(),
             pool_config.pool_mode.to_string(),
         ]));

@@ -1,5 +1,5 @@
 use crate::service_helper::stop_process;
-use crate::utils::{create_temp_file, get_stdio_config, is_debug_mode};
+use crate::utils::{create_config_file, create_temp_file, get_stdio_config, is_debug_mode};
 use crate::world::DoormanWorld;
 use cucumber::{gherkin::Step, given, then, when};
 use portpicker::pick_unused_port;
@@ -94,7 +94,7 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
     // Use centralized placeholder replacement
     let config_content = world.replace_placeholders(&config_content);
 
-    let config_file = create_temp_file(&config_content);
+    let config_file = create_config_file(&config_content);
     let config_path = config_file.path().to_path_buf();
     world.doorman_config_file = Some(config_file);
 
@@ -246,13 +246,8 @@ pub async fn start_doorman_daemon_with_config(world: &mut DoormanWorld, step: &S
     // Use centralized placeholder replacement
     let config_content = world.replace_placeholders(&config_content);
 
-    // Create temp file with .toml extension (required for pg_doorman config parsing)
-    let config_file = tempfile::Builder::new()
-        .suffix(".toml")
-        .tempfile()
-        .expect("Failed to create temp config file");
-    std::io::Write::write_all(&mut config_file.as_file(), config_content.as_bytes())
-        .expect("Failed to write config content");
+    // Create temp file with appropriate extension (required for pg_doorman config parsing)
+    let config_file = create_config_file(&config_content);
     let config_path = config_file.path().to_path_buf();
     world.doorman_config_file = Some(config_file);
 

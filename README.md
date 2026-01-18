@@ -133,36 +133,38 @@ PGPASSWORD=password psql -h 127.0.0.1 -p 6432 -d exampledb -U doorman
 
 ### Configuration
 
-PgDoorman uses a TOML format configuration file. Here's a minimal configuration example:
+PgDoorman supports **YAML** (`.yaml`, `.yml`) and **TOML** (`.toml`) configuration file formats. **YAML is the recommended format** for new configurations, while TOML remains supported for backward compatibility. The format is automatically detected based on the file extension.
 
-```toml
+Here's a minimal configuration example in YAML (recommended):
+
+```yaml
 # Global settings
-[general]
-host = "0.0.0.0"    # Listen on all interfaces
-port = 6432         # Port for client connections
-
-# Admin credentials for the management console
-admin_username = "admin"
-admin_password = "admin"  # Change this in production!
+general:
+  host: "0.0.0.0"           # Listen on all interfaces
+  port: 6432                # Port for client connections
+  # Admin credentials for the management console
+  admin_username: "admin"
+  admin_password: "admin"   # Change this in production!
 
 # Database pools section
-[pools]
-
-# Example database pool
-[pools.exampledb]
-server_host = "127.0.0.1"  # PostgreSQL server address (or unix-domain socket like /var/run/postgresql)
-server_port = 5432         # PostgreSQL server port
-pool_mode = "transaction"  # Connection pooling mode
-
-# User configuration for this pool
-[pools.exampledb.users.0]
-pool_size = 40             # Maximum number of connections in the pool
-username = "doorman"       # Username for PostgreSQL server
-password = "md5xxxxxx"     # Password hash (md5/scram) for authentication (you can use `select * from pg_shadow` or `pg_doorman generate --help` to fetch this value).
-# server_username = "doorman" # Username for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
-# server_password = "your_password" # Plain password for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
-# server_database = "exampledb" # Database for PostgreSQL server (optional)
+pools:
+  exampledb:
+    server_host: "127.0.0.1"   # PostgreSQL server address (or unix-domain socket like /var/run/postgresql)
+    server_port: 5432          # PostgreSQL server port
+    pool_mode: "transaction"   # Connection pooling mode
+    # User configuration for this pool (array of users, username must be unique)
+    users:
+      - pool_size: 40            # Maximum number of connections in the pool
+        username: "doorman"      # Username for PostgreSQL server
+        password: "md5xxxxxx"    # Password hash (md5/scram) for authentication
+        # server_username: "doorman"       # Username for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
+        # server_password: "your_password" # Plain password for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
+        # server_database: "exampledb"     # Database for PostgreSQL server (optional)
 ```
+
+You can use `select * from pg_shadow` or `pg_doorman generate --help` to fetch password hashes.
+
+> **Note:** TOML configuration files are still fully supported for backward compatibility. See `example/pg_doorman/pg_doorman.toml` for a TOML example.
 
 ### Automatic Configuration Generation
 
@@ -172,20 +174,23 @@ PgDoorman provides a powerful `generate` command that can automatically create a
 # View all available options
 pg_doorman generate --help
 
-# Generate a configuration file with default settings
+# Generate a YAML configuration file (recommended)
+pg_doorman generate --output pg_doorman.yaml
+
+# Generate a TOML configuration file (for backward compatibility)
 pg_doorman generate --output pg_doorman.toml
 
 # Connect to a specific PostgreSQL server
-pg_doorman generate --host db.example.com --port 5432 --output pg_doorman.toml
+pg_doorman generate --host db.example.com --port 5432 --output pg_doorman.yaml
 
 # Connect with specific credentials (requires superuser privileges)
-pg_doorman generate --user postgres --password secret --output pg_doorman.toml
+pg_doorman generate --user postgres --password secret --output pg_doorman.yaml
 
 # Generate configuration with SSL/TLS enabled
-pg_doorman generate --ssl --output pg_doorman.toml
+pg_doorman generate --ssl --output pg_doorman.yaml
 
 # Set custom pool size and pool mode
-pg_doorman generate --pool-size 20 --session-pool-mode --output pg_doorman.toml
+pg_doorman generate --pool-size 20 --session-pool-mode --output pg_doorman.yaml
 ```
 
 The `generate` command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
@@ -215,7 +220,7 @@ for a password, even if the user has an MD5 or SCRAM password configured. TLS co
 After creating your configuration file, you can run PgDoorman from the command line:
 
 ```bash
-$ pg_doorman pg_doorman.toml
+$ pg_doorman pg_doorman.yaml
 ```
 
 ### Connecting to PostgreSQL via PgDoorman
