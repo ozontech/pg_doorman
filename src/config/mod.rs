@@ -73,13 +73,10 @@ fn parse_config_content<T: serde::de::DeserializeOwned>(
     format: ConfigFormat,
 ) -> Result<T, Error> {
     match format {
-        ConfigFormat::Toml => {
-            toml::from_str(contents).map_err(|err| Error::BadConfig(format!("TOML parse error: {err}")))
-        }
-        ConfigFormat::Yaml => {
-            serde_yaml::from_str(contents)
-                .map_err(|err| Error::BadConfig(format!("YAML parse error: {err}")))
-        }
+        ConfigFormat::Toml => toml::from_str(contents)
+            .map_err(|err| Error::BadConfig(format!("TOML parse error: {err}"))),
+        ConfigFormat::Yaml => serde_yaml::from_str(contents)
+            .map_err(|err| Error::BadConfig(format!("YAML parse error: {err}"))),
     }
 }
 
@@ -277,17 +274,20 @@ impl Config {
             info!(
                 "[pool: {}] Connect timeout: {}ms",
                 pool_name,
-                pool.connect_timeout.unwrap_or(self.general.connect_timeout.as_millis())
+                pool.connect_timeout
+                    .unwrap_or(self.general.connect_timeout.as_millis())
             );
             info!(
                 "[pool: {}] Idle timeout: {}ms",
                 pool_name,
-                pool.idle_timeout.unwrap_or(self.general.idle_timeout.as_millis())
+                pool.idle_timeout
+                    .unwrap_or(self.general.idle_timeout.as_millis())
             );
             info!(
                 "[pool: {}] Server lifetime: {}ms",
                 pool_name,
-                pool.server_lifetime.unwrap_or(self.general.server_lifetime.as_millis())
+                pool.server_lifetime
+                    .unwrap_or(self.general.server_lifetime.as_millis())
             );
             for (user_index, user) in pool.users.iter().enumerate() {
                 info!(
@@ -431,9 +431,9 @@ pub async fn parse(path: &str) -> Result<(), Error> {
     // merge main with include files via serde-toml-merge.
     // Convert to TOML string first (for YAML files), then parse to toml::Value
     let main_toml_str = content_to_toml_string(&include_only_config_contents, format)?;
-    let mut config_merged: toml::Value = main_toml_str.parse().map_err(|err| {
-        Error::BadConfig(format!("Could not parse config file {path}: {err:?}"))
-    })?;
+    let mut config_merged: toml::Value = main_toml_str
+        .parse()
+        .map_err(|err| Error::BadConfig(format!("Could not parse config file {path}: {err:?}")))?;
 
     for file in include_config.include.files {
         info!("Merge config with include file: {file}");

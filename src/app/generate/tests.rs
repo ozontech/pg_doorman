@@ -137,7 +137,11 @@ fn test_generate_config_with_default_parameters() {
     assert!(postgres_pool.users.iter().any(|u| u.username == "testuser"));
 
     // Verify user details
-    let postgres_user = postgres_pool.users.iter().find(|u| u.username == "postgres").unwrap();
+    let postgres_user = postgres_pool
+        .users
+        .iter()
+        .find(|u| u.username == "postgres")
+        .unwrap();
     assert_eq!(postgres_user.username, "postgres");
     assert_eq!(postgres_user.password, "md5abcdef1234567890");
     assert_eq!(postgres_user.pool_size, 40);
@@ -194,7 +198,11 @@ fn test_generate_config_with_custom_parameters() {
     assert_eq!(testdb_pool.server_port, 5433);
 
     // Verify user details
-    let testuser = testdb_pool.users.iter().find(|u| u.username == "testuser").unwrap();
+    let testuser = testdb_pool
+        .users
+        .iter()
+        .find(|u| u.username == "testuser")
+        .unwrap();
     assert_eq!(testuser.username, "testuser");
     assert_eq!(testuser.pool_size, 20);
 }

@@ -12,7 +12,6 @@ lto = true
 
 [dependencies]
 tikv-jemallocator = { version = "0.6.0", features = ["background_threads_runtime_support"] }
-
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.20", features = ["json", "env-filter", "std"]}
 log = "0.4.27"
@@ -75,6 +74,7 @@ portpicker = "0.1"
 tokio-postgres = "0.7"
 criterion = "0.5"
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
+serial_test = "3"
 
 [[bin]]
 name = "pg_doorman"

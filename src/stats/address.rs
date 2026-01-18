@@ -631,17 +631,49 @@ mod tests {
         // Verify percentiles for transactions
         let (p50, p90, p95, p99) = stats.get_xact_percentiles();
         // p50 should be around 50, p90 around 90, p95 around 95, p99 around 99
-        assert!(p50 >= 45 && p50 <= 55, "p50 xact should be ~50, got {}", p50);
-        assert!(p90 >= 85 && p90 <= 95, "p90 xact should be ~90, got {}", p90);
-        assert!(p95 >= 90 && p95 <= 100, "p95 xact should be ~95, got {}", p95);
-        assert!(p99 >= 95 && p99 <= 105, "p99 xact should be ~99, got {}", p99);
+        assert!(
+            p50 >= 45 && p50 <= 55,
+            "p50 xact should be ~50, got {}",
+            p50
+        );
+        assert!(
+            p90 >= 85 && p90 <= 95,
+            "p90 xact should be ~90, got {}",
+            p90
+        );
+        assert!(
+            p95 >= 90 && p95 <= 100,
+            "p95 xact should be ~95, got {}",
+            p95
+        );
+        assert!(
+            p99 >= 95 && p99 <= 105,
+            "p99 xact should be ~99, got {}",
+            p99
+        );
 
         // Verify percentiles for queries
         let (p50, p90, p95, p99) = stats.get_query_percentiles();
-        assert!(p50 >= 45 && p50 <= 55, "p50 query should be ~50, got {}", p50);
-        assert!(p90 >= 85 && p90 <= 95, "p90 query should be ~90, got {}", p90);
-        assert!(p95 >= 90 && p95 <= 100, "p95 query should be ~95, got {}", p95);
-        assert!(p99 >= 95 && p99 <= 105, "p99 query should be ~99, got {}", p99);
+        assert!(
+            p50 >= 45 && p50 <= 55,
+            "p50 query should be ~50, got {}",
+            p50
+        );
+        assert!(
+            p90 >= 85 && p90 <= 95,
+            "p90 query should be ~90, got {}",
+            p90
+        );
+        assert!(
+            p95 >= 90 && p95 <= 100,
+            "p95 query should be ~95, got {}",
+            p95
+        );
+        assert!(
+            p99 >= 95 && p99 <= 105,
+            "p99 query should be ~99, got {}",
+            p99
+        );
     }
 
     #[test]

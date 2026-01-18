@@ -246,7 +246,10 @@ mod tests {
         assert_eq!(parse_byte_size("1m").unwrap(), ByteSize(1048576)); // case insensitive
         assert_eq!(parse_byte_size("1mb").unwrap(), ByteSize(1048576)); // case insensitive
         assert_eq!(parse_byte_size("1Mb").unwrap(), ByteSize(1048576)); // case insensitive
-        assert_eq!(parse_byte_size("256M").unwrap(), ByteSize(256 * 1024 * 1024));
+        assert_eq!(
+            parse_byte_size("256M").unwrap(),
+            ByteSize(256 * 1024 * 1024)
+        );
         assert_eq!(
             parse_byte_size("256MB").unwrap(),
             ByteSize(256 * 1024 * 1024)
@@ -399,17 +402,8 @@ mod tests {
     #[test]
     fn test_real_world_values() {
         // Test values commonly used in pg_doorman config
-        assert_eq!(
-            parse_byte_size("256MB").unwrap(),
-            ByteSize(268435456)
-        ); // max_memory_usage default
-        assert_eq!(
-            parse_byte_size("1MB").unwrap(),
-            ByteSize(1048576)
-        ); // unix_socket_buffer_size default
-        assert_eq!(
-            parse_byte_size("8MB").unwrap(),
-            ByteSize(8 * 1024 * 1024)
-        ); // worker_stack_size default
+        assert_eq!(parse_byte_size("256MB").unwrap(), ByteSize(268435456)); // max_memory_usage default
+        assert_eq!(parse_byte_size("1MB").unwrap(), ByteSize(1048576)); // unix_socket_buffer_size default
+        assert_eq!(parse_byte_size("8MB").unwrap(), ByteSize(8 * 1024 * 1024)); // worker_stack_size default
     }
 }

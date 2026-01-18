@@ -37,10 +37,7 @@ where
     }
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-    res.put(data_row(&[
-        "databases".to_string(),
-        databases.to_string(),
-    ]));
+    res.put(data_row(&["databases".to_string(), databases.to_string()]));
     res.put(data_row(&["users".to_string(), users.to_string()]));
     res.put(data_row(&["pools".to_string(), databases.to_string()]));
     res.put(data_row(&[
@@ -59,10 +56,7 @@ where
             .count()
             .to_string(),
     ]));
-    res.put(data_row(&[
-        "login_clients".to_string(),
-        "0".to_string(),
-    ]));
+    res.put(data_row(&["login_clients".to_string(), "0".to_string()]));
     res.put(data_row(&[
         "free_servers".to_string(),
         server_stats
