@@ -83,13 +83,24 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
 
 #[when(regex = r#"^I benchmark pool\.get with (\d+) iterations and save as "([^"]+)"$"#)]
 async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iterations: usize, name: String) {
+    // Single client sequential benchmark
+    benchmark_pool_get_impl(world, 1, iterations, name).await;
+}
+
+#[when(regex = r#"^I benchmark pool\.get with (\d+) concurrent clients and (\d+) iterations per client and save as "([^"]+)"$"#)]
+async fn benchmark_pool_get_concurrent(world: &mut DoormanWorld, clients: usize, iterations_per_client: usize, name: String) {
+    benchmark_pool_get_impl(world, clients, iterations_per_client, name).await;
+}
+
+/// Internal implementation for pool.get benchmarks supporting both single and concurrent clients
+async fn benchmark_pool_get_impl(world: &mut DoormanWorld, clients: usize, iterations_per_client: usize, name: String) {
     let internal_pool = world
         .internal_pool
         .as_ref()
         .expect("Internal pool must be set up");
 
     let pool = &internal_pool.pool;
-    let mut latencies = Vec::with_capacity(iterations);
+    let total_iterations = clients * iterations_per_client;
 
     // Warm-up: create initial connections
     {
@@ -110,19 +121,86 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
         None
     };
 
-    let start = Instant::now();
-    for _ in 0..iterations {
-        let iter_start = Instant::now();
-        let obj = pool.get().await.expect("Failed to get connection");
-        let latency = iter_start.elapsed();
-        latencies.push(latency);
-        drop(obj); // Return to pool
-    }
-    let total_elapsed = start.elapsed();
+    let latencies = if clients == 1 {
+        // Single client sequential benchmark
+        let mut latencies = Vec::with_capacity(iterations_per_client);
+        for _ in 0..iterations_per_client {
+            let iter_start = Instant::now();
+            let obj = pool.get().await.expect("Failed to get connection");
+            let latency = iter_start.elapsed();
+            latencies.push(latency);
+            drop(obj); // Return to pool
+        }
+        latencies
+    } else {
+        // Concurrent clients benchmark using tokio tasks
+        let pool = pool.clone();
+        let mut handles = Vec::with_capacity(clients);
+        
+        for _ in 0..clients {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                let mut latencies = Vec::with_capacity(iterations_per_client);
+                for _ in 0..iterations_per_client {
+                    let iter_start = Instant::now();
+                    let obj = pool.get().await.expect("Failed to get connection");
+                    let latency = iter_start.elapsed();
+                    latencies.push(latency);
+                    drop(obj); // Return to pool
+                }
+                latencies
+            }));
+        }
+        
+        // Collect results from all clients
+        let mut all_latencies = Vec::with_capacity(total_iterations);
+        for handle in handles {
+            let client_latencies = handle.await.expect("Client task failed");
+            all_latencies.extend(client_latencies);
+        }
+        all_latencies
+    };
 
-    let ops_per_sec = iterations as f64 / total_elapsed.as_secs_f64();
+    // Note: we measure wall-clock time for the concurrent case differently
+    // For accurate throughput, we re-run the benchmark with timing
+    let (latencies, total_elapsed) = if clients == 1 {
+        // For single client, latencies are already collected above, just sum them
+        let total: Duration = latencies.iter().sum();
+        (latencies, total)
+    } else {
+        // For concurrent clients, run again with wall-clock timing
+        let pool = pool.clone();
+        let mut handles = Vec::with_capacity(clients);
+        
+        let start = Instant::now();
+        for _ in 0..clients {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                let mut latencies = Vec::with_capacity(iterations_per_client);
+                for _ in 0..iterations_per_client {
+                    let iter_start = Instant::now();
+                    let obj = pool.get().await.expect("Failed to get connection");
+                    let latency = iter_start.elapsed();
+                    latencies.push(latency);
+                    drop(obj);
+                }
+                latencies
+            }));
+        }
+        
+        let mut all_latencies = Vec::with_capacity(total_iterations);
+        for handle in handles {
+            let client_latencies = handle.await.expect("Client task failed");
+            all_latencies.extend(client_latencies);
+        }
+        let total_elapsed = start.elapsed();
+        (all_latencies, total_elapsed)
+    };
+
+    let ops_per_sec = total_iterations as f64 / total_elapsed.as_secs_f64();
 
     // Calculate percentiles
+    let mut latencies = latencies;
     latencies.sort();
     let p50 = latencies[latencies.len() / 2];
     let p95 = latencies[(latencies.len() as f64 * 0.95) as usize];
@@ -130,7 +208,9 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
 
     // Output to stdout
     println!("\n=== Pool.get Benchmark Results [{}] ===", name);
-    println!("Total iterations: {}", iterations);
+    println!("Concurrent clients: {}", clients);
+    println!("Iterations per client: {}", iterations_per_client);
+    println!("Total iterations: {}", total_iterations);
     println!("Total time: {:?}", total_elapsed);
     println!("Throughput: {:.0} ops/sec", ops_per_sec);
     println!("Latency p50: {:?}", p50);

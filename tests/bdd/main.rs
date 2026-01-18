@@ -28,7 +28,12 @@ fn main() {
     }
 
     // Create tokio runtime manually so we can control cleanup
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    // Use 4 worker threads explicitly for consistent benchmark results
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .unwrap();
 
     // Run tests with after hook for cleanup
     rt.block_on(async {
