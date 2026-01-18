@@ -720,6 +720,90 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#configuration-file-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration File Format
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration File Format">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-yaml-configuration-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example YAML Configuration (Recommended)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-toml-configuration-legacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example TOML Configuration (Legacy)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generate Command
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#include-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Include Files
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#human-readable-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Human-Readable Values
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Human-Readable Values">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#duration-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      Duration Format
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#byte-size-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      Byte Size Format
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#general-settings" class="md-nav__link">
     <span class="md-ellipsis">
       General Settings
@@ -760,6 +844,15 @@
   <a href="#max_connections" class="md-nav__link">
     <span class="md-ellipsis">
       max_connections
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max_concurrent_creates" class="md-nav__link">
+    <span class="md-ellipsis">
+      max_concurrent_creates
     </span>
   </a>
   
@@ -1232,6 +1325,90 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#configuration-file-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration File Format
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration File Format">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-yaml-configuration-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example YAML Configuration (Recommended)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-toml-configuration-legacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example TOML Configuration (Legacy)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generate Command
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#include-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Include Files
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#human-readable-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Human-Readable Values
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Human-Readable Values">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#duration-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      Duration Format
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#byte-size-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      Byte Size Format
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#general-settings" class="md-nav__link">
     <span class="md-ellipsis">
       General Settings
@@ -1272,6 +1449,15 @@
   <a href="#max_connections" class="md-nav__link">
     <span class="md-ellipsis">
       max_connections
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#max_concurrent_creates" class="md-nav__link">
+    <span class="md-ellipsis">
+      max_concurrent_creates
     </span>
   </a>
   
@@ -1653,6 +1839,110 @@
 
 
 <h1 id="settings">Settings</h1>
+<h2 id="configuration-file-format">Configuration File Format</h2>
+<p>pg_doorman supports two configuration file formats:</p>
+<ul>
+<li><strong>YAML</strong> (<code>.yaml</code>, <code>.yml</code>) - The primary and recommended format for new configurations.</li>
+<li><strong>TOML</strong> (<code>.toml</code>) - Supported for backward compatibility with existing configurations.</li>
+</ul>
+<p>The format is automatically detected based on the file extension. Both formats support the same configuration options and can be used interchangeably.</p>
+<h3 id="example-yaml-configuration-recommended">Example YAML Configuration (Recommended)</h3>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">general</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0.0.0.0&quot;</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">6432</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">admin_username</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;admin&quot;</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">admin_password</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;admin&quot;</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nt">pools</span><span class="p">:</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">mydb</span><span class="p">:</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="nt">server_host</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;localhost&quot;</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">server_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="nt">pool_mode</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;transaction&quot;</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="nt">users</span><span class="p">:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;myuser&quot;</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;mypassword&quot;</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="nt">pool_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">40</span>
+</span></code></pre></div>
+<h3 id="example-toml-configuration-legacy">Example TOML Configuration (Legacy)</h3>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[general]</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.0.0.0&quot;</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6432</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">admin_username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">admin_password</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">[pools.mydb]</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">server_host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;localhost&quot;</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">server_port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5432</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">pool_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;transaction&quot;</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="k">[[pools.mydb.users]]</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;myuser&quot;</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">password</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;mypassword&quot;</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">pool_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">40</span>
+</span></code></pre></div>
+<h3 id="generate-command">Generate Command</h3>
+<p>The <code>generate</code> command can output configuration in either format. The format is determined by the output file extension:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Generate YAML configuration (recommended)</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--output<span class="w"> </span>config.yaml
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Generate TOML configuration (for backward compatibility)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--output<span class="w"> </span>config.toml
+</span></code></pre></div>
+<h3 id="include-files">Include Files</h3>
+<p>Include files can be in either format, and you can mix formats. For example, a YAML main config can include TOML files and vice versa:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">include</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">files</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;pools.yaml&quot;</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;users.toml&quot;</span>
+</span></code></pre></div>
+<h2 id="human-readable-values">Human-Readable Values</h2>
+<p>pg_doorman supports human-readable formats for duration and byte size values, while maintaining backward compatibility with numeric values.</p>
+<h3 id="duration-format">Duration Format</h3>
+<p>Duration values can be specified as:</p>
+<ul>
+<li><strong>Plain numbers</strong>: interpreted as milliseconds (e.g., <code>5000</code> = 5 seconds)</li>
+<li><strong>String with suffix</strong>:<ul>
+<li><code>ms</code> - milliseconds (e.g., <code>"100ms"</code>)</li>
+<li><code>s</code> - seconds (e.g., <code>"5s"</code> = 5000 milliseconds)</li>
+<li><code>m</code> - minutes (e.g., <code>"5m"</code> = 300000 milliseconds)</li>
+<li><code>h</code> - hours (e.g., <code>"1h"</code> = 3600000 milliseconds)</li>
+<li><code>d</code> - days (e.g., <code>"1d"</code> = 86400000 milliseconds)</li>
+</ul>
+</li>
+</ul>
+<p><strong>Examples:</strong>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">general</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="c1"># All these are equivalent (3 seconds):</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="c1"># connect_timeout: 3000      # backward compatible (milliseconds)</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="c1"># connect_timeout: &quot;3s&quot;      # human-readable</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="c1"># connect_timeout: &quot;3000ms&quot;  # explicit milliseconds</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">connect_timeout</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3s&quot;</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">idle_timeout</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;5m&quot;</span><span class="w">         </span><span class="c1"># 5 minutes</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">server_lifetime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1h&quot;</span><span class="w">      </span><span class="c1"># 1 hour</span>
+</span></code></pre></div></p>
+<h3 id="byte-size-format">Byte Size Format</h3>
+<p>Byte size values can be specified as:</p>
+<ul>
+<li><strong>Plain numbers</strong>: interpreted as bytes (e.g., <code>1048576</code> = 1 MB)</li>
+<li><strong>String with suffix</strong> (case-insensitive):<ul>
+<li><code>B</code> - bytes (e.g., <code>"1024B"</code>)</li>
+<li><code>K</code> or <code>KB</code> - kilobytes (e.g., <code>"1K"</code> or <code>"1KB"</code> = 1024 bytes)</li>
+<li><code>M</code> or <code>MB</code> - megabytes (e.g., <code>"1M"</code> or <code>"1MB"</code> = 1048576 bytes)</li>
+<li><code>G</code> or <code>GB</code> - gigabytes (e.g., <code>"1G"</code> or <code>"1GB"</code> = 1073741824 bytes)</li>
+</ul>
+</li>
+</ul>
+<p>Note: Uses binary prefixes (1 KB = 1024 bytes, not 1000 bytes).</p>
+<p><strong>Examples:</strong>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">general</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="c1"># All these are equivalent (256 MB):</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="c1"># max_memory_usage: 268435456  # backward compatible (bytes)</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="c1"># max_memory_usage: &quot;256MB&quot;    # human-readable</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="c1"># max_memory_usage: &quot;256M&quot;     # short form</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="nt">max_memory_usage</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;256MB&quot;</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span><span class="nt">unix_socket_buffer_size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1MB&quot;</span><span class="w"> </span><span class="c1"># 1 MB</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span><span class="nt">worker_stack_size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;8MB&quot;</span><span class="w">       </span><span class="c1"># 8 MB</span>
+</span></code></pre></div></p>
 <h2 id="general-settings">General Settings</h2>
 <h3 id="host">host</h3>
 <p>Listen host (TCP v4 only).</p>
@@ -1668,6 +1958,10 @@
 * A client connecting without SSL will receive the expected error (code: <code>53300</code>, message: <code>sorry, too many clients already</code>).
 * A client connecting via SSL will see a message indicating that the server does not support the SSL protocol.</p>
 <p>Default: <code>8192</code>.</p>
+<h3 id="max_concurrent_creates">max_concurrent_creates</h3>
+<p>Maximum number of server connections that can be created concurrently per pool. This setting uses a semaphore to limit parallel connection creation, which significantly improves performance during cold start and burst scenarios.</p>
+<p>Higher values allow faster pool warm-up but may increase load on the PostgreSQL server during connection storms. Lower values provide more gradual connection creation.</p>
+<p>Default: <code>4</code>.</p>
 <h3 id="tls_mode">tls_mode</h3>
 <p>The TLS mode for incoming connections. It can be one of the following:</p>
 <ul>
@@ -1707,6 +2001,9 @@ Comment this out if you want to log to stdout.</p>
 <h3 id="worker_threads">worker_threads</h3>
 <p>The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
 The more workers there are, the faster the system works, but only up to a certain limit (cpu count).</p>
+<p>This parameter also controls the number of shards in internal concurrent hash maps (DashMap).
+The shard count is calculated as <code>worker_threads * 4</code> rounded up to the nearest power of 2 (minimum 4 shards).
+This is important for Kubernetes deployments where CPU count detection may be incorrect, causing unnecessary overhead.</p>
 <p>Default: <code>4</code>.</p>
 <h3 id="worker_cpu_affinity_pinning">worker_cpu_affinity_pinning</h3>
 <p>Automatically assign workers to different CPUs (man 3 cpu_set).</p>
@@ -1805,20 +2102,20 @@ If the limit is reached, the client will receive an error (256 MB).</p>
 <li>As an object with <code>content</code> containing the rules as a string</li>
 </ul>
 <p>Examples:</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[general]</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># Inline content (triple-quoted TOML string)</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">pg_hba</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="s2"># type   database  user   address         method</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s2">host     all       all    10.0.0.0/8      md5</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s2">hostssl  all       all    0.0.0.0/0       scram-sha-256</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s2">hostnossl all      all    192.168.1.0/24  trust</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s2">&quot;&quot;&quot;</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Or load from file</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># pg_hba = { path = &quot;./pg_hba.conf&quot; }</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># Or embed as a single-line string</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># pg_hba = { content = &quot;host all all 127.0.0.1/32 trust&quot; }</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[general]</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="c1"># Inline content (triple-quoted TOML string)</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">pg_hba</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="s2"># type   database  user   address         method</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="s2">host     all       all    10.0.0.0/8      md5</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="s2">hostssl  all       all    0.0.0.0/0       scram-sha-256</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="s2">hostnossl all      all    192.168.1.0/24  trust</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="c1"># Or load from file</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="c1"># pg_hba = { path = &quot;./pg_hba.conf&quot; }</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="c1"># Or embed as a single-line string</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="c1"># pg_hba = { content = &quot;host all all 127.0.0.1/32 trust&quot; }</span>
 </span></code></pre></div>
 <p>Supported fields and methods:
 - Connection types: <code>local</code>, <code>host</code>, <code>hostssl</code>, <code>hostnossl</code> (TLS-aware matching is honored)
@@ -1836,7 +2133,7 @@ If the limit is reached, the client will receive an error (256 MB).</p>
 <p>Admin console access:
 - <code>general.pg_hba</code> rules apply to the special admin database <code>pgdoorman</code> as well.
 - This means you can allow admin access with the <code>trust</code> method when a matching rule is present, for example:
-  <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>host  pgdoorman  admin  127.0.0.1/32  trust
+  <div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>host  pgdoorman  admin  127.0.0.1/32  trust
 </span></code></pre></div></p>
 <p>Notes and limitations:
 - Only a minimal subset of <code>pg_hba.conf</code> is supported that is sufficient for most proxy use-cases (type, database, user, address, method). Additional options (like <code>clientcert</code>) are currently ignored.

@@ -1338,6 +1338,16 @@
 <h3 id="3.1.0">3.1.0 <small>Jan 18, 2026</small></h3>
 <p><strong>New Features:</strong></p>
 <ul>
+<li><strong>YAML configuration support</strong>: Added support for YAML configuration files (<code>.yaml</code>, <code>.yml</code>) as the primary and recommended format. The format is automatically detected based on file extension. TOML format remains fully supported for backward compatibility.</li>
+<li>The <code>generate</code> command now outputs YAML or TOML based on the output file extension.</li>
+<li>Include files can mix YAML and TOML formats.</li>
+<li>New array syntax for users in YAML: <code>users: [{ username: "user1", ... }]</code></li>
+<li><strong>TOML backward compatibility</strong>: Full backward compatibility with legacy TOML format <code>[pools.*.users.0]</code> is maintained. Both the legacy map format and the new array format <code>[[pools.*.users]]</code> are supported.</li>
+<li><strong>Username uniqueness validation</strong>: Added validation to reject duplicate usernames within a pool, ensuring configuration correctness.</li>
+<li><strong>Human-readable configuration values</strong>: Duration and byte size parameters now support human-readable formats while maintaining backward compatibility with numeric values:</li>
+<li>Duration: <code>"3s"</code>, <code>"5m"</code>, <code>"1h"</code>, <code>"1d"</code> (or milliseconds: <code>3000</code>)</li>
+<li>Byte size: <code>"1MB"</code>, <code>"256M"</code>, <code>"1GB"</code> (or bytes: <code>1048576</code>)</li>
+<li>Example: <code>connect_timeout: "3s"</code> instead of <code>connect_timeout: 3000</code></li>
 <li><strong>Foreground mode binary upgrade</strong>: Added support for binary upgrade in foreground mode by passing the listener socket to the new process via <code>--inherit-fd</code> argument. This enables zero-downtime upgrades without requiring daemon mode.</li>
 <li><strong>Improved graceful shutdown behavior</strong>: </li>
 <li>During graceful shutdown, only clients with active transactions are now counted (instead of all connected clients), allowing faster shutdown when clients are idle.</li>
