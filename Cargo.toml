@@ -26,12 +26,12 @@ quanta = "0.12"
 arc-swap = "1.7.1"
 toml = "0.8"
 prometheus = "0.14.0"
-tokio = { version = "1.44.2", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal", "time"] }
+tokio = { version = "1.48.4", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal", "time"] }
 exitcode = "1.1.2"
 pin-project = "1"
 bytes = "1.10.1"
 md-5 = "0.10"
-socket2 = { version = "0.5.9", features = ["all"] }
+socket2 = { version = "0.6.1", features = ["all"] }
 chrono = "0.4"
 rand = "0.9.1"
 base64 = "0.22.1"

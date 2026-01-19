@@ -13,11 +13,6 @@ use tokio::signal::unix::{signal as unix_signal, SignalKind};
 use tokio::signal::windows as win_signal;
 use tokio::{runtime::Builder, sync::mpsc};
 
-#[cfg(not(windows))]
-use std::os::fd::{AsRawFd, FromRawFd};
-#[cfg(not(windows))]
-use std::os::unix::process::CommandExt;
-
 use crate::app::args::Args;
 use crate::config::{get_config, reload_config, Config};
 use crate::daemon;
@@ -27,6 +22,11 @@ use crate::prometheus::start_prometheus_server;
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use crate::utils::core_affinity;
 use crate::utils::format_duration;
+use socket2::SockRef;
+#[cfg(not(windows))]
+use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(not(windows))]
+use std::os::unix::process::CommandExt;
 
 use crate::app::tls::init_tls;
 
@@ -67,14 +67,28 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         core_affinity::set_for_current(core_ids[thread_id.fetch_add(1, Ordering::SeqCst)]);
     }
 
-    let runtime = Builder::new_multi_thread()
+    let mut runtime_builder = Builder::new_multi_thread();
+    runtime_builder
         .worker_threads(config.general.worker_threads)
         .enable_all()
-        .thread_name("worker-pg-doorman")
-        .global_queue_interval(config.general.tokio_global_queue_interval)
-        .event_interval(config.general.tokio_event_interval)
-        .thread_stack_size(config.general.worker_stack_size.as_usize())
-        .max_blocking_threads(16 * config.general.worker_threads)
+        .thread_name("worker-pg-doorman");
+
+    // Apply optional tokio runtime parameters only if explicitly configured.
+    // Modern tokio versions handle defaults well, so these are optional.
+    if let Some(interval) = config.general.tokio_global_queue_interval {
+        runtime_builder.global_queue_interval(interval);
+    }
+    if let Some(interval) = config.general.tokio_event_interval {
+        runtime_builder.event_interval(interval);
+    }
+    if let Some(ref stack_size) = config.general.worker_stack_size {
+        runtime_builder.thread_stack_size(stack_size.as_usize());
+    }
+    if let Some(max_threads) = config.general.max_blocking_threads {
+        runtime_builder.max_blocking_threads(max_threads);
+    }
+
+    let runtime = runtime_builder
         .on_thread_start(move || {
             if worker_cpu_affinity_pinning {
                 let core_id = thread_id.fetch_add(1, Ordering::SeqCst);
@@ -125,12 +139,14 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             listen_socket
                 .set_nodelay(true)
                 .expect("can't set nodelay");
-            listen_socket
-                .set_linger(Some(Duration::from_secs(0)))
-                .expect("can't set linger 0");
+            {
+                let sock_ref = SockRef::from(&listen_socket);
+                sock_ref.set_linger(Some(Duration::from_secs(0)))
+                    .expect("could not configure tcp_so_linger for socket");
+            }
             // IPTOS_LOWDELAY: u8 = 0x10;
             if addr.is_ipv4() {
-                match listen_socket.set_tos(0x10) {
+                match listen_socket.set_tos_v4(0x10) {
                     Ok(_) => (),
                     Err(err) => {
                         warn!("Can't set IPTOS_LOWDELAY: {err:?}");
