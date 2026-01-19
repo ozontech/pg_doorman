@@ -985,6 +985,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#max_blocking_threads" class="md-nav__link">
+    <span class="md-ellipsis">
+      max_blocking_threads
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#connect_timeout" class="md-nav__link">
     <span class="md-ellipsis">
       connect_timeout
@@ -1590,6 +1599,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#max_blocking_threads" class="md-nav__link">
+    <span class="md-ellipsis">
+      max_blocking_threads
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#connect_timeout" class="md-nav__link">
     <span class="md-ellipsis">
       connect_timeout
@@ -2009,17 +2027,25 @@ This is important for Kubernetes deployments where CPU count detection may be in
 <p>Automatically assign workers to different CPUs (man 3 cpu_set).</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="tokio_global_queue_interval">tokio_global_queue_interval</h3>
-<p><a href="https://docs.rs/tokio/latest/tokio/">Tokio runtime settings</a>.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>5</code>.</p>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.global_queue_interval">Tokio runtime settings</a>.
+Controls how often the scheduler checks the global task queue.
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: not set (uses tokio's default).</p>
 <h3 id="tokio_event_interval">tokio_event_interval</h3>
-<p><a href="https://docs.rs/tokio/latest/tokio/">Tokio runtime settings</a>.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>1</code>.</p>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.event_interval">Tokio runtime settings</a>.
+Controls how often the scheduler checks for external events (I/O, timers).
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: not set (uses tokio's default).</p>
 <h3 id="worker_stack_size">worker_stack_size</h3>
-<p><a href="https://docs.rs/tokio/latest/tokio/">Tokio runtime settings</a>.
-It is strongly recommended not to change this parameter if you do not understand what you are doing.</p>
-<p>Default: <code>8388608</code>.</p>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.thread_stack_size">Tokio runtime settings</a>.
+Sets the stack size for worker threads.
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: not set (uses tokio's default).</p>
+<h3 id="max_blocking_threads">max_blocking_threads</h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.max_blocking_threads">Tokio runtime settings</a>.
+Sets the maximum number of threads for blocking operations.
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: not set (uses tokio's default).</p>
 <h3 id="connect_timeout">connect_timeout</h3>
 <p>Connection timeout to server in milliseconds.</p>
 <p>Default: <code>3000</code> (3 sec).</p>
