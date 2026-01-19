@@ -30,8 +30,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
     let pg_port = world.pg_port.expect("PostgreSQL must be running");
 
     // Create empty client-server map (use default 4 worker_threads for tests)
-    let client_server_map: ClientServerMap =
-        Arc::new(pg_doorman::utils::dashmap::new_dashmap(4));
+    let client_server_map: ClientServerMap = Arc::new(pg_doorman::utils::dashmap::new_dashmap(4));
 
     // Create Address for the PostgreSQL server
     let address = Address {
@@ -62,7 +61,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         false, // log_client_parameter_status_changes
         0,     // prepared_statement_cache_size
         "pool_bench".to_string(),
-        4,     // max_concurrent_creates
+        4, // max_concurrent_creates
     );
 
     // Create Pool with configuration
@@ -73,7 +72,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
             create: Some(Duration::from_secs(10)),
             recycle: None,
         },
-        queue_mode: QueueMode::Fifo,
+        queue_mode: QueueMode::Lifo,
     };
 
     let pool = Pool::builder(server_pool).config(config).build();
@@ -82,18 +81,48 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
 }
 
 #[when(regex = r#"^I benchmark pool\.get with (\d+) iterations and save as "([^"]+)"$"#)]
-async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iterations: usize, name: String) {
+async fn benchmark_pool_get_iterations_named(
+    world: &mut DoormanWorld,
+    iterations: usize,
+    name: String,
+) {
+    // Single client sequential benchmark
+    benchmark_pool_get_impl(world, 1, iterations, name).await;
+}
+
+#[when(
+    regex = r#"^I benchmark pool\.get with (\d+) concurrent clients and (\d+) iterations per client and save as "([^"]+)"$"#
+)]
+async fn benchmark_pool_get_concurrent(
+    world: &mut DoormanWorld,
+    clients: usize,
+    iterations_per_client: usize,
+    name: String,
+) {
+    benchmark_pool_get_impl(world, clients, iterations_per_client, name).await;
+}
+
+/// Internal implementation for pool.get benchmarks supporting both single and concurrent clients
+async fn benchmark_pool_get_impl(
+    world: &mut DoormanWorld,
+    clients: usize,
+    iterations_per_client: usize,
+    name: String,
+) {
     let internal_pool = world
         .internal_pool
         .as_ref()
         .expect("Internal pool must be set up");
 
     let pool = &internal_pool.pool;
-    let mut latencies = Vec::with_capacity(iterations);
+    let total_iterations = clients * iterations_per_client;
 
     // Warm-up: create initial connections
     {
-        let _obj = pool.get().await.expect("Failed to get connection for warm-up");
+        let _obj = pool
+            .get()
+            .await
+            .expect("Failed to get connection for warm-up");
     }
 
     // Start CPU profiler with pprof only if PPROF=1 is set
@@ -110,19 +139,86 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
         None
     };
 
-    let start = Instant::now();
-    for _ in 0..iterations {
-        let iter_start = Instant::now();
-        let obj = pool.get().await.expect("Failed to get connection");
-        let latency = iter_start.elapsed();
-        latencies.push(latency);
-        drop(obj); // Return to pool
-    }
-    let total_elapsed = start.elapsed();
+    let latencies = if clients == 1 {
+        // Single client sequential benchmark
+        let mut latencies = Vec::with_capacity(iterations_per_client);
+        for _ in 0..iterations_per_client {
+            let iter_start = Instant::now();
+            let obj = pool.get().await.expect("Failed to get connection");
+            let latency = iter_start.elapsed();
+            latencies.push(latency);
+            drop(obj); // Return to pool
+        }
+        latencies
+    } else {
+        // Concurrent clients benchmark using tokio tasks
+        let pool = pool.clone();
+        let mut handles = Vec::with_capacity(clients);
 
-    let ops_per_sec = iterations as f64 / total_elapsed.as_secs_f64();
+        for _ in 0..clients {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                let mut latencies = Vec::with_capacity(iterations_per_client);
+                for _ in 0..iterations_per_client {
+                    let iter_start = Instant::now();
+                    let obj = pool.get().await.expect("Failed to get connection");
+                    let latency = iter_start.elapsed();
+                    latencies.push(latency);
+                    drop(obj); // Return to pool
+                }
+                latencies
+            }));
+        }
+
+        // Collect results from all clients
+        let mut all_latencies = Vec::with_capacity(total_iterations);
+        for handle in handles {
+            let client_latencies = handle.await.expect("Client task failed");
+            all_latencies.extend(client_latencies);
+        }
+        all_latencies
+    };
+
+    // Note: we measure wall-clock time for the concurrent case differently
+    // For accurate throughput, we re-run the benchmark with timing
+    let (latencies, total_elapsed) = if clients == 1 {
+        // For single client, latencies are already collected above, just sum them
+        let total: Duration = latencies.iter().sum();
+        (latencies, total)
+    } else {
+        // For concurrent clients, run again with wall-clock timing
+        let pool = pool.clone();
+        let mut handles = Vec::with_capacity(clients);
+
+        let start = Instant::now();
+        for _ in 0..clients {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                let mut latencies = Vec::with_capacity(iterations_per_client);
+                for _ in 0..iterations_per_client {
+                    let iter_start = Instant::now();
+                    let obj = pool.get().await.expect("Failed to get connection");
+                    let latency = iter_start.elapsed();
+                    latencies.push(latency);
+                    drop(obj);
+                }
+                latencies
+            }));
+        }
+
+        let mut all_latencies = Vec::with_capacity(total_iterations);
+        for handle in handles {
+            let client_latencies = handle.await.expect("Client task failed");
+            all_latencies.extend(client_latencies);
+        }
+        let total_elapsed = start.elapsed();
+        (all_latencies, total_elapsed)
+    };
+
+    let ops_per_sec = total_iterations as f64 / total_elapsed.as_secs_f64();
 
     // Calculate percentiles
+    let mut latencies = latencies;
     latencies.sort();
     let p50 = latencies[latencies.len() / 2];
     let p95 = latencies[(latencies.len() as f64 * 0.95) as usize];
@@ -130,7 +226,9 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
 
     // Output to stdout
     println!("\n=== Pool.get Benchmark Results [{}] ===", name);
-    println!("Total iterations: {}", iterations);
+    println!("Concurrent clients: {}", clients);
+    println!("Iterations per client: {}", iterations_per_client);
+    println!("Total iterations: {}", total_iterations);
     println!("Total time: {:?}", total_elapsed);
     println!("Throughput: {:.0} ops/sec", ops_per_sec);
     println!("Latency p50: {:?}", p50);
@@ -139,14 +237,17 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
 
     // Print pprof CPU timing breakdown only if profiling was enabled
     let total_samples = if let Some(guard) = guard {
-        let report = guard.report().build().expect("Failed to build pprof report");
-        
+        let report = guard
+            .report()
+            .build()
+            .expect("Failed to build pprof report");
+
         println!("\n--- CPU Profile (pprof) Top Functions ---");
-        
+
         // Aggregate samples by function name across all stack frames
         let mut func_samples: HashMap<String, usize> = HashMap::new();
         let mut total_samples: usize = 0;
-        
+
         for (frames, count) in report.data.iter() {
             total_samples += *count as usize;
             // Iterate through all stack frames to find meaningful function names
@@ -154,11 +255,11 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
                 for symbol in symbols.iter() {
                     let name = symbol.name();
                     // Skip backtrace/profiler internal functions
-                    if name.contains("backtrace::") 
-                        || name.contains("pprof::") 
+                    if name.contains("backtrace::")
+                        || name.contains("pprof::")
                         || name.contains("__pthread")
                         || name.contains("_sigtramp")
-                        || name.starts_with("_") 
+                        || name.starts_with("_")
                     {
                         continue;
                     }
@@ -166,11 +267,11 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
                 }
             }
         }
-        
+
         // Sort by sample count
         let mut frame_times: Vec<(String, usize)> = func_samples.into_iter().collect();
         frame_times.sort_by(|a, b| b.1.cmp(&a.1));
-        
+
         println!("Total CPU samples: {}", total_samples);
         println!("| Function | Samples | % |");
         println!("|----------|---------|---|");
@@ -189,7 +290,7 @@ async fn benchmark_pool_get_iterations_named(world: &mut DoormanWorld, iteration
             println!("| {} | {} | {:.1}% |", display_name, count, pct);
         }
         println!("==========================================\n");
-        
+
         total_samples
     } else {
         println!("(pprof profiling disabled, set PPROF=1 to enable)\n");
@@ -226,7 +327,7 @@ async fn print_benchmark_results_to_stdout(world: &mut DoormanWorld) {
     println!("\n=== All Benchmark Results ===");
     println!("| Test | Throughput | p50 | p95 | p99 |");
     println!("|------|------------|-----|-----|-----|");
-    
+
     // Find main test names (without _pXX_ns suffix)
     let mut test_names: Vec<String> = world
         .bench_results
@@ -235,12 +336,21 @@ async fn print_benchmark_results_to_stdout(world: &mut DoormanWorld) {
         .cloned()
         .collect();
     test_names.sort();
-    
+
     for test_name in &test_names {
         let ops = world.bench_results.get(test_name.as_str()).unwrap_or(&0.0);
-        let p50 = world.bench_results.get(&format!("{}_p50_ns", test_name)).unwrap_or(&0.0);
-        let p95 = world.bench_results.get(&format!("{}_p95_ns", test_name)).unwrap_or(&0.0);
-        let p99 = world.bench_results.get(&format!("{}_p99_ns", test_name)).unwrap_or(&0.0);
+        let p50 = world
+            .bench_results
+            .get(&format!("{}_p50_ns", test_name))
+            .unwrap_or(&0.0);
+        let p95 = world
+            .bench_results
+            .get(&format!("{}_p95_ns", test_name))
+            .unwrap_or(&0.0);
+        let p99 = world
+            .bench_results
+            .get(&format!("{}_p99_ns", test_name))
+            .unwrap_or(&0.0);
         println!(
             "| {} | {:.0} ops/sec | {:.0} ns | {:.0} ns | {:.0} ns |",
             test_name, ops, p50, p95, p99

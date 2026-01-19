@@ -19,7 +19,8 @@ title: Changelog
   - Byte size: `"1MB"`, `"256M"`, `"1GB"` (or bytes: `1048576`)
   - Example: `connect_timeout: "3s"` instead of `connect_timeout: 3000`
 - **Foreground mode binary upgrade**: Added support for binary upgrade in foreground mode by passing the listener socket to the new process via `--inherit-fd` argument. This enables zero-downtime upgrades without requiring daemon mode.
-- **Improved graceful shutdown behavior**: 
+- **Optional tokio runtime parameters**: The following tokio runtime parameters are now optional and default to `None` (using tokio's built-in defaults): `tokio_global_queue_interval`, `tokio_event_interval`, `worker_stack_size`, and the new `max_blocking_threads`. Modern tokio versions handle these parameters well by default, so explicit configuration is no longer required in most cases.
+- **Improved graceful shutdown behavior**:
   - During graceful shutdown, only clients with active transactions are now counted (instead of all connected clients), allowing faster shutdown when clients are idle.
   - After a client completes their transaction during shutdown, they receive a proper PostgreSQL protocol error (`58006 - pooler is shut down now`) instead of a connection reset.
   - Server connections are immediately released (marked as bad) after transaction completion during shutdown to conserve PostgreSQL connections.

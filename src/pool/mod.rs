@@ -354,7 +354,10 @@ impl std::fmt::Debug for ServerPool {
                 "log_client_parameter_status_changes",
                 &self.log_client_parameter_status_changes,
             )
-            .field("prepared_statement_cache_size", &self.prepared_statement_cache_size)
+            .field(
+                "prepared_statement_cache_size",
+                &self.prepared_statement_cache_size,
+            )
             .field(
                 "connection_counter",
                 &self.connection_counter.load(Ordering::Relaxed),
@@ -394,9 +397,11 @@ impl ServerPool {
     /// Uses a semaphore to limit concurrent connection creation instead of serializing with mutex.
     pub async fn create(&self) -> Result<Server, Error> {
         // Acquire semaphore permit to limit concurrent creates
-        let _permit = self.create_semaphore.acquire().await.map_err(|_| {
-            Error::ServerStartupReadParameters("Semaphore closed".to_string())
-        })?;
+        let _permit = self
+            .create_semaphore
+            .acquire()
+            .await
+            .map_err(|_| Error::ServerStartupReadParameters("Semaphore closed".to_string()))?;
 
         let conn_num = self.connection_counter.fetch_add(1, Ordering::Relaxed) + 1;
         info!(

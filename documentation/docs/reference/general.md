@@ -246,24 +246,35 @@ Default: `false`.
 
 ### tokio_global_queue_interval
 
-[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/).
-It is strongly recommended not to change this parameter if you do not understand what you are doing.
+[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.global_queue_interval).
+Controls how often the scheduler checks the global task queue.
+Modern tokio versions handle this well by default, so this parameter is optional.
 
-Default: `5`.
+Default: not set (uses tokio's default).
 
 ### tokio_event_interval
 
-[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/).
-It is strongly recommended not to change this parameter if you do not understand what you are doing.
+[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.event_interval).
+Controls how often the scheduler checks for external events (I/O, timers).
+Modern tokio versions handle this well by default, so this parameter is optional.
 
-Default: `1`.
+Default: not set (uses tokio's default).
 
 ### worker_stack_size
 
-[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/).
-It is strongly recommended not to change this parameter if you do not understand what you are doing.
+[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.thread_stack_size).
+Sets the stack size for worker threads.
+Modern tokio versions handle this well by default, so this parameter is optional.
 
-Default: `8388608`.
+Default: not set (uses tokio's default).
+
+### max_blocking_threads
+
+[Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.max_blocking_threads).
+Sets the maximum number of threads for blocking operations.
+Modern tokio versions handle this well by default, so this parameter is optional.
+
+Default: not set (uses tokio's default).
 
 
 ### connect_timeout

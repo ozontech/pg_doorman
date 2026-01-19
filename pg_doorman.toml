@@ -140,15 +140,25 @@ worker_threads = 4
 # Default: false
 worker_cpu_affinity_pinning = false
 
-# Stack size for each worker thread (in bytes).
-# Default: 8388608 (8 MB)
-worker_stack_size = 8388608
-
 # Tokio runtime settings (advanced, change only if you understand the implications).
-# Default: 5
-tokio_global_queue_interval = 5
-# Default: 1
-tokio_event_interval = 1
+# Modern tokio versions handle these well by default, so these parameters are optional.
+# Uncomment only if you need to override tokio's defaults.
+
+# Stack size for each worker thread (in bytes).
+# Default: not set (uses tokio's default)
+# worker_stack_size = 8388608
+
+# Maximum number of threads for blocking operations.
+# Default: not set (uses tokio's default)
+# max_blocking_threads = 64
+
+# Controls how often the scheduler checks the global task queue.
+# Default: not set (uses tokio's default)
+# tokio_global_queue_interval = 5
+
+# Controls how often the scheduler checks for external events (I/O, timers).
+# Default: not set (uses tokio's default)
+# tokio_event_interval = 1
 
 # --------------------------------------------------------------------------
 # Pool Behavior

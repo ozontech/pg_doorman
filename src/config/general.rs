@@ -18,11 +18,11 @@ pub struct General {
     #[serde(default = "General::default_port")]
     pub port: u16,
 
-    #[serde(default = "General::default_tokio_global_queue_interval")]
-    pub tokio_global_queue_interval: u32,
+    #[serde(default)]
+    pub tokio_global_queue_interval: Option<u32>,
 
-    #[serde(default = "General::default_tokio_event_interval")]
-    pub tokio_event_interval: u32,
+    #[serde(default)]
+    pub tokio_event_interval: Option<u32>,
 
     #[serde(default = "General::default_connect_timeout")]
     pub connect_timeout: Duration,
@@ -92,8 +92,11 @@ pub struct General {
     #[serde(default = "General::default_worker_cpu_affinity_pinning")]
     pub worker_cpu_affinity_pinning: bool,
     // worker_stack_size: размера стэка каждого воркера.
-    #[serde(default = "General::default_worker_stack_size")] // 8388608
-    pub worker_stack_size: ByteSize,
+    #[serde(default)]
+    pub worker_stack_size: Option<ByteSize>,
+    // max_blocking_threads: максимальное количество блокирующих потоков tokio.
+    #[serde(default)]
+    pub max_blocking_threads: Option<usize>,
     // tcp backlog.
     #[serde(default = "General::default_backlog")]
     pub backlog: u32,
@@ -150,14 +153,6 @@ impl General {
         5432
     }
 
-    pub fn default_tokio_global_queue_interval() -> u32 {
-        5
-    }
-
-    pub fn default_tokio_event_interval() -> u32 {
-        1
-    }
-
     pub fn default_tls_rate_limit_per_second() -> usize {
         0
     }
@@ -187,10 +182,6 @@ impl General {
 
     pub fn default_worker_cpu_affinity_pinning() -> bool {
         false
-    }
-
-    pub fn default_worker_stack_size() -> ByteSize {
-        ByteSize::from_mb(8) // 8mb
     }
 
     pub fn default_max_memory_usage() -> ByteSize {
@@ -319,8 +310,8 @@ impl Default for General {
         General {
             host: Self::default_host(),
             port: Self::default_port(),
-            tokio_global_queue_interval: Self::default_tokio_global_queue_interval(),
-            tokio_event_interval: Self::default_tokio_event_interval(),
+            tokio_global_queue_interval: None,
+            tokio_event_interval: None,
             connect_timeout: General::default_connect_timeout(),
             query_wait_timeout: General::default_query_wait_timeout(),
             idle_timeout: General::default_idle_timeout(),
@@ -332,7 +323,8 @@ impl Default for General {
             max_concurrent_creates: Self::default_max_concurrent_creates(),
             worker_threads: Self::default_worker_threads(),
             worker_cpu_affinity_pinning: Self::default_worker_cpu_affinity_pinning(),
-            worker_stack_size: Self::default_worker_stack_size(),
+            worker_stack_size: None,
+            max_blocking_threads: None,
             tcp_keepalives_idle: Self::default_tcp_keepalives_idle(),
             tcp_keepalives_count: Self::default_tcp_keepalives_count(),
             tcp_keepalives_interval: Self::default_tcp_keepalives_interval(),

@@ -34,7 +34,7 @@ pub fn configure_tcp_socket_for_cancel(stream: &TcpStream) {
         Ok(_) => {}
         Err(err) => error!("Could not configure tcp_so_linger (node) for socket: {err}"),
     }
-    match sock_ref.set_nodelay(false) {
+    match sock_ref.set_tcp_nodelay(false) {
         Ok(_) => {}
         Err(err) => error!("Could not configure no delay (false) for socket: {err}"),
     }
@@ -50,7 +50,7 @@ pub fn configure_tcp_socket(stream: &TcpStream) {
         Err(err) => error!("Could not configure tcp_so_linger for socket: {err}"),
     }
 
-    match sock_ref.set_nodelay(conf.general.tcp_no_delay) {
+    match sock_ref.set_tcp_nodelay(conf.general.tcp_no_delay) {
         Ok(_) => {}
         Err(err) => error!("Could not configure no delay for socket: {err}"),
     }

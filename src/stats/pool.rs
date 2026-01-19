@@ -404,13 +404,22 @@ impl PoolStats {
             let (xact_p50, xact_p90, xact_p95, xact_p99) = address.get_xact_percentiles();
 
             // Create a new PoolStats instance for this pool with pre-calculated percentiles
-            let mut current =
-                PoolStats::new_with_percentiles(
-                    identifier.clone(),
-                    pool.settings.pool_mode,
-                    Percentile { p50: query_p50, p90: query_p90, p95: query_p95, p99: query_p99 },
-                    Percentile { p50: xact_p50, p90: xact_p90, p95: xact_p95, p99: xact_p99 },
-                );
+            let mut current = PoolStats::new_with_percentiles(
+                identifier.clone(),
+                pool.settings.pool_mode,
+                Percentile {
+                    p50: query_p50,
+                    p90: query_p90,
+                    p95: query_p95,
+                    p99: query_p99,
+                },
+                Percentile {
+                    p50: xact_p50,
+                    p90: xact_p90,
+                    p95: xact_p95,
+                    p99: xact_p99,
+                },
+            );
 
             // Load average statistics
             current.avg_xact_count = address.averages.xact_count.load(Ordering::Relaxed);
@@ -538,7 +547,6 @@ impl PoolStats {
     ) -> HashMap<PoolIdentifier, PoolStats> {
         pool_map
     }
-
 }
 
 impl IntoIterator for PoolStats {

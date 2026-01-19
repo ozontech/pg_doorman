@@ -12,7 +12,6 @@ lto = true
 
 [dependencies]
 tikv-jemallocator = { version = "0.6.0", features = ["background_threads_runtime_support"] }
-
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.20", features = ["json", "env-filter", "std"]}
 log = "0.4.27"
@@ -27,12 +26,12 @@ quanta = "0.12"
 arc-swap = "1.7.1"
 toml = "0.8"
 prometheus = "0.14.0"
-tokio = { version = "1.44.2", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal", "time"] }
+tokio = { version = "1.48.4", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal", "time"] }
 exitcode = "1.1.2"
 pin-project = "1"
 bytes = "1.10.1"
 md-5 = "0.10"
-socket2 = { version = "0.5.9", features = ["all"] }
+socket2 = { version = "0.6.1", features = ["all"] }
 chrono = "0.4"
 rand = "0.9.1"
 base64 = "0.22.1"
@@ -75,6 +74,7 @@ portpicker = "0.1"
 tokio-postgres = "0.7"
 criterion = "0.5"
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
+serial_test = "3"
 
 [[bin]]
 name = "pg_doorman"

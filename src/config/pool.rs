@@ -95,7 +95,10 @@ pub struct Pool {
 
     pub prepared_statements_cache_size: Option<usize>,
 
-    #[serde(default = "Pool::default_users", deserialize_with = "deserialize_users")]
+    #[serde(
+        default = "Pool::default_users",
+        deserialize_with = "deserialize_users"
+    )]
     pub users: Vec<User>,
     // Note, don't put simple fields below these configs. There's a compatibility issue with TOML that makes it
     // incompatible to have simple fields in TOML after complex objects. See
