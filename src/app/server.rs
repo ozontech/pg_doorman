@@ -344,6 +344,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             // Foreground mode: start new process with inherited listener fd
                             info!("Starting new process with inherited listener fd={}", listener_fd);
 
+                            // Get current process group to pass to child
+                            let current_pgid = unsafe { libc::getpgrp() };
                             // Create a pipe for readiness signaling
                             let mut pipe_fds: [libc::c_int; 2] = [0; 2];
                             if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
@@ -365,6 +367,11 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                             // so they are inherited by the child
                                             libc::fcntl(listener_fd, libc::F_SETFD, 0);
                                             libc::fcntl(pipe_write_fd, libc::F_SETFD, 0);
+                                            // Explicitly set process group to parent's group
+                                            // This ensures the child stays in the same process group
+                                            // even after parent dies
+                                            libc::setpgid(0, current_pgid);
+
                                             Ok(())
                                         });
                                     cmd.spawn()
