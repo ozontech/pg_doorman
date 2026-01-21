@@ -385,19 +385,18 @@ impl Server {
         prepared_statements::add_to_cache(&mut self.prepared_statement_cache, &self.stats, name)
     }
 
-    fn remove_prepared_statement_from_cache(&mut self, name: &str) {
-        prepared_statements::remove_from_cache(
-            &mut self.prepared_statement_cache,
-            &self.stats,
-            name,
-        );
+    #[inline]
+    pub fn has_prepared_statement(&mut self, name: &str) -> bool {
+        prepared_statements::has(&self.prepared_statement_cache, &self.stats, name)
     }
 
     pub async fn register_prepared_statement(
         &mut self,
         parse: &Parse,
         should_send_parse_to_server: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<BytesMut>, Error> {
+        let mut bytes_to_send_later = None;
+
         if !self.has_prepared_statement(&parse.name) {
             self.registering_prepared_statement
                 .push_back(parse.name.clone());
@@ -412,24 +411,27 @@ impl Server {
             // If we evict something, we need to close it on the server
             // We do this by adding it to the messages we're sending to the server before the sync
             if let Some(evicted_name) = self.add_prepared_statement_to_cache(&parse.name) {
-                self.remove_prepared_statement_from_cache(&evicted_name);
                 let close_bytes: BytesMut = Close::new(&evicted_name).try_into()?;
                 bytes.extend_from_slice(&close_bytes);
-            };
+            }
 
             // If we have a parse or close we need to send to the server, send them and sync
             if !bytes.is_empty() {
-                bytes.extend_from_slice(&sync());
+                if should_send_parse_to_server {
+                    bytes.extend_from_slice(&sync());
 
-                self.send_and_flush(&bytes).await?;
+                    self.send_and_flush(&bytes).await?;
 
-                let mut noop = tokio::io::sink();
-                loop {
-                    self.recv(&mut noop, None).await?;
+                    let mut noop = tokio::io::sink();
+                    loop {
+                        self.recv(&mut noop, None).await?;
 
-                    if !self.is_data_available() {
-                        break;
+                        if !self.is_data_available() {
+                            break;
+                        }
                     }
+                } else {
+                    bytes_to_send_later = Some(bytes);
                 }
             }
         };
@@ -439,7 +441,7 @@ impl Server {
         if !self.has_prepared_statement(&parse.name) {
             Err(Error::PreparedStatementError)
         } else {
-            Ok(())
+            Ok(bytes_to_send_later)
         }
     }
 
@@ -454,13 +456,6 @@ impl Server {
                 self.address.port,
             ),
         );
-    }
-
-    /// Determines if the server already has a prepared statement with the given name.
-    /// Updates the prepared statement cache hit/miss counters.
-    #[inline]
-    pub fn has_prepared_statement(&mut self, name: &str) -> bool {
-        prepared_statements::has(&self.prepared_statement_cache, &self.stats, name)
     }
 
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {

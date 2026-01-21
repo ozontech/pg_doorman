@@ -1294,6 +1294,28 @@ pub async fn send_parse_to_session(
 }
 
 #[when(
+    regex = r#"^we send (\d+) Parse requests with different queries to session "([^"]+)"$"#
+)]
+pub async fn send_multiple_parse_to_session(
+    world: &mut DoormanWorld,
+    count: usize,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    for i in 1..=count {
+        let name = format!("stmt_{}", i);
+        let query = format!("SELECT {}", i);
+        conn.send_parse(&name, &query)
+            .await
+            .expect("Failed to send Parse");
+    }
+}
+
+#[when(
     regex = r#"^we send Bind "([^"]*)" to "([^"]*)" with params "([^"]*)" to session "([^"]+)"$"#
 )]
 #[then(

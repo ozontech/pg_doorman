@@ -22,28 +22,8 @@ where
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
-        match self.prepared_statements.get(&key) {
-            Some((parse, hash)) => {
-                debug!("Prepared statement `{key:?}` found in cache");
-                // In this case we want to send the parse message to the server
-                // since pgcat is initiating the prepared statement on this specific server
-                match self
-                    .register_parse_to_server_cache(true, hash, parse, pool, server)
-                    .await
-                {
-                    Ok(_) => (),
-                    Err(err) => match err {
-                        Error::PreparedStatementError => {
-                            debug!("Removed {key:?} from client cache");
-                            self.prepared_statements.remove(&key);
-                        }
-
-                        _ => {
-                            return Err(err);
-                        }
-                    },
-                }
-            }
+        let (parse, hash) = match self.prepared_statements.get(&key) {
+            Some((parse, hash)) => (parse.clone(), *hash),
 
             None => {
                 return Err(Error::ClientError(format!(
@@ -52,6 +32,26 @@ where
             }
         };
 
+        debug!("Prepared statement `{:?}` found in cache", key);
+        // In this case we want to send the parse message to the server
+        // since pgcat is initiating the prepared statement on this specific server
+        match self
+            .register_parse_to_server_cache(true, &hash, &parse, pool, server)
+            .await
+        {
+            Ok(_) => (),
+            Err(err) => match err {
+                Error::PreparedStatementError => {
+                    debug!("Removed {:?} from client cache", key);
+                    self.prepared_statements.remove(&key);
+                }
+
+                _ => {
+                    return Err(err);
+                }
+            },
+        }
+
         Ok(())
     }
 
@@ -59,7 +59,7 @@ where
     ///
     /// Also updates the pool LRU that this parse was used recently
     pub(crate) async fn register_parse_to_server_cache(
-        &self,
+        &mut self,
         should_send_parse_to_server: bool,
         hash: &u64,
         parse: &Arc<Parse>,
@@ -71,9 +71,12 @@ where
 
         debug!("Checking for prepared statement {}", parse.name);
 
-        server
+        if let Some(bytes) = server
             .register_prepared_statement(parse, should_send_parse_to_server)
-            .await?;
+            .await?
+        {
+            self.buffer.put(&bytes[..]);
+        }
 
         Ok(())
     }
