@@ -316,10 +316,23 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         // Binary upgrade: start new process with inherited listener fd
                         let full_exe_args: Vec<_> = std::env::args().collect();
                         let exe_path = &full_exe_args[0];
-                        // Filter out any existing --inherit-fd argument
-                        let exe_args: Vec<_> = full_exe_args.iter().skip(1)
-                            .filter(|arg| !arg.starts_with("--inherit-fd"))
-                            .collect();
+                        // Filter out any existing --inherit-fd argument and its value
+                        let mut exe_args: Vec<String> = Vec::new();
+                        let mut skip_next = false;
+                        for arg in full_exe_args.iter().skip(1) {
+                            if skip_next {
+                                skip_next = false;
+                                continue;
+                            }
+                            if arg == "--inherit-fd" {
+                                skip_next = true;
+                                continue;
+                            }
+                            if arg.starts_with("--inherit-fd=") {
+                                continue;
+                            }
+                            exe_args.push(arg.to_string());
+                        }
                         core_affinity::clear_for_current();
 
                         let listener_fd = listener.as_ref().unwrap().as_raw_fd();
