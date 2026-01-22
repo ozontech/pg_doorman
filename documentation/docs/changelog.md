@@ -4,6 +4,12 @@ title: Changelog
 
 # Changelog
 
+### 3.1.4 <small>Jan 22, 2026</small> { id="3.1.1" }
+
+**Bug Fixes:**
+
+- **Fixed PROTOCOL VIOLATION with batch PrepareAsync**: Fixed a critical bug where .NET clients (Npgsql) using `NpgsqlBatch.PrepareAsync()` would receive "Received unexpected backend message ParseComplete" error. The issue occurred when pg_doorman skipped sending Parse messages for cached prepared statements but incorrectly inserted ParseComplete messages in the response.
+
 ### 3.1.0 <small>Jan 18, 2026</small> { id="3.1.0" }
 
 **New Features:**

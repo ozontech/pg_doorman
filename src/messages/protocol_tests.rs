@@ -542,20 +542,17 @@ fn test_insert_parse_complete_before_param_desc_single() {
 
 #[test]
 fn test_insert_parse_complete_before_no_data_single() {
+    // NoData ('n') alone means no ParameterDescription - nothing to insert before
+    // This happens when Describe is for a portal, not a statement
     let mut buffer = BytesMut::new();
     buffer.extend_from_slice(&no_data_msg());
     buffer.extend_from_slice(&ready_for_query_msg(b'I'));
 
-    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 1);
+    let (result, inserted) = insert_parse_complete_before_parameter_description(buffer.clone(), 1);
 
-    assert_eq!(inserted, 1);
-    let expected = [
-        parse_complete_msg(),
-        no_data_msg(),
-        ready_for_query_msg(b'I'),
-    ]
-    .concat();
-    assert_eq!(result.as_ref(), &expected[..]);
+    // No 't' messages, so nothing inserted
+    assert_eq!(inserted, 0);
+    assert_eq!(result.as_ref(), buffer.as_ref());
 }
 
 #[test]
@@ -586,21 +583,25 @@ fn test_insert_parse_complete_before_param_desc_multiple() {
 
 #[test]
 fn test_insert_parse_complete_before_param_desc_mixed_t_and_n() {
-    // Simulate mixed responses: [t, T, n, Z] (one with results, one without)
+    // Simulate mixed responses: [t, T, t, n, Z] (one with RowDescription, one with NoData)
+    // This is the actual batch PrepareAsync scenario: two statements, both have parameters
     let mut buffer = BytesMut::new();
     buffer.extend_from_slice(&parameter_description_msg(1));
     buffer.extend_from_slice(&row_description_msg());
+    buffer.extend_from_slice(&parameter_description_msg(2));
     buffer.extend_from_slice(&no_data_msg());
     buffer.extend_from_slice(&ready_for_query_msg(b'I'));
 
     let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 2);
 
+    // Only insert before 't' (ParameterDescription), not before 'n' (NoData)
     assert_eq!(inserted, 2);
     let expected = [
         parse_complete_msg(),
         parameter_description_msg(1),
         row_description_msg(),
         parse_complete_msg(),
+        parameter_description_msg(2),
         no_data_msg(),
         ready_for_query_msg(b'I'),
     ]
@@ -610,7 +611,7 @@ fn test_insert_parse_complete_before_param_desc_mixed_t_and_n() {
 
 #[test]
 fn test_insert_parse_complete_before_param_desc_count_exceeds_available() {
-    // Request 5 insertions but only 2 't'/'n' messages available
+    // Request 5 insertions but only 1 't' message available (we only insert before 't', not 'n')
     let mut buffer = BytesMut::new();
     buffer.extend_from_slice(&parameter_description_msg(1));
     buffer.extend_from_slice(&row_description_msg());
@@ -619,12 +620,11 @@ fn test_insert_parse_complete_before_param_desc_count_exceeds_available() {
 
     let (result, inserted) = insert_parse_complete_before_parameter_description(buffer, 5);
 
-    assert_eq!(inserted, 2); // Only 2 available
+    assert_eq!(inserted, 1); // Only 1 't' available
     let expected = [
         parse_complete_msg(),
         parameter_description_msg(1),
         row_description_msg(),
-        parse_complete_msg(),
         no_data_msg(),
         ready_for_query_msg(b'I'),
     ]

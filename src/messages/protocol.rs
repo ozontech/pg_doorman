@@ -814,8 +814,13 @@ pub fn insert_close_complete_after_last_close_complete(
     }
 }
 
-/// Insert ParseComplete messages before each ParameterDescription ('t') or NoData ('n') message.
+/// Insert ParseComplete messages before each ParameterDescription ('t') message.
 /// This is used for the Describe flow when Parse was skipped due to caching.
+/// 
+/// Describe response for a statement is:
+/// - ParameterDescription ('t') followed by RowDescription ('T') or NoData ('n')
+/// 
+/// So ParseComplete should be inserted before 't' only, not before 'n'.
 /// Returns (modified_buffer, inserted_count).
 pub fn insert_parse_complete_before_parameter_description(
     buffer: BytesMut,
@@ -828,11 +833,12 @@ pub fn insert_parse_complete_before_parameter_description(
     let bytes = buffer.as_ref();
     let mut insert_positions = Vec::new();
 
-    // Find all ParameterDescription ('t') or NoData ('n') messages
+    // Find all ParameterDescription ('t') messages only
+    // Note: NoData ('n') comes AFTER ParameterDescription, not instead of it
     let mut pos = 0;
     while pos + 5 <= bytes.len() && insert_positions.len() < count as usize {
         let msg_type = bytes[pos];
-        if msg_type == b't' || msg_type == b'n' {
+        if msg_type == b't' {
             insert_positions.push(pos);
         }
         let msg_len = i32::from_be_bytes([

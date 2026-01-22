@@ -8,7 +8,7 @@ use crate::utils::clock::{now, recent};
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
-use crate::client::core::Client;
+use crate::client::core::{Client, ParseCompleteTarget};
 use crate::client::util::QUERY_DEALLOCATE;
 use crate::errors::Error;
 use crate::messages::{
@@ -694,50 +694,97 @@ where
                 }
             };
 
-            // Insert pending ParseComplete messages before BindComplete
-            // If no BindComplete found, insert at the beginning of response
-            if self.pending_parse_complete > 0 {
-                let (new_response, inserted) = insert_parse_complete_before_bind_complete(
-                    response,
-                    self.pending_parse_complete,
+            // Insert pending ParseComplete messages based on skipped_parses
+            if !self.skipped_parses.is_empty() {
+                // Count how many ParseComplete we need for each target type
+                let bind_complete_count = self
+                    .skipped_parses
+                    .iter()
+                    .filter(|s| s.target == ParseCompleteTarget::BindComplete)
+                    .count() as u32;
+                let param_desc_count = self
+                    .skipped_parses
+                    .iter()
+                    .filter(|s| s.target == ParseCompleteTarget::ParameterDescription)
+                    .count() as u32;
+
+                debug!(
+                    "skipped_parses: {} total, {} for BindComplete, {} for ParameterDescription, data_available: {}",
+                    self.skipped_parses.len(),
+                    bind_complete_count,
+                    param_desc_count,
+                    server.data_available
                 );
 
-                // If no BindComplete was found (inserted == 0), insert at the beginning
-                if inserted == 0
-                    && self.pending_parse_complete > 0
-                    // If the server has more data, we can't insert ParseComplete messages
-                    // because it would insert between DataRow messages
-                    && !server.data_available
-                {
-                    let mut prefixed_response = BytesMut::with_capacity(
-                        new_response.len() + (self.pending_parse_complete as usize * 5),
+                // Insert ParseComplete before BindComplete
+                // This must happen regardless of data_available because BindComplete comes early in the response
+                if bind_complete_count > 0 {
+                    let (new_response, inserted) =
+                        insert_parse_complete_before_bind_complete(response, bind_complete_count);
+                    debug!(
+                        "insert_parse_complete_before_bind_complete: requested {}, inserted {}",
+                        bind_complete_count, inserted
                     );
 
-                    // Insert ParseComplete messages at the beginning
-                    for _ in 0..self.pending_parse_complete {
-                        prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                    if inserted > 0 {
+                        response = new_response;
+                        // Remove only the processed BindComplete entries (the ones we inserted for)
+                        let mut removed = 0u32;
+                        self.skipped_parses.retain(|s| {
+                            if s.target == ParseCompleteTarget::BindComplete && removed < inserted {
+                                removed += 1;
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                    } else if !server.data_available {
+                        // No BindComplete found and no more data coming - insert at the beginning
+                        let mut prefixed_response = BytesMut::with_capacity(
+                            new_response.len() + (bind_complete_count as usize * 5),
+                        );
+
+                        // Insert ParseComplete messages at the beginning
+                        for _ in 0..bind_complete_count {
+                            prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                        }
+
+                        // Append the original response
+                        prefixed_response.extend_from_slice(&new_response);
+                        response = prefixed_response;
+
+                        // Remove all BindComplete entries
+                        self.skipped_parses
+                            .retain(|s| s.target != ParseCompleteTarget::BindComplete);
+                    } else {
+                        // data_available is true and no BindComplete found - keep response unchanged
+                        response = new_response;
                     }
-
-                    // Append the original response
-                    prefixed_response.extend_from_slice(&new_response);
-
-                    response = prefixed_response;
-                    self.pending_parse_complete = 0;
-                } else {
-                    response = new_response;
-                    self.pending_parse_complete -= inserted;
                 }
-            }
 
-            // Insert pending ParseComplete messages for Describe flow
-            // (before each ParameterDescription 't' or NoData 'n')
-            if self.pending_parse_complete_for_describe > 0 && !server.data_available {
-                let (new_response, inserted) = insert_parse_complete_before_parameter_description(
-                    response,
-                    self.pending_parse_complete_for_describe,
-                );
-                response = new_response;
-                self.pending_parse_complete_for_describe -= inserted;
+                // Insert ParseComplete before ParameterDescription
+                // Only do this when server has no more data, to avoid inserting between DataRow messages
+                if param_desc_count > 0 && !server.data_available {
+                    let (new_response, inserted) =
+                        insert_parse_complete_before_parameter_description(response, param_desc_count);
+                    debug!(
+                        "Inserted {} ParseComplete before ParameterDescription (requested {})",
+                        inserted, param_desc_count
+                    );
+                    response = new_response;
+
+                    // Remove processed ParameterDescription entries (only the ones that were inserted)
+                    let mut removed = 0u32;
+                    self.skipped_parses.retain(|s| {
+                        if s.target == ParseCompleteTarget::ParameterDescription && removed < inserted
+                        {
+                            removed += 1;
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server
@@ -762,8 +809,7 @@ where
                 && !server.in_transaction()
                 && !server.in_copy_mode()
                 && !server.is_async()
-                && self.pending_parse_complete == 0
-                && self.pending_parse_complete_for_describe == 0
+                && self.skipped_parses.is_empty()
                 && self.pending_close_complete == 0
             {
                 self.client_last_messages_in_tx.put(&response[..]);

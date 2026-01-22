@@ -31,6 +31,24 @@ impl PreparedStatementKey {
     }
 }
 
+/// What response message we're waiting for to insert ParseComplete
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseCompleteTarget {
+    /// Waiting for BindComplete - insert ParseComplete before it
+    BindComplete,
+    /// Waiting for ParameterDescription - insert ParseComplete before it (Describe flow)
+    ParameterDescription,
+}
+
+/// Tracks a skipped Parse message that needs a synthetic ParseComplete response
+#[derive(Debug, Clone)]
+pub struct SkippedParse {
+    /// The rewritten statement name (e.g., DOORMAN_5)
+    pub statement_name: String,
+    /// What response we're waiting for to insert ParseComplete
+    pub target: ParseCompleteTarget,
+}
+
 /// The client state. One of these is created per client.
 pub struct Client<S, T> {
     /// The reads are buffered (8K by default).
@@ -47,12 +65,9 @@ pub struct Client<S, T> {
     /// Counter for pending CloseComplete messages to send before ReadyForQuery
     pub(crate) pending_close_complete: u32,
 
-    /// Counter for pending ParseComplete messages (for cached prepared statements)
-    pub(crate) pending_parse_complete: u32,
-
-    /// Counter for pending ParseComplete messages specifically for Describe flow
-    /// (when Parse was skipped but Describe needs ParseComplete before ParameterDescription)
-    pub(crate) pending_parse_complete_for_describe: u32,
+    /// Tracks skipped Parse messages that need synthetic ParseComplete responses.
+    /// Each entry contains the statement name and what response we're waiting for.
+    pub(crate) skipped_parses: Vec<SkippedParse>,
 
     /// Address
     pub(crate) addr: std::net::SocketAddr,
