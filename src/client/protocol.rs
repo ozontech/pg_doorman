@@ -8,7 +8,7 @@ use crate::messages::{error_response, Bind, Close, Describe, Parse};
 use crate::pool::ConnectionPool;
 use crate::server::Server;
 
-use super::core::{Client, PreparedStatementKey};
+use super::core::{Client, ParseCompleteTarget, PreparedStatementKey, SkippedParse};
 
 impl<S, T> Client<S, T>
 where
@@ -152,8 +152,15 @@ where
                 self.buffer.put(&parse_bytes[..]);
             } else {
                 // We don't want to send the parse message to the server
-                // Increment counter - ParseComplete will be inserted before BindComplete in response
-                self.pending_parse_complete += 1;
+                // Track this skipped Parse - ParseComplete will be inserted before BindComplete in response
+                debug!(
+                    "Parse skipped for `{}` (already on server), will insert ParseComplete later",
+                    new_parse.name
+                );
+                self.skipped_parses.push(SkippedParse {
+                    statement_name: new_parse.name.clone(),
+                    target: ParseCompleteTarget::BindComplete,
+                });
             }
         } else {
             debug!(
@@ -301,16 +308,18 @@ where
                 self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
                     .await?;
 
-                // If Parse was skipped (pending_parse_complete > 0), we need to insert ParseComplete
-                // before ParameterDescription in the response. We use a separate counter for this
-                // because we can't send Parse again (statement already exists on server).
-                if self.pending_parse_complete > 0 {
+                // If Parse was skipped for this statement, we need to insert ParseComplete
+                // before ParameterDescription in the response (not before BindComplete).
+                // Find the skipped parse entry for this statement and update its target.
+                if let Some(skipped) = self.skipped_parses.iter_mut().find(|s| {
+                    s.statement_name == rewritten_parse.name
+                        && s.target == ParseCompleteTarget::BindComplete
+                }) {
                     debug!(
                         "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
                         rewritten_parse.name
                     );
-                    self.pending_parse_complete_for_describe += 1;
-                    self.pending_parse_complete -= 1;
+                    skipped.target = ParseCompleteTarget::ParameterDescription;
                 }
 
                 // Add directly to buffer
@@ -359,7 +368,6 @@ where
     pub(crate) fn reset_buffered_state(&mut self) {
         self.buffer.clear();
         self.pending_close_complete = 0;
-        self.pending_parse_complete = 0;
-        self.pending_parse_complete_for_describe = 0;
+        self.skipped_parses.clear();
     }
 }
