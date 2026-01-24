@@ -86,6 +86,12 @@ pub struct DoormanWorld {
     pub bench_end_time: Option<chrono::DateTime<chrono::Utc>>,
     /// Internal pool for direct Pool.get benchmarking
     pub internal_pool: Option<crate::pool_bench_helper::InternalPool>,
+    /// Last used username (for reconnection)
+    pub last_user: Option<String>,
+    /// Last used password (for reconnection)
+    pub last_password: Option<String>,
+    /// Last used database (for reconnection)
+    pub last_database: Option<String>,
 }
 
 impl DoormanWorld {

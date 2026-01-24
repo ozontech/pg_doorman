@@ -112,7 +112,7 @@
             pythonEnv
 
             # .NET SDK
-            dotnet-sdk_8
+            dotnet-sdk_10
 
             # Rust toolchain
             rustToolchain

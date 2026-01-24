@@ -79,12 +79,12 @@ impl ProtocolState {
         match msg_type {
             '1' => {
                 // ParseComplete
+                // Note: pg_doorman may insert extra ParseComplete for skipped (cached) Parse messages,
+                // so receiving ParseComplete without pending Parse is valid and not a protocol violation.
                 if self.pending_parse > 0 {
                     self.pending_parse -= 1;
-                    None
-                } else {
-                    Some("ParseComplete('1') received but no Parse was pending".to_string())
                 }
+                None
             }
             '2' => {
                 // BindComplete

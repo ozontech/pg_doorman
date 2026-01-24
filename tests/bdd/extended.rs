@@ -251,6 +251,78 @@ pub async fn login_to_both(
 
     world.pg_conn = Some(pg_conn);
     world.doorman_conn = Some(doorman_conn);
+
+    // Save credentials for reconnection
+    world.last_user = Some(user);
+    world.last_password = Some(password);
+    world.last_database = Some(database);
+}
+
+#[when(regex = r#"^we disconnect from both$"#)]
+pub async fn disconnect_from_both(world: &mut DoormanWorld) {
+    // Drop connections by setting them to None
+    // This will close the TCP connections gracefully
+    world.pg_conn = None;
+    world.doorman_conn = None;
+
+    // Clear accumulated messages for fresh start after reconnect
+    world.pg_accumulated_messages.clear();
+    world.doorman_accumulated_messages.clear();
+}
+
+#[when(regex = r#"^we reconnect to both$"#)]
+pub async fn reconnect_to_both(world: &mut DoormanWorld) {
+    let user = world
+        .last_user
+        .clone()
+        .expect("No previous login credentials - call login first");
+    let password = world
+        .last_password
+        .clone()
+        .expect("No previous login credentials - call login first");
+    let database = world
+        .last_database
+        .clone()
+        .expect("No previous login credentials - call login first");
+
+    let pg_port = world.pg_port.expect("PostgreSQL not started");
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+
+    let pg_addr = format!("127.0.0.1:{}", pg_port);
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    // Connect to PostgreSQL
+    let mut pg_conn = PgConnection::connect(&pg_addr)
+        .await
+        .expect("Failed to reconnect to PostgreSQL");
+    pg_conn
+        .send_startup(&user, &database)
+        .await
+        .expect("Failed to send startup to PostgreSQL");
+    pg_conn
+        .authenticate(&user, &password)
+        .await
+        .expect("Failed to authenticate to PostgreSQL");
+
+    // Connect to pg_doorman
+    let mut doorman_conn = PgConnection::connect(&doorman_addr)
+        .await
+        .expect("Failed to reconnect to pg_doorman");
+    doorman_conn
+        .send_startup(&user, &database)
+        .await
+        .expect("Failed to send startup to pg_doorman");
+    doorman_conn
+        .authenticate(&user, &password)
+        .await
+        .expect("Failed to authenticate to pg_doorman");
+
+    world.pg_conn = Some(pg_conn);
+    world.doorman_conn = Some(doorman_conn);
+
+    // Clear accumulated messages for fresh start
+    world.pg_accumulated_messages.clear();
+    world.doorman_accumulated_messages.clear();
 }
 
 #[when(regex = r#"^we send SimpleQuery "([^"]+)" to both$"#)]
@@ -829,31 +901,39 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
     let pg_messages = &world.pg_accumulated_messages;
     let doorman_messages = &world.doorman_accumulated_messages;
 
-    // Debug output with detailed message information
+    // Check message count and provide detailed error if mismatch
     if pg_messages.len() != doorman_messages.len() {
-        eprintln!("\n=== MESSAGE COUNT MISMATCH ===");
-        eprintln!("PostgreSQL: {} messages", pg_messages.len());
-        eprintln!("pg_doorman: {} messages", doorman_messages.len());
+        let mut error_msg = format!(
+            "\n=== MESSAGE COUNT MISMATCH ===\nPostgreSQL: {} messages\npg_doorman: {} messages\n",
+            pg_messages.len(),
+            doorman_messages.len()
+        );
 
-        eprintln!("\n=== PostgreSQL messages ===");
+        error_msg.push_str("\n=== PostgreSQL messages ===\n");
         for (i, (msg_type, data)) in pg_messages.iter().enumerate() {
-            eprintln!("  [{}] {}", i, format_message_details(*msg_type, data));
+            error_msg.push_str(&format!(
+                "  [{}] {}\n",
+                i,
+                format_message_details(*msg_type, data)
+            ));
         }
 
-        eprintln!("\n=== pg_doorman messages ===");
+        error_msg.push_str("\n=== pg_doorman messages ===\n");
         for (i, (msg_type, data)) in doorman_messages.iter().enumerate() {
-            eprintln!("  [{}] {}", i, format_message_details(*msg_type, data));
+            error_msg.push_str(&format!(
+                "  [{}] {}\n",
+                i,
+                format_message_details(*msg_type, data)
+            ));
         }
-        eprintln!();
-    }
 
-    assert_eq!(
-        pg_messages.len(),
-        doorman_messages.len(),
-        "Number of messages differs: PostgreSQL={}, pg_doorman={}",
-        pg_messages.len(),
-        doorman_messages.len()
-    );
+        panic!(
+            "Number of messages differs: PostgreSQL={}, pg_doorman={}\n{}",
+            pg_messages.len(),
+            doorman_messages.len(),
+            error_msg
+        );
+    }
 
     for (i, (pg_msg, doorman_msg)) in pg_messages.iter().zip(doorman_messages.iter()).enumerate() {
         let (pg_type, pg_data) = pg_msg;
