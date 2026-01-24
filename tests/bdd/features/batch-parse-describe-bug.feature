@@ -131,7 +131,7 @@ Feature: Batch Parse/Describe bug reproduction
     And we send Sync to both
     Then we should receive identical messages from both
 
-  @batch-edge-case-3 @todo-skip
+  @batch-edge-case-3
   Scenario: Interleaved Parse/Bind/Execute for cached and new statements
     # First cache stmt1
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"

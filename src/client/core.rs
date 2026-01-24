@@ -47,6 +47,14 @@ pub struct SkippedParse {
     pub statement_name: String,
     /// What response we're waiting for to insert ParseComplete
     pub target: ParseCompleteTarget,
+    /// If true, ParseComplete should be inserted at the beginning of the response.
+    /// This is set when a skipped Parse comes before a new Parse in the same batch,
+    /// AND there is no corresponding Bind for this skipped Parse yet.
+    pub insert_at_beginning: bool,
+    /// If true, a Bind message for this statement has been processed.
+    /// This prevents marking insert_at_beginning=true when a new Parse arrives,
+    /// because the ParseComplete should be inserted before BindComplete, not at beginning.
+    pub has_bind: bool,
 }
 
 /// The client state. One of these is created per client.
@@ -120,6 +128,10 @@ pub struct Client<S, T> {
 
     /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
     pub(crate) last_anonymous_prepared_hash: Option<u64>,
+
+    /// Counter for Parse messages sent to server in current batch.
+    /// Used to determine if skipped Parse should insert ParseComplete at beginning or before BindComplete.
+    pub(crate) parses_sent_in_batch: u32,
 
     pub(crate) max_memory_usage: u64,
 

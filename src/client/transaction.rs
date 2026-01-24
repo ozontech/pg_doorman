@@ -8,7 +8,7 @@ use crate::utils::clock::{now, recent};
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
-use crate::client::core::{Client, ParseCompleteTarget};
+use crate::client::core::Client;
 use crate::client::util::QUERY_DEALLOCATE;
 use crate::errors::Error;
 use crate::messages::{
@@ -273,6 +273,9 @@ where
         );
 
         self.buffer.clear();
+        // Reset batch state for next batch
+        self.parses_sent_in_batch = 0;
+        self.skipped_parses.clear();
 
         if self.complete_transaction_if_needed(server, true) {
             return Ok(TransactionAction::Break);
@@ -695,101 +698,115 @@ where
 
             // Insert pending ParseComplete messages based on skipped_parses
             if !self.skipped_parses.is_empty() {
-                // Count how many ParseComplete we need for BindComplete target
-                let bind_complete_count = self
+                // Count skipped parses that should be inserted at the beginning
+                // (these are skipped Parse that came BEFORE a new Parse in the batch)
+                let insert_at_beginning_count = self
                     .skipped_parses
                     .iter()
-                    .filter(|s| s.target == ParseCompleteTarget::BindComplete)
+                    .filter(|s| s.insert_at_beginning)
                     .count() as u32;
 
+                let insert_before_bind_count = self.skipped_parses.len() as u32 - insert_at_beginning_count;
+
                 debug!(
-                    "skipped_parses: {} total, {} for BindComplete, data_available: {}",
+                    "skipped_parses: {} total ({} at beginning, {} before bind), data_available: {}",
                     self.skipped_parses.len(),
-                    bind_complete_count,
+                    insert_at_beginning_count,
+                    insert_before_bind_count,
                     server.data_available
                 );
 
-                // Insert ParseComplete before BindComplete
-                // This must happen regardless of data_available because BindComplete comes early in the response
-                if bind_complete_count > 0 {
-                    let (new_response, inserted) =
-                        insert_parse_complete_before_bind_complete(response, bind_complete_count);
-                    debug!(
-                        "insert_parse_complete_before_bind_complete: requested {}, inserted {}",
-                        bind_complete_count, inserted
+                // First, insert ParseComplete messages at the beginning if needed
+                // This handles the case where skipped Parse came before new Parse
+                if insert_at_beginning_count > 0 {
+                    let mut prefixed_response = BytesMut::with_capacity(
+                        response.len() + (insert_at_beginning_count as usize * 5),
                     );
+
+                    for _ in 0..insert_at_beginning_count {
+                        prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                    }
+
+                    prefixed_response.extend_from_slice(&response);
+                    response = prefixed_response;
+
+                    debug!(
+                        "Inserted {} ParseComplete at beginning",
+                        insert_at_beginning_count
+                    );
+
+                    // Remove processed entries (those with insert_at_beginning=true)
+                    self.skipped_parses.retain(|s| !s.insert_at_beginning);
+                }
+
+                // Then, insert ParseComplete before BindComplete for remaining entries
+                if insert_before_bind_count > 0 {
+                    let (new_response, inserted) =
+                        insert_parse_complete_before_bind_complete(response, insert_before_bind_count);
 
                     if inserted > 0 {
                         response = new_response;
-                        // Remove only the processed BindComplete entries (the ones we inserted for)
+                        // Remove processed entries
                         let mut removed = 0u32;
-                        self.skipped_parses.retain(|s| {
-                            if s.target == ParseCompleteTarget::BindComplete && removed < inserted {
+                        self.skipped_parses.retain(|_| {
+                            if removed < inserted {
                                 removed += 1;
                                 false
                             } else {
                                 true
                             }
                         });
-                    } else if !server.data_available {
-                        // No BindComplete found and no more data coming - insert at the beginning
-                        let mut prefixed_response = BytesMut::with_capacity(
-                            new_response.len() + (bind_complete_count as usize * 5),
+
+                        debug!(
+                            "Inserted {} ParseComplete before BindComplete",
+                            inserted
                         );
 
-                        // Insert ParseComplete messages at the beginning
-                        for _ in 0..bind_complete_count {
+                        // If no more data and still have remaining skipped_parses,
+                        // insert them at the beginning (they won't have matching BindComplete)
+                        if !server.data_available && !self.skipped_parses.is_empty() {
+                            let remaining = self.skipped_parses.len() as u32;
+                            let mut prefixed_response = BytesMut::with_capacity(
+                                response.len() + (remaining as usize * 5),
+                            );
+
+                            for _ in 0..remaining {
+                                prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                            }
+
+                            prefixed_response.extend_from_slice(&response);
+                            response = prefixed_response;
+
+                            debug!(
+                                "Inserted {} remaining ParseComplete at beginning",
+                                remaining
+                            );
+
+                            self.skipped_parses.clear();
+                        }
+                    } else if !server.data_available {
+                        // No BindComplete found and no more data - insert at beginning
+                        let remaining = self.skipped_parses.len() as u32;
+                        let mut prefixed_response = BytesMut::with_capacity(
+                            new_response.len() + (remaining as usize * 5),
+                        );
+
+                        for _ in 0..remaining {
                             prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
                         }
 
-                        // Append the original response
                         prefixed_response.extend_from_slice(&new_response);
                         response = prefixed_response;
 
-                        // Remove all BindComplete entries
-                        self.skipped_parses
-                            .retain(|s| s.target != ParseCompleteTarget::BindComplete);
+                        debug!(
+                            "Inserted {} ParseComplete at beginning (no BindComplete found)",
+                            remaining
+                        );
+
+                        self.skipped_parses.clear();
                     } else {
-                        // data_available is true and no BindComplete found - keep response unchanged
                         response = new_response;
                     }
-                }
-
-                // Insert ParseComplete for Describe flow (ParameterDescription target)
-                // These should be inserted at the BEGINNING of the response, not before each ParameterDescription.
-                // This is because in a batch like: Parse(skipped), Parse(skipped), Parse(new), Describe, Describe, Describe
-                // The server returns: ParseComplete(new), ParameterDescription, RowDescription, ...
-                // And we need to prepend the skipped ParseComplete messages to get the correct order:
-                // ParseComplete(skipped1), ParseComplete(skipped2), ParseComplete(new), ParameterDescription, ...
-                let param_desc_count = self
-                    .skipped_parses
-                    .iter()
-                    .filter(|s| s.target == ParseCompleteTarget::ParameterDescription)
-                    .count() as u32;
-
-                if param_desc_count > 0 && !server.data_available {
-                    // Insert ParseComplete messages at the beginning of the response
-                    let mut prefixed_response = BytesMut::with_capacity(
-                        response.len() + (param_desc_count as usize * 5),
-                    );
-
-                    // Insert ParseComplete messages at the beginning
-                    for _ in 0..param_desc_count {
-                        prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                    }
-
-                    // Append the original response
-                    prefixed_response.extend_from_slice(&response);
-                    response = prefixed_response;
-
-                    debug!(
-                        "Inserted {} ParseComplete at beginning for ParameterDescription flow",
-                        param_desc_count
-                    );
-
-                    // Remove all ParameterDescription entries
-                    self.skipped_parses
-                        .retain(|s| s.target != ParseCompleteTarget::ParameterDescription);
                 }
             }
 

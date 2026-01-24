@@ -634,9 +634,11 @@ pub fn server_parameter_message(key: &str, value: &str) -> BytesMut {
 }
 
 // Helper to check if message type needs ParseComplete before it
+// BindComplete ('2') or ParameterDescription ('t')
+// Note: NoData ('n') comes AFTER BindComplete, not as a replacement for ParseComplete
 #[inline]
 fn needs_parse_complete(msg_type: u8) -> bool {
-    msg_type == b'2'
+    msg_type == b'2' || msg_type == b't'
 }
 
 /// Insert ParseComplete messages before BindComplete, ParameterDescription, or NoData messages

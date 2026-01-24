@@ -157,9 +157,16 @@ where
                     "Parse skipped for `{}` (already on server), will insert ParseComplete later",
                     new_parse.name
                 );
+                // insert_at_beginning starts as false. It will be set to true later
+                // if a new Parse is sent to server AFTER this skipped Parse.
+                // This ensures correct ordering: ParseComplete for skipped Parse that comes
+                // BEFORE new Parse should be at the beginning of the response.
+                // has_bind starts as false - will be set to true when Bind is processed.
                 self.skipped_parses.push(SkippedParse {
                     statement_name: new_parse.name.clone(),
                     target: ParseCompleteTarget::BindComplete,
+                    insert_at_beginning: false,
+                    has_bind: false,
                 });
             }
         } else {
@@ -172,9 +179,22 @@ where
             self.register_parse_to_server_cache(false, &hash, &new_parse, pool, server)
                 .await?;
 
+            // Before sending new Parse, mark pending skipped_parses as insert_at_beginning=true
+            // because their ParseComplete should come before the ParseComplete from server.
+            // BUT only if they don't have a corresponding Bind yet - if they have Bind,
+            // their ParseComplete should be inserted before BindComplete, not at beginning.
+            for skipped in &mut self.skipped_parses {
+                if !skipped.insert_at_beginning && !skipped.has_bind {
+                    skipped.insert_at_beginning = true;
+                }
+            }
+
             // Add parse message to buffer
             let parse_bytes: BytesMut = new_parse.as_ref().try_into()?;
             self.buffer.put(&parse_bytes[..]);
+
+            // Track that we sent a Parse to server in this batch
+            self.parses_sent_in_batch += 1;
         }
 
         Ok(())
@@ -241,6 +261,17 @@ where
                 // (e.g., asyncpg sends only Bind without Parse for cached statements)
                 self.ensure_prepared_statement_is_on_server(lookup_key, pool, server)
                     .await?;
+
+                // Mark the corresponding skipped_parse as having a Bind.
+                // This prevents it from being marked as insert_at_beginning when a new Parse arrives,
+                // because its ParseComplete should be inserted before BindComplete, not at beginning.
+                if let Some(skipped) = self.skipped_parses.iter_mut().find(|s| {
+                    s.statement_name == rewritten_name
+                        && s.target == ParseCompleteTarget::BindComplete
+                        && !s.has_bind
+                }) {
+                    skipped.has_bind = true;
+                }
 
                 // Add directly to buffer
                 self.buffer.put(&message[..]);
@@ -321,10 +352,14 @@ where
                         "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
                         rewritten_parse.name
                     );
+                    let insert_at_beginning = self.skipped_parses[idx].insert_at_beginning;
+                    let has_bind = self.skipped_parses[idx].has_bind;
                     self.skipped_parses.remove(idx);
                     self.skipped_parses.push(SkippedParse {
                         statement_name: rewritten_parse.name.clone(),
                         target: ParseCompleteTarget::ParameterDescription,
+                        insert_at_beginning,
+                        has_bind,
                     });
                 }
 
@@ -375,5 +410,6 @@ where
         self.buffer.clear();
         self.pending_close_complete = 0;
         self.skipped_parses.clear();
+        self.parses_sent_in_batch = 0;
     }
 }
