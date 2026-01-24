@@ -2,10 +2,10 @@
 Feature: Batch Parse/Describe bug reproduction
   Reproduces the bug where a batch containing:
   - A cached (skipped) Parse
-  - A new Parse  
+  - A new Parse
   - Describe for the cached statement
   Results in an extra ParseComplete being sent to the client.
-  
+
   The issue: When Parse is skipped (statement already cached), pg_doorman adds it to skipped_parses
   with target=ParameterDescription. Later, when processing Describe, it inserts ParseComplete
   before ParameterDescription. But if there's also a real Parse in the same batch, the client
@@ -47,34 +47,38 @@ Feature: Batch Parse/Describe bug reproduction
     Then we should receive identical messages from both
 
   @batch-bug-step2
-  Scenario: Step 2 - Batch with new Parse + Describe for existing statement
+  Scenario: Step 2 - Reproduce the bug with batch containing cached Parse + new Parse + Describe
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     # First, prepare stmt1 - this will be cached on server
     And we send Parse "stmt1" with query "select $1::int" to both
     And we send Sync to both
-    # Now send a batch with:
+    # Now send a batch that triggers the bug:
+    # - Parse stmt1 again (will be skipped, already cached)
     # - Parse stmt2 (new, will be sent to server)
-    # - Describe stmt1 (for the already prepared statement)
-    # 
-    # Expected: 1 ParseComplete (for stmt2) + ParameterDescription + RowDescription
+    # - Describe stmt1 (for the cached/skipped statement)
+    #
+    # Expected from PostgreSQL: 1 ParseComplete (for stmt2) + ParameterDescription + RowDescription
+    # Bug: pg_doorman sends 2 ParseComplete (one injected for skipped stmt1)
+    And we send Parse "stmt1" with query "select $1::int" to both
     And we send Parse "stmt2" with query "select $1::text" to both
     And we send Describe "S" "stmt1" to both
     And we send Sync to both
     Then we should receive identical messages from both
 
-  @batch-bug-step3  
-  Scenario: Step 3 - More complex batch with multiple new statements and describes
+  @batch-bug-step3
+  Scenario: Step 3 - More complex batch with multiple cached and new statements
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     # Prepare stmt1 first
     And we send Parse "stmt1" with query "select $1::int" to both
     And we send Sync to both
     # Prepare stmt2
-    And we send Parse "stmt2" with query "select $1::text" to both  
+    And we send Parse "stmt2" with query "select $1::text" to both
     And we send Sync to both
     # Now batch with:
+    # - Parse stmt2 (cached/skipped)
     # - Parse stmt3 (new)
-    # - Describe stmt1 (already prepared)
-    # - Describe stmt2 (already prepared)
+    # - Describe stmt1
+    # - Describe stmt2
     And we send Parse "stmt3" with query "select $1::bigint" to both
     And we send Describe "S" "stmt1" to both
     And we send Describe "S" "stmt2" to both
