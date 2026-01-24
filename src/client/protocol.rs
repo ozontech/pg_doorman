@@ -309,17 +309,21 @@ where
                     .await?;
 
                 // If Parse was skipped for this statement, we need to insert ParseComplete
-                // before ParameterDescription in the response (not before BindComplete).
-                // Find the skipped parse entry for this statement and update its target.
-                if let Some(skipped) = self.skipped_parses.iter_mut().find(|s| {
-                    s.statement_name == rewritten_parse.name
+                // at the start of the response batch (before any other messages).
+                // Remove from skipped_parses and increment the counter for start-of-response insertion.
+                let statement_name = rewritten_parse.name.clone();
+                let had_skipped = self.skipped_parses.iter().any(|s| {
+                    s.statement_name == statement_name
                         && s.target == ParseCompleteTarget::BindComplete
-                }) {
+                });
+                if had_skipped {
                     debug!(
-                        "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
-                        rewritten_parse.name
+                        "Parse was skipped for `{}`, will insert ParseComplete at start of response",
+                        statement_name
                     );
-                    skipped.target = ParseCompleteTarget::ParameterDescription;
+                    self.skipped_parses
+                        .retain(|s| s.statement_name != statement_name);
+                    self.pending_parse_complete_at_start += 1;
                 }
 
                 // Add directly to buffer
@@ -368,6 +372,7 @@ where
     pub(crate) fn reset_buffered_state(&mut self) {
         self.buffer.clear();
         self.pending_close_complete = 0;
+        self.pending_parse_complete_at_start = 0;
         self.skipped_parses.clear();
     }
 }

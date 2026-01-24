@@ -14,8 +14,7 @@ use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
     error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, insert_parse_complete_before_parameter_description,
-    read_message, ready_for_query, write_all_flush,
+    insert_parse_complete_before_bind_complete, read_message, ready_for_query, write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
@@ -694,25 +693,42 @@ where
                 }
             };
 
+            // Insert ParseComplete messages at the start of response (for Describe flow)
+            // This must be done first, before any other insertions, to maintain correct message order
+            if self.pending_parse_complete_at_start > 0 && !server.data_available {
+                let count = self.pending_parse_complete_at_start as usize;
+                let mut prefixed_response =
+                    BytesMut::with_capacity(response.len() + count * PARSE_COMPLETE_MSG.len());
+
+                // Insert ParseComplete messages at the beginning
+                for _ in 0..count {
+                    prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                }
+
+                // Append the original response
+                prefixed_response.extend_from_slice(&response);
+                response = prefixed_response;
+
+                debug!(
+                    "Inserted {} ParseComplete at start of response",
+                    self.pending_parse_complete_at_start
+                );
+                self.pending_parse_complete_at_start = 0;
+            }
+
             // Insert pending ParseComplete messages based on skipped_parses
             if !self.skipped_parses.is_empty() {
-                // Count how many ParseComplete we need for each target type
+                // Count how many ParseComplete we need for BindComplete target
                 let bind_complete_count = self
                     .skipped_parses
                     .iter()
                     .filter(|s| s.target == ParseCompleteTarget::BindComplete)
                     .count() as u32;
-                let param_desc_count = self
-                    .skipped_parses
-                    .iter()
-                    .filter(|s| s.target == ParseCompleteTarget::ParameterDescription)
-                    .count() as u32;
 
                 debug!(
-                    "skipped_parses: {} total, {} for BindComplete, {} for ParameterDescription, data_available: {}",
+                    "skipped_parses: {} total, {} for BindComplete, data_available: {}",
                     self.skipped_parses.len(),
                     bind_complete_count,
-                    param_desc_count,
                     server.data_available
                 );
 
@@ -762,29 +778,6 @@ where
                     }
                 }
 
-                // Insert ParseComplete before ParameterDescription
-                // Only do this when server has no more data, to avoid inserting between DataRow messages
-                if param_desc_count > 0 && !server.data_available {
-                    let (new_response, inserted) =
-                        insert_parse_complete_before_parameter_description(response, param_desc_count);
-                    debug!(
-                        "Inserted {} ParseComplete before ParameterDescription (requested {})",
-                        inserted, param_desc_count
-                    );
-                    response = new_response;
-
-                    // Remove processed ParameterDescription entries (only the ones that were inserted)
-                    let mut removed = 0u32;
-                    self.skipped_parses.retain(|s| {
-                        if s.target == ParseCompleteTarget::ParameterDescription && removed < inserted
-                        {
-                            removed += 1;
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                }
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server

@@ -36,8 +36,6 @@ impl PreparedStatementKey {
 pub enum ParseCompleteTarget {
     /// Waiting for BindComplete - insert ParseComplete before it
     BindComplete,
-    /// Waiting for ParameterDescription - insert ParseComplete before it (Describe flow)
-    ParameterDescription,
 }
 
 /// Tracks a skipped Parse message that needs a synthetic ParseComplete response
@@ -64,6 +62,11 @@ pub struct Client<S, T> {
 
     /// Counter for pending CloseComplete messages to send before ReadyForQuery
     pub(crate) pending_close_complete: u32,
+
+    /// Counter for ParseComplete messages to insert at the start of response.
+    /// Used when Parse was skipped (cached) and Describe follows - ParseComplete
+    /// must come before any other response messages to maintain correct order.
+    pub(crate) pending_parse_complete_at_start: u32,
 
     /// Tracks skipped Parse messages that need synthetic ParseComplete responses.
     /// Each entry contains the statement name and what response we're waiting for.
