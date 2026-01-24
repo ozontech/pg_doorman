@@ -8,7 +8,9 @@ use crate::messages::{error_response, Bind, Close, Describe, Parse};
 use crate::pool::ConnectionPool;
 use crate::server::Server;
 
-use super::core::{Client, ParseCompleteTarget, PreparedStatementKey, SkippedParse};
+use super::core::{
+    BatchOperation, Client, ParseCompleteTarget, PreparedStatementKey, SkippedParse,
+};
 
 impl<S, T> Client<S, T>
 where
@@ -168,6 +170,10 @@ where
                     insert_at_beginning: false,
                     has_bind: false,
                 });
+                // Track operation order for correct ParseComplete insertion
+                self.batch_operations.push(BatchOperation::ParseSkipped {
+                    statement_name: new_parse.name.clone(),
+                });
             }
         } else {
             debug!(
@@ -195,6 +201,11 @@ where
 
             // Track that we sent a Parse to server in this batch
             self.parses_sent_in_batch += 1;
+
+            // Track operation order for correct ParseComplete insertion
+            self.batch_operations.push(BatchOperation::ParseSent {
+                statement_name: new_parse.name.clone(),
+            });
         }
 
         Ok(())
@@ -275,6 +286,11 @@ where
 
                 // Add directly to buffer
                 self.buffer.put(&message[..]);
+
+                // Track operation order for correct ParseComplete insertion
+                self.batch_operations.push(BatchOperation::Bind {
+                    statement_name: rewritten_name,
+                });
 
                 Ok(())
             }
@@ -366,6 +382,11 @@ where
                 // Add directly to buffer
                 let describe_bytes: BytesMut = describe.try_into()?;
                 self.buffer.put(&describe_bytes[..]);
+
+                // Track operation order for correct ParseComplete insertion
+                self.batch_operations.push(BatchOperation::Describe {
+                    statement_name: rewritten_parse.name.clone(),
+                });
 
                 Ok(())
             }

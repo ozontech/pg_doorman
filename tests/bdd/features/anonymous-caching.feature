@@ -35,6 +35,7 @@ Feature: .NET anonymous queries without prepare on server side
       pool_size = 40
       """
 
+  @batch-edge-case-debug-7
   Scenario: Run .NET anonymous queries without prepare on server side
     When I run shell command:
       """

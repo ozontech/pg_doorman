@@ -57,6 +57,21 @@ pub struct SkippedParse {
     pub has_bind: bool,
 }
 
+/// Tracks operations in a batch to determine correct ParseComplete insertion order
+#[derive(Debug, Clone)]
+pub enum BatchOperation {
+    /// Parse was skipped (statement already on server)
+    ParseSkipped { statement_name: String },
+    /// Parse was sent to server
+    ParseSent { statement_name: String },
+    /// Describe statement
+    Describe { statement_name: String },
+    /// Bind to statement
+    Bind { statement_name: String },
+    /// Execute portal (produces DataRow + CommandComplete)
+    Execute,
+}
+
 /// The client state. One of these is created per client.
 pub struct Client<S, T> {
     /// The reads are buffered (8K by default).
@@ -76,6 +91,10 @@ pub struct Client<S, T> {
     /// Tracks skipped Parse messages that need synthetic ParseComplete responses.
     /// Each entry contains the statement name and what response we're waiting for.
     pub(crate) skipped_parses: Vec<SkippedParse>,
+
+    /// Tracks all operations in current batch to determine correct ParseComplete insertion order.
+    /// Cleared after Sync.
+    pub(crate) batch_operations: Vec<BatchOperation>,
 
     /// Address
     pub(crate) addr: std::net::SocketAddr,
@@ -132,6 +151,10 @@ pub struct Client<S, T> {
     /// Counter for Parse messages sent to server in current batch.
     /// Used to determine if skipped Parse should insert ParseComplete at beginning or before BindComplete.
     pub(crate) parses_sent_in_batch: u32,
+
+    /// Tracks how many BindComplete/ParameterDescription messages have been processed
+    /// across multiple response chunks. Used for correct ParseComplete insertion.
+    pub(crate) processed_response_counts: std::collections::HashMap<char, usize>,
 
     pub(crate) max_memory_usage: u64,
 

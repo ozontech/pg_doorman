@@ -8,13 +8,13 @@ use crate::utils::clock::{now, recent};
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
-use crate::client::core::Client;
+use crate::client::core::{BatchOperation, Client};
 use crate::client::util::QUERY_DEALLOCATE;
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
-    error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, read_message, ready_for_query, write_all_flush,
+    error_response_terminal, insert_close_complete_after_last_close_complete, read_message,
+    ready_for_query, write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
@@ -91,6 +91,228 @@ where
             ));
         }
         Ok(())
+    }
+
+    /// Insert ParseComplete messages into response based on batch_operations order.
+    /// This ensures that ParseComplete for skipped Parse operations appears in the
+    /// correct position relative to other responses.
+    ///
+    /// PostgreSQL processes messages in order and sends responses in order:
+    /// - Parse → ParseComplete (immediately)
+    /// - Bind → BindComplete (immediately)  
+    /// - Execute → DataRow + CommandComplete (immediately)
+    /// - Describe → ParameterDescription + RowDescription (immediately)
+    ///
+    /// So for skipped Parse operations, we need to insert ParseComplete at the
+    /// ABSOLUTE position in the response stream where the Parse was in the batch.
+    ///
+    /// This function handles streaming responses - it tracks how many messages have been
+    /// processed across multiple chunks using self.processed_response_counts.
+    fn insert_parse_completes_by_batch_order(&mut self, response: BytesMut) -> BytesMut {
+        if self.batch_operations.is_empty() || self.skipped_parses.is_empty() {
+            return response;
+        }
+
+        // Build ordered list of absolute insertion positions based on batch_operations order.
+        // Each entry is the absolute message index where ParseComplete should be inserted.
+        // We track the expected response position as we iterate through batch_operations.
+
+        let mut insertions: Vec<usize> = Vec::new(); // absolute message indices for ParseComplete insertion
+
+        // Track Parse operations per statement: (was_skipped, absolute_position_at_parse_time)
+        // This allows us to match Bind/Describe with the correct Parse by order
+        // and insert ParseComplete at the position where Parse was in the batch
+        let mut parse_queue: std::collections::HashMap<
+            String,
+            std::collections::VecDeque<(bool, usize)>,
+        > = std::collections::HashMap::new();
+
+        // Track absolute position in the response stream (across all message types)
+        let mut absolute_position: usize = 0;
+
+        for op in &self.batch_operations {
+            match op {
+                BatchOperation::ParseSkipped { statement_name } => {
+                    // Record that this Parse was skipped, along with current absolute position
+                    // We'll add to insertions when Bind/Describe consumes this Parse
+                    parse_queue
+                        .entry(statement_name.clone())
+                        .or_default()
+                        .push_back((true, absolute_position)); // true = skipped
+                                                               // Note: we don't increment absolute_position because server won't send ParseComplete
+                }
+                BatchOperation::ParseSent { statement_name } => {
+                    // Record that this Parse was sent to server
+                    parse_queue
+                        .entry(statement_name.clone())
+                        .or_default()
+                        .push_back((false, absolute_position)); // false = sent
+                                                                // Server will send ParseComplete, increment position
+                    absolute_position += 1;
+                }
+                BatchOperation::Describe { statement_name } => {
+                    // Consume the Parse from queue and add insertion if it was skipped
+                    if let Some(queue) = parse_queue.get_mut(statement_name) {
+                        if let Some((was_skipped, pos_at_parse)) = queue.pop_front() {
+                            if was_skipped {
+                                // Insert ParseComplete at the position where Parse was in the batch
+                                insertions.push(pos_at_parse);
+                            }
+                        }
+                    }
+                    // Server sends ParameterDescription + RowDescription for Describe
+                    absolute_position += 2;
+                }
+                BatchOperation::Bind { statement_name } => {
+                    // Consume the Parse from queue and add insertion if it was skipped
+                    if let Some(queue) = parse_queue.get_mut(statement_name) {
+                        if let Some((was_skipped, pos_at_parse)) = queue.pop_front() {
+                            if was_skipped {
+                                // Insert ParseComplete at the position where Parse was in the batch
+                                insertions.push(pos_at_parse);
+                            }
+                        }
+                    }
+                    // Server sends BindComplete for Bind
+                    absolute_position += 1;
+                }
+                BatchOperation::Execute => {
+                    // Server sends DataRow + CommandComplete for Execute (2 messages)
+                    absolute_position += 2;
+                }
+            }
+        }
+
+        // Any remaining skipped Parses without Describe/Bind should be inserted at the beginning
+        // But only on the first chunk (when no messages have been processed yet)
+        let insert_at_beginning: usize = if self.processed_response_counts.is_empty() {
+            parse_queue
+                .values()
+                .flat_map(|q| q.iter())
+                .filter(|(was_skipped, _)| *was_skipped)
+                .count()
+        } else {
+            0
+        };
+
+        // Get the offset (how many messages have been processed in previous chunks)
+        let offset = *self.processed_response_counts.get(&'*').unwrap_or(&0);
+
+        // Count messages in this chunk
+        let mut chunk_msg_count: usize = 0;
+        let mut pos = 0;
+        while pos < response.len() {
+            if pos + 5 > response.len() {
+                break;
+            }
+            let msg_len = u32::from_be_bytes([
+                response[pos + 1],
+                response[pos + 2],
+                response[pos + 3],
+                response[pos + 4],
+            ]) as usize;
+            let msg_end = pos + 1 + msg_len;
+            if msg_end > response.len() {
+                break;
+            }
+            chunk_msg_count += 1;
+            pos = msg_end;
+        }
+
+        // Filter insertions to only those in range [offset, offset + chunk_msg_count)
+        // and convert absolute indices to chunk-relative indices
+        let relevant_insertions: Vec<usize> = insertions
+            .iter()
+            .filter_map(|abs_idx| {
+                if *abs_idx >= offset && *abs_idx < offset + chunk_msg_count {
+                    // Convert to chunk-relative index
+                    Some(*abs_idx - offset)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let total_insertions = relevant_insertions.len() + insert_at_beginning;
+
+        if total_insertions == 0 {
+            // Update processed counts even if no insertions
+            *self.processed_response_counts.entry('*').or_insert(0) += chunk_msg_count;
+            return response;
+        }
+
+        debug!(
+            "insert_parse_completes_by_batch_order: {:?}, {} at beginning (chunk has {} messages)",
+            relevant_insertions, insert_at_beginning, chunk_msg_count
+        );
+
+        // Build new response with ParseComplete messages inserted at correct positions
+        let mut new_response = BytesMut::with_capacity(response.len() + total_insertions * 5);
+
+        // Insert ParseComplete at beginning for pending_skipped without Describe/Bind
+        for _ in 0..insert_at_beginning {
+            new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+        }
+
+        // Count how many ParseComplete to insert before each message index
+        let mut insert_before_map: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+
+        for chunk_relative_idx in &relevant_insertions {
+            *insert_before_map.entry(*chunk_relative_idx).or_insert(0) += 1;
+        }
+
+        // Parse response and insert ParseComplete at correct positions
+        let mut pos = 0;
+        let mut msg_index: usize = 0;
+
+        while pos < response.len() {
+            if pos + 5 > response.len() {
+                // Not enough bytes for a complete message header
+                new_response.extend_from_slice(&response[pos..]);
+                break;
+            }
+
+            let msg_type = response[pos] as char;
+            let msg_len = u32::from_be_bytes([
+                response[pos + 1],
+                response[pos + 2],
+                response[pos + 3],
+                response[pos + 4],
+            ]) as usize;
+
+            let msg_end = pos + 1 + msg_len;
+            if msg_end > response.len() {
+                // Incomplete message
+                new_response.extend_from_slice(&response[pos..]);
+                break;
+            }
+
+            // Check if we need to insert ParseComplete BEFORE this message
+            if let Some(&count) = insert_before_map.get(&msg_index) {
+                for _ in 0..count {
+                    new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                }
+                debug!(
+                    "Inserted {} ParseComplete before message {} (type '{}')",
+                    count, msg_index, msg_type
+                );
+            }
+
+            // Copy the original message
+            new_response.extend_from_slice(&response[pos..msg_end]);
+
+            msg_index += 1;
+            pos = msg_end;
+        }
+
+        // Update processed counts for next chunk
+        *self.processed_response_counts.entry('*').or_insert(0) += chunk_msg_count;
+
+        // Note: skipped_parses is cleared after Sync in handle_sync_flush, not here.
+        // Clearing it here would cause fast_release to trigger prematurely.
+
+        new_response
     }
 
     /// Wait for a ROLLBACK from client after server entered aborted transaction state.
@@ -276,6 +498,8 @@ where
         // Reset batch state for next batch
         self.parses_sent_in_batch = 0;
         self.skipped_parses.clear();
+        self.batch_operations.clear();
+        self.processed_response_counts.clear();
 
         if self.complete_transaction_if_needed(server, true) {
             return Ok(TransactionAction::Break);
@@ -568,6 +792,8 @@ where
                         // Execute a prepared statement prepared in `P` and bound in `B`.
                         'E' => {
                             self.buffer.put(&message[..]);
+                            // Track Execute for correct ParseComplete insertion position
+                            self.batch_operations.push(BatchOperation::Execute);
                             TransactionAction::Continue
                         }
 
@@ -696,118 +922,11 @@ where
                 }
             };
 
-            // Insert pending ParseComplete messages based on skipped_parses
-            if !self.skipped_parses.is_empty() {
-                // Count skipped parses that should be inserted at the beginning
-                // (these are skipped Parse that came BEFORE a new Parse in the batch)
-                let insert_at_beginning_count = self
-                    .skipped_parses
-                    .iter()
-                    .filter(|s| s.insert_at_beginning)
-                    .count() as u32;
-
-                let insert_before_bind_count = self.skipped_parses.len() as u32 - insert_at_beginning_count;
-
-                debug!(
-                    "skipped_parses: {} total ({} at beginning, {} before bind), data_available: {}",
-                    self.skipped_parses.len(),
-                    insert_at_beginning_count,
-                    insert_before_bind_count,
-                    server.data_available
-                );
-
-                // First, insert ParseComplete messages at the beginning if needed
-                // This handles the case where skipped Parse came before new Parse
-                if insert_at_beginning_count > 0 {
-                    let mut prefixed_response = BytesMut::with_capacity(
-                        response.len() + (insert_at_beginning_count as usize * 5),
-                    );
-
-                    for _ in 0..insert_at_beginning_count {
-                        prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                    }
-
-                    prefixed_response.extend_from_slice(&response);
-                    response = prefixed_response;
-
-                    debug!(
-                        "Inserted {} ParseComplete at beginning",
-                        insert_at_beginning_count
-                    );
-
-                    // Remove processed entries (those with insert_at_beginning=true)
-                    self.skipped_parses.retain(|s| !s.insert_at_beginning);
-                }
-
-                // Then, insert ParseComplete before BindComplete for remaining entries
-                if insert_before_bind_count > 0 {
-                    let (new_response, inserted) =
-                        insert_parse_complete_before_bind_complete(response, insert_before_bind_count);
-
-                    if inserted > 0 {
-                        response = new_response;
-                        // Remove processed entries
-                        let mut removed = 0u32;
-                        self.skipped_parses.retain(|_| {
-                            if removed < inserted {
-                                removed += 1;
-                                false
-                            } else {
-                                true
-                            }
-                        });
-
-                        debug!(
-                            "Inserted {} ParseComplete before BindComplete",
-                            inserted
-                        );
-
-                        // If no more data and still have remaining skipped_parses,
-                        // insert them at the beginning (they won't have matching BindComplete)
-                        if !server.data_available && !self.skipped_parses.is_empty() {
-                            let remaining = self.skipped_parses.len() as u32;
-                            let mut prefixed_response = BytesMut::with_capacity(
-                                response.len() + (remaining as usize * 5),
-                            );
-
-                            for _ in 0..remaining {
-                                prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                            }
-
-                            prefixed_response.extend_from_slice(&response);
-                            response = prefixed_response;
-
-                            debug!(
-                                "Inserted {} remaining ParseComplete at beginning",
-                                remaining
-                            );
-
-                            self.skipped_parses.clear();
-                        }
-                    } else if !server.data_available {
-                        // No BindComplete found and no more data - insert at beginning
-                        let remaining = self.skipped_parses.len() as u32;
-                        let mut prefixed_response = BytesMut::with_capacity(
-                            new_response.len() + (remaining as usize * 5),
-                        );
-
-                        for _ in 0..remaining {
-                            prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                        }
-
-                        prefixed_response.extend_from_slice(&new_response);
-                        response = prefixed_response;
-
-                        debug!(
-                            "Inserted {} ParseComplete at beginning (no BindComplete found)",
-                            remaining
-                        );
-
-                        self.skipped_parses.clear();
-                    } else {
-                        response = new_response;
-                    }
-                }
+            // Insert pending ParseComplete messages based on batch_operations order
+            // This ensures ParseComplete messages are inserted in the correct position
+            // relative to other responses (ParameterDescription, BindComplete, etc.)
+            if !self.batch_operations.is_empty() && !self.skipped_parses.is_empty() {
+                response = self.insert_parse_completes_by_batch_order(response);
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server

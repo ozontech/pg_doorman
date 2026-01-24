@@ -818,10 +818,10 @@ pub fn insert_close_complete_after_last_close_complete(
 
 /// Insert ParseComplete messages before each ParameterDescription ('t') message.
 /// This is used for the Describe flow when Parse was skipped due to caching.
-/// 
+///
 /// Describe response for a statement is:
 /// - ParameterDescription ('t') followed by RowDescription ('T') or NoData ('n')
-/// 
+///
 /// So ParseComplete should be inserted before 't' only, not before 'n'.
 /// Returns (modified_buffer, inserted_count).
 pub fn insert_parse_complete_before_parameter_description(
