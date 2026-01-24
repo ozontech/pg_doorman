@@ -60,6 +60,7 @@ fn main() {
 
         let writer = DoormanWorld::cucumber()
             .max_concurrent_scenarios(5)
+            .fail_fast()
             .with_cli(cli)
             .before(|feature, _rule, scenario, world| {
                 Box::pin(async move {

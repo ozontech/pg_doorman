@@ -310,8 +310,10 @@ where
 
                 // If Parse was skipped for this statement, we need to insert ParseComplete
                 // before ParameterDescription in the response (not before BindComplete).
-                // Find the skipped parse entry for this statement and update its target.
-                if let Some(skipped) = self.skipped_parses.iter_mut().find(|s| {
+                // Find and remove the skipped parse entry, then add a new one with ParameterDescription target.
+                // Using position() + remove() + push() instead of iter_mut().find() to avoid issues
+                // when multiple Parse operations for the same statement are skipped in a batch.
+                if let Some(idx) = self.skipped_parses.iter().position(|s| {
                     s.statement_name == rewritten_parse.name
                         && s.target == ParseCompleteTarget::BindComplete
                 }) {
@@ -319,7 +321,11 @@ where
                         "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
                         rewritten_parse.name
                     );
-                    skipped.target = ParseCompleteTarget::ParameterDescription;
+                    self.skipped_parses.remove(idx);
+                    self.skipped_parses.push(SkippedParse {
+                        statement_name: rewritten_parse.name.clone(),
+                        target: ParseCompleteTarget::ParameterDescription,
+                    });
                 }
 
                 // Add directly to buffer

@@ -14,8 +14,7 @@ use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
     error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, insert_parse_complete_before_parameter_description,
-    read_message, ready_for_query, write_all_flush,
+    insert_parse_complete_before_bind_complete, read_message, ready_for_query, write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
@@ -756,8 +755,12 @@ where
                     }
                 }
 
-                // Insert ParseComplete before ParameterDescription (for Describe flow)
-                // Only do this when server has no more data, to avoid inserting between DataRow messages
+                // Insert ParseComplete for Describe flow (ParameterDescription target)
+                // These should be inserted at the BEGINNING of the response, not before each ParameterDescription.
+                // This is because in a batch like: Parse(skipped), Parse(skipped), Parse(new), Describe, Describe, Describe
+                // The server returns: ParseComplete(new), ParameterDescription, RowDescription, ...
+                // And we need to prepend the skipped ParseComplete messages to get the correct order:
+                // ParseComplete(skipped1), ParseComplete(skipped2), ParseComplete(new), ParameterDescription, ...
                 let param_desc_count = self
                     .skipped_parses
                     .iter()
@@ -765,25 +768,28 @@ where
                     .count() as u32;
 
                 if param_desc_count > 0 && !server.data_available {
-                    let (new_response, inserted) =
-                        insert_parse_complete_before_parameter_description(response, param_desc_count);
-                    debug!(
-                        "Inserted {} ParseComplete before ParameterDescription (requested {})",
-                        inserted, param_desc_count
+                    // Insert ParseComplete messages at the beginning of the response
+                    let mut prefixed_response = BytesMut::with_capacity(
+                        response.len() + (param_desc_count as usize * 5),
                     );
-                    response = new_response;
 
-                    // Remove processed ParameterDescription entries (only the ones that were inserted)
-                    let mut removed = 0u32;
-                    self.skipped_parses.retain(|s| {
-                        if s.target == ParseCompleteTarget::ParameterDescription && removed < inserted
-                        {
-                            removed += 1;
-                            false
-                        } else {
-                            true
-                        }
-                    });
+                    // Insert ParseComplete messages at the beginning
+                    for _ in 0..param_desc_count {
+                        prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                    }
+
+                    // Append the original response
+                    prefixed_response.extend_from_slice(&response);
+                    response = prefixed_response;
+
+                    debug!(
+                        "Inserted {} ParseComplete at beginning for ParameterDescription flow",
+                        param_desc_count
+                    );
+
+                    // Remove all ParameterDescription entries
+                    self.skipped_parses
+                        .retain(|s| s.target != ParseCompleteTarget::ParameterDescription);
                 }
             }
 
