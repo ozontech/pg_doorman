@@ -16,7 +16,7 @@ const BEGIN_MSG_LEN: usize = 12;
 
 /// Checks if the message is a standalone BEGIN query (simple query protocol).
 /// Micro-optimization: first checks message size (12 bytes), then content.
-/// 
+///
 /// Q message format:
 /// - Byte 0: 'Q' (0x51)
 /// - Bytes 1-4: length in big-endian (11 = 4 + 6 + 1)
@@ -28,7 +28,7 @@ pub(crate) fn is_standalone_begin(message: &BytesMut) -> bool {
     if message.len() != BEGIN_MSG_LEN || message[0] != b'Q' {
         return false;
     }
-    
+
     // Bytes 5-10 contain "begin;" (without null terminator)
     let query = &message[5..11];
     query.eq_ignore_ascii_case(b"begin;")

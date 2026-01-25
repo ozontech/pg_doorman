@@ -531,22 +531,28 @@ where
             // BEGIN itself doesn't perform any server operations, it only
             // reserves a connection which is wasteful if client is slow.
             let (message, pending_begin) = if is_standalone_begin(&message) {
-                debug!("Deferring connection for standalone BEGIN from {}", self.addr);
-                
+                debug!(
+                    "Deferring connection for standalone BEGIN from {}",
+                    self.addr
+                );
+
                 // Read next message from client
                 self.stats.idle_read();
                 let next_message = match read_message(&mut self.read, self.max_memory_usage).await {
                     Ok(msg) => msg,
                     Err(err) => return self.process_error(err).await,
                 };
-                
+
                 // If client sends Terminate after BEGIN, no need to get connection
                 if next_message[0] as char == 'X' {
-                    debug!("Client {} sent Terminate after BEGIN, skipping connection", self.addr);
+                    debug!(
+                        "Client {} sent Terminate after BEGIN, skipping connection",
+                        self.addr
+                    );
                     self.stats.disconnect();
                     return Ok(());
                 }
-                
+
                 // Return next message as main, BEGIN as pending
                 (next_message, Some(message))
             } else {
@@ -641,7 +647,8 @@ where
                 // If we deferred BEGIN, send it to server first
                 if let Some(begin_msg) = pending_begin {
                     debug!("Sending deferred BEGIN to server for client {}", self.addr);
-                    self.execute_server_roundtrip(Some(&begin_msg), server).await?;
+                    self.execute_server_roundtrip(Some(&begin_msg), server)
+                        .await?;
                     // Reset query_start_at for the actual query
                     query_start_at = now();
                 }
@@ -859,7 +866,9 @@ where
             // Insert pending ParseComplete messages based on batch_operations order
             // This ensures ParseComplete messages are inserted in the correct position
             // relative to other responses (ParameterDescription, BindComplete, etc.)
-            if !self.prepared.batch_operations.is_empty() && !self.prepared.skipped_parses.is_empty() {
+            if !self.prepared.batch_operations.is_empty()
+                && !self.prepared.skipped_parses.is_empty()
+            {
                 response = self.reorder_parse_complete_responses(response);
             }
 

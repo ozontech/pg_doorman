@@ -36,7 +36,9 @@ fn insertion_map_add(map: &mut InsertionMap, index: usize, count: usize) {
 /// Helper to get count for an index from InsertionMap
 #[inline]
 fn insertion_map_get(map: &InsertionMap, index: usize) -> Option<usize> {
-    map.iter().find(|(idx, _)| *idx == index).map(|(_, count)| *count)
+    map.iter()
+        .find(|(idx, _)| *idx == index)
+        .map(|(_, count)| *count)
 }
 
 /// Helper to sum all counts in InsertionMap
@@ -115,7 +117,11 @@ where
                 BatchOperation::Describe { .. } => {
                     // Insert pending ParseComplete before this ParameterDescription
                     if pending_insertions > 0 {
-                        insertion_map_add(&mut insert_before_param_desc, describe_index, pending_insertions);
+                        insertion_map_add(
+                            &mut insert_before_param_desc,
+                            describe_index,
+                            pending_insertions,
+                        );
                         pending_insertions = 0;
                     }
                     describe_index += 1;
@@ -134,7 +140,11 @@ where
                 BatchOperation::Execute => {
                     // Insert pending ParseComplete before this Execute's first message
                     if pending_insertions > 0 {
-                        insertion_map_add(&mut insert_before_execute, execute_index, pending_insertions);
+                        insertion_map_add(
+                            &mut insert_before_execute,
+                            execute_index,
+                            pending_insertions,
+                        );
                         pending_insertions = 0;
                     }
                     execute_index += 1;
@@ -142,7 +152,11 @@ where
                 BatchOperation::Close => {
                     // Insert pending ParseComplete before this CloseComplete
                     if pending_insertions > 0 {
-                        insertion_map_add(&mut insert_before_close, close_index, pending_insertions);
+                        insertion_map_add(
+                            &mut insert_before_close,
+                            close_index,
+                            pending_insertions,
+                        );
                         pending_insertions = 0;
                     }
                     close_index += 1;

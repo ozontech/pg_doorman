@@ -137,7 +137,8 @@ where
         }
         let cache_key = PreparedStatementKey::from_name_or_hash(client_given_name, hash);
 
-        self.prepared.cache
+        self.prepared
+            .cache
             .insert(cache_key, (new_parse.clone(), hash));
 
         // Check if server already has this prepared statement
@@ -171,9 +172,11 @@ where
                     has_bind: false,
                 });
                 // Track operation order for correct ParseComplete insertion
-                self.prepared.batch_operations.push(BatchOperation::ParseSkipped {
-                    statement_name: new_parse.name.clone(),
-                });
+                self.prepared
+                    .batch_operations
+                    .push(BatchOperation::ParseSkipped {
+                        statement_name: new_parse.name.clone(),
+                    });
             }
         } else {
             debug!(
@@ -203,9 +206,11 @@ where
             self.prepared.parses_sent_in_batch += 1;
 
             // Track operation order for correct ParseComplete insertion
-            self.prepared.batch_operations.push(BatchOperation::ParseSent {
-                statement_name: new_parse.name.clone(),
-            });
+            self.prepared
+                .batch_operations
+                .push(BatchOperation::ParseSent {
+                    statement_name: new_parse.name.clone(),
+                });
         }
 
         Ok(())
@@ -331,7 +336,9 @@ where
             debug!("Portal describe message");
             self.buffer.put(&message[..]);
             // Track portal describe for correct ParseComplete insertion position
-            self.prepared.batch_operations.push(BatchOperation::DescribePortal);
+            self.prepared
+                .batch_operations
+                .push(BatchOperation::DescribePortal);
             return Ok(());
         }
 
@@ -386,9 +393,11 @@ where
                 self.buffer.put(&describe_bytes[..]);
 
                 // Track operation order for correct ParseComplete insertion
-                self.prepared.batch_operations.push(BatchOperation::Describe {
-                    statement_name: rewritten_parse.name.clone(),
-                });
+                self.prepared
+                    .batch_operations
+                    .push(BatchOperation::Describe {
+                        statement_name: rewritten_parse.name.clone(),
+                    });
 
                 Ok(())
             }

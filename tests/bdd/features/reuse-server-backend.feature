@@ -30,7 +30,7 @@ Feature: Reuse server backend connection
 
   Scenario: Backend connection is reused after error
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "begin;" to session "one"
+    And we send SimpleQuery "begin; /**/" to session "one"
     And we send SimpleQuery "select pg_backend_pid()" to session "one" and store backend_pid
     And we send SimpleQuery "bad sql" to session "one"
     And we sleep 100ms
@@ -40,7 +40,7 @@ Feature: Reuse server backend connection
 
   Scenario: Nested transactions with savepoint
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "begin;" to session "one"
+    And we send SimpleQuery "begin; /**/" to session "one"
     And we send SimpleQuery "savepoint sp;" to session "one"
     And we send SimpleQuery "select pg_backend_pid()" to session "one" and store backend_pid
     And we send SimpleQuery "bad sql;" to session "one"
