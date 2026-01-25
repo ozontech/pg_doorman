@@ -113,162 +113,140 @@ where
             return response;
         }
 
-        // Build ordered list of absolute insertion positions based on batch_operations order.
-        // Each entry is the absolute message index where ParseComplete should be inserted.
-        // We track the expected response position as we iterate through batch_operations.
+        // Track which BindComplete/ParameterDescription index needs ParseComplete inserted before it.
+        // We can't use absolute positions because Execute returns variable number of messages.
+        // Instead, we track the index of BindComplete/ParameterDescription where ParseComplete should go.
+        //
+        // When ParseSkipped happens, we look at the NEXT operation that will produce a response:
+        // - If next is Bind -> insert before that BindComplete
+        // - If next is Describe -> insert before that ParameterDescription
+        // - If next is Execute/DescribePortal -> we need to insert before the NEXT Bind/Describe after that
 
-        let mut insertions: Vec<usize> = Vec::new(); // absolute message indices for ParseComplete insertion
+        // Maps: BindComplete index -> count of ParseComplete to insert before it
+        //       ParameterDescription index -> count of ParseComplete to insert before it
+        let mut insert_before_bind: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        let mut insert_before_param_desc: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
 
-        // Track Parse operations per statement: (was_skipped, absolute_position_at_parse_time)
-        // This allows us to match Bind/Describe with the correct Parse by order
-        // and insert ParseComplete at the position where Parse was in the batch
-        let mut parse_queue: std::collections::HashMap<
-            String,
-            std::collections::VecDeque<(bool, usize)>,
-        > = std::collections::HashMap::new();
+        // Pending ParseComplete insertions waiting for next Bind/Describe
+        let mut pending_insertions: usize = 0;
 
-        // Track absolute position in the response stream (across all message types)
-        let mut absolute_position: usize = 0;
+        // Current indices
+        let mut bind_index: usize = 0;
+        let mut describe_index: usize = 0;
+
+        // Also track Execute index for inserting before Execute's first message
+        let mut insert_before_execute: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        let mut execute_index: usize = 0;
 
         for op in &self.batch_operations {
             match op {
-                BatchOperation::ParseSkipped { statement_name } => {
-                    // Record that this Parse was skipped, along with current absolute position
-                    // We'll add to insertions when Bind/Describe consumes this Parse
-                    parse_queue
-                        .entry(statement_name.clone())
-                        .or_default()
-                        .push_back((true, absolute_position)); // true = skipped
-                                                               // Note: we don't increment absolute_position because server won't send ParseComplete
+                BatchOperation::ParseSkipped { .. } => {
+                    // Mark that we need to insert ParseComplete
+                    pending_insertions += 1;
                 }
-                BatchOperation::ParseSent { statement_name } => {
-                    // Record that this Parse was sent to server
-                    parse_queue
-                        .entry(statement_name.clone())
-                        .or_default()
-                        .push_back((false, absolute_position)); // false = sent
-                                                                // Server will send ParseComplete, increment position
-                    absolute_position += 1;
+                BatchOperation::ParseSent { .. } => {
+                    // Server sends ParseComplete, no action needed
                 }
-                BatchOperation::Describe { statement_name } => {
-                    // Consume the Parse from queue and add insertion if it was skipped
-                    if let Some(queue) = parse_queue.get_mut(statement_name) {
-                        if let Some((was_skipped, pos_at_parse)) = queue.pop_front() {
-                            if was_skipped {
-                                // Insert ParseComplete at the position where Parse was in the batch
-                                insertions.push(pos_at_parse);
-                            }
-                        }
+                BatchOperation::Describe { .. } => {
+                    // Insert pending ParseComplete before this ParameterDescription
+                    if pending_insertions > 0 {
+                        *insert_before_param_desc.entry(describe_index).or_insert(0) +=
+                            pending_insertions;
+                        pending_insertions = 0;
                     }
-                    // Server sends ParameterDescription + RowDescription for Describe
-                    absolute_position += 2;
+                    describe_index += 1;
                 }
-                BatchOperation::Bind { statement_name } => {
-                    // Consume the Parse from queue and add insertion if it was skipped
-                    if let Some(queue) = parse_queue.get_mut(statement_name) {
-                        if let Some((was_skipped, pos_at_parse)) = queue.pop_front() {
-                            if was_skipped {
-                                // Insert ParseComplete at the position where Parse was in the batch
-                                insertions.push(pos_at_parse);
-                            }
-                        }
+                BatchOperation::Bind { .. } => {
+                    // Insert pending ParseComplete before this BindComplete
+                    if pending_insertions > 0 {
+                        *insert_before_bind.entry(bind_index).or_insert(0) += pending_insertions;
+                        pending_insertions = 0;
                     }
-                    // Server sends BindComplete for Bind
-                    absolute_position += 1;
+                    bind_index += 1;
+                }
+                BatchOperation::DescribePortal => {
+                    // DescribePortal doesn't consume pending insertions
                 }
                 BatchOperation::Execute => {
-                    // Server sends DataRow + CommandComplete for Execute (2 messages)
-                    absolute_position += 2;
+                    // Insert pending ParseComplete before this Execute's first message
+                    if pending_insertions > 0 {
+                        *insert_before_execute.entry(execute_index).or_insert(0) +=
+                            pending_insertions;
+                        pending_insertions = 0;
+                    }
+                    execute_index += 1;
                 }
             }
         }
 
-        // Any remaining skipped Parses without Describe/Bind should be inserted at the beginning
-        // But only on the first chunk (when no messages have been processed yet)
-        let insert_at_beginning: usize = if self.processed_response_counts.is_empty() {
-            parse_queue
-                .values()
-                .flat_map(|q| q.iter())
-                .filter(|(was_skipped, _)| *was_skipped)
-                .count()
-        } else {
-            0
-        };
+        // Get offsets from previous chunks
+        let bind_offset = *self.processed_response_counts.get(&'2').unwrap_or(&0);
+        let param_desc_offset = *self.processed_response_counts.get(&'t').unwrap_or(&0);
+        let execute_offset = *self.processed_response_counts.get(&'E').unwrap_or(&0); // 'E' for Execute count
 
-        // Get the offset (how many messages have been processed in previous chunks)
-        let offset = *self.processed_response_counts.get(&'*').unwrap_or(&0);
-
-        // Count messages in this chunk
-        let mut chunk_msg_count: usize = 0;
-        let mut pos = 0;
-        while pos < response.len() {
-            if pos + 5 > response.len() {
-                break;
-            }
-            let msg_len = u32::from_be_bytes([
-                response[pos + 1],
-                response[pos + 2],
-                response[pos + 3],
-                response[pos + 4],
-            ]) as usize;
-            let msg_end = pos + 1 + msg_len;
-            if msg_end > response.len() {
-                break;
-            }
-            chunk_msg_count += 1;
-            pos = msg_end;
-        }
-
-        // Filter insertions to only those in range [offset, offset + chunk_msg_count)
-        // and convert absolute indices to chunk-relative indices
-        let relevant_insertions: Vec<usize> = insertions
+        // Adjust indices by offset
+        let relevant_bind: std::collections::HashMap<usize, usize> = insert_before_bind
             .iter()
-            .filter_map(|abs_idx| {
-                if *abs_idx >= offset && *abs_idx < offset + chunk_msg_count {
-                    // Convert to chunk-relative index
-                    Some(*abs_idx - offset)
-                } else {
-                    None
-                }
-            })
+            .filter(|(&idx, _)| idx >= bind_offset)
+            .map(|(&idx, &count)| (idx - bind_offset, count))
+            .collect();
+        let relevant_param_desc: std::collections::HashMap<usize, usize> = insert_before_param_desc
+            .iter()
+            .filter(|(&idx, _)| idx >= param_desc_offset)
+            .map(|(&idx, &count)| (idx - param_desc_offset, count))
+            .collect();
+        let relevant_execute: std::collections::HashMap<usize, usize> = insert_before_execute
+            .iter()
+            .filter(|(&idx, _)| idx >= execute_offset)
+            .map(|(&idx, &count)| (idx - execute_offset, count))
             .collect();
 
-        let total_insertions = relevant_insertions.len() + insert_at_beginning;
+        let total_insertions: usize = relevant_bind.values().sum::<usize>()
+            + relevant_param_desc.values().sum::<usize>()
+            + relevant_execute.values().sum::<usize>()
+            + pending_insertions; // remaining at end
 
         if total_insertions == 0 {
-            // Update processed counts even if no insertions
-            *self.processed_response_counts.entry('*').or_insert(0) += chunk_msg_count;
+            // Still need to count messages for offset tracking
+            let mut bind_count = 0usize;
+            let mut param_desc_count = 0usize;
+            let mut cmd_complete_count = 0usize;
+            let mut pos = 0;
+            while pos + 5 <= response.len() {
+                let msg_type = response[pos] as char;
+                let msg_len = u32::from_be_bytes([
+                    response[pos + 1],
+                    response[pos + 2],
+                    response[pos + 3],
+                    response[pos + 4],
+                ]) as usize;
+                match msg_type {
+                    '2' => bind_count += 1,
+                    't' => param_desc_count += 1,
+                    'C' => cmd_complete_count += 1,
+                    _ => {}
+                }
+                pos += 1 + msg_len;
+            }
+            *self.processed_response_counts.entry('2').or_insert(0) += bind_count;
+            *self.processed_response_counts.entry('t').or_insert(0) += param_desc_count;
+            *self.processed_response_counts.entry('E').or_insert(0) += cmd_complete_count; // Execute count = CommandComplete count
             return response;
         }
 
-        debug!(
-            "insert_parse_completes_by_batch_order: {:?}, {} at beginning (chunk has {} messages)",
-            relevant_insertions, insert_at_beginning, chunk_msg_count
-        );
-
-        // Build new response with ParseComplete messages inserted at correct positions
+        // Build new response
         let mut new_response = BytesMut::with_capacity(response.len() + total_insertions * 5);
-
-        // Insert ParseComplete at beginning for pending_skipped without Describe/Bind
-        for _ in 0..insert_at_beginning {
-            new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-        }
-
-        // Count how many ParseComplete to insert before each message index
-        let mut insert_before_map: std::collections::HashMap<usize, usize> =
-            std::collections::HashMap::new();
-
-        for chunk_relative_idx in &relevant_insertions {
-            *insert_before_map.entry(*chunk_relative_idx).or_insert(0) += 1;
-        }
-
-        // Parse response and insert ParseComplete at correct positions
         let mut pos = 0;
-        let mut msg_index: usize = 0;
+        let mut bind_count: usize = 0;
+        let mut param_desc_count: usize = 0;
+        let mut execute_count: usize = 0;
+        let mut in_execute: bool = false; // Track if we're inside an Execute response
 
         while pos < response.len() {
             if pos + 5 > response.len() {
-                // Not enough bytes for a complete message header
                 new_response.extend_from_slice(&response[pos..]);
                 break;
             }
@@ -283,34 +261,56 @@ where
 
             let msg_end = pos + 1 + msg_len;
             if msg_end > response.len() {
-                // Incomplete message
                 new_response.extend_from_slice(&response[pos..]);
                 break;
             }
 
-            // Check if we need to insert ParseComplete BEFORE this message
-            if let Some(&count) = insert_before_map.get(&msg_index) {
-                for _ in 0..count {
-                    new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+            // Insert ParseComplete BEFORE this message if needed
+            match msg_type {
+                '2' => {
+                    if let Some(&count) = relevant_bind.get(&bind_count) {
+                        for _ in 0..count {
+                            new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                        }
+                    }
+                    bind_count += 1;
                 }
-                debug!(
-                    "Inserted {} ParseComplete before message {} (type '{}')",
-                    count, msg_index, msg_type
-                );
+                't' => {
+                    if let Some(&count) = relevant_param_desc.get(&param_desc_count) {
+                        for _ in 0..count {
+                            new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                        }
+                    }
+                    param_desc_count += 1;
+                }
+                'C' => {
+                    // CommandComplete marks end of Execute
+                    in_execute = false;
+                    execute_count += 1;
+                }
+                'D' | 'n' | 'T' => {
+                    // DataRow, NoData, or RowDescription can be first message of Execute
+                    // Insert ParseComplete before first message of Execute if needed
+                    if !in_execute {
+                        if let Some(&count) = relevant_execute.get(&execute_count) {
+                            for _ in 0..count {
+                                new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                            }
+                        }
+                        in_execute = true;
+                    }
+                }
+                _ => {}
             }
 
-            // Copy the original message
             new_response.extend_from_slice(&response[pos..msg_end]);
-
-            msg_index += 1;
             pos = msg_end;
         }
 
-        // Update processed counts for next chunk
-        *self.processed_response_counts.entry('*').or_insert(0) += chunk_msg_count;
-
-        // Note: skipped_parses is cleared after Sync in handle_sync_flush, not here.
-        // Clearing it here would cause fast_release to trigger prematurely.
+        // Update processed counts
+        *self.processed_response_counts.entry('2').or_insert(0) += bind_count;
+        *self.processed_response_counts.entry('t').or_insert(0) += param_desc_count;
+        *self.processed_response_counts.entry('E').or_insert(0) += execute_count;
 
         new_response
     }

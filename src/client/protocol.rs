@@ -172,7 +172,7 @@ where
                 });
                 // Track operation order for correct ParseComplete insertion
                 self.batch_operations.push(BatchOperation::ParseSkipped {
-                    statement_name: new_parse.name.clone(),
+                    _statement_name: new_parse.name.clone(),
                 });
             }
         } else {
@@ -204,7 +204,7 @@ where
 
             // Track operation order for correct ParseComplete insertion
             self.batch_operations.push(BatchOperation::ParseSent {
-                statement_name: new_parse.name.clone(),
+                _statement_name: new_parse.name.clone(),
             });
         }
 
@@ -289,7 +289,7 @@ where
 
                 // Track operation order for correct ParseComplete insertion
                 self.batch_operations.push(BatchOperation::Bind {
-                    statement_name: rewritten_name,
+                    _statement_name: rewritten_name,
                 });
 
                 Ok(())
@@ -330,6 +330,8 @@ where
         if describe.target == 'P' {
             debug!("Portal describe message");
             self.buffer.put(&message[..]);
+            // Track portal describe for correct ParseComplete insertion position
+            self.batch_operations.push(BatchOperation::DescribePortal);
             return Ok(());
         }
 
@@ -385,7 +387,7 @@ where
 
                 // Track operation order for correct ParseComplete insertion
                 self.batch_operations.push(BatchOperation::Describe {
-                    statement_name: rewritten_parse.name.clone(),
+                    _statement_name: rewritten_parse.name.clone(),
                 });
 
                 Ok(())

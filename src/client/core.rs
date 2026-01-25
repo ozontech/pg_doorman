@@ -61,13 +61,15 @@ pub struct SkippedParse {
 #[derive(Debug, Clone)]
 pub enum BatchOperation {
     /// Parse was skipped (statement already on server)
-    ParseSkipped { statement_name: String },
+    ParseSkipped { _statement_name: String },
     /// Parse was sent to server
-    ParseSent { statement_name: String },
-    /// Describe statement
-    Describe { statement_name: String },
+    ParseSent { _statement_name: String },
+    /// Describe statement (produces ParameterDescription + RowDescription)
+    Describe { _statement_name: String },
+    /// Describe portal (produces RowDescription only)
+    DescribePortal,
     /// Bind to statement
-    Bind { statement_name: String },
+    Bind { _statement_name: String },
     /// Execute portal (produces DataRow + CommandComplete)
     Execute,
 }
