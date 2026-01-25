@@ -10,7 +10,7 @@ use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client};
-use crate::client::util::QUERY_DEALLOCATE;
+use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
@@ -525,6 +525,33 @@ where
                 continue;
             }
 
+            // Micro-optimization: if first message is standalone BEGIN,
+            // defer connection acquisition until next message arrives.
+            // BEGIN itself doesn't perform any server operations, it only
+            // reserves a connection which is wasteful if client is slow.
+            let (message, pending_begin) = if is_standalone_begin(&message) {
+                debug!("Deferring connection for standalone BEGIN from {}", self.addr);
+                
+                // Read next message from client
+                self.stats.idle_read();
+                let next_message = match read_message(&mut self.read, self.max_memory_usage).await {
+                    Ok(msg) => msg,
+                    Err(err) => return self.process_error(err).await,
+                };
+                
+                // If client sends Terminate after BEGIN, no need to get connection
+                if next_message[0] as char == 'X' {
+                    debug!("Client {} sent Terminate after BEGIN, skipping connection", self.addr);
+                    self.stats.disconnect();
+                    return Ok(());
+                }
+                
+                // Return next message as main, BEGIN as pending
+                (next_message, Some(message))
+            } else {
+                (message, None)
+            };
+
             let shutdown_in_progress = {
                 // start server.
                 // Grab a server from the pool.
@@ -609,6 +636,14 @@ where
                     server.sync_parameters(&self.server_parameters).await?;
                 }
                 server.set_async_mode(false);
+
+                // If we deferred BEGIN, send it to server first
+                if let Some(begin_msg) = pending_begin {
+                    debug!("Sending deferred BEGIN to server for client {}", self.addr);
+                    self.execute_server_roundtrip(Some(&begin_msg), server).await?;
+                    // Reset query_start_at for the actual query
+                    query_start_at = now();
+                }
 
                 let mut initial_message = Some(message);
 
