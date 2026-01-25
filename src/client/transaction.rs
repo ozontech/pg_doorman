@@ -8,6 +8,7 @@ use crate::utils::clock::{now, recent};
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
+use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client};
 use crate::client::util::QUERY_DEALLOCATE;
 use crate::errors::Error;
@@ -360,6 +361,27 @@ where
             // Mark this client as async client forever
             self.prepared.async_client = true;
             debug!("Client requested flush, going async");
+
+            // If there are skipped Parse operations, send synthetic ParseComplete to client
+            // BEFORE waiting for server response. This is necessary because:
+            // 1. Parse was skipped (statement already cached), so server didn't receive it
+            // 2. Flush was sent to server, but server has nothing to flush
+            // 3. Server won't respond, causing a hang
+            // By sending synthetic ParseComplete here, we satisfy client's expectation
+            if !self.prepared.skipped_parses.is_empty() {
+                let count = self.prepared.skipped_parses.len();
+                debug!(
+                    "Flush: sending {} synthetic ParseComplete for skipped Parse operations",
+                    count
+                );
+                let mut synthetic_response = BytesMut::with_capacity(count * 5);
+                for _ in 0..count {
+                    synthetic_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                }
+                write_all_flush(&mut self.write, &synthetic_response).await?;
+                self.prepared.skipped_parses.clear();
+                self.prepared.batch_operations.clear();
+            }
         } else {
             // For Sync, exit async mode
             server.set_async_mode(false);
