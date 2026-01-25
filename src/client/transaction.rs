@@ -300,6 +300,17 @@ where
                         in_execute = true;
                     }
                 }
+                'Z' => {
+                    // ReadyForQuery - insert any remaining pending ParseComplete before it
+                    // This handles the case when batch contains only ParseSkipped + Sync
+                    // (without Bind/Describe/Execute)
+                    if pending_insertions > 0 {
+                        for _ in 0..pending_insertions {
+                            new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                        }
+                        pending_insertions = 0;
+                    }
+                }
                 _ => {}
             }
 
