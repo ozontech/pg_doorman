@@ -1,3 +1,4 @@
+mod batch_handling;
 pub mod buffer_pool;
 mod core;
 mod entrypoint;

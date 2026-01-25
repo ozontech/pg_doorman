@@ -1225,6 +1225,7 @@ dependencies = [
  "serde_yaml",
  "sha-1",
  "sha2",
+ "smallvec",
  "socket2 0.6.1",
  "stringprep",
  "syslog",

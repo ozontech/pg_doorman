@@ -57,6 +57,27 @@ pub struct SkippedParse {
     pub has_bind: bool,
 }
 
+/// Tracks response message counts across multiple chunks.
+/// Replaces HashMap<char, usize> with fixed fields for better performance.
+#[derive(Debug, Clone, Default)]
+pub struct ResponseCounts {
+    /// Count of BindComplete ('2') messages
+    pub bind_complete: usize,
+    /// Count of ParameterDescription ('t') messages
+    pub param_desc: usize,
+    /// Count of Execute (tracked via CommandComplete 'C') messages
+    pub execute: usize,
+}
+
+impl ResponseCounts {
+    #[inline]
+    pub fn clear(&mut self) {
+        self.bind_complete = 0;
+        self.param_desc = 0;
+        self.execute = 0;
+    }
+}
+
 /// Tracks operations in a batch to determine correct ParseComplete insertion order
 #[derive(Debug, Clone)]
 pub enum BatchOperation {
@@ -107,7 +128,7 @@ pub struct PreparedStatementState {
 
     /// Tracks how many BindComplete/ParameterDescription messages have been processed
     /// across multiple response chunks. Used for correct ParseComplete insertion.
-    pub processed_response_counts: std::collections::HashMap<char, usize>,
+    pub processed_response_counts: ResponseCounts,
 
     /// Counter for pending CloseComplete messages to send before ReadyForQuery
     pub pending_close_complete: u32,
@@ -124,7 +145,7 @@ impl PreparedStatementState {
             skipped_parses: Vec::new(),
             batch_operations: Vec::new(),
             parses_sent_in_batch: 0,
-            processed_response_counts: std::collections::HashMap::new(),
+            processed_response_counts: ResponseCounts::default(),
             pending_close_complete: 0,
         }
     }

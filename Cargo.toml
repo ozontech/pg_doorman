@@ -60,6 +60,7 @@ flate2 = "1.0.28"
 zerocopy = "0.8.24"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 ahash = "0.8"
+smallvec = "1.13"
 dashmap = "6.1"
 reqwest = { version = "0.11", features = ["json"] }
 hdrhistogram = "7.5"
