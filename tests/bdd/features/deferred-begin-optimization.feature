@@ -43,3 +43,26 @@ Feature: Deferred connection for standalone BEGIN
     And we execute "show pools" on admin session "admin" and store response
     # sv_active should be 0 because BEGIN is deferred - no server connection acquired yet
     Then admin session "admin" column "sv_active" should be between 0 and 0
+
+  @deferred-begin-backend-killed
+  Scenario: Client receives error when backend is killed after deferred BEGIN
+    # This test verifies that when a server backend is terminated during a transaction
+    # that started with deferred BEGIN, the client receives proper error notification.
+
+    # Create main client session
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    # Send BEGIN - this is deferred, no server connection yet
+    And we send SimpleQuery "begin;" to session "main"
+    # Send a query to trigger actual connection and get backend PID
+    And we send SimpleQuery "select pg_backend_pid()" to session "main" and store backend_pid
+
+    # Create killer session to terminate the backend
+    When we create session "killer" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    # Terminate the main session's backend using stored backend_pid
+    And we terminate backend of session "main" via session "killer"
+
+    # Small delay for termination to take effect
+    And we sleep 100ms
+
+    # Now try to execute a query on main session - should receive connection close or error
+    When we send SimpleQuery "select 1" to session "main" expecting connection close

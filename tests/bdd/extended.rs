@@ -1353,6 +1353,58 @@ pub async fn compare_named_backend_pid_with_initial(
     );
 }
 
+#[when(
+    regex = r#"^we terminate backend of session "([^"]+)" via session "([^"]+)"$"#
+)]
+pub async fn terminate_backend_of_session(
+    world: &mut DoormanWorld,
+    target_session: String,
+    killer_session: String,
+) {
+    // Get backend_pid of target session
+    let backend_pid = world
+        .session_backend_pids
+        .get(&target_session)
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", target_session));
+
+    let terminate_query = format!("SELECT pg_terminate_backend({})", backend_pid);
+    eprintln!(
+        "Terminating backend of session '{}' (pid={}) via session '{}'",
+        target_session, backend_pid, killer_session
+    );
+
+    // Get killer session connection
+    let conn = world
+        .named_sessions
+        .get_mut(&killer_session)
+        .unwrap_or_else(|| panic!("Session '{}' not found", killer_session));
+
+    // Send terminate query
+    conn.send_simple_query(&terminate_query)
+        .await
+        .expect("Failed to send pg_terminate_backend query");
+
+    // Read response
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+        match msg_type {
+            'Z' => break, // ReadyForQuery - done
+            'D' => {
+                // DataRow - check result (should be 't' for true)
+                eprintln!("pg_terminate_backend result: {:?}", String::from_utf8_lossy(&data));
+            }
+            'E' => {
+                // Error
+                panic!(
+                    "Error executing pg_terminate_backend: {:?}",
+                    String::from_utf8_lossy(&data)
+                );
+            }
+            _ => {} // Other messages - skip
+        }
+    }
+}
+
 // Steps for prepared statements cache tests
 
 #[when(regex = r#"^we send Parse "([^"]*)" with query "([^"]+)" to session "([^"]+)"$"#)]
