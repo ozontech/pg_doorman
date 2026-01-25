@@ -1,4 +1,4 @@
-@rust @batch-parse-describe-bug
+@rust @rust-1 @batch-parse-describe-bug
 Feature: Batch Parse/Describe bug reproduction
   Reproduces the bug where a batch containing:
   - A cached (skipped) Parse

@@ -1,4 +1,4 @@
-@rust @async-protocol
+@rust @rust-1 @async-protocol
 Feature: Async Protocol (Extended Query with Flush)
   Testing async protocol support - sending Parse/Bind/Describe/Execute with Flush instead of Sync
   to ensure pg_doorman handles async operations identically to PostgreSQL

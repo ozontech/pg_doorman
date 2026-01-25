@@ -1,4 +1,4 @@
-@rust @buffer-cleanup
+@rust @rust-3 @buffer-cleanup
 Feature: Server buffer cleanup on client disconnect
   Test that pg_doorman correctly cleans up server buffer when client
   disconnects unexpectedly in the middle of receiving large result set.

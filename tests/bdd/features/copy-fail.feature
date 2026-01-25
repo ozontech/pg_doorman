@@ -1,4 +1,4 @@
-@rust @copy-fail
+@rust @rust-3 @copy-fail
 Feature: COPY to non-existent table and session reuse
   Test that pg_doorman correctly handles COPY operation to non-existent table
   and that the backend connection is properly returned to the pool for reuse

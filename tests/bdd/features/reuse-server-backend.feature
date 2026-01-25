@@ -1,4 +1,4 @@
-@rust @reuse-backend
+@rust @rust-3 @reuse-backend
 Feature: Reuse server backend connection
   Background:
     Given PostgreSQL started with pg_hba.conf:

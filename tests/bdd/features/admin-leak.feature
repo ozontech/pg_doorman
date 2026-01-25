@@ -1,4 +1,4 @@
-@rust @admin-leak
+@rust @rust-3 @admin-leak
 Feature: Admin console client leak detection
   Test that pg_doorman correctly tracks connected clients in admin console (pgbouncer database)
   and properly cleans up when TCP connections are abruptly closed

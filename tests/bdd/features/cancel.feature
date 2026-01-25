@@ -1,4 +1,4 @@
-@rust @cancel
+@rust @rust-3 @cancel
 Feature: Cancel request (pqCancel) functionality
   Test that pg_doorman correctly handles PostgreSQL cancel requests (pqCancel)
   which allows clients to cancel long-running queries

@@ -1,4 +1,4 @@
-@rust @messages
+@rust @rust-3 @messages
 Feature: Message comparison
   Background:
     Given PostgreSQL started with pg_hba.conf:

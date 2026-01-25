@@ -1,4 +1,4 @@
-@rust @copy-protocol
+@rust @rust-2 @copy-protocol
 Feature: COPY Protocol
   Testing COPY protocol support to ensure pg_doorman handles COPY operations identically to PostgreSQL
   Including error cases like bad SQL syntax

@@ -1,4 +1,4 @@
-@rust @query-wait-timeout
+@rust @rust-3 @query-wait-timeout
 Feature: Query wait timeout when pool is exhausted
   Test that query_wait_timeout works correctly when all pool connections are busy
 

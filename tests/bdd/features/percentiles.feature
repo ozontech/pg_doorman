@@ -1,4 +1,4 @@
-@rust @percentiles
+@rust @rust-3 @percentiles
 Feature: HDR Histogram percentiles for query and transaction times
   Test that pg_doorman correctly calculates percentiles using HDR histograms
   and reports them via SHOW POOLS_EXTENDED command
