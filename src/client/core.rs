@@ -80,19 +80,17 @@ impl ResponseCounts {
 
 /// Tracks operations in a batch to determine correct ParseComplete insertion order
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum BatchOperation {
     /// Parse was skipped (statement already on server)
     ParseSkipped { statement_name: String },
     /// Parse was sent to server
-    #[allow(dead_code)]
     ParseSent { statement_name: String },
     /// Describe statement (produces ParameterDescription + RowDescription)
-    /// #[allow(dead_code)]
     Describe { statement_name: String },
     /// Describe portal (produces RowDescription only)
     DescribePortal,
     /// Bind to statement
-    #[allow(dead_code)]
     Bind { statement_name: String },
     /// Execute portal (produces DataRow + CommandComplete)
     Execute,
