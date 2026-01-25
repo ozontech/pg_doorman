@@ -184,6 +184,7 @@ where
     }
 
     /// Ensure server is in copy mode, return error if not
+    #[inline(always)]
     fn ensure_copy_mode(&mut self, server: &mut Server) -> Result<(), Error> {
         if !server.in_copy_mode() {
             self.stats.disconnect();

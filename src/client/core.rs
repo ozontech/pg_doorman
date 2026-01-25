@@ -72,7 +72,7 @@ pub struct ResponseCounts {
 }
 
 impl ResponseCounts {
-    #[inline]
+    #[inline(always)]
     pub fn clear(&mut self) {
         self.bind_complete = 0;
         self.param_desc = 0;
@@ -154,7 +154,7 @@ impl PreparedStatementState {
     }
 
     /// Reset batch state after Sync
-    #[inline]
+    #[inline(always)]
     pub fn reset_batch(&mut self) {
         self.parses_sent_in_batch = 0;
         self.skipped_parses.clear();
@@ -236,10 +236,12 @@ where
     S: tokio::io::AsyncRead + std::marker::Unpin,
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
+    #[inline(always)]
     pub fn is_admin(&self) -> bool {
         self.admin
     }
 
+    #[inline(always)]
     pub(crate) fn disconnect_stats(&self) {
         self.stats.disconnect();
     }
@@ -271,6 +273,7 @@ where
     }
 
     /// Release the server from the client: it can't cancel its queries anymore.
+    #[inline(always)]
     pub fn release(&self) {
         self.client_server_map
             .remove(&(self.process_id, self.secret_key));
