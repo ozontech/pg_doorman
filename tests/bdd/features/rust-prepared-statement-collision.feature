@@ -1,4 +1,4 @@
-@rust @prepared-collision
+@rust @rust-3 @prepared-collision
 Feature: Multiple clients with same prepared statement name returning different data
   Test that multiple clients using the same prepared statement name but different queries
   receive correct responses when pool_size=1 (forcing connection sharing)

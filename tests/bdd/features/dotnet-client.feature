@@ -35,6 +35,7 @@ Feature: .NET client tests
       pool_size = 40
       """
 
+  @batch-edge-case-debug-2
   Scenario: Run .NET PBDE tests
     When I run shell command:
       """
@@ -53,7 +54,7 @@ Feature: .NET client tests
     Then the command should succeed
     And the command output should contain "prepared complete"
 
-  @dotnet-debug
+  @dotnet-debug @batch-edge-case-debug-6
   Scenario: Run .NET batch tests
     When I run shell command:
       """
@@ -177,7 +178,7 @@ Feature: .NET client tests
     And the command output should contain "Test 5 complete"
     And the command output should contain "describe_flow_cached complete"
 
-  @dotnet-aggressive-mixed
+  @dotnet-aggressive-mixed @batch-edge-case-debug-5
   Scenario: Run .NET aggressive mixed tests (batch + prepared statements + extended protocol)
     When I run shell command:
       """

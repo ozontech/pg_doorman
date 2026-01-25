@@ -1,4 +1,4 @@
-@rust @server-lifetime-prepared
+@rust @rust-3 @server-lifetime-prepared
 Feature: Prepared statements work correctly after server_lifetime expires
   Test that prepared statements continue to work after backend connection is recycled due to server_lifetime
 

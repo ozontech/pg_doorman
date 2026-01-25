@@ -35,6 +35,7 @@ Feature: .NET batch PrepareAsync issue reproduction
       pool_size = 40
       """
 
+  @batch-edge-case-debug-4
   Scenario: Reproduce batch PrepareAsync PROTOCOL VIOLATION
     When I run shell command:
       """

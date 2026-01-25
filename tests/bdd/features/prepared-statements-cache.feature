@@ -1,4 +1,4 @@
-@rust @prepared-cache
+@rust @rust-3 @prepared-cache
 Feature: Prepared statements caching across multiple sessions
   Test that prepared statements are properly cached and reused across different client sessions
 

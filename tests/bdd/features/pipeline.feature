@@ -1,4 +1,4 @@
-@rust @pipeline
+@rust @rust-2 @pipeline
 Feature: Asynchronous Pipeline Protocol
   Test pg_doorman pipeline mode (asynchronous extended protocol)
   

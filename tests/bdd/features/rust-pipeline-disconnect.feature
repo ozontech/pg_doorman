@@ -1,4 +1,4 @@
-@rust @rust-pipeline-disconnect
+@rust @rust-3 @rust-pipeline-disconnect
 Feature: Rust raw protocol pipeline disconnect test
   Test that pg_doorman correctly handles client disconnect during pipeline/batch operations.
   Client A starts a batch query with large result and crashes (disconnects without reading all data).

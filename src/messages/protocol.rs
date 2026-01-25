@@ -634,9 +634,11 @@ pub fn server_parameter_message(key: &str, value: &str) -> BytesMut {
 }
 
 // Helper to check if message type needs ParseComplete before it
+// BindComplete ('2') or ParameterDescription ('t')
+// Note: NoData ('n') comes AFTER BindComplete, not as a replacement for ParseComplete
 #[inline]
 fn needs_parse_complete(msg_type: u8) -> bool {
-    msg_type == b'2'
+    msg_type == b'2' || msg_type == b't'
 }
 
 /// Insert ParseComplete messages before BindComplete, ParameterDescription, or NoData messages
@@ -816,10 +818,10 @@ pub fn insert_close_complete_after_last_close_complete(
 
 /// Insert ParseComplete messages before each ParameterDescription ('t') message.
 /// This is used for the Describe flow when Parse was skipped due to caching.
-/// 
+///
 /// Describe response for a statement is:
 /// - ParameterDescription ('t') followed by RowDescription ('T') or NoData ('n')
-/// 
+///
 /// So ParseComplete should be inserted before 't' only, not before 'n'.
 /// Returns (modified_buffer, inserted_count).
 pub fn insert_parse_complete_before_parameter_description(

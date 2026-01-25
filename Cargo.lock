@@ -1879,7 +1879,7 @@ checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
 name = "pg_doorman"
-version = "3.1.4"
+version = "3.1.5"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -1927,6 +1927,7 @@ dependencies = [
  "serial_test",
  "sha-1",
  "sha2",
+ "smallvec",
  "socket2 0.6.1",
  "stringprep",
  "syslog",

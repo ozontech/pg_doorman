@@ -59,18 +59,12 @@ pull_image() {
 }
 
 # Function to try pulling image, but continue if local image exists
+# Tags are considered immutable - if local image exists, use it without registry updates
 try_pull_image() {
     # Check if image exists locally
     if docker image inspect "${FULL_IMAGE}" &> /dev/null; then
         log_info "Local image found: ${FULL_IMAGE}"
-        log_info "Attempting to update from registry..."
-        if docker pull "${FULL_IMAGE}" 2>&1 | grep -q "denied\|unauthorized\|not found"; then
-            log_warn "Cannot access registry, using local image"
-        elif docker pull "${FULL_IMAGE}"; then
-            log_info "Image updated successfully"
-        else
-            log_warn "Pull failed, using local image"
-        fi
+        log_info "Using local image (tags are immutable, skipping registry update)"
     else
         log_info "No local image found, pulling from registry..."
         if docker pull "${FULL_IMAGE}"; then

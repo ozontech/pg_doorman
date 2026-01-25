@@ -36,6 +36,7 @@ Feature: .NET pipeline disconnect test
       pool_size = 1
       """
 
+  @batch-edge-case-debug-3
   Scenario: Client A crashes during batch, client B gets clean connection
     When I run shell command:
       """

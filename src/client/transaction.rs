@@ -8,26 +8,127 @@ use crate::utils::clock::{now, recent};
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
-use crate::client::core::{Client, ParseCompleteTarget};
-use crate::client::util::QUERY_DEALLOCATE;
+use crate::client::batch_handling::PARSE_COMPLETE_MSG;
+use crate::client::core::{BatchOperation, Client};
+use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, command_complete, deallocate_response, error_message, error_response,
-    error_response_terminal, insert_close_complete_after_last_close_complete,
-    insert_parse_complete_before_bind_complete, insert_parse_complete_before_parameter_description,
-    read_message, ready_for_query, write_all_flush,
+    error_response_terminal, insert_close_complete_after_last_close_complete, read_message,
+    ready_for_query, write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
 use crate::utils::comments::SqlCommentParser;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 
+// =============================================================================
+// PostgreSQL Extended Query Protocol - Documentation
+// =============================================================================
+//
+// This module handles the PostgreSQL Extended Query Protocol, which allows
+// clients to send multiple messages in a batch before requesting results.
+//
+// ## Protocol Message Types (Client → Server)
+//
+// | Code | Message   | Description                                      |
+// |------|-----------|--------------------------------------------------|
+// | 'P'  | Parse     | Prepare a statement (with optional name)         |
+// | 'B'  | Bind      | Bind parameters to a prepared statement          |
+// | 'E'  | Execute   | Execute a bound portal                           |
+// | 'D'  | Describe  | Request description of statement or portal       |
+// | 'C'  | Close     | Close a prepared statement or portal             |
+// | 'S'  | Sync      | Synchronization point, requests results          |
+// | 'H'  | Flush     | Request server to flush output (async mode)      |
+// | 'Q'  | Query     | Simple query (not extended protocol)             |
+// | 'X'  | Terminate | Close connection                                 |
+//
+// ## Protocol Message Types (Server → Client)
+//
+// | Code | Message              | Description                              |
+// |------|----------------------|------------------------------------------|
+// | '1'  | ParseComplete        | Statement was parsed successfully        |
+// | '2'  | BindComplete         | Parameters were bound successfully       |
+// | 'T'  | RowDescription       | Description of result columns            |
+// | 'D'  | DataRow              | A row of query results                   |
+// | 'C'  | CommandComplete      | Command finished (with row count)        |
+// | 't'  | ParameterDescription | Description of statement parameters      |
+// | 'n'  | NoData               | Statement returns no data                |
+// | '3'  | CloseComplete        | Statement/portal was closed              |
+// | 'Z'  | ReadyForQuery        | Server ready for next query              |
+// | 'E'  | ErrorResponse        | An error occurred                        |
+//
+// ## Basic Extended Query Flow
+//
+// ```text
+// Client                      Proxy                      Server
+//   │                           │                           │
+//   │──── Parse (P) ───────────>│                           │
+//   │──── Bind (B) ────────────>│                           │
+//   │──── Execute (E) ─────────>│                           │
+//   │──── Sync (S) ────────────>│──── P,B,E,S ────────────>│
+//   │                           │                           │
+//   │                           │<─── ParseComplete (1) ────│
+//   │                           │<─── BindComplete (2) ─────│
+//   │                           │<─── DataRow... (D) ───────│
+//   │                           │<─── CommandComplete (C) ──│
+//   │<──── Response ────────────│<─── ReadyForQuery (Z) ────│
+// ```
+//
+// ## Prepared Statement Caching
+//
+// pg_doorman caches prepared statements to avoid re-parsing identical queries.
+// When a Parse message arrives:
+//
+// 1. If statement is NOT in cache → send Parse to server, cache it
+// 2. If statement IS in cache AND server has it → skip Parse, inject ParseComplete
+// 3. If statement IS in cache BUT server doesn't have it → send Parse to server
+//
+// ## Batch Processing with Cached Statements
+//
+// When some Parse messages are skipped (cached), we must inject ParseComplete
+// responses in the correct order. Example:
+//
+// ```text
+// Client sends:              Server receives:         Server responds:
+// ┌─────────────────┐        ┌─────────────────┐      ┌─────────────────┐
+// │ Parse "stmt1"   │──┐     │                 │      │                 │
+// │ (cached,skip)   │  │     │                 │      │                 │
+// ├─────────────────┤  │     ├─────────────────┤      ├─────────────────┤
+// │ Parse "stmt2"   │──┼────>│ Parse "stmt2"   │─────>│ ParseComplete   │
+// │ (new, send)     │  │     │                 │      │                 │
+// ├─────────────────┤  │     ├─────────────────┤      ├─────────────────┤
+// │ Bind to "stmt1" │──┼────>│ Bind to "stmt1" │─────>│ BindComplete    │
+// ├─────────────────┤  │     ├─────────────────┤      ├─────────────────┤
+// │ Sync            │──┘────>│ Sync            │─────>│ ReadyForQuery   │
+// └─────────────────┘        └─────────────────┘      └─────────────────┘
+//
+// Proxy must reorder response to client:
+// ┌─────────────────┐
+// │ ParseComplete   │ ← injected for skipped "stmt1"
+// │ ParseComplete   │ ← from server for "stmt2"
+// │ BindComplete    │ ← from server
+// │ ReadyForQuery   │ ← from server
+// └─────────────────┘
+// ```
+//
+// The `reorder_parse_complete_responses()` function handles this reordering
+// by tracking batch operations and inserting synthetic ParseComplete messages
+// at the correct positions in the response stream.
+//
+// ## Async Mode (Flush command)
+//
+// When client uses 'H' (Flush) instead of 'S' (Sync), it enters async mode.
+// In async mode, prepared statement caching is disabled to avoid
+// "prepared statement already exists" errors, because the client may
+// send multiple Parse messages for the same statement before receiving
+// responses.
+//
+// =============================================================================
+
 /// Buffer flush threshold in bytes (8 KiB).
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
-
-// Static ParseComplete message: '1' (1 byte) + length 4 (4 bytes big-endian)
-const PARSE_COMPLETE_MSG: [u8; 5] = [b'1', 0, 0, 0, 4];
 
 /// Action to take after processing a message in the transaction loop
 enum TransactionAction {
@@ -83,6 +184,7 @@ where
     }
 
     /// Ensure server is in copy mode, return error if not
+    #[inline(always)]
     fn ensure_copy_mode(&mut self, server: &mut Server) -> Result<(), Error> {
         if !server.in_copy_mode() {
             self.stats.disconnect();
@@ -188,7 +290,7 @@ where
     /// Returns `Ok(true)` if query was handled (caller should continue to next iteration),
     /// `Ok(false)` if query needs normal processing.
     #[inline]
-    async fn handle_fast_query_check(&mut self, message: &BytesMut) -> Result<bool, Error> {
+    async fn try_handle_without_server(&mut self, message: &BytesMut) -> Result<bool, Error> {
         if message[0] != b'Q' {
             return Ok(false);
         }
@@ -222,7 +324,7 @@ where
         server: &mut Server,
         query_start_at: quanta::Instant,
     ) -> Result<TransactionAction, Error> {
-        self.send_and_receive_loop(Some(message), server).await?;
+        self.execute_server_roundtrip(Some(message), server).await?;
         self.stats.query();
         server.stats.query(
             query_start_at.elapsed().as_micros() as u64,
@@ -258,14 +360,35 @@ where
             // For Flush, enter async mode
             server.set_async_mode(true);
             // Mark this client as async client forever
-            self.async_client = true;
+            self.prepared.async_client = true;
             debug!("Client requested flush, going async");
+
+            // If there are skipped Parse operations, send synthetic ParseComplete to client
+            // BEFORE waiting for server response. This is necessary because:
+            // 1. Parse was skipped (statement already cached), so server didn't receive it
+            // 2. Flush was sent to server, but server has nothing to flush
+            // 3. Server won't respond, causing a hang
+            // By sending synthetic ParseComplete here, we satisfy client's expectation
+            if !self.prepared.skipped_parses.is_empty() {
+                let count = self.prepared.skipped_parses.len();
+                debug!(
+                    "Flush: sending {} synthetic ParseComplete for skipped Parse operations",
+                    count
+                );
+                let mut synthetic_response = BytesMut::with_capacity(count * 5);
+                for _ in 0..count {
+                    synthetic_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                }
+                write_all_flush(&mut self.write, &synthetic_response).await?;
+                self.prepared.skipped_parses.clear();
+                self.prepared.batch_operations.clear();
+            }
         } else {
             // For Sync, exit async mode
             server.set_async_mode(false);
         }
 
-        self.send_and_receive_loop(None, server).await?;
+        self.execute_server_roundtrip(None, server).await?;
 
         self.stats.query();
         server.stats.query(
@@ -274,6 +397,8 @@ where
         );
 
         self.buffer.clear();
+        // Reset batch state for next batch
+        self.prepared.reset_batch();
 
         if self.complete_transaction_if_needed(server, true) {
             return Ok(TransactionAction::Break);
@@ -397,9 +522,36 @@ where
             let current_pool = pool.as_ref().unwrap();
 
             // Handle fast queries (pooler check, DEALLOCATE) without server
-            if self.handle_fast_query_check(&message).await? {
+            if self.try_handle_without_server(&message).await? {
                 continue;
             }
+
+            // Micro-optimization: if first message is standalone BEGIN,
+            // synthesize response and defer actual BEGIN to next query.
+            // BEGIN itself doesn't perform any server operations, it only
+            // reserves a connection which is wasteful if client is slow.
+            if is_standalone_begin(&message) && self.client_pending_begin.is_none() {
+                debug!(
+                    "Synthesizing response for standalone BEGIN from {}",
+                    self.addr
+                );
+
+                // Send synthetic response: CommandComplete('BEGIN') + ReadyForQuery('T')
+                // CommandComplete: 'C' + len(10) + "BEGIN\0"
+                // ReadyForQuery: 'Z' + len(5) + 'T' (in transaction)
+                const SYNTHETIC_BEGIN_RESPONSE: &[u8] = &[
+                    b'C', 0, 0, 0, 10, b'B', b'E', b'G', b'I', b'N', 0, // CommandComplete
+                    b'Z', 0, 0, 0, 5, b'T', // ReadyForQuery('T')
+                ];
+                write_all_flush(&mut self.write, SYNTHETIC_BEGIN_RESPONSE).await?;
+
+                // Store pending BEGIN for next query
+                self.client_pending_begin = Some(message);
+                continue; // Return to main loop, wait for next message
+            }
+
+            // Check if we have a pending BEGIN to send with this query
+            let pending_begin = self.client_pending_begin.take();
 
             let shutdown_in_progress = {
                 // start server.
@@ -486,6 +638,39 @@ where
                 }
                 server.set_async_mode(false);
 
+                // If we deferred BEGIN, send it to server first (without forwarding response to client)
+                // Client already received synthetic response, so we discard the real server response
+                if let Some(begin_msg) = pending_begin {
+                    debug!("Sending deferred BEGIN to server for client {}", self.addr);
+
+                    // Send BEGIN to server
+                    server
+                        .send_and_flush_timeout(&begin_msg, Duration::from_secs(5))
+                        .await?;
+
+                    // Receive and discard response (client already got synthetic response)
+                    // Using sink() to avoid forwarding to client
+                    loop {
+                        match server
+                            .recv(&mut tokio::io::sink(), Some(&mut self.server_parameters))
+                            .await
+                        {
+                            Ok(_) => {
+                                if !server.is_data_available() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                server.mark_bad(&format!("deferred BEGIN failed: {:?}", err));
+                                return Err(err);
+                            }
+                        }
+                    }
+
+                    // Reset query_start_at for the actual query
+                    query_start_at = now();
+                }
+
                 let mut initial_message = Some(message);
 
                 // Transaction loop. Multiple queries can be issued by the client here.
@@ -566,6 +751,8 @@ where
                         // Execute a prepared statement prepared in `P` and bound in `B`.
                         'E' => {
                             self.buffer.put(&message[..]);
+                            // Track Execute for correct ParseComplete insertion position
+                            self.prepared.batch_operations.push(BatchOperation::Execute);
                             TransactionAction::Continue
                         }
 
@@ -655,7 +842,7 @@ where
         }
     }
 
-    pub(crate) async fn send_and_receive_loop(
+    pub(crate) async fn execute_server_roundtrip(
         &mut self,
         message: Option<&BytesMut>,
         server: &mut Server,
@@ -694,107 +881,23 @@ where
                 }
             };
 
-            // Insert pending ParseComplete messages based on skipped_parses
-            if !self.skipped_parses.is_empty() {
-                // Count how many ParseComplete we need for each target type
-                let bind_complete_count = self
-                    .skipped_parses
-                    .iter()
-                    .filter(|s| s.target == ParseCompleteTarget::BindComplete)
-                    .count() as u32;
-                let param_desc_count = self
-                    .skipped_parses
-                    .iter()
-                    .filter(|s| s.target == ParseCompleteTarget::ParameterDescription)
-                    .count() as u32;
-
-                debug!(
-                    "skipped_parses: {} total, {} for BindComplete, {} for ParameterDescription, data_available: {}",
-                    self.skipped_parses.len(),
-                    bind_complete_count,
-                    param_desc_count,
-                    server.data_available
-                );
-
-                // Insert ParseComplete before BindComplete
-                // This must happen regardless of data_available because BindComplete comes early in the response
-                if bind_complete_count > 0 {
-                    let (new_response, inserted) =
-                        insert_parse_complete_before_bind_complete(response, bind_complete_count);
-                    debug!(
-                        "insert_parse_complete_before_bind_complete: requested {}, inserted {}",
-                        bind_complete_count, inserted
-                    );
-
-                    if inserted > 0 {
-                        response = new_response;
-                        // Remove only the processed BindComplete entries (the ones we inserted for)
-                        let mut removed = 0u32;
-                        self.skipped_parses.retain(|s| {
-                            if s.target == ParseCompleteTarget::BindComplete && removed < inserted {
-                                removed += 1;
-                                false
-                            } else {
-                                true
-                            }
-                        });
-                    } else if !server.data_available {
-                        // No BindComplete found and no more data coming - insert at the beginning
-                        let mut prefixed_response = BytesMut::with_capacity(
-                            new_response.len() + (bind_complete_count as usize * 5),
-                        );
-
-                        // Insert ParseComplete messages at the beginning
-                        for _ in 0..bind_complete_count {
-                            prefixed_response.extend_from_slice(&PARSE_COMPLETE_MSG);
-                        }
-
-                        // Append the original response
-                        prefixed_response.extend_from_slice(&new_response);
-                        response = prefixed_response;
-
-                        // Remove all BindComplete entries
-                        self.skipped_parses
-                            .retain(|s| s.target != ParseCompleteTarget::BindComplete);
-                    } else {
-                        // data_available is true and no BindComplete found - keep response unchanged
-                        response = new_response;
-                    }
-                }
-
-                // Insert ParseComplete before ParameterDescription
-                // Only do this when server has no more data, to avoid inserting between DataRow messages
-                if param_desc_count > 0 && !server.data_available {
-                    let (new_response, inserted) =
-                        insert_parse_complete_before_parameter_description(response, param_desc_count);
-                    debug!(
-                        "Inserted {} ParseComplete before ParameterDescription (requested {})",
-                        inserted, param_desc_count
-                    );
-                    response = new_response;
-
-                    // Remove processed ParameterDescription entries (only the ones that were inserted)
-                    let mut removed = 0u32;
-                    self.skipped_parses.retain(|s| {
-                        if s.target == ParseCompleteTarget::ParameterDescription && removed < inserted
-                        {
-                            removed += 1;
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                }
+            // Insert pending ParseComplete messages based on batch_operations order
+            // This ensures ParseComplete messages are inserted in the correct position
+            // relative to other responses (ParameterDescription, BindComplete, etc.)
+            if !self.prepared.batch_operations.is_empty()
+                && !self.prepared.skipped_parses.is_empty()
+            {
+                response = self.reorder_parse_complete_responses(response);
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server
-            if self.pending_close_complete > 0 {
+            if self.prepared.pending_close_complete > 0 {
                 let (new_response, inserted) = insert_close_complete_after_last_close_complete(
                     response,
-                    self.pending_close_complete,
+                    self.prepared.pending_close_complete,
                 );
                 response = new_response;
-                self.pending_close_complete -= inserted;
+                self.prepared.pending_close_complete -= inserted;
             }
 
             // Debug log: server -> client (after all modifications to show what client actually receives)
@@ -809,8 +912,8 @@ where
                 && !server.in_transaction()
                 && !server.in_copy_mode()
                 && !server.is_async()
-                && self.skipped_parses.is_empty()
-                && self.pending_close_complete == 0
+                && self.prepared.skipped_parses.is_empty()
+                && self.prepared.pending_close_complete == 0
             {
                 self.client_last_messages_in_tx.put(&response[..]);
                 break;

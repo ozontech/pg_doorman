@@ -4,11 +4,19 @@ title: Changelog
 
 # Changelog
 
-### 3.1.4 <small>Jan 22, 2026</small> { id="3.1.1" }
+### 3.1.5 <small>Jan 25, 2026</small> { id="3.1.5" }
 
 **Bug Fixes:**
 
-- **Fixed PROTOCOL VIOLATION with batch PrepareAsync**: Fixed a critical bug where .NET clients (Npgsql) using `NpgsqlBatch.PrepareAsync()` would receive "Received unexpected backend message ParseComplete" error. The issue occurred when pg_doorman skipped sending Parse messages for cached prepared statements but incorrectly inserted ParseComplete messages in the response.
+- **Fixed PROTOCOL VIOLATION with batch PrepareAsync**
+- **Rewritten ParseComplete insertion algorithm**
+
+**Performance:**
+
+- **Deferred connection acquisition for standalone BEGIN**: When a client sends a standalone `BEGIN;` or `begin;` query (simple query protocol), the pooler now defers acquiring a server connection until the next message arrives. Since `BEGIN` itself doesn't perform any actual database operations, this optimization reduces connection pool contention when clients are slow to send their next query after starting a transaction.
+  - Micro-optimized detection: first checks message size (12 bytes), then content using case-insensitive comparison
+  - If client sends Terminate (`X`) after `BEGIN`, no server connection is acquired at all
+  - The deferred `BEGIN` is automatically sent to the server before the actual query
 
 ### 3.1.0 <small>Jan 18, 2026</small> { id="3.1.0" }
 

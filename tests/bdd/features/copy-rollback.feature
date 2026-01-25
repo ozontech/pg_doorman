@@ -1,4 +1,4 @@
-@rust @copy-rollback
+@rust @rust-3 @copy-rollback
 Feature: COPY with lock timeout and session reuse
   Test that pg_doorman correctly handles COPY operation that fails due to lock timeout
   and that the backend connection is properly returned to the pool for reuse

@@ -1,4 +1,4 @@
-@rust @admin-commands
+@rust @rust-2 @admin-commands
 Feature: Admin console SHOW commands
   Test that pg_doorman admin console correctly handles all SHOW commands
   and that the driver can parse the responses
