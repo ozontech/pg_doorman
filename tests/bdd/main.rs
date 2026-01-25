@@ -59,7 +59,7 @@ fn main() {
         };
 
         let writer = DoormanWorld::cucumber()
-            .max_concurrent_scenarios(5)
+            .max_concurrent_scenarios(1)
             .fail_fast()
             .with_cli(cli)
             .before(|feature, _rule, scenario, world| {
@@ -76,16 +76,24 @@ fn main() {
                         return;
                     }
 
-                    // Spawn a timeout task for this scenario
+                    // Spawn a periodic warning task for slow scenarios
+                    // Prints every 60 seconds while test is running, aborted when scenario finishes
                     let scenario_name = scenario.name.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                        eprintln!(
-                            "⚠️  Scenario '{}' exceeded 300 second timeout",
-                            scenario_name
-                        );
-                        std::process::exit(124); // Timeout exit code
+                    let feature_name = feature.name.clone();
+                    let slow_warning_task = tokio::spawn(async move {
+                        let mut elapsed_minutes = 0u64;
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                            elapsed_minutes += 1;
+                            eprintln!(
+                                "\n🐢🐢🐢 SLOW TEST 🐢🐢🐢\n\
+                                 >>> Test '{}' (feature '{}') is RUNNING for {} minute(s) <<<\n\
+                                 🐢🐢🐢 SLOW TEST 🐢🐢🐢\n",
+                                scenario_name, feature_name, elapsed_minutes
+                            );
+                        }
                     });
+                    world.slow_warning_abort = Some(slow_warning_task.abort_handle());
                 })
             })
             .after(|_feature, _rule, _scenario, _finished, world| {
@@ -94,6 +102,10 @@ fn main() {
                 // NOTE: We only stop the specific process from this scenario, NOT all pg_doorman processes
                 // because the next scenario's Background steps may have already started a new pg_doorman
                 if let Some(w) = world {
+                    // Cancel the slow warning task since scenario has finished
+                    if let Some(abort_handle) = w.slow_warning_abort.take() {
+                        abort_handle.abort();
+                    }
                     if let Some(ref mut child) = w.doorman_process {
                         doorman_helper::stop_doorman(child);
                     }

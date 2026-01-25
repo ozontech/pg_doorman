@@ -67,6 +67,8 @@ pub struct ResponseCounts {
     pub param_desc: usize,
     /// Count of Execute (tracked via CommandComplete 'C') messages
     pub execute: usize,
+    /// Count of CloseComplete ('3') messages
+    pub close_complete: usize,
 }
 
 impl ResponseCounts {
@@ -75,6 +77,7 @@ impl ResponseCounts {
         self.bind_complete = 0;
         self.param_desc = 0;
         self.execute = 0;
+        self.close_complete = 0;
     }
 }
 
@@ -94,6 +97,8 @@ pub enum BatchOperation {
     Bind { statement_name: String },
     /// Execute portal (produces DataRow + CommandComplete)
     Execute,
+    /// Close statement or portal (produces CloseComplete)
+    Close,
 }
 
 /// State related to prepared statements handling.

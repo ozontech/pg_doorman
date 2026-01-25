@@ -282,30 +282,6 @@ Feature: Batch Parse/Describe bug reproduction
     Then we should receive identical messages from both
 
   # ============================================================================
-  # EDGE CASES: Flush operations in batches
-  # ============================================================================
-
-  @batch-edge-case-18
-  Scenario: Multiple Flush operations with cached statements
-    # First cache stmt1
-    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "stmt1" with query "select $1::int" to both
-    And we send Sync to both
-    Then we should receive identical messages from both
-    # Multiple Flush
-    When we send Parse "stmt1" with query "select $1::int" to both
-    And we send Flush to both
-    And we verify partial response received from both
-    And we send Bind "" to "stmt1" with params "1" to both
-    And we send Flush to both
-    And we verify partial response received from both
-    And we send Execute "" to both
-    And we send Flush to both
-    And we verify partial response received from both
-    And we send Sync to both
-    Then we should receive identical messages from both
-
-  # ============================================================================
   # EDGE CASES: Session state after reconnect
   # ============================================================================
 

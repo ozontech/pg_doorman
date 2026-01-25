@@ -92,6 +92,8 @@ pub struct DoormanWorld {
     pub last_password: Option<String>,
     /// Last used database (for reconnection)
     pub last_database: Option<String>,
+    /// Abort handle for slow scenario warning task (to cancel it when scenario finishes)
+    pub slow_warning_abort: Option<tokio::task::AbortHandle>,
 }
 
 impl DoormanWorld {

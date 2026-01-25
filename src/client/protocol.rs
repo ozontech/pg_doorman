@@ -420,6 +420,9 @@ where
         // This ensures Close is sent to server when followed by Flush
         self.buffer.put(&message[..]);
 
+        // Track Close operation for correct ParseComplete insertion order
+        self.prepared.batch_operations.push(BatchOperation::Close);
+
         // Remove from prepared statements cache if it's a named prepared statement
         if self.prepared.enabled && close.is_prepared_statement() && !close.anonymous() {
             let key = PreparedStatementKey::Named(close.name.clone());

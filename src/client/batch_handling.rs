@@ -99,6 +99,10 @@ where
         let mut insert_before_execute: InsertionMap = SmallVec::new();
         let mut execute_index: usize = 0;
 
+        // Track Close index for inserting before CloseComplete
+        let mut insert_before_close: InsertionMap = SmallVec::new();
+        let mut close_index: usize = 0;
+
         for op in &self.prepared.batch_operations {
             match op {
                 BatchOperation::ParseSkipped { .. } => {
@@ -135,6 +139,14 @@ where
                     }
                     execute_index += 1;
                 }
+                BatchOperation::Close => {
+                    // Insert pending ParseComplete before this CloseComplete
+                    if pending_insertions > 0 {
+                        insertion_map_add(&mut insert_before_close, close_index, pending_insertions);
+                        pending_insertions = 0;
+                    }
+                    close_index += 1;
+                }
             }
         }
 
@@ -142,6 +154,7 @@ where
         let bind_offset = self.prepared.processed_response_counts.bind_complete;
         let param_desc_offset = self.prepared.processed_response_counts.param_desc;
         let execute_offset = self.prepared.processed_response_counts.execute;
+        let close_offset = self.prepared.processed_response_counts.close_complete;
 
         // Adjust indices by offset - filter and transform in place to avoid new allocations
         let relevant_bind: InsertionMap = insert_before_bind
@@ -159,10 +172,16 @@ where
             .filter(|(idx, _)| *idx >= execute_offset)
             .map(|(idx, count)| (idx - execute_offset, *count))
             .collect();
+        let relevant_close: InsertionMap = insert_before_close
+            .iter()
+            .filter(|(idx, _)| *idx >= close_offset)
+            .map(|(idx, count)| (idx - close_offset, *count))
+            .collect();
 
         let total_insertions: usize = insertion_map_sum(&relevant_bind)
             + insertion_map_sum(&relevant_param_desc)
             + insertion_map_sum(&relevant_execute)
+            + insertion_map_sum(&relevant_close)
             + pending_insertions; // remaining at end
 
         if total_insertions == 0 {
@@ -170,6 +189,7 @@ where
             let mut bind_count = 0usize;
             let mut param_desc_count = 0usize;
             let mut cmd_complete_count = 0usize;
+            let mut close_complete_count = 0usize;
             let mut pos = 0;
             while pos + 5 <= response.len() {
                 let msg_type = response[pos] as char;
@@ -183,6 +203,7 @@ where
                     '2' => bind_count += 1,
                     't' => param_desc_count += 1,
                     'C' => cmd_complete_count += 1,
+                    '3' => close_complete_count += 1,
                     _ => {}
                 }
                 pos += 1 + msg_len;
@@ -190,6 +211,7 @@ where
             self.prepared.processed_response_counts.bind_complete += bind_count;
             self.prepared.processed_response_counts.param_desc += param_desc_count;
             self.prepared.processed_response_counts.execute += cmd_complete_count;
+            self.prepared.processed_response_counts.close_complete += close_complete_count;
             return response;
         }
 
@@ -199,6 +221,7 @@ where
         let mut bind_count: usize = 0;
         let mut param_desc_count: usize = 0;
         let mut execute_count: usize = 0;
+        let mut close_count: usize = 0;
         let mut in_execute: bool = false; // Track if we're inside an Execute response
 
         while pos < response.len() {
@@ -239,6 +262,15 @@ where
                     }
                     param_desc_count += 1;
                 }
+                '3' => {
+                    // CloseComplete - insert pending ParseComplete before it
+                    if let Some(count) = insertion_map_get(&relevant_close, close_count) {
+                        for _ in 0..count {
+                            new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                        }
+                    }
+                    close_count += 1;
+                }
                 'C' => {
                     // CommandComplete marks end of Execute
                     in_execute = false;
@@ -278,6 +310,7 @@ where
         self.prepared.processed_response_counts.bind_complete += bind_count;
         self.prepared.processed_response_counts.param_desc += param_desc_count;
         self.prepared.processed_response_counts.execute += execute_count;
+        self.prepared.processed_response_counts.close_complete += close_count;
 
         new_response
     }
