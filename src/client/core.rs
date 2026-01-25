@@ -1,6 +1,7 @@
 use crate::errors::Error;
 /// Handle clients by pretending to be a PostgreSQL server.
 use ahash::AHashMap;
+use bytes::BytesMut;
 use std::sync::Arc;
 use tokio::io::BufReader;
 
@@ -229,6 +230,11 @@ pub struct Client<S, T> {
     pub(crate) client_last_messages_in_tx: PooledBuffer,
 
     pub(crate) pooler_check_query_request_vec: Vec<u8>,
+
+    /// Pending BEGIN message for deferred connection optimization.
+    /// When client sends standalone "begin;", we synthesize response
+    /// and defer actual BEGIN until next query arrives.
+    pub(crate) client_pending_begin: Option<BytesMut>,
 }
 
 impl<S, T> Client<S, T>

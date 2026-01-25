@@ -527,37 +527,31 @@ where
             }
 
             // Micro-optimization: if first message is standalone BEGIN,
-            // defer connection acquisition until next message arrives.
+            // synthesize response and defer actual BEGIN to next query.
             // BEGIN itself doesn't perform any server operations, it only
             // reserves a connection which is wasteful if client is slow.
-            let (message, pending_begin) = if is_standalone_begin(&message) {
+            if is_standalone_begin(&message) && self.client_pending_begin.is_none() {
                 debug!(
-                    "Deferring connection for standalone BEGIN from {}",
+                    "Synthesizing response for standalone BEGIN from {}",
                     self.addr
                 );
 
-                // Read next message from client
-                self.stats.idle_read();
-                let next_message = match read_message(&mut self.read, self.max_memory_usage).await {
-                    Ok(msg) => msg,
-                    Err(err) => return self.process_error(err).await,
-                };
+                // Send synthetic response: CommandComplete('BEGIN') + ReadyForQuery('T')
+                // CommandComplete: 'C' + len(10) + "BEGIN\0"
+                // ReadyForQuery: 'Z' + len(5) + 'T' (in transaction)
+                const SYNTHETIC_BEGIN_RESPONSE: &[u8] = &[
+                    b'C', 0, 0, 0, 10, b'B', b'E', b'G', b'I', b'N', 0, // CommandComplete
+                    b'Z', 0, 0, 0, 5, b'T', // ReadyForQuery('T')
+                ];
+                write_all_flush(&mut self.write, SYNTHETIC_BEGIN_RESPONSE).await?;
 
-                // If client sends Terminate after BEGIN, no need to get connection
-                if next_message[0] as char == 'X' {
-                    debug!(
-                        "Client {} sent Terminate after BEGIN, skipping connection",
-                        self.addr
-                    );
-                    self.stats.disconnect();
-                    return Ok(());
-                }
+                // Store pending BEGIN for next query
+                self.client_pending_begin = Some(message);
+                continue; // Return to main loop, wait for next message
+            }
 
-                // Return next message as main, BEGIN as pending
-                (next_message, Some(message))
-            } else {
-                (message, None)
-            };
+            // Check if we have a pending BEGIN to send with this query
+            let pending_begin = self.client_pending_begin.take();
 
             let shutdown_in_progress = {
                 // start server.
@@ -644,11 +638,35 @@ where
                 }
                 server.set_async_mode(false);
 
-                // If we deferred BEGIN, send it to server first
+                // If we deferred BEGIN, send it to server first (without forwarding response to client)
+                // Client already received synthetic response, so we discard the real server response
                 if let Some(begin_msg) = pending_begin {
                     debug!("Sending deferred BEGIN to server for client {}", self.addr);
-                    self.execute_server_roundtrip(Some(&begin_msg), server)
+
+                    // Send BEGIN to server
+                    server
+                        .send_and_flush_timeout(&begin_msg, Duration::from_secs(5))
                         .await?;
+
+                    // Receive and discard response (client already got synthetic response)
+                    // Using sink() to avoid forwarding to client
+                    loop {
+                        match server
+                            .recv(&mut tokio::io::sink(), Some(&mut self.server_parameters))
+                            .await
+                        {
+                            Ok(_) => {
+                                if !server.is_data_available() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                server.mark_bad(&format!("deferred BEGIN failed: {:?}", err));
+                                return Err(err);
+                            }
+                        }
+                    }
+
                     // Reset query_start_at for the actual query
                     query_start_at = now();
                 }

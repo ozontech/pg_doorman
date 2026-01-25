@@ -35,7 +35,7 @@ Feature: Deferred connection for standalone BEGIN
     # Create a client session
     When we create session "client1" to pg_doorman as "example_user_1" with password "" and database "example_db"
     # Send BEGIN without waiting for response - this triggers the deferred connection optimization
-    And we send SimpleQuery "begin; /**/" to session "client1" without waiting for response
+    And we send SimpleQuery "begin;" to session "client1" without waiting for response
     # Small delay to ensure pg_doorman has processed the BEGIN message
     And we sleep 100ms
     # Check via admin console that no server backends are active
