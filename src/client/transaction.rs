@@ -21,6 +21,110 @@ use crate::server::Server;
 use crate::utils::comments::SqlCommentParser;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 
+// =============================================================================
+// PostgreSQL Extended Query Protocol - Documentation
+// =============================================================================
+//
+// This module handles the PostgreSQL Extended Query Protocol, which allows
+// clients to send multiple messages in a batch before requesting results.
+//
+// ## Protocol Message Types (Client → Server)
+//
+// | Code | Message   | Description                                      |
+// |------|-----------|--------------------------------------------------|
+// | 'P'  | Parse     | Prepare a statement (with optional name)         |
+// | 'B'  | Bind      | Bind parameters to a prepared statement          |
+// | 'E'  | Execute   | Execute a bound portal                           |
+// | 'D'  | Describe  | Request description of statement or portal       |
+// | 'C'  | Close     | Close a prepared statement or portal             |
+// | 'S'  | Sync      | Synchronization point, requests results          |
+// | 'H'  | Flush     | Request server to flush output (async mode)      |
+// | 'Q'  | Query     | Simple query (not extended protocol)             |
+// | 'X'  | Terminate | Close connection                                 |
+//
+// ## Protocol Message Types (Server → Client)
+//
+// | Code | Message              | Description                              |
+// |------|----------------------|------------------------------------------|
+// | '1'  | ParseComplete        | Statement was parsed successfully        |
+// | '2'  | BindComplete         | Parameters were bound successfully       |
+// | 'T'  | RowDescription       | Description of result columns            |
+// | 'D'  | DataRow              | A row of query results                   |
+// | 'C'  | CommandComplete      | Command finished (with row count)        |
+// | 't'  | ParameterDescription | Description of statement parameters      |
+// | 'n'  | NoData               | Statement returns no data                |
+// | '3'  | CloseComplete        | Statement/portal was closed              |
+// | 'Z'  | ReadyForQuery        | Server ready for next query              |
+// | 'E'  | ErrorResponse        | An error occurred                        |
+//
+// ## Basic Extended Query Flow
+//
+// ```text
+// Client                      Proxy                      Server
+//   │                           │                           │
+//   │──── Parse (P) ───────────>│                           │
+//   │──── Bind (B) ────────────>│                           │
+//   │──── Execute (E) ─────────>│                           │
+//   │──── Sync (S) ────────────>│──── P,B,E,S ────────────>│
+//   │                           │                           │
+//   │                           │<─── ParseComplete (1) ────│
+//   │                           │<─── BindComplete (2) ─────│
+//   │                           │<─── DataRow... (D) ───────│
+//   │                           │<─── CommandComplete (C) ──│
+//   │<──── Response ────────────│<─── ReadyForQuery (Z) ────│
+// ```
+//
+// ## Prepared Statement Caching
+//
+// pg_doorman caches prepared statements to avoid re-parsing identical queries.
+// When a Parse message arrives:
+//
+// 1. If statement is NOT in cache → send Parse to server, cache it
+// 2. If statement IS in cache AND server has it → skip Parse, inject ParseComplete
+// 3. If statement IS in cache BUT server doesn't have it → send Parse to server
+//
+// ## Batch Processing with Cached Statements
+//
+// When some Parse messages are skipped (cached), we must inject ParseComplete
+// responses in the correct order. Example:
+//
+// ```text
+// Client sends:              Server receives:         Server responds:
+// ┌─────────────────┐        ┌─────────────────┐      ┌─────────────────┐
+// │ Parse "stmt1"   │──┐     │                 │      │                 │
+// │ (cached,skip)   │  │     │                 │      │                 │
+// ├─────────────────┤  │     ├─────────────────┤      ├─────────────────┤
+// │ Parse "stmt2"   │──┼────>│ Parse "stmt2"   │─────>│ ParseComplete   │
+// │ (new, send)     │  │     │                 │      │                 │
+// ├─────────────────┤  │     ├─────────────────┤      ├─────────────────┤
+// │ Bind to "stmt1" │──┼────>│ Bind to "stmt1" │─────>│ BindComplete    │
+// ├─────────────────┤  │     ├─────────────────┤      ├─────────────────┤
+// │ Sync            │──┘────>│ Sync            │─────>│ ReadyForQuery   │
+// └─────────────────┘        └─────────────────┘      └─────────────────┘
+//
+// Proxy must reorder response to client:
+// ┌─────────────────┐
+// │ ParseComplete   │ ← injected for skipped "stmt1"
+// │ ParseComplete   │ ← from server for "stmt2"
+// │ BindComplete    │ ← from server
+// │ ReadyForQuery   │ ← from server
+// └─────────────────┘
+// ```
+//
+// The `reorder_parse_complete_responses()` function handles this reordering
+// by tracking batch operations and inserting synthetic ParseComplete messages
+// at the correct positions in the response stream.
+//
+// ## Async Mode (Flush command)
+//
+// When client uses 'H' (Flush) instead of 'S' (Sync), it enters async mode.
+// In async mode, prepared statement caching is disabled to avoid
+// "prepared statement already exists" errors, because the client may
+// send multiple Parse messages for the same statement before receiving
+// responses.
+//
+// =============================================================================
+
 /// Buffer flush threshold in bytes (8 KiB).
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
@@ -108,8 +212,8 @@ where
     ///
     /// This function handles streaming responses - it tracks how many messages have been
     /// processed across multiple chunks using self.processed_response_counts.
-    fn insert_parse_completes_by_batch_order(&mut self, response: BytesMut) -> BytesMut {
-        if self.batch_operations.is_empty() || self.skipped_parses.is_empty() {
+    fn reorder_parse_complete_responses(&mut self, response: BytesMut) -> BytesMut {
+        if self.prepared.batch_operations.is_empty() || self.prepared.skipped_parses.is_empty() {
             return response;
         }
 
@@ -141,7 +245,7 @@ where
             std::collections::HashMap::new();
         let mut execute_index: usize = 0;
 
-        for op in &self.batch_operations {
+        for op in &self.prepared.batch_operations {
             match op {
                 BatchOperation::ParseSkipped { .. } => {
                     // Mark that we need to insert ParseComplete
@@ -183,9 +287,9 @@ where
         }
 
         // Get offsets from previous chunks
-        let bind_offset = *self.processed_response_counts.get(&'2').unwrap_or(&0);
-        let param_desc_offset = *self.processed_response_counts.get(&'t').unwrap_or(&0);
-        let execute_offset = *self.processed_response_counts.get(&'E').unwrap_or(&0); // 'E' for Execute count
+        let bind_offset = *self.prepared.processed_response_counts.get(&'2').unwrap_or(&0);
+        let param_desc_offset = *self.prepared.processed_response_counts.get(&'t').unwrap_or(&0);
+        let execute_offset = *self.prepared.processed_response_counts.get(&'E').unwrap_or(&0); // 'E' for Execute count
 
         // Adjust indices by offset
         let relevant_bind: std::collections::HashMap<usize, usize> = insert_before_bind
@@ -231,9 +335,9 @@ where
                 }
                 pos += 1 + msg_len;
             }
-            *self.processed_response_counts.entry('2').or_insert(0) += bind_count;
-            *self.processed_response_counts.entry('t').or_insert(0) += param_desc_count;
-            *self.processed_response_counts.entry('E').or_insert(0) += cmd_complete_count; // Execute count = CommandComplete count
+            *self.prepared.processed_response_counts.entry('2').or_insert(0) += bind_count;
+            *self.prepared.processed_response_counts.entry('t').or_insert(0) += param_desc_count;
+            *self.prepared.processed_response_counts.entry('E').or_insert(0) += cmd_complete_count; // Execute count = CommandComplete count
             return response;
         }
 
@@ -319,9 +423,9 @@ where
         }
 
         // Update processed counts
-        *self.processed_response_counts.entry('2').or_insert(0) += bind_count;
-        *self.processed_response_counts.entry('t').or_insert(0) += param_desc_count;
-        *self.processed_response_counts.entry('E').or_insert(0) += execute_count;
+        *self.prepared.processed_response_counts.entry('2').or_insert(0) += bind_count;
+        *self.prepared.processed_response_counts.entry('t').or_insert(0) += param_desc_count;
+        *self.prepared.processed_response_counts.entry('E').or_insert(0) += execute_count;
 
         new_response
     }
@@ -420,7 +524,7 @@ where
     /// Returns `Ok(true)` if query was handled (caller should continue to next iteration),
     /// `Ok(false)` if query needs normal processing.
     #[inline]
-    async fn handle_fast_query_check(&mut self, message: &BytesMut) -> Result<bool, Error> {
+    async fn try_handle_without_server(&mut self, message: &BytesMut) -> Result<bool, Error> {
         if message[0] != b'Q' {
             return Ok(false);
         }
@@ -454,7 +558,7 @@ where
         server: &mut Server,
         query_start_at: quanta::Instant,
     ) -> Result<TransactionAction, Error> {
-        self.send_and_receive_loop(Some(message), server).await?;
+        self.execute_server_roundtrip(Some(message), server).await?;
         self.stats.query();
         server.stats.query(
             query_start_at.elapsed().as_micros() as u64,
@@ -490,14 +594,14 @@ where
             // For Flush, enter async mode
             server.set_async_mode(true);
             // Mark this client as async client forever
-            self.async_client = true;
+            self.prepared.async_client = true;
             debug!("Client requested flush, going async");
         } else {
             // For Sync, exit async mode
             server.set_async_mode(false);
         }
 
-        self.send_and_receive_loop(None, server).await?;
+        self.execute_server_roundtrip(None, server).await?;
 
         self.stats.query();
         server.stats.query(
@@ -507,10 +611,7 @@ where
 
         self.buffer.clear();
         // Reset batch state for next batch
-        self.parses_sent_in_batch = 0;
-        self.skipped_parses.clear();
-        self.batch_operations.clear();
-        self.processed_response_counts.clear();
+        self.prepared.reset_batch();
 
         if self.complete_transaction_if_needed(server, true) {
             return Ok(TransactionAction::Break);
@@ -634,7 +735,7 @@ where
             let current_pool = pool.as_ref().unwrap();
 
             // Handle fast queries (pooler check, DEALLOCATE) without server
-            if self.handle_fast_query_check(&message).await? {
+            if self.try_handle_without_server(&message).await? {
                 continue;
             }
 
@@ -804,7 +905,7 @@ where
                         'E' => {
                             self.buffer.put(&message[..]);
                             // Track Execute for correct ParseComplete insertion position
-                            self.batch_operations.push(BatchOperation::Execute);
+                            self.prepared.batch_operations.push(BatchOperation::Execute);
                             TransactionAction::Continue
                         }
 
@@ -894,7 +995,7 @@ where
         }
     }
 
-    pub(crate) async fn send_and_receive_loop(
+    pub(crate) async fn execute_server_roundtrip(
         &mut self,
         message: Option<&BytesMut>,
         server: &mut Server,
@@ -936,18 +1037,18 @@ where
             // Insert pending ParseComplete messages based on batch_operations order
             // This ensures ParseComplete messages are inserted in the correct position
             // relative to other responses (ParameterDescription, BindComplete, etc.)
-            if !self.batch_operations.is_empty() && !self.skipped_parses.is_empty() {
-                response = self.insert_parse_completes_by_batch_order(response);
+            if !self.prepared.batch_operations.is_empty() && !self.prepared.skipped_parses.is_empty() {
+                response = self.reorder_parse_complete_responses(response);
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server
-            if self.pending_close_complete > 0 {
+            if self.prepared.pending_close_complete > 0 {
                 let (new_response, inserted) = insert_close_complete_after_last_close_complete(
                     response,
-                    self.pending_close_complete,
+                    self.prepared.pending_close_complete,
                 );
                 response = new_response;
-                self.pending_close_complete -= inserted;
+                self.prepared.pending_close_complete -= inserted;
             }
 
             // Debug log: server -> client (after all modifications to show what client actually receives)
@@ -962,8 +1063,8 @@ where
                 && !server.in_transaction()
                 && !server.in_copy_mode()
                 && !server.is_async()
-                && self.skipped_parses.is_empty()
-                && self.pending_close_complete == 0
+                && self.prepared.skipped_parses.is_empty()
+                && self.prepared.pending_close_complete == 0
             {
                 self.client_last_messages_in_tx.put(&response[..]);
                 break;

@@ -61,17 +61,88 @@ pub struct SkippedParse {
 #[derive(Debug, Clone)]
 pub enum BatchOperation {
     /// Parse was skipped (statement already on server)
-    ParseSkipped { _statement_name: String },
+    ParseSkipped { statement_name: String },
     /// Parse was sent to server
-    ParseSent { _statement_name: String },
+    #[allow(dead_code)]
+    ParseSent { statement_name: String },
     /// Describe statement (produces ParameterDescription + RowDescription)
-    Describe { _statement_name: String },
+    /// #[allow(dead_code)]
+    Describe { statement_name: String },
     /// Describe portal (produces RowDescription only)
     DescribePortal,
     /// Bind to statement
-    Bind { _statement_name: String },
+    #[allow(dead_code)]
+    Bind { statement_name: String },
     /// Execute portal (produces DataRow + CommandComplete)
     Execute,
+}
+
+/// State related to prepared statements handling.
+/// Groups all fields needed for prepared statement caching and batch processing.
+pub struct PreparedStatementState {
+    /// Whether prepared statements are enabled for this client
+    pub enabled: bool,
+
+    /// Whether this client has ever used async protocol (Flush command)
+    /// Once set to true, prepared statements caching is disabled for this client
+    pub async_client: bool,
+
+    /// Mapping of client named prepared statement to rewritten parse messages
+    pub cache: AHashMap<PreparedStatementKey, (Arc<Parse>, u64)>,
+
+    /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
+    pub last_anonymous_hash: Option<u64>,
+
+    /// Tracks skipped Parse messages that need synthetic ParseComplete responses.
+    /// Each entry contains the statement name and what response we're waiting for.
+    pub skipped_parses: Vec<SkippedParse>,
+
+    /// Tracks all operations in current batch to determine correct ParseComplete insertion order.
+    /// Cleared after Sync.
+    pub batch_operations: Vec<BatchOperation>,
+
+    /// Counter for Parse messages sent to server in current batch.
+    /// Used to determine if skipped Parse should insert ParseComplete at beginning or before BindComplete.
+    pub parses_sent_in_batch: u32,
+
+    /// Tracks how many BindComplete/ParameterDescription messages have been processed
+    /// across multiple response chunks. Used for correct ParseComplete insertion.
+    pub processed_response_counts: std::collections::HashMap<char, usize>,
+
+    /// Counter for pending CloseComplete messages to send before ReadyForQuery
+    pub pending_close_complete: u32,
+}
+
+impl PreparedStatementState {
+    /// Create a new PreparedStatementState with the given enabled flag
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            async_client: false,
+            cache: AHashMap::new(),
+            last_anonymous_hash: None,
+            skipped_parses: Vec::new(),
+            batch_operations: Vec::new(),
+            parses_sent_in_batch: 0,
+            processed_response_counts: std::collections::HashMap::new(),
+            pending_close_complete: 0,
+        }
+    }
+
+    /// Reset batch state after Sync
+    #[inline]
+    pub fn reset_batch(&mut self) {
+        self.parses_sent_in_batch = 0;
+        self.skipped_parses.clear();
+        self.batch_operations.clear();
+        self.processed_response_counts.clear();
+    }
+}
+
+impl Default for PreparedStatementState {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 /// The client state. One of these is created per client.
@@ -86,17 +157,6 @@ pub struct Client<S, T> {
     /// Internal buffer, where we place messages until we have to flush
     /// them to the backend.
     pub(crate) buffer: PooledBuffer,
-
-    /// Counter for pending CloseComplete messages to send before ReadyForQuery
-    pub(crate) pending_close_complete: u32,
-
-    /// Tracks skipped Parse messages that need synthetic ParseComplete responses.
-    /// Each entry contains the statement name and what response we're waiting for.
-    pub(crate) skipped_parses: Vec<SkippedParse>,
-
-    /// Tracks all operations in current batch to determine correct ParseComplete insertion order.
-    /// Cleared after Sync.
-    pub(crate) batch_operations: Vec<BatchOperation>,
 
     /// Address
     pub(crate) addr: std::net::SocketAddr,
@@ -137,26 +197,8 @@ pub struct Client<S, T> {
     /// Server startup and session parameters that we're going to track
     pub(crate) server_parameters: ServerParameters,
 
-    /// Whether prepared statements are enabled for this client
-    pub(crate) prepared_statements_enabled: bool,
-
-    /// Whether this client has ever used async protocol (Flush command)
-    /// Once set to true, prepared statements caching is disabled for this client
-    pub(crate) async_client: bool,
-
-    /// Mapping of client named prepared statement to rewritten parse messages
-    pub(crate) prepared_statements: AHashMap<PreparedStatementKey, (Arc<Parse>, u64)>,
-
-    /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
-    pub(crate) last_anonymous_prepared_hash: Option<u64>,
-
-    /// Counter for Parse messages sent to server in current batch.
-    /// Used to determine if skipped Parse should insert ParseComplete at beginning or before BindComplete.
-    pub(crate) parses_sent_in_batch: u32,
-
-    /// Tracks how many BindComplete/ParameterDescription messages have been processed
-    /// across multiple response chunks. Used for correct ParseComplete insertion.
-    pub(crate) processed_response_counts: std::collections::HashMap<char, usize>,
+    /// Prepared statements state (caching, batch operations, etc.)
+    pub(crate) prepared: PreparedStatementState,
 
     pub(crate) max_memory_usage: u64,
 

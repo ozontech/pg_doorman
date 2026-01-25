@@ -1,4 +1,3 @@
-use ahash::AHashMap;
 use bytes::{Buf, BufMut, BytesMut};
 use log::error;
 use std::ffi::CStr;
@@ -23,7 +22,7 @@ use crate::server::ServerParameters;
 use crate::stats::{ClientStats, CANCEL_CONNECTION_COUNTER};
 
 use super::buffer_pool::PooledBuffer;
-use super::core::Client;
+use super::core::{Client, PreparedStatementState};
 
 /// Type of connection received from client.
 pub(crate) enum ClientConnectionType {
@@ -361,9 +360,6 @@ where
             write,
             addr,
             buffer: PooledBuffer::new(),
-            pending_close_complete: 0,
-            skipped_parses: Vec::new(),
-            batch_operations: Vec::new(),
             cancel_mode: false,
             transaction_mode,
             process_id,
@@ -376,12 +372,7 @@ where
             pool_name,
             username: std::mem::take(&mut client_identifier.username),
             server_parameters,
-            prepared_statements_enabled,
-            async_client: false,
-            prepared_statements: AHashMap::new(),
-            last_anonymous_prepared_hash: None,
-            parses_sent_in_batch: 0,
-            processed_response_counts: std::collections::HashMap::new(),
+            prepared: PreparedStatementState::new(prepared_statements_enabled),
             client_last_messages_in_tx: PooledBuffer::new(),
             max_memory_usage: config.general.max_memory_usage.as_bytes(),
             pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
@@ -403,9 +394,6 @@ where
             write,
             addr,
             buffer: PooledBuffer::new(),
-            pending_close_complete: 0,
-            skipped_parses: Vec::new(),
-            batch_operations: Vec::new(),
             cancel_mode: true,
             transaction_mode: false,
             process_id,
@@ -417,12 +405,7 @@ where
             pool_name: String::from("undefined"),
             username: String::from("undefined"),
             server_parameters: ServerParameters::new(),
-            prepared_statements_enabled: false,
-            async_client: false,
-            prepared_statements: AHashMap::new(),
-            last_anonymous_prepared_hash: None,
-            parses_sent_in_batch: 0,
-            processed_response_counts: std::collections::HashMap::new(),
+            prepared: PreparedStatementState::default(),
             connected_to_server: false,
             client_last_messages_in_tx: PooledBuffer::new(),
             max_memory_usage: 128 * 1024 * 1024,

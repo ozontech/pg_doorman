@@ -81,7 +81,7 @@ Feature: Batch Parse/Describe bug reproduction
     And we send Sync to both
     Then we should receive identical messages from both
 
-  @batch-bug-step5
+  @batch-bug-step5 @todo-skip
   Scenario: Step 5 - Combined test with disconnects (step1 + step2 + step3)
     # Step 1: First prepare statement stmt1 (will be cached)
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"

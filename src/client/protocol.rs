@@ -24,7 +24,7 @@ where
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
-        match self.prepared_statements.get(&key) {
+        match self.prepared.cache.get(&key) {
             Some((parse, hash)) => {
                 debug!("Prepared statement `{key:?}` found in cache");
                 // In this case we want to send the parse message to the server
@@ -37,7 +37,7 @@ where
                     Err(err) => match err {
                         Error::PreparedStatementError => {
                             debug!("Removed {key:?} from client cache");
-                            self.prepared_statements.remove(&key);
+                            self.prepared.cache.remove(&key);
                         }
 
                         _ => {
@@ -89,7 +89,7 @@ where
         server: &mut Server,
     ) -> Result<(), Error> {
         // Avoid parsing if prepared statements not enabled
-        if !self.prepared_statements_enabled {
+        if !self.prepared.enabled {
             debug!("Anonymous parse message");
             let first_char_in_name = *message.get(5).unwrap_or(&0);
             if first_char_in_name != 0 {
@@ -110,7 +110,7 @@ where
 
         // For async clients, create a new Parse with unique name instead of using pool cache
         // This avoids "prepared statement already exists" errors
-        let new_parse = if self.async_client {
+        let new_parse = if self.prepared.async_client {
             // Use rewrite() to rename without cloning - it takes ownership and returns modified Parse
             Arc::new(parse.rewrite())
         } else {
@@ -133,17 +133,17 @@ where
         // For anonymous prepared statements, use hash as key to avoid collisions
         // Save hash for anonymous prepared statement lookup
         if client_given_name.is_empty() {
-            self.last_anonymous_prepared_hash = Some(hash);
+            self.prepared.last_anonymous_hash = Some(hash);
         }
         let cache_key = PreparedStatementKey::from_name_or_hash(client_given_name, hash);
 
-        self.prepared_statements
+        self.prepared.cache
             .insert(cache_key, (new_parse.clone(), hash));
 
         // Check if server already has this prepared statement
         if server.has_prepared_statement(&new_parse.name) {
             // For async clients, always send Parse to get real ParseComplete from server
-            if self.async_client {
+            if self.prepared.async_client {
                 debug!(
                     "Async client: sending Parse `{}` to server even though cached",
                     new_parse.name
@@ -164,15 +164,15 @@ where
                 // This ensures correct ordering: ParseComplete for skipped Parse that comes
                 // BEFORE new Parse should be at the beginning of the response.
                 // has_bind starts as false - will be set to true when Bind is processed.
-                self.skipped_parses.push(SkippedParse {
+                self.prepared.skipped_parses.push(SkippedParse {
                     statement_name: new_parse.name.clone(),
                     target: ParseCompleteTarget::BindComplete,
                     insert_at_beginning: false,
                     has_bind: false,
                 });
                 // Track operation order for correct ParseComplete insertion
-                self.batch_operations.push(BatchOperation::ParseSkipped {
-                    _statement_name: new_parse.name.clone(),
+                self.prepared.batch_operations.push(BatchOperation::ParseSkipped {
+                    statement_name: new_parse.name.clone(),
                 });
             }
         } else {
@@ -189,7 +189,7 @@ where
             // because their ParseComplete should come before the ParseComplete from server.
             // BUT only if they don't have a corresponding Bind yet - if they have Bind,
             // their ParseComplete should be inserted before BindComplete, not at beginning.
-            for skipped in &mut self.skipped_parses {
+            for skipped in &mut self.prepared.skipped_parses {
                 if !skipped.insert_at_beginning && !skipped.has_bind {
                     skipped.insert_at_beginning = true;
                 }
@@ -200,11 +200,11 @@ where
             self.buffer.put(&parse_bytes[..]);
 
             // Track that we sent a Parse to server in this batch
-            self.parses_sent_in_batch += 1;
+            self.prepared.parses_sent_in_batch += 1;
 
             // Track operation order for correct ParseComplete insertion
-            self.batch_operations.push(BatchOperation::ParseSent {
-                _statement_name: new_parse.name.clone(),
+            self.prepared.batch_operations.push(BatchOperation::ParseSent {
+                statement_name: new_parse.name.clone(),
             });
         }
 
@@ -217,7 +217,7 @@ where
         client_given_name: &str,
     ) -> Result<PreparedStatementKey, Error> {
         if client_given_name.is_empty() {
-            match self.last_anonymous_prepared_hash {
+            match self.prepared.last_anonymous_hash {
                 Some(hash) => Ok(PreparedStatementKey::Anonymous(hash)),
                 None => {
                     debug!("Got anonymous prepared statement reference but no anonymous prepared statement exists");
@@ -246,7 +246,7 @@ where
         server: &mut Server,
     ) -> Result<(), Error> {
         // Avoid parsing if prepared statements not enabled
-        if !self.prepared_statements_enabled {
+        if !self.prepared.enabled {
             debug!("Anonymous bind message");
             self.buffer.put(&message[..]);
             return Ok(());
@@ -257,7 +257,7 @@ where
             .get_prepared_statement_lookup_key(&client_given_name)
             .await?;
 
-        match self.prepared_statements.get(&lookup_key) {
+        match self.prepared.cache.get(&lookup_key) {
             Some((rewritten_parse, _)) => {
                 let rewritten_name = rewritten_parse.name.clone();
                 let message = Bind::rename(message, &rewritten_name)?;
@@ -276,7 +276,7 @@ where
                 // Mark the corresponding skipped_parse as having a Bind.
                 // This prevents it from being marked as insert_at_beginning when a new Parse arrives,
                 // because its ParseComplete should be inserted before BindComplete, not at beginning.
-                if let Some(skipped) = self.skipped_parses.iter_mut().find(|s| {
+                if let Some(skipped) = self.prepared.skipped_parses.iter_mut().find(|s| {
                     s.statement_name == rewritten_name
                         && s.target == ParseCompleteTarget::BindComplete
                         && !s.has_bind
@@ -288,8 +288,8 @@ where
                 self.buffer.put(&message[..]);
 
                 // Track operation order for correct ParseComplete insertion
-                self.batch_operations.push(BatchOperation::Bind {
-                    _statement_name: rewritten_name,
+                self.prepared.batch_operations.push(BatchOperation::Bind {
+                    statement_name: rewritten_name,
                 });
 
                 Ok(())
@@ -320,7 +320,7 @@ where
         server: &mut Server,
     ) -> Result<(), Error> {
         // Avoid parsing if prepared statements not enabled
-        if !self.prepared_statements_enabled {
+        if !self.prepared.enabled {
             debug!("Anonymous describe message");
             self.buffer.put(&message[..]);
             return Ok(());
@@ -331,7 +331,7 @@ where
             debug!("Portal describe message");
             self.buffer.put(&message[..]);
             // Track portal describe for correct ParseComplete insertion position
-            self.batch_operations.push(BatchOperation::DescribePortal);
+            self.prepared.batch_operations.push(BatchOperation::DescribePortal);
             return Ok(());
         }
 
@@ -340,7 +340,7 @@ where
             .get_prepared_statement_lookup_key(&client_given_name)
             .await?;
 
-        match self.prepared_statements.get(&lookup_key) {
+        match self.prepared.cache.get(&lookup_key) {
             Some((rewritten_parse, _)) => {
                 // Clone what we need before any mutable borrows
                 let rewritten_parse = rewritten_parse.clone();
@@ -362,7 +362,7 @@ where
                 // Find and remove the skipped parse entry, then add a new one with ParameterDescription target.
                 // Using position() + remove() + push() instead of iter_mut().find() to avoid issues
                 // when multiple Parse operations for the same statement are skipped in a batch.
-                if let Some(idx) = self.skipped_parses.iter().position(|s| {
+                if let Some(idx) = self.prepared.skipped_parses.iter().position(|s| {
                     s.statement_name == rewritten_parse.name
                         && s.target == ParseCompleteTarget::BindComplete
                 }) {
@@ -370,10 +370,10 @@ where
                         "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
                         rewritten_parse.name
                     );
-                    let insert_at_beginning = self.skipped_parses[idx].insert_at_beginning;
-                    let has_bind = self.skipped_parses[idx].has_bind;
-                    self.skipped_parses.remove(idx);
-                    self.skipped_parses.push(SkippedParse {
+                    let insert_at_beginning = self.prepared.skipped_parses[idx].insert_at_beginning;
+                    let has_bind = self.prepared.skipped_parses[idx].has_bind;
+                    self.prepared.skipped_parses.remove(idx);
+                    self.prepared.skipped_parses.push(SkippedParse {
                         statement_name: rewritten_parse.name.clone(),
                         target: ParseCompleteTarget::ParameterDescription,
                         insert_at_beginning,
@@ -386,8 +386,8 @@ where
                 self.buffer.put(&describe_bytes[..]);
 
                 // Track operation order for correct ParseComplete insertion
-                self.batch_operations.push(BatchOperation::Describe {
-                    _statement_name: rewritten_parse.name.clone(),
+                self.prepared.batch_operations.push(BatchOperation::Describe {
+                    statement_name: rewritten_parse.name.clone(),
                 });
 
                 Ok(())
@@ -421,9 +421,9 @@ where
         self.buffer.put(&message[..]);
 
         // Remove from prepared statements cache if it's a named prepared statement
-        if self.prepared_statements_enabled && close.is_prepared_statement() && !close.anonymous() {
+        if self.prepared.enabled && close.is_prepared_statement() && !close.anonymous() {
             let key = PreparedStatementKey::Named(close.name.clone());
-            self.prepared_statements.remove(&key);
+            self.prepared.cache.remove(&key);
         }
 
         Ok(())
@@ -431,8 +431,8 @@ where
 
     pub(crate) fn reset_buffered_state(&mut self) {
         self.buffer.clear();
-        self.pending_close_complete = 0;
-        self.skipped_parses.clear();
-        self.parses_sent_in_batch = 0;
+        self.prepared.pending_close_complete = 0;
+        self.prepared.skipped_parses.clear();
+        self.prepared.parses_sent_in_batch = 0;
     }
 }
