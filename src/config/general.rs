@@ -142,6 +142,13 @@ pub struct General {
     // New pg_hba rules: either inline content or a file path (see `PgHba` deserialization).
     #[serde(default, skip_serializing)]
     pub pg_hba: Option<PgHba>,
+
+    /// Clock resolution for statistics timing.
+    /// Controls how often the internal clock cache is updated.
+    /// Lower values provide more accurate timing but with slightly higher overhead.
+    /// Default: 0.1ms (100 microseconds)
+    #[serde(default = "General::default_clock_resolution_statistics")]
+    pub clock_resolution_statistics: Duration,
 }
 
 impl General {
@@ -279,6 +286,10 @@ impl General {
         vec![]
     }
 
+    pub fn default_clock_resolution_statistics() -> Duration {
+        Duration::from_micros(100) // 0.1ms = 100 microseconds
+    }
+
     pub fn default_include_files() -> Vec<String> {
         vec![]
     }
@@ -355,6 +366,7 @@ impl Default for General {
             pooler_check_query: Self::default_pooler_check_query(),
             pooler_check_query_request_bytes: None,
             backlog: Self::default_backlog(),
+            clock_resolution_statistics: Self::default_clock_resolution_statistics(),
         }
     }
 }

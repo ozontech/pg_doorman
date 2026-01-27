@@ -480,3 +480,16 @@ This query will not be sent to the server if it is run as a SimpleQuery.
 It can be used to check the connection at the application level.
 
 Default: `;`.
+
+### clock_resolution_statistics
+
+Clock resolution for statistics timing. Controls how often the internal clock cache is updated.
+Lower values provide more accurate timing measurements for query/transaction percentiles but with slightly higher overhead.
+Higher values reduce CPU overhead but may decrease timing precision.
+
+This parameter affects the accuracy of timing statistics reported in the admin console and Prometheus metrics,
+including query time, transaction time, and wait time percentiles.
+
+Supports sub-millisecond precision using microseconds (`us`) or decimal milliseconds (`0.1ms`).
+
+Default: `"0.1ms"` (100 microseconds).

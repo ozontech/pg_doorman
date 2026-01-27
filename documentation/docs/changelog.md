@@ -4,6 +4,22 @@ title: Changelog
 
 # Changelog
 
+### 3.1.6 <small>Jan 27, 2026</small> { id="3.1.6" }
+
+**Bug Fixes:**
+
+- **Fixed incorrect timing statistics (xact_time, wait_time, percentiles)**: The statistics module was using `recent()` (cached clock) without proper clock cache updates, causing transaction time, wait time, and their percentiles to show extremely large incorrect values (e.g., 603979ms instead of actual milliseconds). Now all timing measurements use the properly maintained clock cache.
+
+**New Features:**
+
+- **New `clock_resolution_statistics` configuration parameter**: Added `general.clock_resolution_statistics` parameter (default: `0.1ms` = 100 microseconds) that controls how often the internal clock cache is updated. Lower values provide more accurate timing measurements for query/transaction percentiles, while higher values reduce CPU overhead. This parameter affects the accuracy of all timing statistics reported in the admin console and Prometheus metrics.
+
+- **Sub-millisecond precision for Duration values**: Duration configuration parameters now support sub-millisecond precision:
+  - New `us` suffix for microseconds (e.g., `"100us"` = 100 microseconds)
+  - Decimal milliseconds support (e.g., `"0.1ms"` = 100 microseconds)
+  - Internal representation changed from milliseconds to microseconds for higher precision
+  - Full backward compatibility maintained: plain numbers are still interpreted as milliseconds
+
 ### 3.1.5 <small>Jan 25, 2026</small> { id="3.1.5" }
 
 **Bug Fixes:**

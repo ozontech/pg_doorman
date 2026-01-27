@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::utils::clock::{now, recent};
+use crate::utils::clock::recent;
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
@@ -518,7 +518,7 @@ where
                 continue;
             }
 
-            query_start_at = now();
+            query_start_at = recent();
             let current_pool = pool.as_ref().unwrap();
 
             // Handle fast queries (pooler check, DEALLOCATE) without server
@@ -668,7 +668,7 @@ where
                     }
 
                     // Reset query_start_at for the actual query
-                    query_start_at = now();
+                    query_start_at = recent();
                 }
 
                 let mut initial_message = Some(message);

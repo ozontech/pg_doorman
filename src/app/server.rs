@@ -232,6 +232,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             retain::retain_connections().await;
         });
 
+        // Clock upkeep thread for accurate timing statistics (updates Clock::recent())
+        let clock_resolution = config.general.clock_resolution_statistics.as_std();
+        if let Err(e) = quanta::Upkeep::new(clock_resolution).start() {
+            warn!("Failed to start clock upkeep thread: {:?}", e);
+        }
+
         // Prometheus metrics exporter
         if config.prometheus.enabled {
             tokio::task::spawn(async move {
