@@ -8,7 +8,9 @@ title: Changelog
 
 **Bug Fixes:**
 
-- **Fixed incorrect timing statistics (xact_time, wait_time, percentiles)**: The statistics module was using `recent()` (cached clock) without proper clock cache updates, causing transaction time, wait time, and their percentiles to show extremely large incorrect values (e.g., 603979ms instead of actual milliseconds). Now all timing measurements use the properly maintained clock cache.
+- **Fixed incorrect timing statistics (xact_time, wait_time, percentiles)**: The statistics module was using `recent()` (cached clock) without proper clock cache updates, causing transaction time, wait time, and their percentiles to show extremely large incorrect values (e.g., 100+ seconds instead of actual milliseconds). The root cause was that the `quanta::Upkeep` handle was not being stored, causing the upkeep thread to stop immediately after starting. Now the handle is properly retained for the lifetime of the server, ensuring `Clock::recent()` returns accurate cached time values.
+
+- **Fixed query time accumulation bug in transaction loop**: Query times were incorrectly accumulated when multiple queries were executed within a single transaction. The `query_start_at` timestamp was only set once at the beginning of the transaction, causing each subsequent query's elapsed time to include all previous queries' durations (e.g., 10 queries of 100ms each would report the last query as ~1 second instead of 100ms). Now `query_start_at` is updated for each new message in the transaction loop, ensuring accurate per-query timing.
 
 **New Features:**
 

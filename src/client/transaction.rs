@@ -700,6 +700,11 @@ where
                     };
                     self.stats.active_idle();
 
+                    // Update query start time for each new message in the transaction.
+                    // This ensures each query is measured from its own start time,
+                    // not from the start of the transaction.
+                    query_start_at = recent();
+
                     // The message will be forwarded to the server intact. We still would like to
                     // parse it below to figure out what to do with it.
 

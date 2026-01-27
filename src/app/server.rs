@@ -233,10 +233,22 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         });
 
         // Clock upkeep thread for accurate timing statistics (updates Clock::recent())
+        // IMPORTANT: We must store the handle to keep the upkeep thread running.
+        // If the handle is dropped, the upkeep thread stops and Clock::recent() returns stale values.
         let clock_resolution = config.general.clock_resolution_statistics.as_std();
-        if let Err(e) = quanta::Upkeep::new(clock_resolution).start() {
-            warn!("Failed to start clock upkeep thread: {:?}", e);
-        }
+        let _upkeep_handle = match quanta::Upkeep::new(clock_resolution).start() {
+            Ok(handle) => {
+                info!(
+                    "Clock upkeep thread started with resolution {:?}",
+                    clock_resolution
+                );
+                Some(handle)
+            }
+            Err(e) => {
+                warn!("Failed to start clock upkeep thread: {:?}", e);
+                None
+            }
+        };
 
         // Prometheus metrics exporter
         if config.prometheus.enabled {
