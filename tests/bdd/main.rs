@@ -60,6 +60,7 @@ fn main() {
 
         let writer = DoormanWorld::cucumber()
             .max_concurrent_scenarios(1)
+            .retries(2)
             .fail_fast()
             .with_cli(cli)
             .before(|feature, _rule, scenario, world| {

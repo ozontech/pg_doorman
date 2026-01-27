@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::utils::clock::{now, recent};
+use crate::utils::clock::recent;
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
@@ -518,7 +518,6 @@ where
                 continue;
             }
 
-            query_start_at = now();
             let current_pool = pool.as_ref().unwrap();
 
             // Handle fast queries (pooler check, DEALLOCATE) without server
@@ -666,9 +665,6 @@ where
                             }
                         }
                     }
-
-                    // Reset query_start_at for the actual query
-                    query_start_at = now();
                 }
 
                 let mut initial_message = Some(message);
@@ -699,6 +695,11 @@ where
                         }
                     };
                     self.stats.active_idle();
+
+                    // Update query start time for each new message in the transaction.
+                    // This ensures each query is measured from its own start time,
+                    // not from the start of the transaction.
+                    query_start_at = recent();
 
                     // The message will be forwarded to the server intact. We still would like to
                     // parse it below to figure out what to do with it.

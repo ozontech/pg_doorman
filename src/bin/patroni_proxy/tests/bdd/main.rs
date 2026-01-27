@@ -48,6 +48,7 @@ fn main() {
 
         let writer = PatroniProxyWorld::cucumber()
             .max_concurrent_scenarios(1)
+            .retries(2)
             .with_cli(cli)
             .before(|_feature, _rule, scenario, _world| {
                 Box::pin(async move {

@@ -4,6 +4,24 @@ title: Changelog
 
 # Changelog
 
+### 3.1.6 <small>Jan 27, 2026</small> { id="3.1.6" }
+
+**Bug Fixes:**
+
+- **Fixed incorrect timing statistics (xact_time, wait_time, percentiles)**: The statistics module was using `recent()` (cached clock) without proper clock cache updates, causing transaction time, wait time, and their percentiles to show extremely large incorrect values (e.g., 100+ seconds instead of actual milliseconds). The root cause was that the `quanta::Upkeep` handle was not being stored, causing the upkeep thread to stop immediately after starting. Now the handle is properly retained for the lifetime of the server, ensuring `Clock::recent()` returns accurate cached time values.
+
+- **Fixed query time accumulation bug in transaction loop**: Query times were incorrectly accumulated when multiple queries were executed within a single transaction. The `query_start_at` timestamp was only set once at the beginning of the transaction, causing each subsequent query's elapsed time to include all previous queries' durations (e.g., 10 queries of 100ms each would report the last query as ~1 second instead of 100ms). Now `query_start_at` is updated for each new message in the transaction loop, ensuring accurate per-query timing.
+
+**New Features:**
+
+- **New `clock_resolution_statistics` configuration parameter**: Added `general.clock_resolution_statistics` parameter (default: `0.1ms` = 100 microseconds) that controls how often the internal clock cache is updated. Lower values provide more accurate timing measurements for query/transaction percentiles, while higher values reduce CPU overhead. This parameter affects the accuracy of all timing statistics reported in the admin console and Prometheus metrics.
+
+- **Sub-millisecond precision for Duration values**: Duration configuration parameters now support sub-millisecond precision:
+  - New `us` suffix for microseconds (e.g., `"100us"` = 100 microseconds)
+  - Decimal milliseconds support (e.g., `"0.1ms"` = 100 microseconds)
+  - Internal representation changed from milliseconds to microseconds for higher precision
+  - Full backward compatibility maintained: plain numbers are still interpreted as milliseconds
+
 ### 3.1.5 <small>Jan 25, 2026</small> { id="3.1.5" }
 
 **Bug Fixes:**

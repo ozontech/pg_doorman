@@ -224,6 +224,18 @@ general:
   pooler_check_query: ";"
 
   # --------------------------------------------------------------------------
+  # Statistics
+  # --------------------------------------------------------------------------
+
+  # Clock resolution for statistics timing.
+  # Controls how often the internal clock cache is updated.
+  # Lower values = more accurate timing for query/transaction percentiles.
+  # Higher values = reduced CPU overhead but less timing precision.
+  # Supports sub-millisecond precision: "0.1ms", "100us", or "1ms"
+  # Default: "0.1ms" (100 microseconds)
+  clock_resolution_statistics: "0.1ms"
+
+  # --------------------------------------------------------------------------
   # Prepared Statements
   # --------------------------------------------------------------------------
 
