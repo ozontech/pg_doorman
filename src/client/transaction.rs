@@ -518,7 +518,6 @@ where
                 continue;
             }
 
-            query_start_at = recent();
             let current_pool = pool.as_ref().unwrap();
 
             // Handle fast queries (pooler check, DEALLOCATE) without server
@@ -666,9 +665,6 @@ where
                             }
                         }
                     }
-
-                    // Reset query_start_at for the actual query
-                    query_start_at = recent();
                 }
 
                 let mut initial_message = Some(message);
