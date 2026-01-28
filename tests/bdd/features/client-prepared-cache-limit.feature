@@ -12,6 +12,7 @@ Feature: Client prepared statements cache size limit (LRU eviction)
       """
     And fixtures from "tests/fixture.sql" applied
 
+  @debug-lru
   Scenario: Client cache evicts oldest entries when limit is reached
     Given pg_doorman started with config:
       """

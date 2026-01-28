@@ -168,6 +168,7 @@ impl PreparedStatementState {
         self.batch_operations.clear();
         self.processed_response_counts.clear();
     }
+
 }
 
 impl Default for PreparedStatementState {

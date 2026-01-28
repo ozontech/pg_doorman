@@ -18,7 +18,8 @@ use commands::{reload, shutdown};
 use show::show_sockets;
 use show::{
     show_clients, show_config, show_connections, show_databases, show_help, show_lists, show_pools,
-    show_pools_extended, show_servers, show_stats, show_users, show_version,
+    show_pools_extended, show_pools_memory, show_prepared_statements, show_servers, show_stats,
+    show_users, show_version,
 };
 
 /// Handle admin client.
@@ -65,6 +66,8 @@ where
                     "LISTS" => show_lists(stream).await,
                     "POOLS" => show_pools(stream).await,
                     "POOLS_EXTENDED" => show_pools_extended(stream).await,
+                    "POOLS_MEMORY" | "POOL_MEMORY" => show_pools_memory(stream).await,
+                    "PREPARED_STATEMENTS" => show_prepared_statements(stream).await,
                     "CLIENTS" => show_clients(stream).await,
                     "SERVERS" => show_servers(stream).await,
                     "CONNECTIONS" => show_connections(stream).await,
