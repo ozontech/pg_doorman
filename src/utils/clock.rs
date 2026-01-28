@@ -11,10 +11,3 @@ pub static CLOCK: Lazy<Clock> = Lazy::new(Clock::new);
 pub fn now() -> quanta::Instant {
     CLOCK.now()
 }
-
-/// Get recent instant (cached, ~1-2ns overhead).
-/// Use for statistics and metrics where speed > precision.
-#[inline]
-pub fn recent() -> quanta::Instant {
-    CLOCK.recent()
-}

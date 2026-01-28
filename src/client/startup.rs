@@ -350,7 +350,7 @@ where
             client_identifier.username.as_str(),
             &pool_name,
             addr.to_string().as_str(),
-            crate::utils::clock::recent(),
+            crate::utils::clock::now(),
             use_tls,
         ));
 

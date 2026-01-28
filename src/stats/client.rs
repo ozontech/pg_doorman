@@ -91,7 +91,7 @@ impl Default for ClientStats {
     fn default() -> Self {
         ClientStats {
             client_id: 0,
-            connect_time: clock::recent(),
+            connect_time: clock::now(),
             application_name: String::new(),
             username: String::new(),
             pool_name: String::new(),
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn test_client_stats_new() {
         // Test that ClientStats::new initializes with the provided values
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ClientStats::new(
             42,          // client_id
             "test_app",  // application_name
@@ -438,7 +438,7 @@ mod tests {
     fn test_client_lifecycle_methods() {
         // Create a ClientStats with a unique client_id
         let client_id = 12345;
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ClientStats::new(
             client_id,
             "test_app",
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn test_accessor_methods() {
         // Create a ClientStats with specific values
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ClientStats::new(
             42,          // client_id
             "test_app",  // application_name

@@ -49,7 +49,7 @@ impl Drop for Object {
     fn drop(&mut self) {
         if let Some(mut inner) = self.inner.take() {
             if let Some(pool) = self.pool.upgrade() {
-                inner.metrics.recycled = Some(clock::recent());
+                inner.metrics.recycled = Some(clock::now());
                 inner.metrics.recycle_count += 1;
                 pool.return_object(inner);
             }

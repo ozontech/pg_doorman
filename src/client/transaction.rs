@@ -4,7 +4,7 @@ use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::utils::clock::{now, recent};
+use crate::utils::clock::now;
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
@@ -589,7 +589,7 @@ where
             let shutdown_in_progress = {
                 // start server.
                 // Grab a server from the pool.
-                let connecting_at = recent();
+                let connecting_at = now();
                 self.stats.waiting();
                 let mut conn = loop {
                     match current_pool.database.get().await {
@@ -650,7 +650,7 @@ where
                     connecting_at.elapsed().as_micros() as u64,
                     self.stats.application_name(),
                 );
-                let server_active_at = recent();
+                let server_active_at = now();
 
                 // Server is assigned to the client in case the client wants to
                 // cancel a query later.
