@@ -112,6 +112,10 @@ pub struct PreparedStatementState {
     /// Once set to true, prepared statements caching is disabled for this client
     pub async_client: bool,
 
+    /// Maximum number of prepared statements in cache (0 = unlimited).
+    /// Protection against malicious clients that don't call DEALLOCATE.
+    pub max_cache_size: usize,
+
     /// Mapping of client named prepared statement to rewritten parse messages
     pub cache: AHashMap<PreparedStatementKey, (Arc<Parse>, u64)>,
 
@@ -139,11 +143,13 @@ pub struct PreparedStatementState {
 }
 
 impl PreparedStatementState {
-    /// Create a new PreparedStatementState with the given enabled flag
-    pub fn new(enabled: bool) -> Self {
+    /// Create a new PreparedStatementState with the given enabled flag and max cache size.
+    /// max_cache_size = 0 means unlimited (no protection against malicious clients).
+    pub fn new(enabled: bool, max_cache_size: usize) -> Self {
         Self {
             enabled,
             async_client: false,
+            max_cache_size,
             cache: AHashMap::new(),
             last_anonymous_hash: None,
             skipped_parses: Vec::new(),
@@ -166,7 +172,7 @@ impl PreparedStatementState {
 
 impl Default for PreparedStatementState {
     fn default() -> Self {
-        Self::new(false)
+        Self::new(false, 0) // 0 = unlimited
     }
 }
 

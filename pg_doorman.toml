@@ -204,9 +204,15 @@ clock_resolution_statistics = "0.1ms"
 # Default: true
 prepared_statements = true
 
-# Cache size for prepared statements on the server side.
+# Cache size for prepared statements at the pool level (shared across clients).
 # Default: 8192
 prepared_statements_cache_size = 8192
+
+# Maximum prepared statements cached per client connection.
+# Protection against malicious clients that don't call DEALLOCATE.
+# Set to 0 for unlimited (relies on client calling DEALLOCATE).
+# Default: 0 (unlimited)
+client_prepared_statements_cache_size = 0
 
 # --------------------------------------------------------------------------
 # Admin Console

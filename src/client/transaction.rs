@@ -9,7 +9,7 @@ use crate::utils::clock::recent;
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
-use crate::client::core::{BatchOperation, Client};
+use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
@@ -303,10 +303,43 @@ where
             return Ok(true);
         }
 
-        // Check for DEALLOCATE ALL query
-        if message.len() < 40 && message.len() > QUERY_DEALLOCATE.len() + 5 {
-            let query = &message[5..QUERY_DEALLOCATE.len() + 5];
-            if QUERY_DEALLOCATE == query {
+        // Check for DEALLOCATE query and clear client prepared statements cache
+        // Format: Q message = [Q:1][length:4][query][null:1]
+        // QUERY_DEALLOCATE = "deallocate " (11 bytes)
+        if message.len() < 60 && message.len() > QUERY_DEALLOCATE.len() + 6 {
+            let query_bytes = &message[5..message.len() - 1]; // exclude null terminator
+
+            // Case-insensitive check for "deallocate " prefix
+            if query_bytes
+                .get(..QUERY_DEALLOCATE.len())
+                .map(|s| s.eq_ignore_ascii_case(QUERY_DEALLOCATE))
+                .unwrap_or(false)
+            {
+                // Extract statement name after "deallocate "
+                let statement_part = std::str::from_utf8(&query_bytes[QUERY_DEALLOCATE.len()..])
+                    .unwrap_or("")
+                    .trim()
+                    .trim_end_matches(';');
+
+                if statement_part.eq_ignore_ascii_case("all") {
+                    // DEALLOCATE ALL - clear entire client cache
+                    let count = self.prepared.cache.len();
+                    self.prepared.cache.clear();
+                    debug!(
+                        "DEALLOCATE ALL: cleared {} entries from client prepared statements cache",
+                        count
+                    );
+                } else if !statement_part.is_empty() {
+                    // DEALLOCATE <name> - remove specific statement from cache
+                    let key = PreparedStatementKey::Named(statement_part.to_string());
+                    if self.prepared.cache.remove(&key).is_some() {
+                        debug!(
+                            "DEALLOCATE {}: removed from client prepared statements cache",
+                            statement_part
+                        );
+                    }
+                }
+
                 write_all_flush(&mut self.write, &deallocate_response()).await?;
                 return Ok(true);
             }
