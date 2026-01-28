@@ -95,6 +95,32 @@ pub(crate) static SHOW_POOLS_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+pub(crate) static SHOW_POOL_CACHE_ENTRIES: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pool_prepared_cache_entries",
+            "Number of entries in the pool-level prepared statement cache by user and database."
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static SHOW_POOL_CACHE_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pool_prepared_cache_bytes",
+            "Approximate memory usage of the pool-level prepared statement cache in bytes by user and database."
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
 pub(crate) static SHOW_POOLS_QUERIES_PERCENTILE: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(

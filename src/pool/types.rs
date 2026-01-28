@@ -113,7 +113,7 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            created: clock::recent(),
+            created: clock::now(),
             recycled: None,
             recycle_count: 0,
         }

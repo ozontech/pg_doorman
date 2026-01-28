@@ -10,10 +10,10 @@ permissions:
 
 env:
   # Ubuntu LTS versions (non-EOL)
-  UBUNTU_VERSIONS: "jammy noble questing"
+  UBUNTU_VERSIONS: "jammy noble plucky"
   # jammy = 22.04 LTS
   # noble = 24.04 LTS  
-  # questing = 25.10
+  # plucky = 25.04
   PPA_NAME: "ppa:vadv/pg-doorman"
   RUST_VERSION: "1.87.0"
   # Rebuild number for Launchpad PPA uploads

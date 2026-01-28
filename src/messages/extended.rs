@@ -183,9 +183,19 @@ impl Parse {
     pub fn anonymous(&self) -> bool {
         self.name.is_empty()
     }
-}
 
-/// Bind (B) message.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Approximate memory usage of the parse statement in bytes
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.name.capacity()
+            + self.query.capacity()
+            + self.param_types.capacity() * std::mem::size_of::<i32>()
+    }
+}
 /// See: <https://www.postgresql.org/docs/current/protocol-message-formats.html>
 #[derive(Clone, Debug)]
 pub struct Bind {

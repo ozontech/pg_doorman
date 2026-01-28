@@ -350,7 +350,7 @@ where
             client_identifier.username.as_str(),
             &pool_name,
             addr.to_string().as_str(),
-            crate::utils::clock::recent(),
+            crate::utils::clock::now(),
             use_tls,
         ));
 
@@ -372,7 +372,10 @@ where
             pool_name,
             username: std::mem::take(&mut client_identifier.username),
             server_parameters,
-            prepared: PreparedStatementState::new(prepared_statements_enabled),
+            prepared: PreparedStatementState::new(
+                prepared_statements_enabled,
+                config.general.client_prepared_statements_cache_size,
+            ),
             client_last_messages_in_tx: PooledBuffer::new(),
             max_memory_usage: config.general.max_memory_usage.as_bytes(),
             pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),

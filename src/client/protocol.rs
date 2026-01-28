@@ -137,6 +137,22 @@ where
         }
         let cache_key = PreparedStatementKey::from_name_or_hash(client_given_name, hash);
 
+        // Evict oldest entry if cache is full (protection against malicious clients)
+        // max_cache_size = 0 means unlimited
+        if self.prepared.max_cache_size > 0
+            && self.prepared.cache.len() >= self.prepared.max_cache_size
+        {
+            // Remove first entry (oldest added, since AHashMap doesn't guarantee order,
+            // but this provides reasonable eviction behavior)
+            if let Some(key) = self.prepared.cache.keys().next().cloned() {
+                self.prepared.cache.remove(&key);
+                debug!(
+                    "Client prepared statements cache full (limit: {}), evicted entry",
+                    self.prepared.max_cache_size
+                );
+            }
+        }
+
         self.prepared
             .cache
             .insert(cache_key, (new_parse.clone(), hash));

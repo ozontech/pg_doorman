@@ -20,8 +20,8 @@ use super::{
     SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_QUERIES_COUNTER,
     SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER,
     SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
-    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_SERVERS_PREPARED_HITS,
-    SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
+    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
+    SHOW_POOL_CACHE_ENTRIES, SHOW_SERVERS_PREPARED_HITS, SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -89,7 +89,20 @@ fn update_pool_metrics() {
         update_client_state_metrics(identifier, stats);
         update_byte_metrics(identifier, stats);
         update_percentile_metrics(identifier, stats);
+        update_pool_cache_metrics(identifier, stats);
     }
+}
+
+fn update_pool_cache_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
+    let user = identifier.user.as_str();
+    let database = identifier.db.as_str();
+
+    SHOW_POOL_CACHE_ENTRIES
+        .with_label_values(&[user, database])
+        .set(stats.prepared_statements_count as f64);
+    SHOW_POOL_CACHE_BYTES
+        .with_label_values(&[user, database])
+        .set(stats.prepared_statements_bytes as f64);
 }
 
 fn update_server_metrics() {

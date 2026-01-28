@@ -85,6 +85,30 @@ impl PreparedStatementCache {
         new_parse
     }
 
+    /// Returns number of entries in the cache
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Approximate memory usage of the cache in bytes
+    pub fn memory_usage(&self) -> usize {
+        let mut total = 0;
+        for entry in self.cache.iter() {
+            total += entry.parse.memory_usage();
+            total += std::mem::size_of::<u64>(); // Key
+            total += std::mem::size_of::<CacheEntry>();
+        }
+        total
+    }
+
+    /// Returns a list of all entries in the cache
+    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64)> {
+        self.cache
+            .iter()
+            .map(|entry| (*entry.key(), entry.parse.clone(), entry.last_used))
+            .collect()
+    }
+
     /// Marks the hash as most recently used if it exists
     pub fn promote(&self, hash: &u64) {
         if let Some(mut entry) = self.cache.get_mut(hash) {
