@@ -70,7 +70,7 @@ sudo apt-get update
 sudo apt-get install pg-doorman
 ```
 
-Supported Ubuntu versions: 22.04 (Jammy), 24.04 (Noble), 25.10 (Questing).
+Supported Ubuntu versions: 22.04 (Jammy), 24.04 (Noble), 25.04 (Plucky).
 
 For more information, visit the [Launchpad PPA page](https://launchpad.net/~vadv/+archive/ubuntu/pg-doorman).
 
