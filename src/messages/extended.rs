@@ -195,6 +195,36 @@ impl Parse {
             + self.query.capacity()
             + self.param_types.capacity() * std::mem::size_of::<i32>()
     }
+
+    /// Converts the Parse to bytes using a custom statement name.
+    /// This is used for async clients that need unique names on the server.
+    pub fn to_bytes_with_name(&self, name: &str) -> Result<BytesMut, Error> {
+        let mut bytes = BytesMut::new();
+
+        let name_binding = CString::new(name)?;
+        let name_bytes = name_binding.as_bytes_with_nul();
+
+        let query_binding = CString::new(self.query.as_str())?;
+        let query_bytes = query_binding.as_bytes_with_nul();
+
+        // Compute length of the message
+        let len = 4 // self
+            + name_bytes.len()
+            + query_bytes.len()
+            + 2
+            + 4 * self.num_params as usize;
+
+        bytes.put_u8(self.code as u8);
+        bytes.put_i32(len as i32);
+        bytes.put_slice(name_bytes);
+        bytes.put_slice(query_bytes);
+        bytes.put_i16(self.num_params);
+        for param in &self.param_types {
+            bytes.put_i32(*param);
+        }
+
+        Ok(bytes)
+    }
 }
 /// See: <https://www.postgresql.org/docs/current/protocol-message-formats.html>
 #[derive(Clone, Debug)]

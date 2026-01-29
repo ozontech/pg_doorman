@@ -138,6 +138,15 @@ pub struct PoolStats {
     /// Approximate memory usage of the pool-level prepared statement cache in bytes
     pub prepared_statements_bytes: u64,
 
+    /// Total number of entries in all clients' prepared statement caches
+    pub client_prepared_count: u64,
+
+    /// Total approximate memory usage of all clients' prepared statement caches in bytes
+    pub client_prepared_bytes: u64,
+
+    /// Number of async clients (using Flush instead of Sync)
+    pub async_clients_count: u64,
+
     /// Average bytes received per second
     avg_recv: u64,
 
@@ -226,6 +235,9 @@ impl PoolStats {
             total_query_time_microseconds: 0,
             prepared_statements_count: 0,
             prepared_statements_bytes: 0,
+            client_prepared_count: 0,
+            client_prepared_bytes: 0,
+            async_clients_count: 0,
             avg_recv: 0,
             avg_sent: 0,
             avg_xact_time_microsecons: 0,
@@ -351,8 +363,11 @@ impl PoolStats {
         vec![
             ("database", DataType::Text),
             ("user", DataType::Text),
-            ("prepared_statements_count", DataType::Numeric),
-            ("prepared_statements_bytes", DataType::Numeric),
+            ("pool_prepared_count", DataType::Numeric),
+            ("pool_prepared_bytes", DataType::Numeric),
+            ("client_prepared_count", DataType::Numeric),
+            ("client_prepared_bytes", DataType::Numeric),
+            ("async_clients", DataType::Numeric),
         ]
     }
 
@@ -362,6 +377,9 @@ impl PoolStats {
             Cow::Borrowed(&self.identifier.user),
             Cow::Owned(self.prepared_statements_count.to_string()),
             Cow::Owned(self.prepared_statements_bytes.to_string()),
+            Cow::Owned(self.client_prepared_count.to_string()),
+            Cow::Owned(self.client_prepared_bytes.to_string()),
+            Cow::Owned(self.async_clients_count.to_string()),
         ]
     }
 
@@ -539,6 +557,13 @@ impl PoolStats {
                     // Update maximum wait time
                     let max_wait = client.max_wait_time.load(Ordering::Relaxed);
                     pool_stats.maxwait = std::cmp::max(pool_stats.maxwait, max_wait);
+
+                    // Aggregate client-level prepared statement cache metrics
+                    pool_stats.client_prepared_count += client.prepared_cache_count();
+                    pool_stats.client_prepared_bytes += client.prepared_cache_bytes();
+                    if client.is_async_client() {
+                        pool_stats.async_clients_count += 1;
+                    }
                 }
                 None => debug!("Client from an obsolete pool"),
             }

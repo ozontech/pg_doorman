@@ -394,6 +394,7 @@ where
             server.set_async_mode(true);
             // Mark this client as async client forever
             self.prepared.async_client = true;
+            self.stats.set_async_client();
             debug!("Client requested flush, going async");
 
             // If there are skipped Parse operations, send synthetic ParseComplete to client

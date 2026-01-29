@@ -53,3 +53,16 @@ Feature: Admin console SHOW POOLS_MEMORY and SHOW PREPARED_STATEMENTS commands
     And we create admin session "admin" to pg_doorman as "admin" with password "admin"
     And we execute "show prepared_statements" on admin session "admin" and store response
     Then admin session "admin" response should contain "select $1::int + $2::int"
+
+  @admin-commands-pools-memory-client-metrics
+  Scenario: SHOW POOLS_MEMORY shows client-level prepared statement cache metrics
+    When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "client_stmt1" with query "select $1::int * 2" to session "one"
+    And we send Sync to session "one"
+    And we send Bind "" to "client_stmt1" with params "5" to session "one"
+    And we send Execute "" to session "one"
+    And we send Sync to session "one"
+    And we create admin session "admin" to pg_doorman as "admin" with password "admin"
+    And we execute "show pools_memory" on admin session "admin" and store response
+    Then admin session "admin" response should contain "example_db"
+    And admin session "admin" response should contain "example_user_1"
