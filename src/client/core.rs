@@ -102,6 +102,28 @@ pub enum BatchOperation {
     Close,
 }
 
+/// Cached prepared statement entry.
+/// For async clients, stores an optional unique name to avoid "prepared statement already exists" errors.
+#[derive(Clone)]
+pub struct CachedStatement {
+    /// Shared Parse from pool cache (contains query text)
+    pub parse: Arc<Parse>,
+    /// Hash of the statement
+    pub hash: u64,
+    /// Unique statement name for async clients (e.g., "DOORMAN_async_12345")
+    /// None for non-async clients (they use parse.name directly)
+    pub async_name: Option<String>,
+}
+
+impl CachedStatement {
+    /// Returns the statement name to use when communicating with the server.
+    /// For async clients, returns the unique async_name; otherwise returns parse.name.
+    #[inline(always)]
+    pub fn server_name(&self) -> &str {
+        self.async_name.as_deref().unwrap_or(&self.parse.name)
+    }
+}
+
 /// State related to prepared statements handling.
 /// Groups all fields needed for prepared statement caching and batch processing.
 pub struct PreparedStatementState {
@@ -112,8 +134,12 @@ pub struct PreparedStatementState {
     /// Once set to true, prepared statements caching is disabled for this client
     pub async_client: bool,
 
-    /// Mapping of client named prepared statement to rewritten parse messages
-    pub cache: AHashMap<PreparedStatementKey, (Arc<Parse>, u64)>,
+    /// Maximum number of prepared statements in cache (0 = unlimited).
+    /// Protection against malicious clients that don't call DEALLOCATE.
+    pub max_cache_size: usize,
+
+    /// Mapping of client named prepared statement to cached statement info
+    pub cache: AHashMap<PreparedStatementKey, CachedStatement>,
 
     /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
     pub last_anonymous_hash: Option<u64>,
@@ -139,11 +165,13 @@ pub struct PreparedStatementState {
 }
 
 impl PreparedStatementState {
-    /// Create a new PreparedStatementState with the given enabled flag
-    pub fn new(enabled: bool) -> Self {
+    /// Create a new PreparedStatementState with the given enabled flag and max cache size.
+    /// max_cache_size = 0 means unlimited (no protection against malicious clients).
+    pub fn new(enabled: bool, max_cache_size: usize) -> Self {
         Self {
             enabled,
             async_client: false,
+            max_cache_size,
             cache: AHashMap::new(),
             last_anonymous_hash: None,
             skipped_parses: Vec::new(),
@@ -162,11 +190,43 @@ impl PreparedStatementState {
         self.batch_operations.clear();
         self.processed_response_counts.clear();
     }
+
+    /// Returns the number of entries in the cache
+    #[inline(always)]
+    pub fn cache_count(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Calculates approximate memory usage of the client's prepared statement cache in bytes.
+    /// This includes the keys, the CachedStatement struct, and async_name if present.
+    /// Note: shared Parse content (via Arc) is NOT counted here as it's in the pool cache.
+    pub fn cache_memory_usage(&self) -> usize {
+        let mut total = 0;
+        for (key, cached) in &self.cache {
+            // Key size
+            total += match key {
+                PreparedStatementKey::Named(s) => std::mem::size_of::<PreparedStatementKey>() + s.capacity(),
+                PreparedStatementKey::Anonymous(_) => std::mem::size_of::<PreparedStatementKey>(),
+            };
+            // CachedStatement struct size
+            total += std::mem::size_of::<CachedStatement>();
+            // async_name heap allocation if present
+            if let Some(ref name) = cached.async_name {
+                total += name.capacity();
+            }
+            // For non-shared Parse (strong_count == 1), count its full size
+            // This happens for async clients before the fix
+            if Arc::strong_count(&cached.parse) == 1 {
+                total += cached.parse.memory_usage();
+            }
+        }
+        total
+    }
 }
 
 impl Default for PreparedStatementState {
     fn default() -> Self {
-        Self::new(false)
+        Self::new(false, 0) // 0 = unlimited
     }
 }
 
@@ -250,6 +310,16 @@ where
     #[inline(always)]
     pub(crate) fn disconnect_stats(&self) {
         self.stats.disconnect();
+    }
+
+    /// Updates the prepared cache statistics in ClientStats.
+    /// Should be called after any modification to prepared.cache.
+    #[inline(always)]
+    pub(crate) fn update_prepared_cache_stats(&self) {
+        self.stats.set_prepared_cache_stats(
+            self.prepared.cache_count() as u64,
+            self.prepared.cache_memory_usage() as u64,
+        );
     }
 
     /// Retrieve connection pool, if it exists.

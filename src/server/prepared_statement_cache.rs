@@ -1,16 +1,37 @@
 use dashmap::DashMap;
 use log::warn;
+use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::messages::Parse;
 use crate::utils::dashmap::new_dashmap_with_capacity;
 
+/// Global query string interner.
+/// This ensures that identical query texts share the same Arc<str> allocation,
+/// even when Arc<Parse> is evicted from the pool cache.
+/// The interner never evicts entries - they are kept as long as any client holds a reference.
+static QUERY_INTERNER: Lazy<DashMap<u64, Arc<str>>> = Lazy::new(|| DashMap::with_capacity(8192));
+
+/// Interns a query string, returning a shared Arc<str>.
+/// If the query was already interned, returns the existing Arc<str>.
+/// This is used to ensure query texts are shared between all Parse instances.
+pub fn intern_query(query: &str, hash: u64) -> Arc<str> {
+    // Fast path: check if already interned
+    if let Some(existing) = QUERY_INTERNER.get(&hash) {
+        return existing.clone();
+    }
+    
+    // Slow path: intern the query
+    let arc_str: Arc<str> = Arc::from(query);
+    QUERY_INTERNER.entry(hash).or_insert(arc_str).clone()
+}
+
 /// Entry in the prepared statement cache with LRU ordering.
 struct CacheEntry {
     parse: Arc<Parse>,
-    /// Timestamp for LRU ordering (higher = more recently used)
-    last_used: u64,
+    /// Counter for LRU ordering (higher = more recently used)
+    count_used: u64,
 }
 
 // TODO: Add stats the this cache
@@ -61,12 +82,14 @@ impl PreparedStatementCache {
 
         // Fast path: check if already exists
         if let Some(mut entry) = self.cache.get_mut(&hash) {
-            entry.last_used = timestamp;
+            entry.count_used = timestamp;
             return entry.parse.clone();
         }
 
         // Slow path: insert new entry
-        let new_parse = Arc::new(parse.clone().rewrite());
+        // First intern the query string so it's shared across all clients,
+        // then rewrite the statement name
+        let new_parse = Arc::new(parse.clone().intern_query(hash).rewrite());
 
         // Check if we need to evict before inserting
         if self.cache.len() >= self.max_size {
@@ -78,23 +101,52 @@ impl PreparedStatementCache {
             hash,
             CacheEntry {
                 parse: new_parse.clone(),
-                last_used: timestamp,
+                count_used: timestamp,
             },
         );
 
         new_parse
     }
 
+    /// Returns number of entries in the cache
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Returns true if the cache is empty
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+
+    /// Approximate memory usage of the cache in bytes
+    pub fn memory_usage(&self) -> usize {
+        let mut total = 0;
+        for entry in self.cache.iter() {
+            total += entry.parse.memory_usage();
+            total += std::mem::size_of::<u64>(); // Key
+            total += std::mem::size_of::<CacheEntry>();
+        }
+        total
+    }
+
+    /// Returns a list of all entries in the cache
+    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64)> {
+        self.cache
+            .iter()
+            .map(|entry| (*entry.key(), entry.parse.clone(), entry.count_used))
+            .collect()
+    }
+
     /// Marks the hash as most recently used if it exists
     pub fn promote(&self, hash: &u64) {
         if let Some(mut entry) = self.cache.get_mut(hash) {
-            entry.last_used = self.counter.fetch_add(1, Ordering::Relaxed);
+            entry.count_used = self.counter.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// Evict the oldest entry from the cache (approximate LRU).
     fn evict_oldest(&self) {
-        // Find the entry with the smallest last_used timestamp
+        // Find the entry with the smallest count_used timestamp
         let mut oldest_key: Option<u64> = None;
         let mut oldest_time = u64::MAX;
         let mut evicted_name: Option<String> = None;
@@ -103,8 +155,8 @@ impl PreparedStatementCache {
         // We iterate through all entries but this is still efficient because
         // DashMap uses sharding and we only read, not write
         for entry in self.cache.iter() {
-            if entry.last_used < oldest_time {
-                oldest_time = entry.last_used;
+            if entry.count_used < oldest_time {
+                oldest_time = entry.count_used;
                 oldest_key = Some(*entry.key());
             }
         }

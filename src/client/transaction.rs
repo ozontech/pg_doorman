@@ -4,12 +4,12 @@ use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::utils::clock::recent;
+use crate::utils::clock::now;
 
 use crate::admin::handle_admin;
 use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
-use crate::client::core::{BatchOperation, Client};
+use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
@@ -303,10 +303,43 @@ where
             return Ok(true);
         }
 
-        // Check for DEALLOCATE ALL query
-        if message.len() < 40 && message.len() > QUERY_DEALLOCATE.len() + 5 {
-            let query = &message[5..QUERY_DEALLOCATE.len() + 5];
-            if QUERY_DEALLOCATE == query {
+        // Check for DEALLOCATE query and clear client prepared statements cache
+        // Format: Q message = [Q:1][length:4][query][null:1]
+        // QUERY_DEALLOCATE = "deallocate " (11 bytes)
+        if message.len() < 60 && message.len() > QUERY_DEALLOCATE.len() + 6 {
+            let query_bytes = &message[5..message.len() - 1]; // exclude null terminator
+
+            // Case-insensitive check for "deallocate " prefix
+            if query_bytes
+                .get(..QUERY_DEALLOCATE.len())
+                .map(|s| s.eq_ignore_ascii_case(QUERY_DEALLOCATE))
+                .unwrap_or(false)
+            {
+                // Extract statement name after "deallocate "
+                let statement_part = std::str::from_utf8(&query_bytes[QUERY_DEALLOCATE.len()..])
+                    .unwrap_or("")
+                    .trim()
+                    .trim_end_matches(';');
+
+                if statement_part.eq_ignore_ascii_case("all") {
+                    // DEALLOCATE ALL - clear entire client cache
+                    let count = self.prepared.cache.len();
+                    self.prepared.cache.clear();
+                    debug!(
+                        "DEALLOCATE ALL: cleared {} entries from client prepared statements cache",
+                        count
+                    );
+                } else if !statement_part.is_empty() {
+                    // DEALLOCATE <name> - remove specific statement from cache
+                    let key = PreparedStatementKey::Named(statement_part.to_string());
+                    if self.prepared.cache.remove(&key).is_some() {
+                        debug!(
+                            "DEALLOCATE {}: removed from client prepared statements cache",
+                            statement_part
+                        );
+                    }
+                }
+
                 write_all_flush(&mut self.write, &deallocate_response()).await?;
                 return Ok(true);
             }
@@ -361,6 +394,7 @@ where
             server.set_async_mode(true);
             // Mark this client as async client forever
             self.prepared.async_client = true;
+            self.stats.set_async_client();
             debug!("Client requested flush, going async");
 
             // If there are skipped Parse operations, send synthetic ParseComplete to client
@@ -518,6 +552,7 @@ where
                 continue;
             }
 
+            query_start_at = now();
             let current_pool = pool.as_ref().unwrap();
 
             // Handle fast queries (pooler check, DEALLOCATE) without server
@@ -555,7 +590,7 @@ where
             let shutdown_in_progress = {
                 // start server.
                 // Grab a server from the pool.
-                let connecting_at = recent();
+                let connecting_at = now();
                 self.stats.waiting();
                 let mut conn = loop {
                     match current_pool.database.get().await {
@@ -616,7 +651,7 @@ where
                     connecting_at.elapsed().as_micros() as u64,
                     self.stats.application_name(),
                 );
-                let server_active_at = recent();
+                let server_active_at = now();
 
                 // Server is assigned to the client in case the client wants to
                 // cancel a query later.
@@ -665,6 +700,9 @@ where
                             }
                         }
                     }
+
+                    // Reset query_start_at for the actual query
+                    query_start_at = now();
                 }
 
                 let mut initial_message = Some(message);
@@ -695,11 +733,6 @@ where
                         }
                     };
                     self.stats.active_idle();
-
-                    // Update query start time for each new message in the transaction.
-                    // This ensures each query is measured from its own start time,
-                    // not from the start of the transaction.
-                    query_start_at = recent();
 
                     // The message will be forwarded to the server intact. We still would like to
                     // parse it below to figure out what to do with it.

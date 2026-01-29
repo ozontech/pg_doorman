@@ -370,9 +370,24 @@ Default: `true`.
 
 ### prepared_statements_cache_size
 
-Cache size of prepared requests on the server side.
+Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool). 
+This cache stores the mapping from query hash to rewritten prepared statement name.
 
 Default: `8192`.
+
+### client_prepared_statements_cache_size
+
+Maximum number of prepared statements cached per client connection. This is a protection mechanism against 
+malicious or misbehaving clients that don't call `DEALLOCATE` and could cause memory exhaustion by creating 
+unlimited prepared statements over long-running connections.
+
+When the limit is reached, the oldest entry is evicted from the client's cache. The evicted statement 
+can still be re-used later because the pool-level cache (`prepared_statements_cache_size`) retains the 
+query-to-server-name mapping.
+
+Set to `0` to disable the limit (unlimited cache size, relies on client calling `DEALLOCATE`).
+
+Default: `0` (unlimited).
 
 ### message_size_to_be_stream
 
@@ -480,16 +495,3 @@ This query will not be sent to the server if it is run as a SimpleQuery.
 It can be used to check the connection at the application level.
 
 Default: `;`.
-
-### clock_resolution_statistics
-
-Clock resolution for statistics timing. Controls how often the internal clock cache is updated.
-Lower values provide more accurate timing measurements for query/transaction percentiles but with slightly higher overhead.
-Higher values reduce CPU overhead but may decrease timing precision.
-
-This parameter affects the accuracy of timing statistics reported in the admin console and Prometheus metrics,
-including query time, transaction time, and wait time percentiles.
-
-Supports sub-millisecond precision using microseconds (`us`) or decimal milliseconds (`0.1ms`).
-
-Default: `"0.1ms"` (100 microseconds).

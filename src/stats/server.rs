@@ -104,7 +104,7 @@ impl Default for ServerStats {
             process_id: AtomicI32::new(0),
             application_name: Mutex::new(String::new()),
             address: Address::default(),
-            connect_time: clock::recent(),
+            connect_time: clock::now(),
             state_wait: AtomicU8::new(Self::pack(SERVER_STATE_LOGIN, SERVER_WAIT_IDLE)),
             bytes_sent: AtomicU64::new(0),
             bytes_received: AtomicU64::new(0),
@@ -568,7 +568,7 @@ mod tests {
     fn test_server_stats_new() {
         // Create a mock address
         let address = crate::config::Address::default();
-        let now = clock::recent();
+        let now = clock::now();
 
         // Test that ServerStats::new initializes with the provided values
         let stats = ServerStats::new(address.clone(), now);
@@ -613,7 +613,7 @@ mod tests {
         };
 
         // Create a ServerStats with a fixed server_id for testing
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ServerStats::new(address, now);
 
         // Set a known server_id for testing
@@ -648,7 +648,7 @@ mod tests {
         };
 
         // Create a ServerStats with a fixed server_id for testing
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ServerStats::new(address.clone(), now);
 
         // Set a known server_id for testing
@@ -901,6 +901,6 @@ mod tests {
 
         // Test connect_time
         let connect_time = stats.connect_time();
-        assert!(connect_time <= clock::recent());
+        assert!(connect_time <= clock::now());
     }
 }

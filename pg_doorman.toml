@@ -185,18 +185,6 @@ message_size_to_be_stream = 1048576
 pooler_check_query = ";"
 
 # --------------------------------------------------------------------------
-# Statistics
-# --------------------------------------------------------------------------
-
-# Clock resolution for statistics timing.
-# Controls how often the internal clock cache is updated.
-# Lower values = more accurate timing for query/transaction percentiles.
-# Higher values = reduced CPU overhead but less timing precision.
-# Supports sub-millisecond precision: "0.1ms", "100us", or "1ms"
-# Default: "0.1ms" (100 microseconds)
-clock_resolution_statistics = "0.1ms"
-
-# --------------------------------------------------------------------------
 # Prepared Statements
 # --------------------------------------------------------------------------
 
@@ -204,9 +192,15 @@ clock_resolution_statistics = "0.1ms"
 # Default: true
 prepared_statements = true
 
-# Cache size for prepared statements on the server side.
+# Cache size for prepared statements at the pool level (shared across clients).
 # Default: 8192
 prepared_statements_cache_size = 8192
+
+# Maximum prepared statements cached per client connection.
+# Protection against malicious clients that don't call DEALLOCATE.
+# Set to 0 for unlimited (relies on client calling DEALLOCATE).
+# Default: 0 (unlimited)
+client_prepared_statements_cache_size = 0
 
 # --------------------------------------------------------------------------
 # Admin Console

@@ -9,8 +9,9 @@ use crate::pool::ConnectionPool;
 use crate::server::Server;
 
 use super::core::{
-    BatchOperation, Client, ParseCompleteTarget, PreparedStatementKey, SkippedParse,
+    BatchOperation, CachedStatement, Client, ParseCompleteTarget, PreparedStatementKey, SkippedParse,
 };
+use super::PREPARED_STATEMENT_COUNTER;
 
 impl<S, T> Client<S, T>
 where
@@ -25,12 +26,14 @@ where
         server: &mut Server,
     ) -> Result<(), Error> {
         match self.prepared.cache.get(&key) {
-            Some((parse, hash)) => {
+            Some(cached) => {
                 debug!("Prepared statement `{key:?}` found in cache");
+                // Get the server-side name (may be async_name for async clients)
+                let server_name = cached.server_name().to_string();
                 // In this case we want to send the parse message to the server
                 // since pgcat is initiating the prepared statement on this specific server
                 match self
-                    .register_parse_to_server_cache(true, hash, parse, pool, server)
+                    .register_parse_to_server_cache(true, &cached.hash, &cached.parse, &server_name, pool, server)
                     .await
                 {
                     Ok(_) => (),
@@ -60,21 +63,30 @@ where
     /// Register the parse to the server cache and send it to the server if requested (ie. requested by pgcat)
     ///
     /// Also updates the pool LRU that this parse was used recently
+    ///
+    /// # Arguments
+    /// * `should_send_parse_to_server` - Whether to actually send Parse to server
+    /// * `hash` - Hash of the statement for pool LRU promotion
+    /// * `parse` - The Parse message containing query text and parameters
+    /// * `server_name` - The name to use on the server (may differ from parse.name for async clients)
+    /// * `pool` - Connection pool for LRU promotion
+    /// * `server` - Server connection to register on
     pub(crate) async fn register_parse_to_server_cache(
         &self,
         should_send_parse_to_server: bool,
         hash: &u64,
         parse: &Arc<Parse>,
+        server_name: &str,
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
         // We want to promote this in the pool's LRU
         pool.promote_prepared_statement_hash(hash);
 
-        debug!("Checking for prepared statement {}", parse.name);
+        debug!("Checking for prepared statement {}", server_name);
 
         server
-            .register_prepared_statement(parse, should_send_parse_to_server)
+            .register_prepared_statement(parse, server_name, should_send_parse_to_server)
             .await?;
 
         Ok(())
@@ -108,26 +120,30 @@ where
         // Compute the hash of the parse statement
         let hash = parse.get_hash();
 
-        // For async clients, create a new Parse with unique name instead of using pool cache
-        // This avoids "prepared statement already exists" errors
-        let new_parse = if self.prepared.async_client {
-            // Use rewrite() to rename without cloning - it takes ownership and returns modified Parse
-            Arc::new(parse.rewrite())
-        } else {
-            // Use pool cache for non-async clients
-            match pool.register_parse_to_cache(hash, &parse) {
-                Some(parse) => parse,
-                None => {
-                    return Err(Error::ClientError(format!(
-                        "Could not store Prepared statement `{client_given_name}`"
-                    )))
-                }
+        // Always use pool cache to get shared Arc<Parse> (saves memory for async clients too)
+        let shared_parse = match pool.register_parse_to_cache(hash, &parse) {
+            Some(parse) => parse,
+            None => {
+                return Err(Error::ClientError(format!(
+                    "Could not store Prepared statement `{client_given_name}`"
+                )))
             }
         };
 
+        // For async clients, generate a unique name to avoid "prepared statement already exists" errors
+        // The query text is still shared via Arc<Parse> from pool cache
+        let async_name = if self.prepared.async_client {
+            Some(format!(
+                "DOORMAN_async_{}",
+                PREPARED_STATEMENT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            ))
+        } else {
+            None
+        };
+
         debug!(
-            "Renamed prepared statement `{}` to `{}` and saved to cache",
-            client_given_name, new_parse.name
+            "Renamed prepared statement `{}` to `{}` (async_name: {:?}) and saved to cache",
+            client_given_name, shared_parse.name, async_name
         );
 
         // For anonymous prepared statements, use hash as key to avoid collisions
@@ -137,28 +153,57 @@ where
         }
         let cache_key = PreparedStatementKey::from_name_or_hash(client_given_name, hash);
 
-        self.prepared
-            .cache
-            .insert(cache_key, (new_parse.clone(), hash));
+        // Evict oldest entry if cache is full (protection against malicious clients)
+        // max_cache_size = 0 means unlimited
+        if self.prepared.max_cache_size > 0
+            && self.prepared.cache.len() >= self.prepared.max_cache_size
+        {
+            // Remove first entry (oldest added, since AHashMap doesn't guarantee order,
+            // but this provides reasonable eviction behavior)
+            if let Some(key) = self.prepared.cache.keys().next().cloned() {
+                self.prepared.cache.remove(&key);
+                debug!(
+                    "Client prepared statements cache full (limit: {}), evicted entry",
+                    self.prepared.max_cache_size
+                );
+            }
+        }
+
+        let cached = CachedStatement {
+            parse: shared_parse.clone(),
+            hash,
+            async_name: async_name.clone(),
+        };
+        self.prepared.cache.insert(cache_key, cached);
+
+        // Update prepared cache stats after modification
+        self.update_prepared_cache_stats();
+
+        // Determine the server-side statement name
+        let server_stmt_name = async_name
+            .as_deref()
+            .unwrap_or(&shared_parse.name)
+            .to_string();
 
         // Check if server already has this prepared statement
-        if server.has_prepared_statement(&new_parse.name) {
+        // For async clients with unique names, this will always be false (new unique name)
+        if server.has_prepared_statement(&server_stmt_name) {
             // For async clients, always send Parse to get real ParseComplete from server
             if self.prepared.async_client {
                 debug!(
                     "Async client: sending Parse `{}` to server even though cached",
-                    new_parse.name
+                    server_stmt_name
                 );
 
-                // Add parse message to buffer
-                let parse_bytes: BytesMut = new_parse.as_ref().try_into()?;
+                // Add parse message to buffer with the server statement name
+                let parse_bytes = shared_parse.as_ref().to_bytes_with_name(&server_stmt_name)?;
                 self.buffer.put(&parse_bytes[..]);
             } else {
                 // We don't want to send the parse message to the server
                 // Track this skipped Parse - ParseComplete will be inserted before BindComplete in response
                 debug!(
                     "Parse skipped for `{}` (already on server), will insert ParseComplete later",
-                    new_parse.name
+                    server_stmt_name
                 );
                 // insert_at_beginning starts as false. It will be set to true later
                 // if a new Parse is sent to server AFTER this skipped Parse.
@@ -166,7 +211,7 @@ where
                 // BEFORE new Parse should be at the beginning of the response.
                 // has_bind starts as false - will be set to true when Bind is processed.
                 self.prepared.skipped_parses.push(SkippedParse {
-                    statement_name: new_parse.name.clone(),
+                    statement_name: server_stmt_name.clone(),
                     target: ParseCompleteTarget::BindComplete,
                     insert_at_beginning: false,
                     has_bind: false,
@@ -175,17 +220,16 @@ where
                 self.prepared
                     .batch_operations
                     .push(BatchOperation::ParseSkipped {
-                        statement_name: new_parse.name.clone(),
+                        statement_name: server_stmt_name.clone(),
                     });
             }
         } else {
             debug!(
                 "Prepared statement `{}` not found in server cache",
-                new_parse.name
+                server_stmt_name
             );
-
             // Register to server cache (this may send eviction close to server)
-            self.register_parse_to_server_cache(false, &hash, &new_parse, pool, server)
+            self.register_parse_to_server_cache(false, &hash, &shared_parse, &server_stmt_name, pool, server)
                 .await?;
 
             // Before sending new Parse, mark pending skipped_parses as insert_at_beginning=true
@@ -198,8 +242,8 @@ where
                 }
             }
 
-            // Add parse message to buffer
-            let parse_bytes: BytesMut = new_parse.as_ref().try_into()?;
+            // Add parse message to buffer with the server statement name
+            let parse_bytes = shared_parse.as_ref().to_bytes_with_name(&server_stmt_name)?;
             self.buffer.put(&parse_bytes[..]);
 
             // Track that we sent a Parse to server in this batch
@@ -209,7 +253,7 @@ where
             self.prepared
                 .batch_operations
                 .push(BatchOperation::ParseSent {
-                    statement_name: new_parse.name.clone(),
+                    statement_name: server_stmt_name.clone(),
                 });
         }
 
@@ -263,13 +307,13 @@ where
             .await?;
 
         match self.prepared.cache.get(&lookup_key) {
-            Some((rewritten_parse, _)) => {
-                let rewritten_name = rewritten_parse.name.clone();
-                let message = Bind::rename(message, &rewritten_name)?;
+            Some(cached) => {
+                let server_name = cached.server_name().to_string();
+                let message = Bind::rename(message, &server_name)?;
 
                 debug!(
                     "Rewrote bind `{}` to `{}`",
-                    client_given_name, rewritten_name
+                    client_given_name, server_name
                 );
 
                 // Ensure prepared statement is on server
@@ -282,7 +326,7 @@ where
                 // This prevents it from being marked as insert_at_beginning when a new Parse arrives,
                 // because its ParseComplete should be inserted before BindComplete, not at beginning.
                 if let Some(skipped) = self.prepared.skipped_parses.iter_mut().find(|s| {
-                    s.statement_name == rewritten_name
+                    s.statement_name == server_name
                         && s.target == ParseCompleteTarget::BindComplete
                         && !s.has_bind
                 }) {
@@ -294,7 +338,7 @@ where
 
                 // Track operation order for correct ParseComplete insertion
                 self.prepared.batch_operations.push(BatchOperation::Bind {
-                    statement_name: rewritten_name,
+                    statement_name: server_name,
                 });
 
                 Ok(())
@@ -348,10 +392,10 @@ where
             .await?;
 
         match self.prepared.cache.get(&lookup_key) {
-            Some((rewritten_parse, _)) => {
-                // Clone what we need before any mutable borrows
-                let rewritten_parse = rewritten_parse.clone();
-                let describe = describe.rename(&rewritten_parse.name);
+            Some(cached) => {
+                // Get the server-side statement name
+                let server_name = cached.server_name().to_string();
+                let describe = describe.rename(&server_name);
 
                 debug!(
                     "Rewrote describe `{}` to `{}`",
@@ -370,18 +414,18 @@ where
                 // Using position() + remove() + push() instead of iter_mut().find() to avoid issues
                 // when multiple Parse operations for the same statement are skipped in a batch.
                 if let Some(idx) = self.prepared.skipped_parses.iter().position(|s| {
-                    s.statement_name == rewritten_parse.name
+                    s.statement_name == server_name
                         && s.target == ParseCompleteTarget::BindComplete
                 }) {
                     debug!(
                         "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
-                        rewritten_parse.name
+                        server_name
                     );
                     let insert_at_beginning = self.prepared.skipped_parses[idx].insert_at_beginning;
                     let has_bind = self.prepared.skipped_parses[idx].has_bind;
                     self.prepared.skipped_parses.remove(idx);
                     self.prepared.skipped_parses.push(SkippedParse {
-                        statement_name: rewritten_parse.name.clone(),
+                        statement_name: server_name.clone(),
                         target: ParseCompleteTarget::ParameterDescription,
                         insert_at_beginning,
                         has_bind,
@@ -396,7 +440,7 @@ where
                 self.prepared
                     .batch_operations
                     .push(BatchOperation::Describe {
-                        statement_name: rewritten_parse.name.clone(),
+                        statement_name: server_name,
                     });
 
                 Ok(())

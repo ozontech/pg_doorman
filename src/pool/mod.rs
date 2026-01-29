@@ -410,7 +410,7 @@ impl ServerPool {
         );
         let stats = Arc::new(ServerStats::new(
             self.address.clone(),
-            crate::utils::clock::recent(),
+            crate::utils::clock::now(),
         ));
 
         stats.register(stats.clone());

@@ -4,6 +4,14 @@ title: Changelog
 
 # Changelog
 
+### 3.1.7 <small>Jan 28, 2026</small> { id="3.1.7" }
+
+**Memory Optimization:**
+
+- **DEALLOCATE now clears client prepared statements cache**: When a client sends `DEALLOCATE <name>` or `DEALLOCATE ALL` via simple query protocol, the pooler now properly clears the corresponding entries from the client's internal prepared statements cache. Previously, synthetic OK responses were sent but the client cache was not cleared, causing memory to grow indefinitely for long-running connections using many unique prepared statements. This fix allows memory to be reclaimed when clients properly deallocate their statements.
+
+- **New `client_prepared_statements_cache_size` configuration parameter**: Added protection against malicious or misbehaving clients that don't call `DEALLOCATE` and could exhaust server memory by creating unlimited prepared statements. When the per-client cache limit is reached, the oldest entry is evicted automatically. Set to `0` for unlimited (default, relies on client calling `DEALLOCATE`). Example: `client_prepared_statements_cache_size: 1024` limits each client to 1024 cached prepared statements.
+
 ### 3.1.6 <small>Jan 27, 2026</small> { id="3.1.6" }
 
 **Bug Fixes:**

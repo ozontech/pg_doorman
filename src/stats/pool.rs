@@ -132,6 +132,21 @@ pub struct PoolStats {
     /// Total query processing time (microseconds)
     pub total_query_time_microseconds: u64,
 
+    /// Number of entries in the pool-level prepared statement cache
+    pub prepared_statements_count: u64,
+
+    /// Approximate memory usage of the pool-level prepared statement cache in bytes
+    pub prepared_statements_bytes: u64,
+
+    /// Total number of entries in all clients' prepared statement caches
+    pub client_prepared_count: u64,
+
+    /// Total approximate memory usage of all clients' prepared statement caches in bytes
+    pub client_prepared_bytes: u64,
+
+    /// Number of async clients (using Flush instead of Sync)
+    pub async_clients_count: u64,
+
     /// Average bytes received per second
     avg_recv: u64,
 
@@ -218,6 +233,11 @@ impl PoolStats {
             total_sent: 0,
             total_xact_time_microseconds: 0,
             total_query_time_microseconds: 0,
+            prepared_statements_count: 0,
+            prepared_statements_bytes: 0,
+            client_prepared_count: 0,
+            client_prepared_bytes: 0,
+            async_clients_count: 0,
             avg_recv: 0,
             avg_sent: 0,
             avg_xact_time_microsecons: 0,
@@ -245,7 +265,7 @@ impl PoolStats {
         let server_map = super::get_server_stats();
 
         // Initialize statistics for each virtual pool (percentiles are calculated from HDR histograms)
-        Self::initialize_virtual_pool_stats(&mut virtual_map);
+        Self::initialize_pool_stats(&mut virtual_map);
 
         // Update client and server state counters
         Self::update_client_server_states(&mut virtual_map, &client_map, &server_map);
@@ -339,6 +359,30 @@ impl PoolStats {
         ]
     }
 
+    pub fn generate_show_pools_memory_header() -> Vec<(&'static str, DataType)> {
+        vec![
+            ("database", DataType::Text),
+            ("user", DataType::Text),
+            ("pool_prepared_count", DataType::Numeric),
+            ("pool_prepared_bytes", DataType::Numeric),
+            ("client_prepared_count", DataType::Numeric),
+            ("client_prepared_bytes", DataType::Numeric),
+            ("async_clients", DataType::Numeric),
+        ]
+    }
+
+    pub fn generate_show_pools_memory_row(&self) -> Vec<Cow<'_, str>> {
+        vec![
+            Cow::Borrowed(&self.identifier.db),
+            Cow::Borrowed(&self.identifier.user),
+            Cow::Owned(self.prepared_statements_count.to_string()),
+            Cow::Owned(self.prepared_statements_bytes.to_string()),
+            Cow::Owned(self.client_prepared_count.to_string()),
+            Cow::Owned(self.client_prepared_bytes.to_string()),
+            Cow::Owned(self.async_clients_count.to_string()),
+        ]
+    }
+
     pub fn generate_show_stats_header() -> Vec<(&'static str, DataType)> {
         vec![
             ("database", DataType::Text),
@@ -385,16 +429,16 @@ impl PoolStats {
         ]
     }
 
-    /// Initializes statistics for each virtual pool by collecting data from address stats.
+    /// Initializes statistics for each pool by collecting data from address stats.
     ///
-    /// This helper method creates a PoolStats instance for each virtual pool and populates
+    /// This helper method creates a PoolStats instance for each pool and populates
     /// it with statistics from the corresponding address stats. It collects query and
     /// transaction times, loads average and total statistics, and calculates wait times.
     ///
     /// # Arguments
     ///
-    /// * `virtual_map` - A mutable reference to the map of virtual pool statistics
-    fn initialize_virtual_pool_stats(virtual_map: &mut HashMap<PoolIdentifier, PoolStats>) {
+    /// * `map` - A mutable reference to the map of pool statistics
+    fn initialize_pool_stats(map: &mut HashMap<PoolIdentifier, PoolStats>) {
         for (identifier, pool) in get_all_pools().iter() {
             // Get address stats for this pool
             let address = pool.address().stats.clone();
@@ -446,6 +490,12 @@ impl PoolStats {
                 .load(Ordering::Relaxed);
             current.wait_time = address.total.wait_time.load(Ordering::Relaxed);
 
+            // Load pool-level prepared statement cache statistics
+            if let Some(cache) = pool.prepared_statement_cache.as_ref() {
+                current.prepared_statements_count = cache.len() as u64;
+                current.prepared_statements_bytes = cache.memory_usage() as u64;
+            }
+
             // Load statistics for SHOW STATS command
             current.total_xact_count = address.total.xact_count.load(Ordering::Relaxed);
             current.total_query_count = address.total.query_count.load(Ordering::Relaxed);
@@ -468,7 +518,7 @@ impl PoolStats {
             }
 
             // Add the pool stats to the virtual map
-            virtual_map.insert(identifier.clone(), current);
+            map.insert(identifier.clone(), current);
         }
     }
 
@@ -507,6 +557,13 @@ impl PoolStats {
                     // Update maximum wait time
                     let max_wait = client.max_wait_time.load(Ordering::Relaxed);
                     pool_stats.maxwait = std::cmp::max(pool_stats.maxwait, max_wait);
+
+                    // Aggregate client-level prepared statement cache metrics
+                    pool_stats.client_prepared_count += client.prepared_cache_count();
+                    pool_stats.client_prepared_bytes += client.prepared_cache_bytes();
+                    if client.is_async_client() {
+                        pool_stats.async_clients_count += 1;
+                    }
                 }
                 None => debug!("Client from an obsolete pool"),
             }

@@ -13,6 +13,6 @@ mod prepared_statement_cache;
 mod server_backend;
 
 pub use parameters::ServerParameters;
-pub use prepared_statement_cache::PreparedStatementCache;
+pub use prepared_statement_cache::{intern_query, PreparedStatementCache};
 pub use server_backend::Server;
 pub use stream::StreamInner;

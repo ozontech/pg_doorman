@@ -68,7 +68,9 @@ pub struct Parse {
     #[allow(dead_code)]
     len: i32,
     pub name: String,
-    query: String,
+    /// Query text stored as Arc<str> for efficient sharing between clients.
+    /// Even when Arc<Parse> is evicted from pool cache, the query text remains shared.
+    query: Arc<str>,
     num_params: i16,
     param_types: Vec<i32>,
 }
@@ -81,7 +83,7 @@ impl TryFrom<&BytesMut> for Parse {
         let code = cursor.get_u8() as char;
         let len = cursor.get_i32();
         let name = cursor.read_string()?;
-        let query = cursor.read_string()?;
+        let query_string = cursor.read_string()?;
         let num_params = cursor.get_i16();
         let mut param_types = Vec::new();
 
@@ -93,7 +95,7 @@ impl TryFrom<&BytesMut> for Parse {
             code,
             len,
             name,
-            query,
+            query: Arc::from(query_string),
             num_params,
             param_types,
         })
@@ -109,7 +111,7 @@ impl TryFrom<Parse> for BytesMut {
         let name_binding = CString::new(parse.name)?;
         let name = name_binding.as_bytes_with_nul();
 
-        let query_binding = CString::new(parse.query)?;
+        let query_binding = CString::new(&*parse.query)?;
         let query = query_binding.as_bytes_with_nul();
 
         // Recompute length of the message.
@@ -150,6 +152,16 @@ impl Parse {
         self
     }
 
+    /// Interns the query string using the global interner.
+    /// This ensures that identical query texts share the same Arc<str> allocation,
+    /// even when Arc<Parse> is evicted from the pool cache.
+    /// Should be called after computing the hash.
+    pub fn intern_query(mut self, hash: u64) -> Self {
+        use crate::server::intern_query;
+        self.query = intern_query(&self.query, hash);
+        self
+    }
+
     /// Gets the name of the prepared statement from the buffer
     pub fn get_name(buf: &BytesMut) -> Result<String, Error> {
         let mut cursor = std::io::Cursor::new(buf);
@@ -183,9 +195,49 @@ impl Parse {
     pub fn anonymous(&self) -> bool {
         self.name.is_empty()
     }
-}
 
-/// Bind (B) message.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Approximate memory usage of the parse statement in bytes
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.name.capacity()
+            + self.query.len()  // Arc<str> doesn't have capacity(), use len()
+            + self.param_types.capacity() * std::mem::size_of::<i32>()
+    }
+
+    /// Converts the Parse to bytes using a custom statement name.
+    /// This is used for async clients that need unique names on the server.
+    pub fn to_bytes_with_name(&self, name: &str) -> Result<BytesMut, Error> {
+        let mut bytes = BytesMut::new();
+
+        let name_binding = CString::new(name)?;
+        let name_bytes = name_binding.as_bytes_with_nul();
+
+        let query_binding = CString::new(&*self.query)?;
+        let query_bytes = query_binding.as_bytes_with_nul();
+
+        // Compute length of the message
+        let len = 4 // self
+            + name_bytes.len()
+            + query_bytes.len()
+            + 2
+            + 4 * self.num_params as usize;
+
+        bytes.put_u8(self.code as u8);
+        bytes.put_i32(len as i32);
+        bytes.put_slice(name_bytes);
+        bytes.put_slice(query_bytes);
+        bytes.put_i16(self.num_params);
+        for param in &self.param_types {
+            bytes.put_i32(*param);
+        }
+
+        Ok(bytes)
+    }
+}
 /// See: <https://www.postgresql.org/docs/current/protocol-message-formats.html>
 #[derive(Clone, Debug)]
 pub struct Bind {

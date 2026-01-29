@@ -75,6 +75,15 @@ pub struct ClientStats {
     pub query_count: AtomicU64,
     /// Number of errors encountered by this client
     pub error_count: AtomicU64,
+
+    /// Prepared statement cache metrics
+    /// ------------------------------------------------------------------------------------------
+    /// Number of entries in client's prepared statement cache
+    pub prepared_cache_count: AtomicU64,
+    /// Approximate memory usage of client's prepared statement cache in bytes
+    pub prepared_cache_bytes: AtomicU64,
+    /// Whether this client is async (uses Flush instead of Sync)
+    pub is_async_client: AtomicBool,
 }
 
 /// Default implementation for ClientStats.
@@ -91,7 +100,7 @@ impl Default for ClientStats {
     fn default() -> Self {
         ClientStats {
             client_id: 0,
-            connect_time: clock::recent(),
+            connect_time: clock::now(),
             application_name: String::new(),
             username: String::new(),
             pool_name: String::new(),
@@ -102,6 +111,9 @@ impl Default for ClientStats {
             transaction_count: AtomicU64::new(0),
             query_count: AtomicU64::new(0),
             error_count: AtomicU64::new(0),
+            prepared_cache_count: AtomicU64::new(0),
+            prepared_cache_bytes: AtomicU64::new(0),
+            is_async_client: AtomicBool::new(false),
             reporter: get_reporter(),
             use_tls: false,
         }
@@ -367,6 +379,42 @@ impl ClientStats {
     pub fn ipaddr(&self) -> String {
         self.ipaddr.clone()
     }
+
+    //
+    // Prepared statement cache metrics
+    // ------------------------------------------------------------------------------------------
+
+    /// Updates the prepared statement cache metrics.
+    /// Called when adding or removing entries from the client's prepared statement cache.
+    #[inline(always)]
+    pub fn set_prepared_cache_stats(&self, count: u64, bytes: u64) {
+        self.prepared_cache_count.store(count, Ordering::Relaxed);
+        self.prepared_cache_bytes.store(bytes, Ordering::Relaxed);
+    }
+
+    /// Returns the number of entries in the client's prepared statement cache.
+    #[inline(always)]
+    pub fn prepared_cache_count(&self) -> u64 {
+        self.prepared_cache_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the approximate memory usage of the client's prepared statement cache in bytes.
+    #[inline(always)]
+    pub fn prepared_cache_bytes(&self) -> u64 {
+        self.prepared_cache_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Marks this client as an async client (uses Flush instead of Sync).
+    #[inline(always)]
+    pub fn set_async_client(&self) {
+        self.is_async_client.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns whether this client is an async client.
+    #[inline(always)]
+    pub fn is_async_client(&self) -> bool {
+        self.is_async_client.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
@@ -404,7 +452,7 @@ mod tests {
     #[test]
     fn test_client_stats_new() {
         // Test that ClientStats::new initializes with the provided values
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ClientStats::new(
             42,          // client_id
             "test_app",  // application_name
@@ -438,7 +486,7 @@ mod tests {
     fn test_client_lifecycle_methods() {
         // Create a ClientStats with a unique client_id
         let client_id = 12345;
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ClientStats::new(
             client_id,
             "test_app",
@@ -564,7 +612,7 @@ mod tests {
     #[test]
     fn test_accessor_methods() {
         // Create a ClientStats with specific values
-        let now = clock::recent();
+        let now = clock::now();
         let stats = ClientStats::new(
             42,          // client_id
             "test_app",  // application_name

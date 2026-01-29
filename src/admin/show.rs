@@ -118,6 +118,63 @@ where
     write_all_half(stream, &res).await
 }
 
+/// Show memory utilization of connection pools.
+pub async fn show_pools_memory<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let pool_lookup = PoolStats::construct_pool_lookup();
+    let mut res = BytesMut::new();
+    res.put(row_description(&PoolStats::generate_show_pools_memory_header()));
+    pool_lookup.iter().for_each(|(_identifier, pool_stats)| {
+        res.put(data_row(&pool_stats.generate_show_pools_memory_row()));
+    });
+    res.put(command_complete("SHOW"));
+    // ReadyForQuery
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Show all entries in the global prepared statement cache across all pools.
+pub async fn show_prepared_statements<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let columns = vec![
+        ("pool", DataType::Text),
+        ("hash", DataType::Numeric),
+        ("name", DataType::Text),
+        ("query", DataType::Text),
+        ("count_used", DataType::Numeric),
+    ];
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    for (identifier, pool) in get_all_pools().iter() {
+        if let Some(cache) = pool.prepared_statement_cache.as_ref() {
+            let entries = cache.get_entries();
+            for (hash, parse, last_used) in entries {
+                res.put(data_row(&[
+                    identifier.to_string(),
+                    hash.to_string(),
+                    parse.name.clone(),
+                    parse.query().to_string(),
+                    last_used.to_string(),
+                ]));
+            }
+        }
+    }
+
+    res.put(command_complete("SHOW"));
+    // ReadyForQuery
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
 /// Show extended utilization of connection pools for each pool.
 pub async fn show_pools_extended<T>(stream: &mut T) -> Result<(), Error>
 where
@@ -146,7 +203,7 @@ where
 {
     let columns = vec![("item", DataType::Text)];
     let help_items = [
-        "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION",
+        "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|PREPARED_STATEMENTS|CLIENTS|SERVERS|USERS|VERSION",
         "SHOW LISTS",
         "SHOW CONNECTIONS",
         "SHOW STATS",
