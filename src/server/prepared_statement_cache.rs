@@ -113,6 +113,11 @@ impl PreparedStatementCache {
         self.cache.len()
     }
 
+    /// Returns true if the cache is empty
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+
     /// Approximate memory usage of the cache in bytes
     pub fn memory_usage(&self) -> usize {
         let mut total = 0;
