@@ -68,7 +68,9 @@ pub struct Parse {
     #[allow(dead_code)]
     len: i32,
     pub name: String,
-    query: String,
+    /// Query text stored as Arc<str> for efficient sharing between clients.
+    /// Even when Arc<Parse> is evicted from pool cache, the query text remains shared.
+    query: Arc<str>,
     num_params: i16,
     param_types: Vec<i32>,
 }
@@ -81,7 +83,7 @@ impl TryFrom<&BytesMut> for Parse {
         let code = cursor.get_u8() as char;
         let len = cursor.get_i32();
         let name = cursor.read_string()?;
-        let query = cursor.read_string()?;
+        let query_string = cursor.read_string()?;
         let num_params = cursor.get_i16();
         let mut param_types = Vec::new();
 
@@ -93,7 +95,7 @@ impl TryFrom<&BytesMut> for Parse {
             code,
             len,
             name,
-            query,
+            query: Arc::from(query_string),
             num_params,
             param_types,
         })
@@ -109,7 +111,7 @@ impl TryFrom<Parse> for BytesMut {
         let name_binding = CString::new(parse.name)?;
         let name = name_binding.as_bytes_with_nul();
 
-        let query_binding = CString::new(parse.query)?;
+        let query_binding = CString::new(&*parse.query)?;
         let query = query_binding.as_bytes_with_nul();
 
         // Recompute length of the message.
@@ -147,6 +149,16 @@ impl Parse {
             "DOORMAN_{}",
             PREPARED_STATEMENT_COUNTER.fetch_add(1, Ordering::SeqCst)
         );
+        self
+    }
+
+    /// Interns the query string using the global interner.
+    /// This ensures that identical query texts share the same Arc<str> allocation,
+    /// even when Arc<Parse> is evicted from the pool cache.
+    /// Should be called after computing the hash.
+    pub fn intern_query(mut self, hash: u64) -> Self {
+        use crate::server::intern_query;
+        self.query = intern_query(&self.query, hash);
         self
     }
 
@@ -192,7 +204,7 @@ impl Parse {
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.name.capacity()
-            + self.query.capacity()
+            + self.query.len()  // Arc<str> doesn't have capacity(), use len()
             + self.param_types.capacity() * std::mem::size_of::<i32>()
     }
 
@@ -204,7 +216,7 @@ impl Parse {
         let name_binding = CString::new(name)?;
         let name_bytes = name_binding.as_bytes_with_nul();
 
-        let query_binding = CString::new(self.query.as_str())?;
+        let query_binding = CString::new(&*self.query)?;
         let query_bytes = query_binding.as_bytes_with_nul();
 
         // Compute length of the message

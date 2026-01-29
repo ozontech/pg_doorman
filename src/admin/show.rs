@@ -147,7 +147,7 @@ where
         ("hash", DataType::Numeric),
         ("name", DataType::Text),
         ("query", DataType::Text),
-        ("last_used", DataType::Numeric),
+        ("count_used", DataType::Numeric),
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
