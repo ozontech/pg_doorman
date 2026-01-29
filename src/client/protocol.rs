@@ -28,10 +28,12 @@ where
         match self.prepared.cache.get(&key) {
             Some(cached) => {
                 debug!("Prepared statement `{key:?}` found in cache");
+                // Get the server-side name (may be async_name for async clients)
+                let server_name = cached.server_name().to_string();
                 // In this case we want to send the parse message to the server
                 // since pgcat is initiating the prepared statement on this specific server
                 match self
-                    .register_parse_to_server_cache(true, &cached.hash, &cached.parse, pool, server)
+                    .register_parse_to_server_cache(true, &cached.hash, &cached.parse, &server_name, pool, server)
                     .await
                 {
                     Ok(_) => (),
@@ -61,21 +63,30 @@ where
     /// Register the parse to the server cache and send it to the server if requested (ie. requested by pgcat)
     ///
     /// Also updates the pool LRU that this parse was used recently
+    ///
+    /// # Arguments
+    /// * `should_send_parse_to_server` - Whether to actually send Parse to server
+    /// * `hash` - Hash of the statement for pool LRU promotion
+    /// * `parse` - The Parse message containing query text and parameters
+    /// * `server_name` - The name to use on the server (may differ from parse.name for async clients)
+    /// * `pool` - Connection pool for LRU promotion
+    /// * `server` - Server connection to register on
     pub(crate) async fn register_parse_to_server_cache(
         &self,
         should_send_parse_to_server: bool,
         hash: &u64,
         parse: &Arc<Parse>,
+        server_name: &str,
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
         // We want to promote this in the pool's LRU
         pool.promote_prepared_statement_hash(hash);
 
-        debug!("Checking for prepared statement {}", parse.name);
+        debug!("Checking for prepared statement {}", server_name);
 
         server
-            .register_prepared_statement(parse, should_send_parse_to_server)
+            .register_prepared_statement(parse, server_name, should_send_parse_to_server)
             .await?;
 
         Ok(())
@@ -217,9 +228,8 @@ where
                 "Prepared statement `{}` not found in server cache",
                 server_stmt_name
             );
-
             // Register to server cache (this may send eviction close to server)
-            self.register_parse_to_server_cache(false, &hash, &shared_parse, pool, server)
+            self.register_parse_to_server_cache(false, &hash, &shared_parse, &server_stmt_name, pool, server)
                 .await?;
 
             // Before sending new Parse, mark pending skipped_parses as insert_at_beginning=true

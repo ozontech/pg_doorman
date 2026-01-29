@@ -393,25 +393,33 @@ impl Server {
         );
     }
 
+    /// Register a prepared statement on the server.
+    /// 
+    /// # Arguments
+    /// * `parse` - The Parse message containing query text and parameters
+    /// * `server_name` - The name to use on the server (may differ from parse.name for async clients)
+    /// * `should_send_parse_to_server` - Whether to actually send Parse to server
     pub async fn register_prepared_statement(
         &mut self,
         parse: &Parse,
+        server_name: &str,
         should_send_parse_to_server: bool,
     ) -> Result<(), Error> {
-        if !self.has_prepared_statement(&parse.name) {
+        if !self.has_prepared_statement(server_name) {
             self.registering_prepared_statement
-                .push_back(parse.name.clone());
+                .push_back(server_name.to_string());
 
             let mut bytes = BytesMut::new();
 
             if should_send_parse_to_server {
-                let parse_bytes: BytesMut = parse.try_into()?;
+                // Use server_name instead of parse.name for async clients
+                let parse_bytes = parse.to_bytes_with_name(server_name)?;
                 bytes.extend_from_slice(&parse_bytes);
             }
 
             // If we evict something, we need to close it on the server
             // We do this by adding it to the messages we're sending to the server before the sync
-            if let Some(evicted_name) = self.add_prepared_statement_to_cache(&parse.name) {
+            if let Some(evicted_name) = self.add_prepared_statement_to_cache(server_name) {
                 self.remove_prepared_statement_from_cache(&evicted_name);
                 let close_bytes: BytesMut = Close::new(&evicted_name).try_into()?;
                 bytes.extend_from_slice(&close_bytes);
@@ -436,7 +444,7 @@ impl Server {
 
         // If it's not there, something went bad, I'm guessing bad syntax or permissions error
         // on the server.
-        if !self.has_prepared_statement(&parse.name) {
+        if !self.has_prepared_statement(server_name) {
             Err(Error::PreparedStatementError)
         } else {
             Ok(())
