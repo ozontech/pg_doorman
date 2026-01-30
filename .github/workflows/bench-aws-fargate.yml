@@ -70,7 +70,7 @@ jobs:
       contents: read
       packages: read
     outputs:
-      ecr-image-uri: ${{ steps.push-ecr.outputs.image-uri }}
+      ecr-image-tag: ${{ steps.push-ecr.outputs.image-tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -112,7 +112,8 @@ jobs:
           docker push "${ECR_IMAGE}"
           docker push "${ECR_LATEST}"
 
-          echo "image-uri=${ECR_IMAGE}" >> $GITHUB_OUTPUT
+          # Output only the tag part (timestamp), not full URI with secret
+          echo "image-tag=bench-${TIMESTAMP}" >> $GITHUB_OUTPUT
           echo "✅ Successfully pushed to ECR: ${ECR_IMAGE}"
 
   # Job 3: Register ECS task definition
@@ -138,7 +139,8 @@ jobs:
       - name: Register task definition
         id: register
         run: |
-          IMAGE_URI="${{ needs.build-and-push-to-ecr.outputs.ecr-image-uri }}"
+          # Reconstruct image URI from secret + tag (avoid passing secret in output)
+          IMAGE_URI="${{ secrets.ECR_REPOSITORY }}:${{ needs.build-and-push-to-ecr.outputs.ecr-image-tag }}"
           TASK_FAMILY="pg-doorman-bench-task"
 
           cat > task-definition.json <<EOF
@@ -333,7 +335,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**ECS Cluster:** ${{ secrets.ECS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**Task:** ${{ steps.run-task.outputs.task-arn }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ needs.build-and-push-to-ecr.outputs.ecr-image-uri }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** ${{ needs.build-and-push-to-ecr.outputs.ecr-image-tag }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ secrets.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "**CPU:** ${{ inputs.fargate_cpu }} units ($(((${{ inputs.fargate_cpu }})/1024)) vCPU)" >> $GITHUB_STEP_SUMMARY
           echo "**Memory:** ${{ inputs.fargate_memory }} MB ($(((${{ inputs.fargate_memory }})/1024)) GB)" >> $GITHUB_STEP_SUMMARY
