@@ -759,7 +759,6 @@ where
                         }
 
                         // Parse
-                        // The query with placeholders is here, e.g. `SELECT * FROM users WHERE email = $1 AND active = $2`.
                         'P' => {
                             self.process_parse_immediate(message, current_pool, server)
                                 .await?;

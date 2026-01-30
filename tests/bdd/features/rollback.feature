@@ -71,3 +71,12 @@ Feature: Rollback functionality tests
     Then the command should succeed
     And the command output should contain "✓ Reproduction test passed"
 
+  Scenario: Test savepoint rollback functionality with .NET NpgsqlBatch
+    When I run shell command:
+      """
+      export DATABASE_URL="Host=127.0.0.1;Port=${DOORMAN_PORT};Database=example_db;Username=example_user_1;Password=test;Pooling=false"
+      tests/dotnet/run_test.sh rollback_savepoint rollback_savepoint.cs
+      """
+    Then the command should succeed
+    And the command output should contain "✓ .NET Savepoint rollback test passed"
+

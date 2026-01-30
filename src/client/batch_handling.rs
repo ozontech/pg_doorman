@@ -15,6 +15,7 @@
 //! at the correct positions in the response stream.
 
 use bytes::BytesMut;
+use log::debug;
 use smallvec::SmallVec;
 
 use super::core::{BatchOperation, Client};
@@ -74,6 +75,12 @@ where
         if self.prepared.batch_operations.is_empty() || self.prepared.skipped_parses.is_empty() {
             return response;
         }
+
+        debug!(
+            "Reordering responses: operations={:?}, skipped_parses={}",
+            self.prepared.batch_operations.len(),
+            self.prepared.skipped_parses.len()
+        );
 
         // Track which BindComplete/ParameterDescription index needs ParseComplete inserted before it.
         // We can't use absolute positions because Execute returns variable number of messages.
@@ -195,10 +202,9 @@ where
         let total_insertions: usize = insertion_map_sum(&relevant_bind)
             + insertion_map_sum(&relevant_param_desc)
             + insertion_map_sum(&relevant_execute)
-            + insertion_map_sum(&relevant_close)
-            + pending_insertions; // remaining at end
+            + insertion_map_sum(&relevant_close);
 
-        if total_insertions == 0 {
+        if total_insertions + pending_insertions == 0 {
             // Still need to count messages for offset tracking
             let mut bind_count = 0usize;
             let mut param_desc_count = 0usize;
@@ -230,12 +236,13 @@ where
         }
 
         // Build new response
-        let mut new_response = BytesMut::with_capacity(response.len() + total_insertions * 5);
+        let mut new_response = BytesMut::with_capacity(response.len() + (total_insertions + pending_insertions) * 5);
         let mut pos = 0;
         let mut bind_count: usize = 0;
         let mut param_desc_count: usize = 0;
         let mut execute_count: usize = 0;
         let mut close_count: usize = 0;
+        let mut inserted_count: usize = 0;
         let mut in_execute: bool = false; // Track if we're inside an Execute response
 
         while pos < response.len() {
@@ -264,6 +271,7 @@ where
                     if let Some(count) = insertion_map_get(&relevant_bind, bind_count) {
                         for _ in 0..count {
                             new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                            inserted_count += 1;
                         }
                     }
                     bind_count += 1;
@@ -272,6 +280,7 @@ where
                     if let Some(count) = insertion_map_get(&relevant_param_desc, param_desc_count) {
                         for _ in 0..count {
                             new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                            inserted_count += 1;
                         }
                     }
                     param_desc_count += 1;
@@ -281,6 +290,7 @@ where
                     if let Some(count) = insertion_map_get(&relevant_close, close_count) {
                         for _ in 0..count {
                             new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                            inserted_count += 1;
                         }
                     }
                     close_count += 1;
@@ -297,20 +307,34 @@ where
                         if let Some(count) = insertion_map_get(&relevant_execute, execute_count) {
                             for _ in 0..count {
                                 new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                                inserted_count += 1;
                             }
                         }
                         in_execute = true;
                     }
                 }
-                'Z' => {
-                    // ReadyForQuery - insert any remaining pending ParseComplete before it
-                    // This handles the case when batch contains only ParseSkipped + Sync
-                    // (without Bind/Describe/Execute)
-                    if pending_insertions > 0 {
-                        for _ in 0..pending_insertions {
+                'E' => {
+                    // ErrorResponse - if we have an error, the server will skip all subsequent commands in the batch.
+                    // We must insert all remaining ParseComplete messages for skipped parses now,
+                    // otherwise the client will be out of sync because it expects a response for every Parse.
+                    let remaining_in_maps = total_insertions - inserted_count;
+                    if remaining_in_maps > 0 {
+                        for _ in 0..remaining_in_maps {
                             new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                            inserted_count += 1;
                         }
-                        pending_insertions = 0;
+                    }
+                }
+                'Z' => {
+                    // ReadyForQuery - insert any remaining pending ParseComplete before it.
+                    // This includes both pending_insertions at the end of batch AND
+                    // any insertions that were skipped due to an error before them.
+                    let remaining = (total_insertions + pending_insertions) - inserted_count;
+                    if remaining > 0 {
+                        for _ in 0..remaining {
+                            new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
+                            inserted_count += 1;
+                        }
                     }
                 }
                 _ => {}
