@@ -139,63 +139,69 @@ jobs:
       - name: Register task definition
         id: register
         run: |
-          # Reconstruct image URI from secret + tag (avoid passing secret in output)
-          IMAGE_URI="${{ secrets.ECR_REPOSITORY }}:${{ needs.build-and-push-to-ecr.outputs.ecr-image-tag }}"
+          # Reconstruct image URI from secret + tag
+          REPO_URL="${{ secrets.ECR_REPOSITORY }}"
+          IMAGE_TAG="${{ needs.build-and-push-to-ecr.outputs.ecr-image-tag }}"
+          IMAGE_URI="${REPO_URL}:${IMAGE_TAG}"
           TASK_FAMILY="pg-doorman-bench-task"
 
-          cat > task-definition.json <<EOF
-          {
-            "family": "${TASK_FAMILY}",
-            "networkMode": "awsvpc",
-            "requiresCompatibilities": ["FARGATE"],
-            "cpu": "${{ inputs.fargate_cpu }}",
-            "memory": "${{ inputs.fargate_memory }}",
-            "executionRoleArn": "${{ secrets.ECS_TASK_EXECUTION_ROLE_ARN }}",
-            "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
-            "containerDefinitions": [
-              {
-                "name": "benchmark-container",
-                "image": "${IMAGE_URI}",
-                "essential": true,
-                "command": ["bash", "benches/run-bench-and-upload.sh"],
-                "logConfiguration": {
-                  "logDriver": "awslogs",
-                  "options": {
-                    "awslogs-group": "/ecs/${{ secrets.ECS_CLUSTER_NAME }}",
-                    "awslogs-region": "${{ secrets.AWS_REGION }}",
-                    "awslogs-stream-prefix": "benchmark"
-                  }
-                },
-                "environment": [
-                  {
-                    "name": "DEBUG",
-                    "value": "${{ inputs.debug }}"
+          echo "Constructing task definition for image: ${IMAGE_URI}"
+          
+          if [ -z "${REPO_URL}" ]; then
+            echo "❌ Error: ECR_REPOSITORY secret is empty"
+            exit 1
+          fi
+          if [ -z "${IMAGE_TAG}" ]; then
+            echo "❌ Error: ecr-image-tag output from previous job is empty"
+            exit 1
+          fi
+
+          # Use jq to safely generate JSON (handles special characters and newlines in secrets)
+          jq -n \
+            --arg family "$TASK_FAMILY" \
+            --arg image "$IMAGE_URI" \
+            --arg cpu "${{ inputs.fargate_cpu }}" \
+            --arg memory "${{ inputs.fargate_memory }}" \
+            --arg execRole "${{ secrets.ECS_TASK_EXECUTION_ROLE_ARN }}" \
+            --arg taskRole "${{ secrets.ECS_TASK_ROLE_ARN }}" \
+            --arg logGroup "/ecs/${{ secrets.ECS_CLUSTER_NAME }}" \
+            --arg region "${{ secrets.AWS_REGION }}" \
+            --arg debug "${{ inputs.debug }}" \
+            --arg bencherToken "${{ secrets.BENCHER_API_TOKEN }}" \
+            --arg bencherBranch "${{ github.ref_name }}" \
+            '{
+              family: $family,
+              networkMode: "awsvpc",
+              requiresCompatibilities: ["FARGATE"],
+              cpu: $cpu,
+              memory: $memory,
+              executionRoleArn: $execRole,
+              taskRoleArn: $taskRole,
+              containerDefinitions: [
+                {
+                  name: "benchmark-container",
+                  image: $image,
+                  essential: true,
+                  command: ["bash", "benches/run-bench-and-upload.sh"],
+                  logConfiguration: {
+                    logDriver: "awslogs",
+                    options: {
+                      "awslogs-group": $logGroup,
+                      "awslogs-region": $region,
+                      "awslogs-stream-prefix": "benchmark"
+                    }
                   },
-                  {
-                    "name": "BENCHER_API_TOKEN",
-                    "value": "${{ secrets.BENCHER_API_TOKEN }}"
-                  },
-                  {
-                    "name": "BENCHER_PROJECT",
-                    "value": "pg-doorman"
-                  },
-                  {
-                    "name": "BENCHER_BRANCH",
-                    "value": "${{ github.ref_name }}"
-                  },
-                  {
-                    "name": "BENCHER_TESTBED",
-                    "value": "aws-fargate"
-                  },
-                  {
-                    "name": "JEMALLOC_SYS_WITH_MALLOC_CONF",
-                    "value": "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto"
-                  }
-                ]
-              }
-            ]
-          }
-          EOF
+                  environment: [
+                    { name: "DEBUG", value: $debug },
+                    { name: "BENCHER_API_TOKEN", value: $bencherToken },
+                    { name: "BENCHER_PROJECT", value: "pg-doorman" },
+                    { name: "BENCHER_BRANCH", value: $bencherBranch },
+                    { name: "BENCHER_TESTBED", value: "aws-fargate" },
+                    { name: "JEMALLOC_SYS_WITH_MALLOC_CONF", value: "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" }
+                  ]
+                }
+              ]
+            }' > task-definition.json
 
           echo "Registering task definition..."
           TASK_DEF_ARN=$(aws ecs register-task-definition \
