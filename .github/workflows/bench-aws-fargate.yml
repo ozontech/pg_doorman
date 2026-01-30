@@ -278,9 +278,14 @@ jobs:
             --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP}],assignPublicIp=ENABLED}" \
             --query 'tasks[0].taskArn' \
             --output text)
-
+          
           if [ -z "${TASK_ARN}" ] || [ "${TASK_ARN}" == "None" ]; then
-            echo "❌ Failed to start task"
+            echo "❌ Failed to start task. Full response from AWS:"
+            aws ecs run-task \
+              --cluster "${CLUSTER}" \
+              --task-definition "${TASK_DEF_ARN}" \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP}],assignPublicIp=ENABLED}"
             exit 1
           fi
 
