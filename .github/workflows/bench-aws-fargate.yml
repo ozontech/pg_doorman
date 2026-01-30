@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      task_definition_arn: ${{ steps.register.outputs.task_definition_arn }}
+      task_definition_arn: ${{ steps.register-step.outputs.task_definition_arn }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -137,7 +137,7 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Register task definition
-        id: register
+        id: register-step
         run: |
           # Reconstruct image URI from secret + tag
           REPO_URL="${{ secrets.ECR_REPOSITORY }}"
@@ -215,9 +215,7 @@ jobs:
             exit 1
           fi
 
-          echo "task_definition_arn<<EOF" >> $GITHUB_OUTPUT
-          echo "${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "task_definition_arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
           echo "✅ Task definition registered: ${TASK_DEF_ARN}"
 
   # Job 4: Run benchmark on Fargate
