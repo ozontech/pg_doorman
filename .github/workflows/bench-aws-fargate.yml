@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      task-definition-arn: ${{ steps.register.outputs.task-definition-arn }}
+      task_definition_arn: ${{ steps.register.outputs.task_definition_arn }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -215,7 +215,9 @@ jobs:
             exit 1
           fi
 
-          echo "task-definition-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+          echo "task_definition_arn<<EOF" >> $GITHUB_OUTPUT
+          echo "${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
           echo "✅ Task definition registered: ${TASK_DEF_ARN}"
 
   # Job 4: Run benchmark on Fargate
@@ -240,7 +242,7 @@ jobs:
       - name: Run Fargate task
         id: run-task
         run: |
-          TASK_DEF_ARN="${{ needs.register-task-definition.outputs.task-definition-arn }}"
+          TASK_DEF_ARN="${{ needs.register-task-definition.outputs.task_definition_arn }}"
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           SUBNETS="${{ secrets.ECS_SUBNET_IDS }}"
           SECURITY_GROUP="${{ secrets.ECS_SECURITY_GROUP_ID }}"
@@ -248,6 +250,9 @@ jobs:
           echo "Starting Fargate task..."
           echo "Cluster: ${CLUSTER}"
           echo "Task Definition: ${TASK_DEF_ARN}"
+          
+          # Debug: list all available outputs from register-task-definition
+          echo "Debug needs outputs: ${{ toJson(needs.register-task-definition.outputs) }}"
 
           if [ -z "${TASK_DEF_ARN}" ]; then
             echo "❌ Error: Task Definition ARN is blank. Check the output of the 'Register ECS Task Definition' job."
