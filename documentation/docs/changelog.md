@@ -4,6 +4,15 @@ title: Changelog
 
 # Changelog
 
+### 3.1.8 <small>Jan 31, 2026</small> { id="3.1.8" }
+
+**Bug Fixes:**
+
+- **Fixed ParseComplete desynchronization in pipeline on errors**: Fixed a protocol desynchronization issue (especially noticeable in .NET Npgsql driver) where synthetic `ParseComplete` messages were not being inserted if an error occurred during a pipelined batch. When the pooler caches a prepared statement and skips sending `Parse` to the server, it must still provide a `ParseComplete` to the client. If an error occurs before subsequent commands are processed, the server skips them, and the pooler now ensures all missing synthetic `ParseComplete` messages are inserted into the response stream upon receiving an `ErrorResponse` or `ReadyForQuery`.
+
+- **Fixed incorrect `use_savepoint` state persistence**: Fixed a bug where the `use_savepoint` flag (which disables automatic rollback on connection return if a savepoint was used) was not reset after a transaction ended.
+
+
 ### 3.1.7 <small>Jan 28, 2026</small> { id="3.1.7" }
 
 **Memory Optimization:**
