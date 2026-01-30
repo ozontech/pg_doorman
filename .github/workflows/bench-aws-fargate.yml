@@ -204,10 +204,16 @@ jobs:
             }' > task-definition.json
 
           echo "Registering task definition..."
-          TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-definition.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
+          aws ecs register-task-definition \
+            --cli-input-json file://task-definition.json > register-result.json
+          
+          TASK_DEF_ARN=$(jq -r '.taskDefinition.taskDefinitionArn' register-result.json)
+          
+          if [ -z "${TASK_DEF_ARN}" ] || [ "${TASK_DEF_ARN}" == "null" ]; then
+            echo "❌ Error: Failed to extract Task Definition ARN from response"
+            cat register-result.json
+            exit 1
+          fi
 
           echo "task-definition-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
           echo "✅ Task definition registered: ${TASK_DEF_ARN}"
@@ -242,6 +248,11 @@ jobs:
           echo "Starting Fargate task..."
           echo "Cluster: ${CLUSTER}"
           echo "Task Definition: ${TASK_DEF_ARN}"
+
+          if [ -z "${TASK_DEF_ARN}" ]; then
+            echo "❌ Error: Task Definition ARN is blank. Check the output of the 'Register ECS Task Definition' job."
+            exit 1
+          fi
 
           TASK_ARN=$(aws ecs run-task \
             --cluster "${CLUSTER}" \
