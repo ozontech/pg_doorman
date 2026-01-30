@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      task_definition_arn: ${{ steps.register-step.outputs.task_definition_arn }}
+      status: ${{ steps.register-step.outputs.status }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -215,8 +215,20 @@ jobs:
             exit 1
           fi
 
-          echo "task_definition_arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+          # Output to a file for the next job to pick up as an artifact
+          # This avoids the "Skip output since it may contain secret" restriction for ARNs
+          echo "${TASK_DEF_ARN}" > task_arn.txt
+          
+          # Also set a "safe" output just for job status
+          echo "status=success" >> $GITHUB_OUTPUT
           echo "✅ Task definition registered: ${TASK_DEF_ARN}"
+
+      - name: Upload Task ARN
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-arn
+          path: task_arn.txt
+          retention-days: 1
 
   # Job 4: Run benchmark on Fargate
   run-benchmark:
@@ -237,10 +249,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Download Task ARN
+        uses: actions/download-artifact@v4
+        with:
+          name: task-arn
+
       - name: Run Fargate task
         id: run-task
         run: |
-          TASK_DEF_ARN="${{ needs.register-task-definition.outputs.task_definition_arn }}"
+          TASK_DEF_ARN=$(cat task_arn.txt)
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           SUBNETS="${{ secrets.ECS_SUBNET_IDS }}"
           SECURITY_GROUP="${{ secrets.ECS_SECURITY_GROUP_ID }}"
@@ -249,11 +266,8 @@ jobs:
           echo "Cluster: ${CLUSTER}"
           echo "Task Definition: ${TASK_DEF_ARN}"
           
-          # Debug: list all available outputs from register-task-definition
-          echo "Debug needs outputs: ${{ toJson(needs.register-task-definition.outputs) }}"
-
           if [ -z "${TASK_DEF_ARN}" ]; then
-            echo "❌ Error: Task Definition ARN is blank. Check the output of the 'Register ECS Task Definition' job."
+            echo "❌ Error: Task Definition ARN is blank."
             exit 1
           fi
 
