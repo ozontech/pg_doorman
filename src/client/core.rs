@@ -1,7 +1,8 @@
 use crate::errors::Error;
 /// Handle clients by pretending to be a PostgreSQL server.
-use ahash::AHashMap;
 use bytes::BytesMut;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::io::BufReader;
 
@@ -134,12 +135,8 @@ pub struct PreparedStatementState {
     /// Once set to true, prepared statements caching is disabled for this client
     pub async_client: bool,
 
-    /// Maximum number of prepared statements in cache (0 = unlimited).
-    /// Protection against malicious clients that don't call DEALLOCATE.
-    pub max_cache_size: usize,
-
     /// Mapping of client named prepared statement to cached statement info
-    pub cache: AHashMap<PreparedStatementKey, CachedStatement>,
+    pub cache: LruCache<PreparedStatementKey, CachedStatement>,
 
     /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
     pub last_anonymous_hash: Option<u64>,
@@ -168,11 +165,16 @@ impl PreparedStatementState {
     /// Create a new PreparedStatementState with the given enabled flag and max cache size.
     /// max_cache_size = 0 means unlimited (no protection against malicious clients).
     pub fn new(enabled: bool, max_cache_size: usize) -> Self {
+        let capacity = if max_cache_size > 0 {
+            max_cache_size
+        } else {
+            1_000_000 // 1M as "unlimited"
+        };
+
         Self {
             enabled,
             async_client: false,
-            max_cache_size,
-            cache: AHashMap::new(),
+            cache: LruCache::new(NonZeroUsize::new(capacity).unwrap()),
             last_anonymous_hash: None,
             skipped_parses: Vec::new(),
             batch_operations: Vec::new(),
@@ -202,7 +204,7 @@ impl PreparedStatementState {
     /// Note: shared Parse content (via Arc) is NOT counted here as it's in the pool cache.
     pub fn cache_memory_usage(&self) -> usize {
         let mut total = 0;
-        for (key, cached) in &self.cache {
+        for (key, cached) in self.cache.iter() {
             // Key size
             total += match key {
                 PreparedStatementKey::Named(s) => std::mem::size_of::<PreparedStatementKey>() + s.capacity(),

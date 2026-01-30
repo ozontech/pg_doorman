@@ -25,7 +25,8 @@ where
         pool: &ConnectionPool,
         server: &mut Server,
     ) -> Result<(), Error> {
-        match self.prepared.cache.get(&key) {
+        let cached = self.prepared.cache.get(&key).cloned();
+        match cached {
             Some(cached) => {
                 debug!("Prepared statement `{key:?}` found in cache");
                 // Get the server-side name (may be async_name for async clients)
@@ -40,7 +41,7 @@ where
                     Err(err) => match err {
                         Error::PreparedStatementError => {
                             debug!("Removed {key:?} from client cache");
-                            self.prepared.cache.remove(&key);
+                            self.prepared.cache.pop(&key);
                         }
 
                         _ => {
@@ -153,28 +154,12 @@ where
         }
         let cache_key = PreparedStatementKey::from_name_or_hash(client_given_name, hash);
 
-        // Evict oldest entry if cache is full (protection against malicious clients)
-        // max_cache_size = 0 means unlimited
-        if self.prepared.max_cache_size > 0
-            && self.prepared.cache.len() >= self.prepared.max_cache_size
-        {
-            // Remove first entry (oldest added, since AHashMap doesn't guarantee order,
-            // but this provides reasonable eviction behavior)
-            if let Some(key) = self.prepared.cache.keys().next().cloned() {
-                self.prepared.cache.remove(&key);
-                debug!(
-                    "Client prepared statements cache full (limit: {}), evicted entry",
-                    self.prepared.max_cache_size
-                );
-            }
-        }
-
         let cached = CachedStatement {
             parse: shared_parse.clone(),
             hash,
             async_name: async_name.clone(),
         };
-        self.prepared.cache.insert(cache_key, cached);
+        self.prepared.cache.put(cache_key, cached);
 
         // Update prepared cache stats after modification
         self.update_prepared_cache_stats();
@@ -306,7 +291,8 @@ where
             .get_prepared_statement_lookup_key(&client_given_name)
             .await?;
 
-        match self.prepared.cache.get(&lookup_key) {
+        let cached = self.prepared.cache.get(&lookup_key).cloned();
+        match cached {
             Some(cached) => {
                 let server_name = cached.server_name().to_string();
                 let message = Bind::rename(message, &server_name)?;
@@ -391,7 +377,8 @@ where
             .get_prepared_statement_lookup_key(&client_given_name)
             .await?;
 
-        match self.prepared.cache.get(&lookup_key) {
+        let cached = self.prepared.cache.get(&lookup_key).cloned();
+        match cached {
             Some(cached) => {
                 // Get the server-side statement name
                 let server_name = cached.server_name().to_string();
@@ -479,7 +466,7 @@ where
         // Remove from prepared statements cache if it's a named prepared statement
         if self.prepared.enabled && close.is_prepared_statement() && !close.anonymous() {
             let key = PreparedStatementKey::Named(close.name.clone());
-            self.prepared.cache.remove(&key);
+            self.prepared.cache.pop(&key);
         }
 
         Ok(())
