@@ -2,6 +2,8 @@ use crate::errors::Error;
 /// Handle clients by pretending to be a PostgreSQL server.
 use ahash::AHashMap;
 use bytes::BytesMut;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::io::BufReader;
 
@@ -28,6 +30,69 @@ impl PreparedStatementKey {
             PreparedStatementKey::Anonymous(hash)
         } else {
             PreparedStatementKey::Named(name)
+        }
+    }
+}
+
+/// Abstract cache that can be either unlimited (AHashMap) or limited (LruCache)
+pub enum PreparedStatementCache {
+    Unlimited(AHashMap<PreparedStatementKey, CachedStatement>),
+    Limited(LruCache<PreparedStatementKey, CachedStatement>),
+}
+
+impl PreparedStatementCache {
+    /// Returns a reference to the value corresponding to the key.
+    /// Updates LRU order for Limited cache.
+    pub fn get(&mut self, key: &PreparedStatementKey) -> Option<&CachedStatement> {
+        match self {
+            Self::Unlimited(m) => m.get(key),
+            Self::Limited(l) => l.get(key),
+        }
+    }
+
+    /// Inserts a key-value pair into the cache.
+    /// For Limited cache, may evict the oldest entry.
+    pub fn put(&mut self, key: PreparedStatementKey, value: CachedStatement) {
+        match self {
+            Self::Unlimited(m) => {
+                m.insert(key, value);
+            }
+            Self::Limited(l) => {
+                l.put(key, value);
+            }
+        }
+    }
+
+    /// Removes a key from the cache, returning the value if it existed.
+    pub fn pop(&mut self, key: &PreparedStatementKey) -> Option<CachedStatement> {
+        match self {
+            Self::Unlimited(m) => m.remove(key),
+            Self::Limited(l) => l.pop(key),
+        }
+    }
+
+    /// Returns the number of elements in the cache.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Unlimited(m) => m.len(),
+            Self::Limited(l) => l.len(),
+        }
+    }
+
+    /// Clears the cache.
+    pub fn clear(&mut self) {
+        match self {
+            Self::Unlimited(m) => m.clear(),
+            Self::Limited(l) => l.clear(),
+        }
+    }
+
+    /// Returns an iterator over the cache entries.
+    /// Note: for Limited cache, this does not affect LRU order.
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (&PreparedStatementKey, &CachedStatement)> + '_> {
+        match self {
+            Self::Unlimited(m) => Box::new(m.iter()),
+            Self::Limited(l) => Box::new(l.iter()),
         }
     }
 }
@@ -134,12 +199,8 @@ pub struct PreparedStatementState {
     /// Once set to true, prepared statements caching is disabled for this client
     pub async_client: bool,
 
-    /// Maximum number of prepared statements in cache (0 = unlimited).
-    /// Protection against malicious clients that don't call DEALLOCATE.
-    pub max_cache_size: usize,
-
     /// Mapping of client named prepared statement to cached statement info
-    pub cache: AHashMap<PreparedStatementKey, CachedStatement>,
+    pub cache: PreparedStatementCache,
 
     /// Hash of the last anonymous prepared statement (for Bind to find the corresponding Parse)
     pub last_anonymous_hash: Option<u64>,
@@ -168,11 +229,16 @@ impl PreparedStatementState {
     /// Create a new PreparedStatementState with the given enabled flag and max cache size.
     /// max_cache_size = 0 means unlimited (no protection against malicious clients).
     pub fn new(enabled: bool, max_cache_size: usize) -> Self {
+        let cache = if max_cache_size > 0 {
+            PreparedStatementCache::Limited(LruCache::new(NonZeroUsize::new(max_cache_size).unwrap()))
+        } else {
+            PreparedStatementCache::Unlimited(AHashMap::new())
+        };
+
         Self {
             enabled,
             async_client: false,
-            max_cache_size,
-            cache: AHashMap::new(),
+            cache,
             last_anonymous_hash: None,
             skipped_parses: Vec::new(),
             batch_operations: Vec::new(),
@@ -202,7 +268,7 @@ impl PreparedStatementState {
     /// Note: shared Parse content (via Arc) is NOT counted here as it's in the pool cache.
     pub fn cache_memory_usage(&self) -> usize {
         let mut total = 0;
-        for (key, cached) in &self.cache {
+        for (key, cached) in self.cache.iter() {
             // Key size
             total += match key {
                 PreparedStatementKey::Named(s) => std::mem::size_of::<PreparedStatementKey>() + s.capacity(),

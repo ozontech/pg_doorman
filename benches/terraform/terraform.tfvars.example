@@ -1,0 +1,26 @@
+# Example Terraform variables file
+# Copy this file to terraform.tfvars and modify values:
+#   cp terraform.tfvars.example terraform.tfvars
+
+# AWS region (default: us-east-1)
+aws_region = "us-east-1"
+
+# IAM user name for GitHub Actions
+github_actions_user_name = "github-actions-pg-doorman"
+
+# ECR repository name
+ecr_repository_name = "pg-doorman-bench"
+
+# ECS cluster name for running benchmarks
+ecs_cluster_name = "pg-doorman-bench"
+
+# CloudWatch logs retention in days (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365...)
+log_retention_days = 7
+
+# Additional tags
+tags = {
+  Project     = "pg_doorman"
+  ManagedBy   = "Terraform"
+  Environment = "ci"
+  Owner       = "your-name"
+}

@@ -332,7 +332,7 @@ where
                 } else if !statement_part.is_empty() {
                     // DEALLOCATE <name> - remove specific statement from cache
                     let key = PreparedStatementKey::Named(statement_part.to_string());
-                    if self.prepared.cache.remove(&key).is_some() {
+                    if self.prepared.cache.pop(&key).is_some() {
                         debug!(
                             "DEALLOCATE {}: removed from client prepared statements cache",
                             statement_part
@@ -759,7 +759,6 @@ where
                         }
 
                         // Parse
-                        // The query with placeholders is here, e.g. `SELECT * FROM users WHERE email = $1 AND active = $2`.
                         'P' => {
                             self.process_parse_immediate(message, current_pool, server)
                                 .await?;

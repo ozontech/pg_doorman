@@ -1,0 +1,380 @@
+name: AWS Fargate Benchmarks
+
+permissions:
+  contents: write
+  packages: read
+  pull-requests: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug output'
+        required: false
+        default: 'true'
+        type: boolean
+      fargate_cpu:
+        description: 'Fargate CPU units (1024=1vCPU, 2048=2vCPU, 4096=4vCPU, 8192=8vCPU, 16384=16vCPU)'
+        required: false
+        default: '8192'
+        type: choice
+        options:
+          - '2048'
+          - '4096'
+          - '8192'
+          - '16384'
+      fargate_memory:
+        description: 'Fargate memory in MB (must be compatible with CPU)'
+        required: false
+        default: '16384'
+        type: choice
+        options:
+          - '4096'
+          - '8192'
+          - '16384'
+          - '32768'
+          - '61440'
+          - '122880'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/test-runner
+
+jobs:
+  # Job 1: Check and prepare benchmark image
+  check-image:
+    name: Check Image Cache
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      image-tag: ${{ steps.compute-tag.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compute image tag from flake files
+        id: compute-tag
+        run: |
+          FLAKE_HASH=$(cat tests/nix/flake.nix tests/nix/flake.lock | sha256sum | cut -c1-16)
+          echo "tag=flake-${FLAKE_HASH}" >> $GITHUB_OUTPUT
+          echo "Computed image tag: flake-${FLAKE_HASH}"
+
+  # Job 2: Build and push to ECR
+  build-and-push-to-ecr:
+    name: Build and Push to ECR
+    needs: check-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      ecr-image-uri: ${{ steps.push-ecr.outputs.image-uri }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull from GHCR and push to ECR
+        id: push-ecr
+        run: |
+          GHCR_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }}"
+          echo "Pulling from GHCR: ${GHCR_IMAGE}"
+          docker pull "${GHCR_IMAGE}"
+
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          ECR_IMAGE="${{ secrets.ECR_REPOSITORY }}:bench-${TIMESTAMP}"
+          ECR_LATEST="${{ secrets.ECR_REPOSITORY }}:latest"
+
+          echo "Tagging for ECR: ${ECR_IMAGE}"
+          docker tag "${GHCR_IMAGE}" "${ECR_IMAGE}"
+          docker tag "${GHCR_IMAGE}" "${ECR_LATEST}"
+
+          echo "Pushing to ECR..."
+          docker push "${ECR_IMAGE}"
+          docker push "${ECR_LATEST}"
+
+          echo "image-uri=${ECR_IMAGE}" >> $GITHUB_OUTPUT
+          echo "✅ Successfully pushed to ECR: ${ECR_IMAGE}"
+
+  # Job 3: Register ECS task definition
+  register-task-definition:
+    name: Register ECS Task Definition
+    needs: [check-image, build-and-push-to-ecr]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      task-definition-arn: ${{ steps.register.outputs.task-definition-arn }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Register task definition
+        id: register
+        run: |
+          IMAGE_URI="${{ needs.build-and-push-to-ecr.outputs.ecr-image-uri }}"
+          TASK_FAMILY="pg-doorman-bench-task"
+
+          cat > task-definition.json <<EOF
+          {
+            "family": "${TASK_FAMILY}",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "${{ inputs.fargate_cpu }}",
+            "memory": "${{ inputs.fargate_memory }}",
+            "executionRoleArn": "${{ secrets.ECS_TASK_EXECUTION_ROLE_ARN }}",
+            "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
+            "containerDefinitions": [
+              {
+                "name": "benchmark-container",
+                "image": "${IMAGE_URI}",
+                "essential": true,
+                "command": ["bash", "benches/run-bench-and-upload.sh"],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/${{ secrets.ECS_CLUSTER_NAME }}",
+                    "awslogs-region": "${{ secrets.AWS_REGION }}",
+                    "awslogs-stream-prefix": "benchmark"
+                  }
+                },
+                "environment": [
+                  {
+                    "name": "DEBUG",
+                    "value": "${{ inputs.debug }}"
+                  },
+                  {
+                    "name": "BENCHER_API_TOKEN",
+                    "value": "${{ secrets.BENCHER_API_TOKEN }}"
+                  },
+                  {
+                    "name": "BENCHER_PROJECT",
+                    "value": "pg-doorman"
+                  },
+                  {
+                    "name": "BENCHER_BRANCH",
+                    "value": "${{ github.ref_name }}"
+                  },
+                  {
+                    "name": "BENCHER_TESTBED",
+                    "value": "aws-fargate"
+                  },
+                  {
+                    "name": "JEMALLOC_SYS_WITH_MALLOC_CONF",
+                    "value": "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          echo "Registering task definition..."
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "task-definition-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+          echo "✅ Task definition registered: ${TASK_DEF_ARN}"
+
+  # Job 4: Run benchmark on Fargate
+  run-benchmark:
+    name: Run Benchmark on Fargate
+    needs: [check-image, build-and-push-to-ecr, register-task-definition]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run Fargate task
+        id: run-task
+        run: |
+          TASK_DEF_ARN="${{ needs.register-task-definition.outputs.task-definition-arn }}"
+          CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
+          SUBNETS="${{ secrets.ECS_SUBNET_IDS }}"
+          SECURITY_GROUP="${{ secrets.ECS_SECURITY_GROUP_ID }}"
+
+          echo "Starting Fargate task..."
+          echo "Cluster: ${CLUSTER}"
+          echo "Task Definition: ${TASK_DEF_ARN}"
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${CLUSTER}" \
+            --task-definition "${TASK_DEF_ARN}" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP}],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          if [ -z "${TASK_ARN}" ] || [ "${TASK_ARN}" == "None" ]; then
+            echo "❌ Failed to start task"
+            exit 1
+          fi
+
+          echo "task-arn=${TASK_ARN}" >> $GITHUB_OUTPUT
+          echo "✅ Task started: ${TASK_ARN}"
+
+          # Wait for task to complete
+          echo "Waiting for task to complete..."
+          aws ecs wait tasks-stopped \
+            --cluster "${CLUSTER}" \
+            --tasks "${TASK_ARN}"
+
+          # Check task exit code
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "${CLUSTER}" \
+            --tasks "${TASK_ARN}" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          echo "Task exit code: ${EXIT_CODE}"
+
+          if [ "${EXIT_CODE}" != "0" ]; then
+            echo "❌ Task failed with exit code: ${EXIT_CODE}"
+            exit 1
+          fi
+
+          echo "✅ Task completed successfully"
+
+      - name: Download and extract benchmark results
+        run: |
+          CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
+          LOG_GROUP="/ecs/${CLUSTER}"
+          TASK_ID=$(echo "${{ steps.run-task.outputs.task-arn }}" | awk -F/ '{print $NF}')
+          LOG_STREAM="benchmark/${TASK_ID}"
+
+          echo "Fetching logs from ${LOG_GROUP}/${LOG_STREAM}"
+
+          mkdir -p benchmark-results
+
+          # Wait a bit for logs to be available
+          sleep 5
+
+          # Download logs
+          aws logs get-log-events \
+            --log-group-name "${LOG_GROUP}" \
+            --log-stream-name "${LOG_STREAM}" \
+            --output text > benchmark-results/cloudwatch-raw.txt || true
+
+          echo "Extracting benchmark results..."
+
+          if [ -f benchmark-results/cloudwatch-raw.txt ]; then
+            # Extract just the messages (column 4 onwards)
+            awk '{$1=$2=$3=""; print substr($0,4)}' benchmark-results/cloudwatch-raw.txt > benchmark-results/stdout.txt
+
+            # Extract base64 encoded benchmark file
+            sed -n '/===BEGIN_BENCHMARK_RESULTS===/,/===END_BENCHMARK_RESULTS===/p' benchmark-results/stdout.txt | \
+              grep -v "===BEGIN_BENCHMARK_RESULTS===" | \
+              grep -v "===END_BENCHMARK_RESULTS===" | \
+              base64 -d > documentation/docs/benchmarks.md
+
+            if [ -f documentation/docs/benchmarks.md ] && [ -s documentation/docs/benchmarks.md ]; then
+              echo "✅ Benchmark results extracted successfully"
+              echo "File size: $(wc -c < documentation/docs/benchmarks.md) bytes"
+            else
+              echo "❌ Failed to extract benchmark results"
+              exit 1
+            fi
+          else
+            echo "❌ No logs found"
+            exit 1
+          fi
+
+          ls -lah benchmark-results/
+          ls -lah documentation/docs/benchmarks.md
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fargate-benchmark-results-${{ github.run_number }}
+          path: benchmark-results/
+          retention-days: 30
+
+      - name: Display benchmark summary
+        run: |
+          echo "=== Benchmark Execution Summary ===" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**ECS Cluster:** ${{ secrets.ECS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Task:** ${{ steps.run-task.outputs.task-arn }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ needs.build-and-push-to-ecr.outputs.ecr-image-uri }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ secrets.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**CPU:** ${{ inputs.fargate_cpu }} units ($(((${{ inputs.fargate_cpu }})/1024)) vCPU)" >> $GITHUB_STEP_SUMMARY
+          echo "**Memory:** ${{ inputs.fargate_memory }} MB ($(((${{ inputs.fargate_memory }})/1024)) GB)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f benchmark-results/stdout.txt ]; then
+            echo "### Benchmark Output (Last 100 lines)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -100 benchmark-results/stdout.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Create Pull Request with results
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Create a unique branch name with timestamp
+          BRANCH_NAME="fargate-benchmark-results-$(date +%Y%m%d-%H%M%S)"
+
+          # Fetch latest master and create new branch from it
+          git fetch origin master
+          git checkout -b "$BRANCH_NAME" origin/master
+
+          # benchmarks.md is already extracted in previous step
+          # Check if there are any changes to commit
+          git add documentation/docs/benchmarks.md
+          if git diff --staged --quiet; then
+            echo "No changes to benchmark results, skipping PR creation"
+            exit 0
+          fi
+
+          # Commit and push
+          git commit -m "Update AWS Fargate benchmark results [skip ci]"
+          git push origin "$BRANCH_NAME"
+
+          # Create Pull Request to master
+          gh pr create \
+            --title "Update AWS Fargate benchmark results" \
+            --body "Automated benchmark results from AWS Fargate. This PR updates the benchmark comparison table in documentation/docs/benchmarks.md." \
+            --base "master" \
+            --head "$BRANCH_NAME"
