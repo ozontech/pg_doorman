@@ -210,3 +210,38 @@ Feature: Asynchronous Pipeline Protocol
     And we send Execute "" to both
     And we send Sync to both
     Then we should receive identical messages from both
+
+  @pipeline-fifteenth
+  Scenario: Rollback to savepoint in pipeline
+    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "" with query "BEGIN" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Parse "" with query "create table test_sp(id int)" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Parse "" with query "SAVEPOINT sp1" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Parse "" with query "insert into test_sp values (1)" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Parse "" with query "SELECT 1/0" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Parse "" with query "ROLLBACK TO SAVEPOINT sp1" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Parse "" with query "insert into test_sp values (2)" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Parse "" with query "COMMIT" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Sync to both
+    Then we should receive identical messages from both
+    And we send Parse "" with query "SELECT * FROM test_sp" to both
+    And we send Bind "" to "" with params "" to both
+    And we send Execute "" to both
+    And we send Sync to both
+    Then we should receive identical messages from both
