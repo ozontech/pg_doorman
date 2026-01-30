@@ -62,3 +62,12 @@ Feature: Rollback functionality tests
     Then the command should succeed
     And the command output should contain "PASS: Test_RollbackSavePoint"
 
+  Scenario: Test savepoint rollback functionality with python asyncpg
+    When I run shell command:
+      """
+      export DATABASE_URL_ROLLBACK="postgresql://example_user_rollback:test@127.0.0.1:${DOORMAN_PORT}/example_db?sslmode=disable"
+      python3 tests/python/reproduce_rollback.py
+      """
+    Then the command should succeed
+    And the command output should contain "✓ Reproduction test passed"
+
