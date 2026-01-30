@@ -93,28 +93,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull from GHCR and push to ECR
+      - name: Build and push benchmark image
         id: push-ecr
         run: |
           GHCR_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }}"
-          echo "Pulling from GHCR: ${GHCR_IMAGE}"
-          docker pull "${GHCR_IMAGE}"
-
+          echo "Using base image from GHCR: ${GHCR_IMAGE}"
+          
+          # Create a Dockerfile that includes the source code.
+          # The base image (test-runner) contains the environment but not the code.
+          cat > Dockerfile.bench <<EOF
+          FROM ${GHCR_IMAGE}
+          WORKDIR /workspace
+          COPY . .
+          RUN chmod +x benches/*.sh
+          EOF
+          
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          ECR_IMAGE="${{ secrets.ECR_REPOSITORY }}:bench-${TIMESTAMP}"
-          ECR_LATEST="${{ secrets.ECR_REPOSITORY }}:latest"
-
-          echo "Tagging for ECR: ${ECR_IMAGE}"
-          docker tag "${GHCR_IMAGE}" "${ECR_IMAGE}"
-          docker tag "${GHCR_IMAGE}" "${ECR_LATEST}"
-
+          REPO_URL="${{ secrets.ECR_REPOSITORY }}"
+          ECR_IMAGE="${REPO_URL}:bench-${TIMESTAMP}"
+          ECR_LATEST="${REPO_URL}:latest"
+          
+          echo "Building benchmark image: ${ECR_IMAGE}"
+          docker build -t "${ECR_IMAGE}" -t "${ECR_LATEST}" -f Dockerfile.bench .
+          
           echo "Pushing to ECR..."
           docker push "${ECR_IMAGE}"
           docker push "${ECR_LATEST}"
 
           # Output only the tag part (timestamp), not full URI with secret
           echo "image-tag=bench-${TIMESTAMP}" >> $GITHUB_OUTPUT
-          echo "✅ Successfully pushed to ECR: ${ECR_IMAGE}"
+          echo "✅ Successfully built and pushed to ECR: ${ECR_IMAGE}"
 
   # Job 3: Register ECS task definition
   register-task-definition:
@@ -156,6 +164,9 @@ jobs:
             exit 1
           fi
 
+          # Clean secret from potential newlines/spaces
+          BENCHER_TOKEN=$(echo "${{ secrets.BENCHER_API_TOKEN }}" | tr -d '\r\n ')
+
           # Use jq to safely generate JSON (handles special characters and newlines in secrets)
           jq -n \
             --arg family "$TASK_FAMILY" \
@@ -167,7 +178,7 @@ jobs:
             --arg logGroup "/ecs/${{ secrets.ECS_CLUSTER_NAME }}" \
             --arg region "${{ secrets.AWS_REGION }}" \
             --arg debug "${{ inputs.debug }}" \
-            --arg bencherToken "${{ secrets.BENCHER_API_TOKEN }}" \
+            --arg bencherToken "$BENCHER_TOKEN" \
             --arg bencherBranch "${{ github.ref_name }}" \
             '{
               family: $family,
