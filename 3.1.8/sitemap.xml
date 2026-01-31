@@ -48,4 +48,8 @@
          <loc>https://ozontech.github.io/pg_doorman/3.1.8/tutorials/patroni-proxy/</loc>
          <lastmod>2026-01-31</lastmod>
     </url>
+    <url>
+         <loc>https://ozontech.github.io/pg_doorman/3.1.8/tutorials/troubleshooting/</loc>
+         <lastmod>2026-01-31</lastmod>
+    </url>
 </urlset>

@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/3.1.8/tutorials/binary-upgrade/">
+        <link rel="canonical" href="https://ozontech.github.io/pg_doorman/3.1.8/tutorials/troubleshooting/">
       
       
-        <link rel="prev" href="../basic-usage/">
+        <link rel="prev" href="../patroni-proxy/">
       
       
-        <link rel="next" href="../patroni-proxy/">
+        <link rel="next" href="../../benchmarks/">
       
       
       <link rel="icon" href="../../images/favicon.png">
@@ -22,7 +22,7 @@
     
     
       
-        <title>Binary Upgrade Process - PgDoorman Documentation</title>
+        <title>Troubleshooting - PgDoorman Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#binary-upgrade-process" class="md-skip">
+        <a href="#troubleshooting" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Binary Upgrade Process
+              Troubleshooting
             
           </span>
         </div>
@@ -592,32 +592,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Binary Upgrade Process
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../binary-upgrade/" class="md-nav__link">
         
   
   
@@ -628,62 +606,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      Overview
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#how-the-upgrade-process-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      How the Upgrade Process Works
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#handling-existing-connections" class="md-nav__link">
-    <span class="md-ellipsis">
-      Handling Existing Connections
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#important-considerations" class="md-nav__link">
-    <span class="md-ellipsis">
-      Important Considerations
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -716,10 +638,19 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../troubleshooting/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -730,6 +661,7 @@
   
 
       </a>
+      
     </li>
   
 
@@ -957,50 +889,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      Overview
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#how-the-upgrade-process-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      How the Upgrade Process Works
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#handling-existing-connections" class="md-nav__link">
-    <span class="md-ellipsis">
-      Handling Existing Connections
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#important-considerations" class="md-nav__link">
-    <span class="md-ellipsis">
-      Important Considerations
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -1018,33 +906,13 @@
   
 
 
-<h1 id="binary-upgrade-process">Binary Upgrade Process</h1>
-<h2 id="overview">Overview</h2>
-<p>PgDoorman supports seamless binary upgrades that allow you to update the software with minimal disruption to your database connections. This document explains how the upgrade process works and what to expect during an upgrade.</p>
-<h2 id="how-the-upgrade-process-works">How the Upgrade Process Works</h2>
-<p>When you send a <code>SIGINT</code> signal to the PgDoorman process, the binary upgrade process is initiated:</p>
-<ol>
-<li>The current PgDoorman instance executes the exec command and starts a new, daemonized process</li>
-<li>The new process uses the <code>SO_REUSE_PORT</code> socket option, allowing the operating system to distribute incoming traffic to the new instance</li>
-<li>The old instance then closes its socket for incoming connections</li>
-<li>Existing connections are handled gracefully during the transition</li>
-</ol>
-<h2 id="handling-existing-connections">Handling Existing Connections</h2>
-<p>During the upgrade process, PgDoorman handles existing connections as follows:</p>
-<ol>
-<li>Current queries and transactions are allowed to complete within the specified <code>shutdown_timeout</code> (default: 10 seconds)</li>
-<li>After each query or transaction completes successfully, PgDoorman returns error code <code>58006</code> to the client</li>
-<li>This error code indicates to the client that they need to reconnect to the server</li>
-<li>After reconnecting, clients can safely retry their queries with the new PgDoorman instance</li>
-</ol>
-<h2 id="important-considerations">Important Considerations</h2>
-<div class="admonition warning">
-<p class="admonition-title">Query Repetition</p>
-<p>Repeating a query without receiving error code <code>58006</code> may cause problems as described in <a href="https://github.com/lib/pq/issues/939">this issue</a>. Make sure your client application properly handles reconnection scenarios.</p>
-</div>
+<h1 id="troubleshooting">Troubleshooting</h1>
+<p>This guide helps you resolve common issues when using PgDoorman.</p>
+<h1 id="todo">TODO</h1>
+<hr />
 <div class="admonition tip">
-<p class="admonition-title">Client Library Compatibility</p>
-<p>Be careful when using client libraries like <code>github.com/lib/pq</code> or Go's standard <code>database/sql</code> package. Ensure they properly handle the reconnection process during binary upgrades.</p>
+<p class="admonition-title">Still having issues?</p>
+<p>If you encounter a problem not listed here, please <a href="https://github.com/ozontech/pg_doorman/issues">open an issue on GitHub</a>.</p>
 </div>
 
 
@@ -1052,9 +920,6 @@
 
 
 
-
-  
-  
 
 
 
@@ -1084,7 +949,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../basic-usage/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Basic Usage">
+          <a href="../patroni-proxy/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Patroni Proxy">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1094,20 +959,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Basic Usage
+                Patroni Proxy
               </div>
             </div>
           </a>
         
         
           
-          <a href="../patroni-proxy/" class="md-footer__link md-footer__link--next" aria-label="Next: Patroni Proxy">
+          <a href="../../benchmarks/" class="md-footer__link md-footer__link--next" aria-label="Next: Benchmarks">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Patroni Proxy
+                Benchmarks
               </div>
             </div>
             <div class="md-footer__button md-icon">
