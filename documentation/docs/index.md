@@ -7,11 +7,23 @@ title: Home
 
 ## PgDoorman: PostgreSQL Pooler
 
-PgDoorman is a stable and good alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), or [PgCat](https://github.com/postgresml/pgcat) (based on it).
-It has created with the Unix philosophy in mind. Developing was focused on perfomance, efficience and reliability.
-Also, PgDoorman has the improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
+PgDoorman is a stable and high-performance alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), or [PgCat](https://github.com/postgresml/pgcat).
+It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
+Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
 
 [:fontawesome-solid-download: Get PgDoorman {{ version }}](tutorials/installation.md){ .md-button .md-button--primary }
+
+### Quick Start
+
+Run PgDoorman instantly using Docker:
+
+```bash
+docker run -p 6432:6432 \
+  -v $(pwd)/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
+  ghcr.io/ozontech/pg_doorman
+```
+
+*For more details, see the [Installation Guide](tutorials/installation.md).*
 
 
 ### Why not multi-PgBouncer?
@@ -33,7 +45,7 @@ Some of the key differences include:
 
 - Performance improvements compared to PgCat/PgBouncer/Odyssey.
 - Support for extended protocol with popular programming language drivers.
-- Enhanced monitoring metrics to improve visibility into database activity..
+- Enhanced monitoring metrics to improve visibility into database activity.
 - Careful resource management to avoid memory issues (`max_memory_usage`, `message_size_to_be_stream`).
 - SCRAM client/server authentication support.
 - [Gracefully binary upgrade](tutorials/binary-upgrade.md).

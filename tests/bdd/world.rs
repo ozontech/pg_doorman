@@ -142,13 +142,13 @@ impl DoormanWorld {
         let doorman_workers = std::env::var("BENCH_DOORMAN_WORKERS")
             .ok()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "4".to_string());
+            .unwrap_or_else(|| "12".to_string());
         result = result.replace("${DOORMAN_WORKERS}", &doorman_workers);
 
         let odyssey_workers = std::env::var("BENCH_ODYSSEY_WORKERS")
             .ok()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "4".to_string());
+            .unwrap_or_else(|| "12".to_string());
         result = result.replace("${ODYSSEY_WORKERS}", &odyssey_workers);
 
         // pgbench jobs can be overridden globally or specifically for client counts
@@ -156,14 +156,8 @@ impl DoormanWorld {
             .ok()
             .filter(|s| !s.is_empty());
 
-        let pgbench_jobs_c1 = global_pgbench_jobs
-            .clone()
-            .or_else(|| {
-                std::env::var("BENCH_PGBENCH_JOBS_C1")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-            })
-            .unwrap_or_else(|| "1".to_string());
+        // C1 always needs 1 thread to avoid pgbench error: "number of clients (1) must be a multiple of number of threads"
+        let pgbench_jobs_c1 = "1".to_string();
         result = result.replace("${PGBENCH_JOBS_C1}", &pgbench_jobs_c1);
 
         let pgbench_jobs_c40 = global_pgbench_jobs
@@ -173,20 +167,11 @@ impl DoormanWorld {
                     .ok()
                     .filter(|s| !s.is_empty())
             })
-            .unwrap_or_else(|| "2".to_string());
+            .unwrap_or_else(|| "4".to_string());
         result = result.replace("${PGBENCH_JOBS_C40}", &pgbench_jobs_c40);
 
-        let pgbench_jobs_c80 = global_pgbench_jobs
-            .clone()
-            .or_else(|| {
-                std::env::var("BENCH_PGBENCH_JOBS_C80")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-            })
-            .unwrap_or_else(|| "4".to_string());
-        result = result.replace("${PGBENCH_JOBS_C80}", &pgbench_jobs_c80);
-
         let pgbench_jobs_c120 = global_pgbench_jobs
+            .clone()
             .or_else(|| {
                 std::env::var("BENCH_PGBENCH_JOBS_C120")
                     .ok()
@@ -194,6 +179,25 @@ impl DoormanWorld {
             })
             .unwrap_or_else(|| "4".to_string());
         result = result.replace("${PGBENCH_JOBS_C120}", &pgbench_jobs_c120);
+
+        let pgbench_jobs_c500 = global_pgbench_jobs
+            .clone()
+            .or_else(|| {
+                std::env::var("BENCH_PGBENCH_JOBS_C500")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_else(|| "4".to_string());
+        result = result.replace("${PGBENCH_JOBS_C500}", &pgbench_jobs_c500);
+
+        let pgbench_jobs_c10000 = global_pgbench_jobs
+            .or_else(|| {
+                std::env::var("BENCH_PGBENCH_JOBS_C10000")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_else(|| "4".to_string());
+        result = result.replace("${PGBENCH_JOBS_C10000}", &pgbench_jobs_c10000);
 
         result
     }
