@@ -16,7 +16,7 @@ on:
       fargate_cpu:
         description: 'Fargate CPU units (1024=1vCPU, 2048=2vCPU, 4096=4vCPU, 8192=8vCPU, 16384=16vCPU)'
         required: false
-        default: '8192'
+        default: '16384'
         type: choice
         options:
           - '2048'
@@ -26,7 +26,7 @@ on:
       fargate_memory:
         description: 'Fargate memory in MB (must be compatible with CPU)'
         required: false
-        default: '16384'
+        default: '32768'
         type: choice
         options:
           - '4096'
@@ -362,7 +362,7 @@ jobs:
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           LOG_GROUP="/ecs/${CLUSTER}"
           TASK_ID=$(echo "${{ steps.run-task.outputs.task-arn }}" | awk -F/ '{print $NF}')
-          LOG_STREAM="benchmark/${TASK_ID}"
+          LOG_STREAM="benchmark/benchmark-container/${TASK_ID}"
 
           echo "Fetching logs from ${LOG_GROUP}/${LOG_STREAM}"
 
