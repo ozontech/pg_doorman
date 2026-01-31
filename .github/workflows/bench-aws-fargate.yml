@@ -14,35 +14,30 @@ on:
         default: 'true'
         type: boolean
       fargate_cpu:
-        description: 'Fargate CPU units (1024=1vCPU, 2048=2vCPU, 4096=4vCPU, 8192=8vCPU, 16384=16vCPU)'
+        description: 'Fargate CPU units (8192=8vCPU, 16384=16vCPU)'
         required: false
         default: '16384'
         type: choice
         options:
-          - '2048'
-          - '4096'
           - '8192'
           - '16384'
       fargate_memory:
-        description: 'Fargate memory in MB (must be compatible with CPU)'
+        description: 'Fargate memory in MB (32GB, 64GB, 120GB)'
         required: false
         default: '32768'
         type: choice
         options:
-          - '4096'
-          - '8192'
-          - '16384'
           - '32768'
           - '61440'
           - '122880'
       doorman_workers:
         description: 'Number of worker threads for pg_doorman and odyssey'
         required: false
-        default: '4'
+        default: '12'
       pgbench_jobs:
         description: 'Number of threads (-j) for pgbench (global override)'
         required: false
-        default: ''
+        default: '4'
 
 env:
   REGISTRY: ghcr.io

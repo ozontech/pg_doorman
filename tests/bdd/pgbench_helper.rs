@@ -1006,52 +1006,62 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     let simple_configs: Vec<(&str, &str)> = vec![
         ("simple_c1", "1 client"),
         ("simple_c40", "40 clients"),
-        ("simple_c80", "80 clients"),
         ("simple_c120", "120 clients"),
+        ("simple_c500", "500 clients"),
+        ("simple_c10000", "10,000 clients"),
         ("simple_connect_c1", "1 client + Reconnect"),
         ("simple_connect_c40", "40 clients + Reconnect"),
-        ("simple_connect_c80", "80 clients + Reconnect"),
         ("simple_connect_c120", "120 clients + Reconnect"),
+        ("simple_connect_c500", "500 clients + Reconnect"),
+        ("simple_connect_c10000", "10,000 clients + Reconnect"),
         ("ssl_simple_c1", "1 client + SSL"),
         ("ssl_simple_c40", "40 clients + SSL"),
-        ("ssl_simple_c80", "80 clients + SSL"),
         ("ssl_simple_c120", "120 clients + SSL"),
+        ("ssl_simple_c500", "500 clients + SSL"),
+        ("ssl_simple_c10000", "10,000 clients + SSL"),
     ];
 
     // Extended Protocol tests
     let extended_configs: Vec<(&str, &str)> = vec![
         ("extended_c1", "1 client"),
         ("extended_c40", "40 clients"),
-        ("extended_c80", "80 clients"),
         ("extended_c120", "120 clients"),
+        ("extended_c500", "500 clients"),
+        ("extended_c10000", "10,000 clients"),
         ("extended_connect_c1", "1 client + Reconnect"),
         ("extended_connect_c40", "40 clients + Reconnect"),
-        ("extended_connect_c80", "80 clients + Reconnect"),
         ("extended_connect_c120", "120 clients + Reconnect"),
+        ("extended_connect_c500", "500 clients + Reconnect"),
+        ("extended_connect_c10000", "10,000 clients + Reconnect"),
         ("ssl_extended_c1", "1 client + SSL"),
         ("ssl_extended_c40", "40 clients + SSL"),
-        ("ssl_extended_c80", "80 clients + SSL"),
         ("ssl_extended_c120", "120 clients + SSL"),
+        ("ssl_extended_c500", "500 clients + SSL"),
+        ("ssl_extended_c10000", "10,000 clients + SSL"),
         ("ssl_connect_c1", "1 client + SSL + Reconnect"),
         ("ssl_connect_c40", "40 clients + SSL + Reconnect"),
-        ("ssl_connect_c80", "80 clients + SSL + Reconnect"),
         ("ssl_connect_c120", "120 clients + SSL + Reconnect"),
+        ("ssl_connect_c500", "500 clients + SSL + Reconnect"),
+        ("ssl_connect_c10000", "10,000 clients + SSL + Reconnect"),
     ];
 
     // Prepared Protocol tests
     let prepared_configs: Vec<(&str, &str)> = vec![
         ("prepared_c1", "1 client"),
         ("prepared_c40", "40 clients"),
-        ("prepared_c80", "80 clients"),
         ("prepared_c120", "120 clients"),
+        ("prepared_c500", "500 clients"),
+        ("prepared_c10000", "10,000 clients"),
         ("prepared_connect_c1", "1 client + Reconnect"),
         ("prepared_connect_c40", "40 clients + Reconnect"),
-        ("prepared_connect_c80", "80 clients + Reconnect"),
         ("prepared_connect_c120", "120 clients + Reconnect"),
+        ("prepared_connect_c500", "500 clients + Reconnect"),
+        ("prepared_connect_c10000", "10,000 clients + Reconnect"),
         ("ssl_prepared_c1", "1 client + SSL"),
         ("ssl_prepared_c40", "40 clients + SSL"),
-        ("ssl_prepared_c80", "80 clients + SSL"),
         ("ssl_prepared_c120", "120 clients + SSL"),
+        ("ssl_prepared_c500", "500 clients + SSL"),
+        ("ssl_prepared_c10000", "10,000 clients + SSL"),
     ];
 
     let simple_table = generate_table(&simple_configs, &world.bench_results);
@@ -1068,11 +1078,11 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     let doorman_workers = std::env::var("BENCH_DOORMAN_WORKERS")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "4".to_string());
+        .unwrap_or_else(|| "12".to_string());
     let odyssey_workers = std::env::var("BENCH_ODYSSEY_WORKERS")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "4".to_string());
+        .unwrap_or_else(|| "12".to_string());
     let pgbench_jobs = std::env::var("BENCH_PGBENCH_JOBS")
         .ok()
         .filter(|s| !s.is_empty());
@@ -1095,7 +1105,7 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     if let Some(jobs) = pgbench_jobs {
         env_info.push(format!("- **pgbench jobs**: {} (global override)", jobs));
     } else {
-        env_info.push("- **pgbench jobs**: variable (c1: 1, c40: 2, c80: 4, c120: 4)".to_string());
+        env_info.push("- **pgbench jobs**: variable (c1: 1, c40: 4, c120: 4, c500: 4, c10k: 4)".to_string());
     }
 
     // Record end time

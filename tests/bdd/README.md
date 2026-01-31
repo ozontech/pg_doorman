@@ -61,13 +61,14 @@ cargo test --test bdd -- --tags @bench
 
 You can parameterize benchmarks using environment variables:
 
-- `BENCH_DOORMAN_WORKERS`: Number of worker threads for `pg_doorman` (default: 4)
-- `BENCH_ODYSSEY_WORKERS`: Number of workers for `odyssey` (default: 4)
+- `BENCH_DOORMAN_WORKERS`: Number of worker threads for `pg_doorman` (default: 12)
+- `BENCH_ODYSSEY_WORKERS`: Number of workers for `odyssey` (default: 12)
 - `BENCH_PGBENCH_JOBS`: Global number of threads (`-j`) for `pgbench`. If set, it overrides all specific job settings.
 - `BENCH_PGBENCH_JOBS_C1`: Number of threads for 1-client tests (default: 1)
-- `BENCH_PGBENCH_JOBS_C40`: Number of threads for 40-client tests (default: 2)
-- `BENCH_PGBENCH_JOBS_C80`: Number of threads for 80-client tests (default: 4)
+- `BENCH_PGBENCH_JOBS_C40`: Number of threads for 40-client tests (default: 4)
 - `BENCH_PGBENCH_JOBS_C120`: Number of threads for 120-client tests (default: 4)
+- `BENCH_PGBENCH_JOBS_C500`: Number of threads for 500-client tests (default: 4)
+- `BENCH_PGBENCH_JOBS_C10000`: Number of threads for 10,000-client tests (default: 4)
 - `FARGATE_CPU`: AWS Fargate CPU units (optional, for reporting)
 - `FARGATE_MEMORY`: AWS Fargate memory in MB (optional, for reporting)
 
