@@ -44,39 +44,49 @@ theme:
     - navigation.sections
     - navigation.indexes
     - navigation.top
+    - navigation.breadcrumbs
+    - navigation.expand
+    - toc.follow
+    - search.highlight
+    - search.share
+    - search.suggest
 markdown_extensions:
   - tables
   - attr_list
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.superfences
   - md_in_html
   - pymdownx.blocks.caption
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
 nav:
-    - index.md
-    - 'Getting started':
-        - 'tutorials/overview.md'
-        - 'tutorials/installation.md'
-        - 'tutorials/basic-usage.md'
-        - 'tutorials/binary-upgrade.md'
-        - 'tutorials/patroni-proxy.md'
-        - 'tutorials/contributing.md'
-        - 'changelog.md' 
+    - Home: index.md
+    - Overview: tutorials/overview.md
+    - Installation: tutorials/installation.md
+    - 'User Guide':
+        - tutorials/basic-usage.md
+        - tutorials/binary-upgrade.md
+        - tutorials/patroni-proxy.md
+        - tutorials/troubleshooting.md
+    - Benchmarks: benchmarks.md
     - 'Reference':
-        - 'reference/general.md'
-        - 'reference/pool.md'
-        - 'reference/prometheus.md'
-    - benchmarks.md
+        - reference/general.md
+        - reference/pool.md
+        - reference/prometheus.md
+    - Changelog: changelog.md
+    - Contributing: tutorials/contributing.md
 plugins:
   - search
   - autorefs

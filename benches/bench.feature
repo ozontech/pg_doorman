@@ -28,6 +28,7 @@ Feature: Benchmarking environment setup with SSL
       admin_password = "admin"
       tls_private_key = "${DOORMAN_SSL_KEY}"
       tls_certificate = "${DOORMAN_SSL_CERT}"
+      max_connections = 11000
 
       [pools.postgres]
       server_host = "127.0.0.1"
