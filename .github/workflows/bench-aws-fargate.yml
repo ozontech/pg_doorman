@@ -379,6 +379,7 @@ jobs:
           echo "✅ Task completed successfully"
 
       - name: Download and extract benchmark results
+        if: always()
         run: |
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           LOG_GROUP="/ecs/${CLUSTER}"
@@ -441,6 +442,7 @@ jobs:
           ls -lah documentation/docs/benchmarks.md
 
       - name: Upload benchmark artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fargate-benchmark-results-${{ github.run_number }}
@@ -448,6 +450,7 @@ jobs:
           retention-days: 30
 
       - name: Display benchmark summary
+        if: always()
         run: |
           echo "=== Benchmark Execution Summary ===" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -469,6 +472,7 @@ jobs:
           fi
 
       - name: Create Pull Request with results
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

@@ -1059,11 +1059,23 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     let prepared_table = generate_table(&prepared_configs, &world.bench_results);
 
     // Environment and parameter info
-    let fargate_cpu = std::env::var("FARGATE_CPU").ok();
-    let fargate_memory = std::env::var("FARGATE_MEMORY").ok();
-    let doorman_workers = std::env::var("BENCH_DOORMAN_WORKERS").unwrap_or_else(|_| "4".to_string());
-    let odyssey_workers = std::env::var("BENCH_ODYSSEY_WORKERS").unwrap_or_else(|_| "4".to_string());
-    let pgbench_jobs = std::env::var("BENCH_PGBENCH_JOBS").ok();
+    let fargate_cpu = std::env::var("FARGATE_CPU")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let fargate_memory = std::env::var("FARGATE_MEMORY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let doorman_workers = std::env::var("BENCH_DOORMAN_WORKERS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "4".to_string());
+    let odyssey_workers = std::env::var("BENCH_ODYSSEY_WORKERS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "4".to_string());
+    let pgbench_jobs = std::env::var("BENCH_PGBENCH_JOBS")
+        .ok()
+        .filter(|s| !s.is_empty());
 
     let mut env_info = Vec::new();
     if let (Some(cpu), Some(mem)) = (fargate_cpu, fargate_memory) {
