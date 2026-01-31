@@ -16,7 +16,7 @@ on:
       fargate_cpu:
         description: 'Fargate CPU units (1024=1vCPU, 2048=2vCPU, 4096=4vCPU, 8192=8vCPU, 16384=16vCPU)'
         required: false
-        default: '8192'
+        default: '16384'
         type: choice
         options:
           - '2048'
@@ -26,7 +26,7 @@ on:
       fargate_memory:
         description: 'Fargate memory in MB (must be compatible with CPU)'
         required: false
-        default: '16384'
+        default: '32768'
         type: choice
         options:
           - '4096'
@@ -35,6 +35,14 @@ on:
           - '32768'
           - '61440'
           - '122880'
+      doorman_workers:
+        description: 'Number of worker threads for pg_doorman and odyssey'
+        required: false
+        default: '4'
+      pgbench_jobs:
+        description: 'Number of threads (-j) for pgbench (global override)'
+        required: false
+        default: ''
 
 env:
   REGISTRY: ghcr.io
@@ -70,7 +78,7 @@ jobs:
       contents: read
       packages: read
     outputs:
-      ecr-image-uri: ${{ steps.push-ecr.outputs.image-uri }}
+      ecr-image-tag: ${{ steps.push-ecr.outputs.image-tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -93,27 +101,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull from GHCR and push to ECR
+      - name: Build and push benchmark image
         id: push-ecr
         run: |
+          REPO_URL="${{ secrets.ECR_REPOSITORY }}"
+          if [ -z "${REPO_URL}" ]; then
+            echo "❌ Error: ECR_REPOSITORY secret is empty"
+            exit 1
+          fi
+
           GHCR_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }}"
-          echo "Pulling from GHCR: ${GHCR_IMAGE}"
-          docker pull "${GHCR_IMAGE}"
-
+          echo "Using base image from GHCR: ${GHCR_IMAGE}"
+          
+          # Create a Dockerfile that includes the source code.
+          # The base image (test-runner) contains the environment but not the code.
+          cat > Dockerfile.bench <<EOF
+          FROM ${GHCR_IMAGE}
+          WORKDIR /workspace
+          COPY . .
+          RUN chmod +x benches/*.sh
+          EOF
+          
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          ECR_IMAGE="${{ secrets.ECR_REPOSITORY }}:bench-${TIMESTAMP}"
-          ECR_LATEST="${{ secrets.ECR_REPOSITORY }}:latest"
-
-          echo "Tagging for ECR: ${ECR_IMAGE}"
-          docker tag "${GHCR_IMAGE}" "${ECR_IMAGE}"
-          docker tag "${GHCR_IMAGE}" "${ECR_LATEST}"
-
+          REPO_URL="${{ secrets.ECR_REPOSITORY }}"
+          ECR_IMAGE="${REPO_URL}:bench-${TIMESTAMP}"
+          ECR_LATEST="${REPO_URL}:latest"
+          
+          echo "Building benchmark image: ${ECR_IMAGE}"
+          docker build -t "${ECR_IMAGE}" -t "${ECR_LATEST}" -f Dockerfile.bench .
+          
           echo "Pushing to ECR..."
           docker push "${ECR_IMAGE}"
           docker push "${ECR_LATEST}"
 
-          echo "image-uri=${ECR_IMAGE}" >> $GITHUB_OUTPUT
-          echo "✅ Successfully pushed to ECR: ${ECR_IMAGE}"
+          # Output only the tag part (timestamp), not full URI with secret
+          echo "image-tag=bench-${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "✅ Successfully built and pushed to ECR: ${ECR_IMAGE}"
 
   # Job 3: Register ECS task definition
   register-task-definition:
@@ -123,7 +146,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      task-definition-arn: ${{ steps.register.outputs.task-definition-arn }}
+      status: ${{ steps.register-step.outputs.status }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -136,73 +159,108 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Register task definition
-        id: register
+        id: register-step
         run: |
-          IMAGE_URI="${{ needs.build-and-push-to-ecr.outputs.ecr-image-uri }}"
+          # Reconstruct image URI from secret + tag
+          REPO_URL="${{ secrets.ECR_REPOSITORY }}"
+          IMAGE_TAG="${{ needs.build-and-push-to-ecr.outputs.ecr-image-tag }}"
+          IMAGE_URI="${REPO_URL}:${IMAGE_TAG}"
           TASK_FAMILY="pg-doorman-bench-task"
 
-          cat > task-definition.json <<EOF
-          {
-            "family": "${TASK_FAMILY}",
-            "networkMode": "awsvpc",
-            "requiresCompatibilities": ["FARGATE"],
-            "cpu": "${{ inputs.fargate_cpu }}",
-            "memory": "${{ inputs.fargate_memory }}",
-            "executionRoleArn": "${{ secrets.ECS_TASK_EXECUTION_ROLE_ARN }}",
-            "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
-            "containerDefinitions": [
-              {
-                "name": "benchmark-container",
-                "image": "${IMAGE_URI}",
-                "essential": true,
-                "command": ["bash", "benches/run-bench-and-upload.sh"],
-                "logConfiguration": {
-                  "logDriver": "awslogs",
-                  "options": {
-                    "awslogs-group": "/ecs/${{ secrets.ECS_CLUSTER_NAME }}",
-                    "awslogs-region": "${{ secrets.AWS_REGION }}",
-                    "awslogs-stream-prefix": "benchmark"
-                  }
-                },
-                "environment": [
-                  {
-                    "name": "DEBUG",
-                    "value": "${{ inputs.debug }}"
+          echo "Constructing task definition for image: ${IMAGE_URI}"
+          
+          if [ -z "${REPO_URL}" ]; then
+            echo "❌ Error: ECR_REPOSITORY secret is empty"
+            exit 1
+          fi
+          if [ -z "${IMAGE_TAG}" ]; then
+            echo "❌ Error: ecr-image-tag output from previous job is empty"
+            exit 1
+          fi
+
+          # Clean secret from potential newlines/spaces
+          BENCHER_TOKEN=$(echo "${{ secrets.BENCHER_API_TOKEN }}" | tr -d '\r\n ')
+
+          # Use jq to safely generate JSON (handles special characters and newlines in secrets)
+          jq -n \
+            --arg family "$TASK_FAMILY" \
+            --arg image "$IMAGE_URI" \
+            --arg cpu "${{ inputs.fargate_cpu }}" \
+            --arg memory "${{ inputs.fargate_memory }}" \
+            --arg execRole "${{ secrets.ECS_TASK_EXECUTION_ROLE_ARN }}" \
+            --arg taskRole "${{ secrets.ECS_TASK_ROLE_ARN }}" \
+            --arg logGroup "/ecs/${{ secrets.ECS_CLUSTER_NAME }}" \
+            --arg region "${{ secrets.AWS_REGION }}" \
+            --arg debug "${{ inputs.debug }}" \
+            --arg bencherToken "$BENCHER_TOKEN" \
+            --arg bencherBranch "${{ github.ref_name }}" \
+            --arg doormanWorkers "${{ inputs.doorman_workers }}" \
+            --arg pgbenchJobs "${{ inputs.pgbench_jobs }}" \
+            '{
+              family: $family,
+              networkMode: "awsvpc",
+              requiresCompatibilities: ["FARGATE"],
+              cpu: $cpu,
+              memory: $memory,
+              executionRoleArn: $execRole,
+              taskRoleArn: $taskRole,
+              containerDefinitions: [
+                {
+                  name: "benchmark-container",
+                  image: $image,
+                  essential: true,
+                  command: ["bash", "benches/run-bench-and-upload.sh"],
+                  logConfiguration: {
+                    logDriver: "awslogs",
+                    options: {
+                      "awslogs-group": $logGroup,
+                      "awslogs-region": $region,
+                      "awslogs-stream-prefix": "benchmark"
+                    }
                   },
-                  {
-                    "name": "BENCHER_API_TOKEN",
-                    "value": "${{ secrets.BENCHER_API_TOKEN }}"
-                  },
-                  {
-                    "name": "BENCHER_PROJECT",
-                    "value": "pg-doorman"
-                  },
-                  {
-                    "name": "BENCHER_BRANCH",
-                    "value": "${{ github.ref_name }}"
-                  },
-                  {
-                    "name": "BENCHER_TESTBED",
-                    "value": "aws-fargate"
-                  },
-                  {
-                    "name": "JEMALLOC_SYS_WITH_MALLOC_CONF",
-                    "value": "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto"
-                  }
-                ]
-              }
-            ]
-          }
-          EOF
+                  environment: [
+                    { name: "DEBUG", value: $debug },
+                    { name: "BENCHER_API_TOKEN", value: $bencherToken },
+                    { name: "BENCHER_PROJECT", value: "pg-doorman" },
+                    { name: "BENCHER_BRANCH", value: $bencherBranch },
+                    { name: "BENCHER_TESTBED", value: "aws-fargate" },
+                    { name: "BENCH_DOORMAN_WORKERS", value: $doormanWorkers },
+                    { name: "BENCH_ODYSSEY_WORKERS", value: $doormanWorkers },
+                    { name: "BENCH_PGBENCH_JOBS", value: $pgbenchJobs },
+                    { name: "FARGATE_CPU", value: $cpu },
+                    { name: "FARGATE_MEMORY", value: $memory },
+                    { name: "JEMALLOC_SYS_WITH_MALLOC_CONF", value: "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" }
+                  ]
+                }
+              ]
+            }' > task-definition.json
 
           echo "Registering task definition..."
-          TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-definition.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
+          aws ecs register-task-definition \
+            --cli-input-json file://task-definition.json > register-result.json
+          
+          TASK_DEF_ARN=$(jq -r '.taskDefinition.taskDefinitionArn' register-result.json)
+          
+          if [ -z "${TASK_DEF_ARN}" ] || [ "${TASK_DEF_ARN}" == "null" ]; then
+            echo "❌ Error: Failed to extract Task Definition ARN from response"
+            cat register-result.json
+            exit 1
+          fi
 
-          echo "task-definition-arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+          # Output to a file for the next job to pick up as an artifact
+          # This avoids the "Skip output since it may contain secret" restriction for ARNs
+          echo "${TASK_DEF_ARN}" > task_arn.txt
+          
+          # Also set a "safe" output just for job status
+          echo "status=success" >> $GITHUB_OUTPUT
           echo "✅ Task definition registered: ${TASK_DEF_ARN}"
+
+      - name: Upload Task ARN
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-arn
+          path: task_arn.txt
+          retention-days: 1
 
   # Job 4: Run benchmark on Fargate
   run-benchmark:
@@ -223,10 +281,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Download Task ARN
+        uses: actions/download-artifact@v4
+        with:
+          name: task-arn
+
       - name: Run Fargate task
         id: run-task
         run: |
-          TASK_DEF_ARN="${{ needs.register-task-definition.outputs.task-definition-arn }}"
+          TASK_DEF_ARN=$(cat task_arn.txt)
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           SUBNETS="${{ secrets.ECS_SUBNET_IDS }}"
           SECURITY_GROUP="${{ secrets.ECS_SECURITY_GROUP_ID }}"
@@ -234,6 +297,11 @@ jobs:
           echo "Starting Fargate task..."
           echo "Cluster: ${CLUSTER}"
           echo "Task Definition: ${TASK_DEF_ARN}"
+          
+          if [ -z "${TASK_DEF_ARN}" ]; then
+            echo "❌ Error: Task Definition ARN is blank."
+            exit 1
+          fi
 
           TASK_ARN=$(aws ecs run-task \
             --cluster "${CLUSTER}" \
@@ -242,20 +310,57 @@ jobs:
             --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP}],assignPublicIp=ENABLED}" \
             --query 'tasks[0].taskArn' \
             --output text)
-
+          
           if [ -z "${TASK_ARN}" ] || [ "${TASK_ARN}" == "None" ]; then
-            echo "❌ Failed to start task"
+            echo "❌ Failed to start task. Full response from AWS:"
+            aws ecs run-task \
+              --cluster "${CLUSTER}" \
+              --task-definition "${TASK_DEF_ARN}" \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUP}],assignPublicIp=ENABLED}"
             exit 1
           fi
 
           echo "task-arn=${TASK_ARN}" >> $GITHUB_OUTPUT
           echo "✅ Task started: ${TASK_ARN}"
+          echo "### 🚀 Fargate Task Started" >> $GITHUB_STEP_SUMMARY
+          echo "- **Task ARN:** \`${TASK_ARN}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster:** \`${CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** \`${{ secrets.AWS_REGION }}\`" >> $GITHUB_STEP_SUMMARY
 
-          # Wait for task to complete
+          # Wait for task to complete with a custom loop (longer timeout)
           echo "Waiting for task to complete..."
-          aws ecs wait tasks-stopped \
-            --cluster "${CLUSTER}" \
-            --tasks "${TASK_ARN}"
+          MAX_ATTEMPTS=240 # 240 * 30s = 120 minutes
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            STATUS=$(aws ecs describe-tasks \
+              --cluster "${CLUSTER}" \
+              --tasks "${TASK_ARN}" \
+              --query 'tasks[0].lastStatus' \
+              --output text)
+            
+            echo "Attempt $((ATTEMPT+1))/${MAX_ATTEMPTS}: Task status is ${STATUS}"
+            
+            if [ "${STATUS}" == "STOPPED" ]; then
+              echo "✅ Task has stopped."
+              break
+            fi
+            
+            if [ "${STATUS}" == "None" ]; then
+              echo "❌ Error: Task not found."
+              exit 1
+            fi
+            
+            sleep 30
+            ATTEMPT=$((ATTEMPT+1))
+          done
+
+          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+            echo "❌ Error: Timeout waiting for task to complete after 120 minutes."
+            # Try to stop the task if it's still running
+            aws ecs stop-task --cluster "${CLUSTER}" --task "${TASK_ARN}" --reason "Timeout in GitHub Actions" || true
+            exit 1
+          fi
 
           # Check task exit code
           EXIT_CODE=$(aws ecs describe-tasks \
@@ -274,31 +379,45 @@ jobs:
           echo "✅ Task completed successfully"
 
       - name: Download and extract benchmark results
+        if: always()
         run: |
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           LOG_GROUP="/ecs/${CLUSTER}"
-          TASK_ID=$(echo "${{ steps.run-task.outputs.task-arn }}" | awk -F/ '{print $NF}')
-          LOG_STREAM="benchmark/${TASK_ID}"
+          TASK_ARN="${{ steps.run-task.outputs.task-arn }}"
+          TASK_ID=$(echo "${TASK_ARN}" | awk -F/ '{print $NF}')
+          LOG_STREAM="benchmark/benchmark-container/${TASK_ID}"
+
+          if [ -z "${TASK_ARN}" ]; then
+            echo "❌ Error: Task ARN is missing, cannot fetch logs."
+            exit 1
+          fi
 
           echo "Fetching logs from ${LOG_GROUP}/${LOG_STREAM}"
-
           mkdir -p benchmark-results
 
-          # Wait a bit for logs to be available
-          sleep 5
+          # Wait for logs to be available (retry loop)
+          echo "Waiting for log stream to become available..."
+          MAX_LOG_ATTEMPTS=10
+          LOG_ATTEMPT=0
+          while [ $LOG_ATTEMPT -lt $MAX_LOG_ATTEMPTS ]; do
+            if aws logs describe-log-streams --log-group-name "${LOG_GROUP}" --log-stream-name-prefix "${LOG_STREAM}" --query 'logStreams[0].logStreamName' --output text | grep -q "${LOG_STREAM}"; then
+              echo "✅ Log stream is available."
+              break
+            fi
+            echo "Attempt $((LOG_ATTEMPT+1))/${MAX_LOG_ATTEMPTS}: Log stream not found yet, waiting..."
+            sleep 10
+            LOG_ATTEMPT=$((LOG_ATTEMPT+1))
+          done
 
-          # Download logs
+          # Download logs using jq to ensure each event is on a new line
           aws logs get-log-events \
             --log-group-name "${LOG_GROUP}" \
             --log-stream-name "${LOG_STREAM}" \
-            --output text > benchmark-results/cloudwatch-raw.txt || true
+            --output json | jq -r '.events[].message' > benchmark-results/stdout.txt
 
-          echo "Extracting benchmark results..."
+          echo "Extracting benchmark results from logs..."
 
-          if [ -f benchmark-results/cloudwatch-raw.txt ]; then
-            # Extract just the messages (column 4 onwards)
-            awk '{$1=$2=$3=""; print substr($0,4)}' benchmark-results/cloudwatch-raw.txt > benchmark-results/stdout.txt
-
+          if [ -s benchmark-results/stdout.txt ]; then
             # Extract base64 encoded benchmark file
             sed -n '/===BEGIN_BENCHMARK_RESULTS===/,/===END_BENCHMARK_RESULTS===/p' benchmark-results/stdout.txt | \
               grep -v "===BEGIN_BENCHMARK_RESULTS===" | \
@@ -309,11 +428,13 @@ jobs:
               echo "✅ Benchmark results extracted successfully"
               echo "File size: $(wc -c < documentation/docs/benchmarks.md) bytes"
             else
-              echo "❌ Failed to extract benchmark results"
+              echo "❌ Failed to extract benchmark results or file is empty"
+              echo "Last 20 lines of logs for context:"
+              tail -20 benchmark-results/stdout.txt
               exit 1
             fi
           else
-            echo "❌ No logs found"
+            echo "❌ No logs found or log file is empty"
             exit 1
           fi
 
@@ -321,6 +442,7 @@ jobs:
           ls -lah documentation/docs/benchmarks.md
 
       - name: Upload benchmark artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fargate-benchmark-results-${{ github.run_number }}
@@ -328,15 +450,18 @@ jobs:
           retention-days: 30
 
       - name: Display benchmark summary
+        if: always()
         run: |
           echo "=== Benchmark Execution Summary ===" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**ECS Cluster:** ${{ secrets.ECS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**Task:** ${{ steps.run-task.outputs.task-arn }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ needs.build-and-push-to-ecr.outputs.ecr-image-uri }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** ${{ needs.build-and-push-to-ecr.outputs.ecr-image-tag }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ secrets.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "**CPU:** ${{ inputs.fargate_cpu }} units ($(((${{ inputs.fargate_cpu }})/1024)) vCPU)" >> $GITHUB_STEP_SUMMARY
           echo "**Memory:** ${{ inputs.fargate_memory }} MB ($(((${{ inputs.fargate_memory }})/1024)) GB)" >> $GITHUB_STEP_SUMMARY
+          echo "**Doorman Workers:** ${{ inputs.doorman_workers }}" >> $GITHUB_STEP_SUMMARY
+          echo "**pgbench Jobs:** ${{ inputs.pgbench_jobs || 'default' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -f benchmark-results/stdout.txt ]; then
@@ -347,11 +472,15 @@ jobs:
           fi
 
       - name: Create Pull Request with results
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+
+          # Save benchmark results to a temporary location before switching branches
+          cp documentation/docs/benchmarks.md /tmp/benchmarks.md.tmp
 
           # Create a unique branch name with timestamp
           BRANCH_NAME="fargate-benchmark-results-$(date +%Y%m%d-%H%M%S)"
@@ -360,7 +489,9 @@ jobs:
           git fetch origin master
           git checkout -b "$BRANCH_NAME" origin/master
 
-          # benchmarks.md is already extracted in previous step
+          # Restore benchmark results to the new branch
+          mv /tmp/benchmarks.md.tmp documentation/docs/benchmarks.md
+
           # Check if there are any changes to commit
           git add documentation/docs/benchmarks.md
           if git diff --staged --quiet; then

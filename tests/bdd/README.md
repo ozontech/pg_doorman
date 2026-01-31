@@ -49,6 +49,28 @@ cargo test --test bdd
 - `pg_connection.rs` - PostgreSQL connection utilities
 - `extended.rs` - Extended query protocol test steps
 
+## Benchmarks
+
+Benchmarks are located in `benches/bench.feature` and can be run using the `@bench` tag:
+
+```bash
+cargo test --test bdd -- --tags @bench
+```
+
+### Parameterization
+
+You can parameterize benchmarks using environment variables:
+
+- `BENCH_DOORMAN_WORKERS`: Number of worker threads for `pg_doorman` (default: 4)
+- `BENCH_ODYSSEY_WORKERS`: Number of workers for `odyssey` (default: 4)
+- `BENCH_PGBENCH_JOBS`: Global number of threads (`-j`) for `pgbench`. If set, it overrides all specific job settings.
+- `BENCH_PGBENCH_JOBS_C1`: Number of threads for 1-client tests (default: 1)
+- `BENCH_PGBENCH_JOBS_C40`: Number of threads for 40-client tests (default: 2)
+- `BENCH_PGBENCH_JOBS_C80`: Number of threads for 80-client tests (default: 4)
+- `BENCH_PGBENCH_JOBS_C120`: Number of threads for 120-client tests (default: 4)
+- `FARGATE_CPU`: AWS Fargate CPU units (optional, for reporting)
+- `FARGATE_MEMORY`: AWS Fargate memory in MB (optional, for reporting)
+
 ## Requirements
 
 - PostgreSQL installed and available in PATH
