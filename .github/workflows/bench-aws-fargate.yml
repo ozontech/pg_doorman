@@ -302,12 +302,44 @@ jobs:
 
           echo "task-arn=${TASK_ARN}" >> $GITHUB_OUTPUT
           echo "✅ Task started: ${TASK_ARN}"
+          echo "### 🚀 Fargate Task Started" >> $GITHUB_STEP_SUMMARY
+          echo "- **Task ARN:** \`${TASK_ARN}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster:** \`${CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** \`${{ secrets.AWS_REGION }}\`" >> $GITHUB_STEP_SUMMARY
 
-          # Wait for task to complete
+          # Wait for task to complete with a custom loop (longer timeout)
           echo "Waiting for task to complete..."
-          aws ecs wait tasks-stopped \
-            --cluster "${CLUSTER}" \
-            --tasks "${TASK_ARN}"
+          MAX_ATTEMPTS=240 # 240 * 30s = 120 minutes
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            STATUS=$(aws ecs describe-tasks \
+              --cluster "${CLUSTER}" \
+              --tasks "${TASK_ARN}" \
+              --query 'tasks[0].lastStatus' \
+              --output text)
+            
+            echo "Attempt $((ATTEMPT+1))/${MAX_ATTEMPTS}: Task status is ${STATUS}"
+            
+            if [ "${STATUS}" == "STOPPED" ]; then
+              echo "✅ Task has stopped."
+              break
+            fi
+            
+            if [ "${STATUS}" == "None" ]; then
+              echo "❌ Error: Task not found."
+              exit 1
+            fi
+            
+            sleep 30
+            ATTEMPT=$((ATTEMPT+1))
+          done
+
+          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+            echo "❌ Error: Timeout waiting for task to complete after 60 minutes."
+            # Try to stop the task if it's still running
+            aws ecs stop-task --cluster "${CLUSTER}" --task "${TASK_ARN}" --reason "Timeout in GitHub Actions" || true
+            exit 1
+          fi
 
           # Check task exit code
           EXIT_CODE=$(aws ecs describe-tasks \
