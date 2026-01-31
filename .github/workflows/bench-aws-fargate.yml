@@ -393,12 +393,11 @@ jobs:
             LOG_ATTEMPT=$((LOG_ATTEMPT+1))
           done
 
-          # Download logs using query to get only messages
+          # Download logs using jq to ensure each event is on a new line
           aws logs get-log-events \
             --log-group-name "${LOG_GROUP}" \
             --log-stream-name "${LOG_STREAM}" \
-            --query 'events[].message' \
-            --output text > benchmark-results/stdout.txt
+            --output json | jq -r '.events[].message' > benchmark-results/stdout.txt
 
           echo "Extracting benchmark results from logs..."
 
