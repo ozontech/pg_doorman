@@ -96,6 +96,12 @@ jobs:
       - name: Build and push benchmark image
         id: push-ecr
         run: |
+          REPO_URL="${{ secrets.ECR_REPOSITORY }}"
+          if [ -z "${REPO_URL}" ]; then
+            echo "❌ Error: ECR_REPOSITORY secret is empty"
+            exit 1
+          fi
+
           GHCR_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-image.outputs.image-tag }}"
           echo "Using base image from GHCR: ${GHCR_IMAGE}"
           
@@ -335,7 +341,7 @@ jobs:
           done
 
           if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-            echo "❌ Error: Timeout waiting for task to complete after 60 minutes."
+            echo "❌ Error: Timeout waiting for task to complete after 120 minutes."
             # Try to stop the task if it's still running
             aws ecs stop-task --cluster "${CLUSTER}" --task "${TASK_ARN}" --reason "Timeout in GitHub Actions" || true
             exit 1
@@ -361,28 +367,42 @@ jobs:
         run: |
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           LOG_GROUP="/ecs/${CLUSTER}"
-          TASK_ID=$(echo "${{ steps.run-task.outputs.task-arn }}" | awk -F/ '{print $NF}')
+          TASK_ARN="${{ steps.run-task.outputs.task-arn }}"
+          TASK_ID=$(echo "${TASK_ARN}" | awk -F/ '{print $NF}')
           LOG_STREAM="benchmark/benchmark-container/${TASK_ID}"
 
-          echo "Fetching logs from ${LOG_GROUP}/${LOG_STREAM}"
+          if [ -z "${TASK_ARN}" ]; then
+            echo "❌ Error: Task ARN is missing, cannot fetch logs."
+            exit 1
+          fi
 
+          echo "Fetching logs from ${LOG_GROUP}/${LOG_STREAM}"
           mkdir -p benchmark-results
 
-          # Wait a bit for logs to be available
-          sleep 5
+          # Wait for logs to be available (retry loop)
+          echo "Waiting for log stream to become available..."
+          MAX_LOG_ATTEMPTS=10
+          LOG_ATTEMPT=0
+          while [ $LOG_ATTEMPT -lt $MAX_LOG_ATTEMPTS ]; do
+            if aws logs describe-log-streams --log-group-name "${LOG_GROUP}" --log-stream-name-prefix "${LOG_STREAM}" --query 'logStreams[0].logStreamName' --output text | grep -q "${LOG_STREAM}"; then
+              echo "✅ Log stream is available."
+              break
+            fi
+            echo "Attempt $((LOG_ATTEMPT+1))/${MAX_LOG_ATTEMPTS}: Log stream not found yet, waiting..."
+            sleep 10
+            LOG_ATTEMPT=$((LOG_ATTEMPT+1))
+          done
 
-          # Download logs
+          # Download logs using query to get only messages
           aws logs get-log-events \
             --log-group-name "${LOG_GROUP}" \
             --log-stream-name "${LOG_STREAM}" \
-            --output text > benchmark-results/cloudwatch-raw.txt || true
+            --query 'events[].message' \
+            --output text > benchmark-results/stdout.txt
 
-          echo "Extracting benchmark results..."
+          echo "Extracting benchmark results from logs..."
 
-          if [ -f benchmark-results/cloudwatch-raw.txt ]; then
-            # Extract just the messages (column 4 onwards)
-            awk '{$1=$2=$3=""; print substr($0,4)}' benchmark-results/cloudwatch-raw.txt > benchmark-results/stdout.txt
-
+          if [ -s benchmark-results/stdout.txt ]; then
             # Extract base64 encoded benchmark file
             sed -n '/===BEGIN_BENCHMARK_RESULTS===/,/===END_BENCHMARK_RESULTS===/p' benchmark-results/stdout.txt | \
               grep -v "===BEGIN_BENCHMARK_RESULTS===" | \
@@ -393,11 +413,13 @@ jobs:
               echo "✅ Benchmark results extracted successfully"
               echo "File size: $(wc -c < documentation/docs/benchmarks.md) bytes"
             else
-              echo "❌ Failed to extract benchmark results"
+              echo "❌ Failed to extract benchmark results or file is empty"
+              echo "Last 20 lines of logs for context:"
+              tail -20 benchmark-results/stdout.txt
               exit 1
             fi
           else
-            echo "❌ No logs found"
+            echo "❌ No logs found or log file is empty"
             exit 1
           fi
 
@@ -437,6 +459,9 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
+          # Save benchmark results to a temporary location before switching branches
+          cp documentation/docs/benchmarks.md /tmp/benchmarks.md.tmp
+
           # Create a unique branch name with timestamp
           BRANCH_NAME="fargate-benchmark-results-$(date +%Y%m%d-%H%M%S)"
 
@@ -444,7 +469,9 @@ jobs:
           git fetch origin master
           git checkout -b "$BRANCH_NAME" origin/master
 
-          # benchmarks.md is already extracted in previous step
+          # Restore benchmark results to the new branch
+          mv /tmp/benchmarks.md.tmp documentation/docs/benchmarks.md
+
           # Check if there are any changes to commit
           git add documentation/docs/benchmarks.md
           if git diff --staged --quiet; then
