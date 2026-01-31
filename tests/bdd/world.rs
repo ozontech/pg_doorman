@@ -138,6 +138,41 @@ impl DoormanWorld {
             );
         }
 
+        // Benchmarking parameters from environment variables
+        let doorman_workers =
+            std::env::var("BENCH_DOORMAN_WORKERS").unwrap_or_else(|_| "4".to_string());
+        result = result.replace("${DOORMAN_WORKERS}", &doorman_workers);
+
+        let odyssey_workers =
+            std::env::var("BENCH_ODYSSEY_WORKERS").unwrap_or_else(|_| "4".to_string());
+        result = result.replace("${ODYSSEY_WORKERS}", &odyssey_workers);
+
+        // pgbench jobs can be overridden globally or specifically for client counts
+        let global_pgbench_jobs = std::env::var("BENCH_PGBENCH_JOBS").ok();
+
+        let pgbench_jobs_c1 = global_pgbench_jobs
+            .clone()
+            .or_else(|| std::env::var("BENCH_PGBENCH_JOBS_C1").ok())
+            .unwrap_or_else(|| "1".to_string());
+        result = result.replace("${PGBENCH_JOBS_C1}", &pgbench_jobs_c1);
+
+        let pgbench_jobs_c40 = global_pgbench_jobs
+            .clone()
+            .or_else(|| std::env::var("BENCH_PGBENCH_JOBS_C40").ok())
+            .unwrap_or_else(|| "2".to_string());
+        result = result.replace("${PGBENCH_JOBS_C40}", &pgbench_jobs_c40);
+
+        let pgbench_jobs_c80 = global_pgbench_jobs
+            .clone()
+            .or_else(|| std::env::var("BENCH_PGBENCH_JOBS_C80").ok())
+            .unwrap_or_else(|| "4".to_string());
+        result = result.replace("${PGBENCH_JOBS_C80}", &pgbench_jobs_c80);
+
+        let pgbench_jobs_c120 = global_pgbench_jobs
+            .or_else(|| std::env::var("BENCH_PGBENCH_JOBS_C120").ok())
+            .unwrap_or_else(|| "4".to_string());
+        result = result.replace("${PGBENCH_JOBS_C120}", &pgbench_jobs_c120);
+
         result
     }
 }

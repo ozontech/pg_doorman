@@ -35,6 +35,14 @@ on:
           - '32768'
           - '61440'
           - '122880'
+      doorman_workers:
+        description: 'Number of worker threads for pg_doorman and odyssey'
+        required: false
+        default: '4'
+      pgbench_jobs:
+        description: 'Number of threads (-j) for pgbench (global override)'
+        required: false
+        default: ''
 
 env:
   REGISTRY: ghcr.io
@@ -186,6 +194,8 @@ jobs:
             --arg debug "${{ inputs.debug }}" \
             --arg bencherToken "$BENCHER_TOKEN" \
             --arg bencherBranch "${{ github.ref_name }}" \
+            --arg doormanWorkers "${{ inputs.doorman_workers }}" \
+            --arg pgbenchJobs "${{ inputs.pgbench_jobs }}" \
             '{
               family: $family,
               networkMode: "awsvpc",
@@ -214,6 +224,11 @@ jobs:
                     { name: "BENCHER_PROJECT", value: "pg-doorman" },
                     { name: "BENCHER_BRANCH", value: $bencherBranch },
                     { name: "BENCHER_TESTBED", value: "aws-fargate" },
+                    { name: "BENCH_DOORMAN_WORKERS", value: $doormanWorkers },
+                    { name: "BENCH_ODYSSEY_WORKERS", value: $doormanWorkers },
+                    { name: "BENCH_PGBENCH_JOBS", value: $pgbenchJobs },
+                    { name: "FARGATE_CPU", value: $cpu },
+                    { name: "FARGATE_MEMORY", value: $memory },
                     { name: "JEMALLOC_SYS_WITH_MALLOC_CONF", value: "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" }
                   ]
                 }
@@ -442,6 +457,8 @@ jobs:
           echo "**Region:** ${{ secrets.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "**CPU:** ${{ inputs.fargate_cpu }} units ($(((${{ inputs.fargate_cpu }})/1024)) vCPU)" >> $GITHUB_STEP_SUMMARY
           echo "**Memory:** ${{ inputs.fargate_memory }} MB ($(((${{ inputs.fargate_memory }})/1024)) GB)" >> $GITHUB_STEP_SUMMARY
+          echo "**Doorman Workers:** ${{ inputs.doorman_workers }}" >> $GITHUB_STEP_SUMMARY
+          echo "**pgbench Jobs:** ${{ inputs.pgbench_jobs || 'default' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -f benchmark-results/stdout.txt ]; then
