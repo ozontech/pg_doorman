@@ -104,6 +104,11 @@ run_in_container() {
         docker_args+=(-e "DEBUG=${DEBUG}")
     fi
 
+    # Pass PPROF environment variable if set
+    if [ -n "${PPROF:-}" ]; then
+        docker_args+=(-e "PPROF=${PPROF}")
+    fi
+
     # Pass BENCHER environment variables for benchmark reporting
     if [ -n "${BENCHER_API_TOKEN:-}" ]; then
         docker_args+=(-e "BENCHER_API_TOKEN=${BENCHER_API_TOKEN}")
