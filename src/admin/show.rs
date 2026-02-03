@@ -125,7 +125,9 @@ where
 {
     let pool_lookup = PoolStats::construct_pool_lookup();
     let mut res = BytesMut::new();
-    res.put(row_description(&PoolStats::generate_show_pools_memory_header()));
+    res.put(row_description(
+        &PoolStats::generate_show_pools_memory_header(),
+    ));
     pool_lookup.iter().for_each(|(_identifier, pool_stats)| {
         res.put(data_row(&pool_stats.generate_show_pools_memory_row()));
     });

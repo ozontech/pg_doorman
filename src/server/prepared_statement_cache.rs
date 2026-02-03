@@ -21,7 +21,7 @@ pub fn intern_query(query: &str, hash: u64) -> Arc<str> {
     if let Some(existing) = QUERY_INTERNER.get(&hash) {
         return existing.clone();
     }
-    
+
     // Slow path: intern the query
     let arc_str: Arc<str> = Arc::from(query);
     QUERY_INTERNER.entry(hash).or_insert(arc_str).clone()

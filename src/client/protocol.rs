@@ -9,7 +9,8 @@ use crate::pool::ConnectionPool;
 use crate::server::Server;
 
 use super::core::{
-    BatchOperation, CachedStatement, Client, ParseCompleteTarget, PreparedStatementKey, SkippedParse,
+    BatchOperation, CachedStatement, Client, ParseCompleteTarget, PreparedStatementKey,
+    SkippedParse,
 };
 use super::PREPARED_STATEMENT_COUNTER;
 
@@ -34,7 +35,14 @@ where
                 // In this case we want to send the parse message to the server
                 // since pgcat is initiating the prepared statement on this specific server
                 match self
-                    .register_parse_to_server_cache(true, &cached.hash, &cached.parse, &server_name, pool, server)
+                    .register_parse_to_server_cache(
+                        true,
+                        &cached.hash,
+                        &cached.parse,
+                        &server_name,
+                        pool,
+                        server,
+                    )
                     .await
                 {
                     Ok(_) => (),
@@ -181,7 +189,9 @@ where
                 );
 
                 // Add parse message to buffer with the server statement name
-                let parse_bytes = shared_parse.as_ref().to_bytes_with_name(&server_stmt_name)?;
+                let parse_bytes = shared_parse
+                    .as_ref()
+                    .to_bytes_with_name(&server_stmt_name)?;
                 self.buffer.put(&parse_bytes[..]);
             } else {
                 // We don't want to send the parse message to the server
@@ -214,8 +224,15 @@ where
                 server_stmt_name
             );
             // Register to server cache (this may send eviction close to server)
-            self.register_parse_to_server_cache(false, &hash, &shared_parse, &server_stmt_name, pool, server)
-                .await?;
+            self.register_parse_to_server_cache(
+                false,
+                &hash,
+                &shared_parse,
+                &server_stmt_name,
+                pool,
+                server,
+            )
+            .await?;
 
             // Before sending new Parse, mark pending skipped_parses as insert_at_beginning=true
             // because their ParseComplete should come before the ParseComplete from server.
@@ -228,7 +245,9 @@ where
             }
 
             // Add parse message to buffer with the server statement name
-            let parse_bytes = shared_parse.as_ref().to_bytes_with_name(&server_stmt_name)?;
+            let parse_bytes = shared_parse
+                .as_ref()
+                .to_bytes_with_name(&server_stmt_name)?;
             self.buffer.put(&parse_bytes[..]);
 
             // Track that we sent a Parse to server in this batch
@@ -297,10 +316,7 @@ where
                 let server_name = cached.server_name().to_string();
                 let message = Bind::rename(message, &server_name)?;
 
-                debug!(
-                    "Rewrote bind `{}` to `{}`",
-                    client_given_name, server_name
-                );
+                debug!("Rewrote bind `{}` to `{}`", client_given_name, server_name);
 
                 // Ensure prepared statement is on server
                 // For async clients, Parse may NOT be in buffer if client reuses cached prepared statement
@@ -401,8 +417,7 @@ where
                 // Using position() + remove() + push() instead of iter_mut().find() to avoid issues
                 // when multiple Parse operations for the same statement are skipped in a batch.
                 if let Some(idx) = self.prepared.skipped_parses.iter().position(|s| {
-                    s.statement_name == server_name
-                        && s.target == ParseCompleteTarget::BindComplete
+                    s.statement_name == server_name && s.target == ParseCompleteTarget::BindComplete
                 }) {
                     debug!(
                         "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",

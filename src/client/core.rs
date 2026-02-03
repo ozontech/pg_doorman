@@ -230,7 +230,9 @@ impl PreparedStatementState {
     /// max_cache_size = 0 means unlimited (no protection against malicious clients).
     pub fn new(enabled: bool, max_cache_size: usize) -> Self {
         let cache = if max_cache_size > 0 {
-            PreparedStatementCache::Limited(LruCache::new(NonZeroUsize::new(max_cache_size).unwrap()))
+            PreparedStatementCache::Limited(LruCache::new(
+                NonZeroUsize::new(max_cache_size).unwrap(),
+            ))
         } else {
             PreparedStatementCache::Unlimited(AHashMap::new())
         };
@@ -271,7 +273,9 @@ impl PreparedStatementState {
         for (key, cached) in self.cache.iter() {
             // Key size
             total += match key {
-                PreparedStatementKey::Named(s) => std::mem::size_of::<PreparedStatementKey>() + s.capacity(),
+                PreparedStatementKey::Named(s) => {
+                    std::mem::size_of::<PreparedStatementKey>() + s.capacity()
+                }
                 PreparedStatementKey::Anonymous(_) => std::mem::size_of::<PreparedStatementKey>(),
             };
             // CachedStatement struct size

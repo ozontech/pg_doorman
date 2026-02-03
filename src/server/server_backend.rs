@@ -394,7 +394,7 @@ impl Server {
     }
 
     /// Register a prepared statement on the server.
-    /// 
+    ///
     /// # Arguments
     /// * `parse` - The Parse message containing query text and parameters
     /// * `server_name` - The name to use on the server (may differ from parse.name for async clients)

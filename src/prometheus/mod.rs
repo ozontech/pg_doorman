@@ -99,7 +99,7 @@ pub(crate) static SHOW_POOL_CACHE_ENTRIES: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pool_prepared_cache_entries",
-            "Number of entries in the pool-level prepared statement cache by user and database."
+            "Number of entries in the pool-level prepared statement cache by user and database.",
         ),
         &["user", "database"],
     )
@@ -151,7 +151,7 @@ pub(crate) static SHOW_ASYNC_CLIENTS_COUNT: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_async_clients_count",
-            "Number of async clients (using Flush instead of Sync) by user and database."
+            "Number of async clients (using Flush instead of Sync) by user and database.",
         ),
         &["user", "database"],
     )

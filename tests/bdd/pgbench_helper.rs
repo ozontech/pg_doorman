@@ -1059,9 +1059,7 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     let prepared_table = generate_table(&prepared_configs, &world.bench_results);
 
     // Environment and parameter info
-    let fargate_cpu = std::env::var("FARGATE_CPU")
-        .ok()
-        .filter(|s| !s.is_empty());
+    let fargate_cpu = std::env::var("FARGATE_CPU").ok().filter(|s| !s.is_empty());
     let fargate_memory = std::env::var("FARGATE_MEMORY")
         .ok()
         .filter(|s| !s.is_empty());
