@@ -1353,9 +1353,7 @@ pub async fn compare_named_backend_pid_with_initial(
     );
 }
 
-#[when(
-    regex = r#"^we terminate backend of session "([^"]+)" via session "([^"]+)"$"#
-)]
+#[when(regex = r#"^we terminate backend of session "([^"]+)" via session "([^"]+)"$"#)]
 pub async fn terminate_backend_of_session(
     world: &mut DoormanWorld,
     target_session: String,
@@ -1391,7 +1389,10 @@ pub async fn terminate_backend_of_session(
             'Z' => break, // ReadyForQuery - done
             'D' => {
                 // DataRow - check result (should be 't' for true)
-                eprintln!("pg_terminate_backend result: {:?}", String::from_utf8_lossy(&data));
+                eprintln!(
+                    "pg_terminate_backend result: {:?}",
+                    String::from_utf8_lossy(&data)
+                );
             }
             'E' => {
                 // Error

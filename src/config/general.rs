@@ -360,7 +360,8 @@ impl Default for General {
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
-            client_prepared_statements_cache_size: Self::default_client_prepared_statements_cache_size(),
+            client_prepared_statements_cache_size:
+                Self::default_client_prepared_statements_cache_size(),
             hba: Self::default_hba(),
             pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),

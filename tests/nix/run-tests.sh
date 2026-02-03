@@ -85,7 +85,6 @@ run_in_container() {
 
     docker_args=(
         --rm
-        -it
         --init
         -v "${PROJECT_ROOT}:/workspace"
         -w /workspace
@@ -95,9 +94,19 @@ run_in_container() {
         -e "POSTGRES_PORT=5432"
     )
 
+    # Add -t for colored output if stdout is a terminal
+    if [ -t 1 ]; then
+        docker_args+=(-t)
+    fi
+
     # Pass DEBUG environment variable if set
     if [ -n "${DEBUG:-}" ]; then
         docker_args+=(-e "DEBUG=${DEBUG}")
+    fi
+
+    # Pass PPROF environment variable if set
+    if [ -n "${PPROF:-}" ]; then
+        docker_args+=(-e "PPROF=${PPROF}")
     fi
 
     # Pass BENCHER environment variables for benchmark reporting
@@ -115,7 +124,7 @@ run_in_container() {
     fi
 
     if [ "$interactive" = "true" ]; then
-        docker_args+=(-i)
+        docker_args+=(-i -t)
     fi
 
     # Add persistent volumes for caching

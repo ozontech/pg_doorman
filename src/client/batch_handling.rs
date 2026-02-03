@@ -236,7 +236,8 @@ where
         }
 
         // Build new response
-        let mut new_response = BytesMut::with_capacity(response.len() + (total_insertions + pending_insertions) * 5);
+        let mut new_response =
+            BytesMut::with_capacity(response.len() + (total_insertions + pending_insertions) * 5);
         let mut pos = 0;
         let mut bind_count: usize = 0;
         let mut param_desc_count: usize = 0;
