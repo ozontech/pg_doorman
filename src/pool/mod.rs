@@ -23,7 +23,7 @@ mod types;
 
 pub use errors::{PoolError, RecycleError, RecycleResult};
 pub use inner::{Object, Pool, PoolBuilder};
-pub use types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
+pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts};
 
 pub use crate::server::PreparedStatementCache;
 
@@ -221,6 +221,7 @@ impl ConnectionPool {
                         recycle: None,
                     },
                     queue_mode: queue_strategy,
+                    scaling: ScalingConfig::default(),
                 });
 
                 let pool = builder_config.build();

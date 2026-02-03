@@ -15,7 +15,9 @@ fn is_pprof_enabled() -> bool {
 }
 
 use pg_doorman::config::{Address, User};
-use pg_doorman::pool::{ClientServerMap, Pool, PoolConfig, QueueMode, ServerPool, Timeouts};
+use pg_doorman::pool::{
+    ClientServerMap, Pool, PoolConfig, QueueMode, ScalingConfig, ServerPool, Timeouts,
+};
 use pg_doorman::stats::AddressStats;
 
 use crate::world::DoormanWorld;
@@ -73,6 +75,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
             recycle: None,
         },
         queue_mode: QueueMode::Lifo,
+        scaling: ScalingConfig::default(),
     };
 
     let pool = Pool::builder(server_pool).config(config).build();

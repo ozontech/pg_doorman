@@ -2,6 +2,39 @@ use std::time::Duration;
 
 use crate::utils::clock;
 
+/// Connection scaling configuration for gradual pool growth.
+#[derive(Clone, Copy, Debug)]
+pub struct ScalingConfig {
+    /// Warm pool ratio (0.0-1.0). Connections below this threshold are created immediately.
+    pub warm_pool_ratio: f32,
+
+    /// Fast retry count with yield_now() for low latency waiting.
+    pub fast_retries: u32,
+
+    /// Sleep duration in ms after fast retries (0 = disabled).
+    pub cooldown_sleep_ms: u64,
+}
+
+impl ScalingConfig {
+    /// Default scaling configuration.
+    /// - 20% warm pool (immediate creation)
+    /// - 10 fast retries (~10-50μs)
+    /// - 10ms sleep after fast retries
+    const DEFAULT_WARM_POOL_RATIO: f32 = 0.2;
+    const DEFAULT_FAST_RETRIES: u32 = 10;
+    const DEFAULT_COOLDOWN_SLEEP_MS: u64 = 10;
+}
+
+impl Default for ScalingConfig {
+    fn default() -> Self {
+        Self {
+            warm_pool_ratio: Self::DEFAULT_WARM_POOL_RATIO,
+            fast_retries: Self::DEFAULT_FAST_RETRIES,
+            cooldown_sleep_ms: Self::DEFAULT_COOLDOWN_SLEEP_MS,
+        }
+    }
+}
+
 /// Pool configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct PoolConfig {
@@ -14,6 +47,9 @@ pub struct PoolConfig {
     /// Queue mode of the pool.
     /// Determines the order of objects being queued and dequeued.
     pub queue_mode: QueueMode,
+
+    /// Scaling configuration for gradual pool growth.
+    pub scaling: ScalingConfig,
 }
 
 impl PoolConfig {
@@ -24,6 +60,7 @@ impl PoolConfig {
             max_size,
             timeouts: Timeouts::default(),
             queue_mode: QueueMode::default(),
+            scaling: ScalingConfig::default(),
         }
     }
 }

@@ -288,7 +288,136 @@ impl Pool {
                     }
                 }
                 None => {
-                    // No existing object, create a new one
+                    // Queue is empty. Check if we should wait (cooldown zone) or create immediately (warm pool).
+                    let should_wait_in_cooldown = {
+                        let slots = self.inner.slots.lock();
+                        let warm_threshold = (slots.max_size as f32
+                            * self.inner.config.scaling.warm_pool_ratio)
+                            as usize;
+                        slots.size >= warm_threshold
+                    };
+
+                    if !should_wait_in_cooldown {
+                        // Warm pool zone - create connection immediately
+                        break;
+                    }
+
+                    // Cooldown zone: try to wait for a free connection before creating new one
+
+                    // Phase 1: Fast retries with yield_now (low latency, ~10-50μs)
+                    let fast_retries = self.inner.config.scaling.fast_retries;
+                    for _ in 0..fast_retries {
+                        // Try to get from queue
+                        let obj_inner_retry = {
+                            let mut slots = self.inner.slots.lock();
+                            slots.vec.pop_front()
+                        };
+
+                        if let Some(mut inner) = obj_inner_retry {
+                            // Found a connection! Try to recycle it
+                            let recycle_result = match timeouts.recycle {
+                                Some(duration) => {
+                                    match tokio::time::timeout(
+                                        duration,
+                                        self.inner
+                                            .server_pool
+                                            .recycle(&mut inner.obj, &inner.metrics),
+                                    )
+                                    .await
+                                    {
+                                        Ok(r) => r,
+                                        Err(_) => {
+                                            Err(RecycleError::StaticMessage("Recycle timeout"))
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.inner
+                                        .server_pool
+                                        .recycle(&mut inner.obj, &inner.metrics)
+                                        .await
+                                }
+                            };
+
+                            match recycle_result {
+                                Ok(()) => {
+                                    // Successfully recycled, return it
+                                    permit.forget();
+                                    return Ok(Object {
+                                        inner: Some(inner),
+                                        pool: Arc::downgrade(&self.inner),
+                                    });
+                                }
+                                Err(_) => {
+                                    // Bad connection, clean up and continue retrying
+                                    let mut slots = self.inner.slots.lock();
+                                    slots.size = slots.size.saturating_sub(1);
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // No connection available, short spin + yield before next retry
+                        for _ in 0..4 {
+                            std::hint::spin_loop();
+                        }
+                        tokio::task::yield_now().await;
+                    }
+
+                    // Phase 2: Single sleep retry if fast retries didn't help
+                    let cooldown_sleep_ms = self.inner.config.scaling.cooldown_sleep_ms;
+                    if cooldown_sleep_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(cooldown_sleep_ms))
+                            .await;
+
+                        // Final attempt to get from queue
+                        let obj_inner_final = {
+                            let mut slots = self.inner.slots.lock();
+                            slots.vec.pop_front()
+                        };
+
+                        if let Some(mut inner) = obj_inner_final {
+                            let recycle_result = match timeouts.recycle {
+                                Some(duration) => {
+                                    match tokio::time::timeout(
+                                        duration,
+                                        self.inner
+                                            .server_pool
+                                            .recycle(&mut inner.obj, &inner.metrics),
+                                    )
+                                    .await
+                                    {
+                                        Ok(r) => r,
+                                        Err(_) => {
+                                            Err(RecycleError::StaticMessage("Recycle timeout"))
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.inner
+                                        .server_pool
+                                        .recycle(&mut inner.obj, &inner.metrics)
+                                        .await
+                                }
+                            };
+
+                            match recycle_result {
+                                Ok(()) => {
+                                    permit.forget();
+                                    return Ok(Object {
+                                        inner: Some(inner),
+                                        pool: Arc::downgrade(&self.inner),
+                                    });
+                                }
+                                Err(_) => {
+                                    let mut slots = self.inner.slots.lock();
+                                    slots.size = slots.size.saturating_sub(1);
+                                }
+                            }
+                        }
+                    }
+
+                    // All retries exhausted, create new connection
                     break;
                 }
             }
