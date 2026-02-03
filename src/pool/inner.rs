@@ -239,7 +239,53 @@ impl Pool {
             break;
         }
 
-        // Check if we're in cooldown zone (pool size above warm threshold)
+        // First, try to get an existing connection (hot path - no cooldown check)
+        let obj_inner = {
+            let mut slots = self.inner.slots.lock();
+            slots.vec.pop_front()
+        };
+
+        // If we got a connection, try to recycle it (hot path)
+        if let Some(mut inner) = obj_inner {
+            let recycle_result = match timeouts.recycle {
+                Some(duration) => {
+                    match tokio::time::timeout(
+                        duration,
+                        self.inner
+                            .server_pool
+                            .recycle(&mut inner.obj, &inner.metrics),
+                    )
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+                    }
+                }
+                None => {
+                    self.inner
+                        .server_pool
+                        .recycle(&mut inner.obj, &inner.metrics)
+                        .await
+                }
+            };
+
+            match recycle_result {
+                Ok(()) => {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
+                }
+                Err(_) => {
+                    let mut slots = self.inner.slots.lock();
+                    slots.size = slots.size.saturating_sub(1);
+                    // Continue to cooldown logic below
+                }
+            }
+        }
+
+        // No connection available - check if we should use cooldown zone logic
         let should_use_cooldown = {
             let slots = self.inner.slots.lock();
             let warm_threshold = std::cmp::max(
