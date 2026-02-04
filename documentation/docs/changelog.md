@@ -12,6 +12,8 @@ title: Changelog
 
 - **Configuration validation before binary upgrade**: When receiving SIGINT for graceful shutdown/binary upgrade, the server now validates the new binary's configuration using `-t` flag before proceeding. If the configuration test fails, the shutdown is cancelled and critical error messages are logged to alert the operator. This prevents accidental downtime from deploying a binary with invalid configuration.
 
+- **New `retain_connections_max` configuration parameter**: Controls the maximum number of idle connections to close per retain cycle. When set to `0` (default), all idle connections that exceed `idle_timeout` or `server_lifetime` are closed immediately, ensuring aggressive cleanup of unused connections. Previously, only 1 connection was closed per cycle, which could lead to slow connection cleanup when many connections became idle simultaneously. Connection closures are now logged for better observability.
+
 **Simplification:**
 
 - **Removed `wait_rollback` mechanism**: The pooler no longer attempts to automatically wait for ROLLBACK from clients when a transaction enters an aborted state. This complex mechanism was causing protocol desynchronization issues with async clients and extended query protocol. Server connections in aborted transactions are now simply returned to the pool and cleaned up normally via ROLLBACK during checkin.

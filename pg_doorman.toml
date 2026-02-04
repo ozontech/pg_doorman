@@ -57,6 +57,11 @@ server_lifetime = 300000
 # Default: 60000 (60 sec)
 retain_connections_time = 60000
 
+# Maximum number of idle connections to close per retain cycle.
+# 0 means unlimited (close all idle connections that exceed timeout).
+# Default: 0 (unlimited)
+retain_connections_max = 0
+
 # Graceful shutdown timeout in milliseconds.
 # Default: 10000 (10 sec)
 shutdown_timeout = 10000

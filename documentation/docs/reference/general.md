@@ -301,6 +301,18 @@ Server lifetime in milliseconds.
 
 Default: `300000` (5 min).
 
+### retain_connections_max
+
+Maximum number of idle connections to close per retain cycle.
+When set to `0`, all idle connections that exceed `idle_timeout` or `server_lifetime` will be closed immediately.
+When set to a positive value, at most that many connections will be closed per cycle across all pools.
+
+This parameter controls how aggressively pg_doorman closes idle connections. With the default value of `0` (unlimited),
+all expired connections are closed in each retain cycle, ensuring quick cleanup. If you need to limit the rate of
+connection closures (e.g., to reduce load spikes), set this to a positive value.
+
+Default: `0` (unlimited).
+
 ### server_round_robin
 
 In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
