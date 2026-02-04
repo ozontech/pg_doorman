@@ -526,3 +526,40 @@ pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: St
         pid
     );
 }
+
+/// Overwrite the pg_doorman config file with new invalid content
+#[when("we overwrite pg_doorman config file with invalid content:")]
+pub async fn overwrite_config_with_invalid(world: &mut DoormanWorld, step: &Step) {
+    let invalid_content = step
+        .docstring
+        .as_ref()
+        .expect("Invalid config content not found in docstring")
+        .to_string();
+
+    let config_file = world
+        .doorman_config_file
+        .as_ref()
+        .expect("pg_doorman config file not found");
+
+    std::fs::write(config_file.path(), invalid_content).expect("Failed to overwrite config file");
+}
+
+/// Verify that pg_doorman PID has NOT changed (same process still running)
+#[then(regex = r#"foreground pg_doorman PID should be same as stored "([^"]+)""#)]
+pub async fn verify_foreground_pid_same(world: &mut DoormanWorld, name: String) {
+    let stored_pid = world
+        .named_backend_pids
+        .get(&(name.clone(), "foreground_pid".to_string()))
+        .expect("Stored foreground PID not found");
+
+    if let Some(ref child) = world.doorman_process {
+        let current_pid = child.id() as i32;
+        assert_eq!(
+            *stored_pid, current_pid,
+            "PID should be same: stored '{}' = {}, current = {}",
+            name, stored_pid, current_pid
+        );
+    } else {
+        panic!("pg_doorman process not running");
+    }
+}

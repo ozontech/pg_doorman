@@ -306,6 +306,77 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 // kill -SIGINT $(pgrep pg_doorman)
                 _ = interrupt_signal.recv() => {
                     info!("Got SIGINT, starting graceful shutdown");
+
+                    // First, validate configuration of the new binary before proceeding with shutdown
+                    #[cfg(not(windows))]
+                    if !admin_only {
+                        let full_exe_args: Vec<_> = std::env::args().collect();
+                        let exe_path = &full_exe_args[0];
+
+                        // Find config file from arguments (first positional argument)
+                        let config_file = full_exe_args
+                            .iter()
+                            .skip(1)
+                            .find(|arg| !arg.starts_with('-'))
+                            .cloned()
+                            .unwrap_or_else(|| "pg_doorman.toml".to_string());
+
+                        info!("Validating configuration with: {} -t {}", exe_path, config_file);
+
+                        let config_test_result = process::Command::new(exe_path)
+                            .arg("-t")
+                            .arg(&config_file)
+                            .stdout(process::Stdio::piped())
+                            .stderr(process::Stdio::piped())
+                            .output();
+
+                        match config_test_result {
+                            Ok(output) => {
+                                if !output.status.success() {
+                                    // Configuration test FAILED - DO NOT proceed with shutdown!
+                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                    error!("!!!                    CRITICAL ERROR                               !!!");
+                                    error!("!!!         CONFIGURATION VALIDATION FAILED                        !!!");
+                                    error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
+                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                    error!("");
+                                    error!("The new binary failed configuration validation!");
+                                    error!("Configuration file: {}", config_file);
+                                    error!("Exit code: {:?}", output.status.code());
+                                    if !output.stderr.is_empty() {
+                                        error!("Error output: {}", String::from_utf8_lossy(&output.stderr));
+                                    }
+                                    if !output.stdout.is_empty() {
+                                        error!("Standard output: {}", String::from_utf8_lossy(&output.stdout));
+                                    }
+                                    error!("");
+                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                    error!("!!!  FIX THE CONFIGURATION BEFORE ATTEMPTING BINARY UPGRADE AGAIN  !!!");
+                                    error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
+                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                    continue;
+                                }
+                                info!("Configuration validation successful");
+                            }
+                            Err(e) => {
+                                // Failed to run the config test - DO NOT proceed with shutdown!
+                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                error!("!!!                    CRITICAL ERROR                               !!!");
+                                error!("!!!         FAILED TO VALIDATE CONFIGURATION                       !!!");
+                                error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
+                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                error!("");
+                                error!("Could not execute configuration test: {}", e);
+                                error!("Binary path: {}", exe_path);
+                                error!("");
+                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
+                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                                continue;
+                            }
+                        }
+                    }
+
                     SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
 
                     // Drain all idle connections from pools to release PostgreSQL connections

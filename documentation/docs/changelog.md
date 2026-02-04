@@ -6,6 +6,22 @@ title: Changelog
 
 ### 3.2.0 <small>Feb 3, 2026</small> { id="3.2.0" }
 
+**New Features:**
+
+- **Configuration test mode (`-t` / `--test-config`)**: Added nginx-style configuration validation flag. Running `pg_doorman -t` or `pg_doorman --test-config` will parse and validate the configuration file, report success or errors, and exit without starting the server. Useful for CI/CD pipelines and pre-deployment configuration checks.
+
+- **Configuration validation before binary upgrade**: When receiving SIGINT for graceful shutdown/binary upgrade, the server now validates the new binary's configuration using `-t` flag before proceeding. If the configuration test fails, the shutdown is cancelled and critical error messages are logged to alert the operator. This prevents accidental downtime from deploying a binary with invalid configuration.
+
+**Simplification:**
+
+- **Removed `wait_rollback` mechanism**: The pooler no longer attempts to automatically wait for ROLLBACK from clients when a transaction enters an aborted state. This complex mechanism was causing protocol desynchronization issues with async clients and extended query protocol. Server connections in aborted transactions are now simply returned to the pool and cleaned up normally via ROLLBACK during checkin.
+
+- **Removed savepoint tracking**: Removed the `use_savepoint` flag and related logic that was tracking SAVEPOINT usage. The pooler now treats savepoints as regular PostgreSQL commands without special handling.
+
+**Bug Fixes:**
+
+- **Fixed protocol desynchronization in async mode with simple prepared statements**: When `prepared_statements` was disabled but clients used extended query protocol (Parse, Bind, Describe, Execute, Flush), the pooler wasn't tracking batch operations, causing `expected_responses` to be calculated as 0. This led to the pooler exiting the response loop immediately without waiting for server responses (ParseComplete, BindComplete, etc.). Now batch operations are tracked regardless of the `prepared_statements` setting.
+
 **Performance:**
 
 - **Removed timeout-based waiting in async protocol**: The pooler now tracks expected responses based on batch operations (Parse, Bind, Execute, etc.) and exits immediately when all responses are received. This eliminates unnecessary latency in pipeline/async workloads.

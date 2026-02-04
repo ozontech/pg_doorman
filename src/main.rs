@@ -32,6 +32,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app::install_panic_hook();
     let args = app::parse_args()?;
     let config = app::init_config(&args)?;
+
+    if args.test_config {
+        println!(
+            "pg_doorman: the configuration file {} syntax is ok",
+            args.config_file
+        );
+        println!(
+            "pg_doorman: configuration file {} test is successful",
+            args.config_file
+        );
+        return Ok(());
+    }
+
     app::init_logging(&args, &config)?;
     app::run_server(args, config)
 }

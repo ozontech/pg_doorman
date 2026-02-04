@@ -13,13 +13,11 @@ use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
-    check_query_response, command_complete, deallocate_response, error_message, error_response,
-    error_response_terminal, insert_close_complete_after_last_close_complete, read_message,
-    ready_for_query, write_all_flush,
+    check_query_response, deallocate_response, error_response, error_response_terminal,
+    insert_close_complete_after_last_close_complete, read_message, write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
-use crate::utils::comments::SqlCommentParser;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 
 // =============================================================================
@@ -136,8 +134,6 @@ enum TransactionAction {
     Continue,
     /// Break out of the transaction loop (release server)
     Break,
-    /// Break and wait for ROLLBACK from client (aborted transaction)
-    BreakWaitRollback,
 }
 
 impl<S, T> Client<S, T>
@@ -145,22 +141,6 @@ where
     S: tokio::io::AsyncRead + std::marker::Unpin,
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    /// Send error response for aborted transaction state
-    async fn send_aborted_transaction_error(&mut self) -> Result<(), Error> {
-        let mut buf = error_message(
-            "current transaction is aborted, commands ignored until end of transaction block",
-            "25P02",
-        );
-        // ReadyForQuery with state 'E'
-        let mut z = BytesMut::new();
-        z.put_u8(b'Z');
-        z.put_i32(5);
-        z.put_u8(b'E');
-        buf.put(z);
-        self.stats.idle_write();
-        write_all_flush(&mut self.write, &buf).await
-    }
-
     /// Complete transaction statistics and check if server should be released
     /// Returns true if the transaction loop should break (server should be released)
     #[inline(always)]
@@ -194,67 +174,6 @@ where
             ));
         }
         Ok(())
-    }
-
-    /// Wait for a ROLLBACK from client after server entered aborted transaction state.
-    /// For any incoming message except a Simple Query with ROLLBACK, respond with:
-    /// - ErrorResponse (SQLSTATE 25P02) and ReadyForQuery with status 'E' (failed tx)
-    ///   For a Simple Query 'ROLLBACK', respond with:
-    ///   - CommandComplete("ROLLBACK") and ReadyForQuery with status 'I' (idle)
-    pub async fn wait_rollback(&mut self) -> Result<(), Error> {
-        loop {
-            // Read next client message
-            let message = match read_message(&mut self.read, self.max_memory_usage).await {
-                Ok(message) => message,
-                Err(err) => return self.process_error(err).await,
-            };
-
-            let code = message[0] as char;
-            match code {
-                // Terminate
-                'X' => {
-                    debug!("Client {} sent Terminate [X]", self.addr);
-                    self.stats.disconnect();
-                    return Ok(());
-                }
-                // Simple Query
-                'Q' => {
-                    // Parse query string (null-terminated) - work with &str to avoid allocation
-                    let sql = if message.len() >= 6 {
-                        let payload = &message[5..];
-                        // strip trailing NUL if present
-                        let end = payload
-                            .iter()
-                            .position(|b| *b == 0)
-                            .unwrap_or(payload.len());
-                        std::str::from_utf8(&payload[..end]).unwrap_or("")
-                    } else {
-                        ""
-                    };
-                    let sql_without_comments = SqlCommentParser::new(sql).remove_comment_sql();
-                    let command = sql_without_comments.trim().trim_end_matches(';').trim();
-                    if command.eq_ignore_ascii_case("rollback")
-                        || command.eq_ignore_ascii_case("commit")
-                    {
-                        // Send CommandComplete + ReadyForQuery(Idle)
-                        // Pre-allocate buffer: command_complete ~20 bytes + ready_for_query 6 bytes
-                        let mut res = BytesMut::with_capacity(32);
-                        res.put(command_complete("ROLLBACK"));
-                        res.put(ready_for_query(false)); // Idle
-                        self.stats.idle_write();
-                        write_all_flush(&mut self.write, &res).await?;
-                        return Ok(());
-                    } else {
-                        self.send_aborted_transaction_error().await?;
-                        // Continue waiting for rollback
-                    }
-                }
-                // For any other kind of message, reply with the same error and continue
-                _ => {
-                    self.send_aborted_transaction_error().await?;
-                }
-            }
-        }
     }
 
     /// Handle cancel mode - when client wants to cancel a previously issued query.
@@ -369,10 +288,6 @@ where
             self.server_parameters.get_application_name(),
         );
 
-        if server.in_aborted() {
-            return Ok(TransactionAction::BreakWaitRollback);
-        }
-
         if self.complete_transaction_if_needed(server, false) {
             self.stats.idle_read();
             return Ok(TransactionAction::Break);
@@ -459,9 +374,6 @@ where
         if self.complete_transaction_if_needed(server, true) {
             return Ok(TransactionAction::Break);
         }
-        if server.in_aborted() {
-            return Ok(TransactionAction::BreakWaitRollback);
-        }
 
         Ok(TransactionAction::Continue)
     }
@@ -543,9 +455,7 @@ where
         };
 
         let mut query_start_at: quanta::Instant;
-        let mut wait_rollback_from_client: bool;
         loop {
-            wait_rollback_from_client = false;
             self.stats.idle_read();
             let message = match read_message(&mut self.read, self.max_memory_usage).await {
                 Ok(message) => message,
@@ -844,10 +754,6 @@ where
                     match action {
                         TransactionAction::Continue => {}
                         TransactionAction::Break => break,
-                        TransactionAction::BreakWaitRollback => {
-                            wait_rollback_from_client = true;
-                            break;
-                        }
                     }
                 }
                 // Check if shutdown is in progress - if so, mark server as bad to release PG connection
@@ -883,11 +789,6 @@ where
                     .await?;
                 self.stats.disconnect();
                 return Ok(());
-            }
-
-            if wait_rollback_from_client {
-                // release from server and wait rollback from client;
-                self.wait_rollback().await?;
             }
 
             self.stats.idle_read();
@@ -995,7 +896,7 @@ where
             self.stats.active_idle();
 
             // Early exit check
-            if !server.is_data_available() || server.in_aborted() {
+            if !server.is_data_available() {
                 break;
             }
         }

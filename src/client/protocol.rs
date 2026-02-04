@@ -120,6 +120,12 @@ where
             }
             // Add directly to buffer
             self.buffer.put(&message[..]);
+            // Track operation for correct expected_responses calculation in Flush
+            self.prepared
+                .batch_operations
+                .push(BatchOperation::ParseSent {
+                    statement_name: String::new(),
+                });
             return Ok(());
         }
 
@@ -302,6 +308,10 @@ where
         if !self.prepared.enabled {
             debug!("Anonymous bind message");
             self.buffer.put(&message[..]);
+            // Track operation for correct expected_responses calculation in Flush
+            self.prepared.batch_operations.push(BatchOperation::Bind {
+                statement_name: String::new(),
+            });
             return Ok(());
         }
 
@@ -374,6 +384,21 @@ where
         if !self.prepared.enabled {
             debug!("Anonymous describe message");
             self.buffer.put(&message[..]);
+            // Track operation for correct expected_responses calculation in Flush
+            // Describe message format: 'D' + len(4) + target(1) + name + '\0'
+            // target is at byte 5: 'S' for statement (2 responses), 'P' for portal (1 response)
+            let target = *message.get(5).unwrap_or(&b'S') as char;
+            if target == 'P' {
+                self.prepared
+                    .batch_operations
+                    .push(BatchOperation::DescribePortal);
+            } else {
+                self.prepared
+                    .batch_operations
+                    .push(BatchOperation::Describe {
+                        statement_name: String::new(),
+                    });
+            }
             return Ok(());
         }
 
