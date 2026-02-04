@@ -4,6 +4,12 @@ title: Changelog
 
 # Changelog
 
+### 3.2.0 <small>Feb 3, 2026</small> { id="3.2.0" }
+
+**Performance:**
+
+- **Removed timeout-based waiting in async protocol**: The pooler now tracks expected responses based on batch operations (Parse, Bind, Execute, etc.) and exits immediately when all responses are received. This eliminates unnecessary latency in pipeline/async workloads.
+
 ### 3.1.8 <small>Jan 31, 2026</small> { id="3.1.8" }
 
 **Bug Fixes:**
