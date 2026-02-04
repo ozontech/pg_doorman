@@ -21,14 +21,19 @@ func Test_Rollback(t *testing.T) {
 	_, err = tx.Exec(`select 1`)
 	assert.NoError(t, err)
 	var count int
-	// 2 backends in non-idle
+	// Check backend is in transaction
 	assert.NoError(t, db.QueryRow("select count(*) from pg_stat_activity where usename = 'example_user_rollback' and state = 'idle in transaction'").Scan(&count))
 	assert.Equal(t, 1, count)
 	_, err = tx.Exec("aaaaaaa")
 	assert.Error(t, err)
-	// auto-rollback
+	// After error, backend is in aborted state until client sends ROLLBACK
+	time.Sleep(100 * time.Millisecond)
+	assert.NoError(t, db.QueryRow("select count(*) from pg_stat_activity where usename = 'example_user_rollback' and state = 'idle in transaction (aborted)'").Scan(&count))
+	assert.Equal(t, 1, count)
+	// Client explicitly rolls back
+	_ = tx.Rollback()
+	// After rollback, backend should not be in aborted state
 	time.Sleep(100 * time.Millisecond)
 	assert.NoError(t, db.QueryRow("select count(*) from pg_stat_activity where usename = 'example_user_rollback' and state = 'idle in transaction (aborted)'").Scan(&count))
 	assert.Equal(t, 0, count)
-	_ = tx.Rollback()
 }

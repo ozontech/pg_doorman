@@ -31,12 +31,6 @@ use super::server_backend::Server;
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
 /// CommandComplete payload for DECLARE CURSOR statements (requires CLOSE ALL cleanup)
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
-/// CommandComplete payload for SAVEPOINT statements (enables savepoint mode)
-const COMMAND_SAVEPOINT: &[u8; 10] = b"SAVEPOINT\0";
-/// CommandComplete payload for COMMIT statements
-const COMMAND_COMMIT: &[u8; 7] = b"COMMIT\0";
-/// CommandComplete payload for ROLLBACK statements
-const COMMAND_ROLLBACK: &[u8; 9] = b"ROLLBACK\0";
 /// CommandComplete payload for DEALLOCATE ALL (clears prepared statement cache)
 const COMMAND_COMPLETE_BY_DEALLOCATE_ALL: &[u8; 15] = b"DEALLOCATE ALL\0";
 /// CommandComplete payload for DISCARD ALL (clears prepared statement cache)
@@ -195,20 +189,16 @@ fn handle_ready_for_query(server: &mut Server, message: &mut BytesMut) -> Result
     match transaction_state {
         // 'T' - In transaction block
         'T' => {
-            server.is_aborted = false;
             server.in_transaction = true;
         }
 
         // 'I' - Idle (not in transaction)
         'I' => {
-            server.is_aborted = false;
             server.in_transaction = false;
-            server.use_savepoint = false;
         }
 
         // 'E' - In failed transaction block (requires ROLLBACK)
         'E' => {
-            server.is_aborted = true;
             server.in_transaction = true;
             if let Ok(msg) = PgErrorMsg::parse(message) {
                 error!(
@@ -323,15 +313,6 @@ fn handle_command_complete(server: &mut Server, message: &BytesMut) {
     // Check for commands that require cleanup at connection checkin
     if message.len() == 4 && &message[..] == COMMAND_COMPLETE_BY_SET {
         server.cleanup_state.needs_cleanup_set = true;
-    }
-    if message.len() == 10 && &message[..] == COMMAND_SAVEPOINT {
-        server.use_savepoint = true;
-    }
-    if message.len() == 7 && &message[..] == COMMAND_COMMIT {
-        server.use_savepoint = false;
-    }
-    if message.len() == 9 && &message[..] == COMMAND_ROLLBACK {
-        server.use_savepoint = false;
     }
     if message.len() == 15 && &message[..] == COMMAND_COMPLETE_BY_DECLARE {
         server.cleanup_state.needs_cleanup_declare = true;

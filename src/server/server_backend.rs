@@ -65,10 +65,6 @@ pub struct Server {
     /// Transaction state: true if the server is currently inside a transaction block.
     pub(crate) in_transaction: bool,
 
-    /// Aborted transaction state: true if the current transaction has failed and requires ROLLBACK.
-    /// When true, the server will reject all commands except ROLLBACK/COMMIT.
-    pub(crate) is_aborted: bool,
-
     /// Indicates whether more data is available from the server to be read.
     /// Set to false when ReadyForQuery message is received.
     pub(crate) data_available: bool,
@@ -115,9 +111,6 @@ pub struct Server {
     /// Configuration flag: if true, execute cleanup statements (RESET ALL, etc.) on dirty connections
     /// before returning them to the pool. If false, discard dirty connections instead.
     cleanup_connections: bool,
-
-    /// Transaction savepoint mode: if true, use savepoints for nested transaction control.
-    pub(crate) use_savepoint: bool,
 
     /// Configuration flag: if true, log when server parameters change for debugging purposes.
     pub(crate) log_client_parameter_status_changes: bool,
@@ -274,13 +267,6 @@ impl Server {
         self.in_transaction
     }
 
-    /// If the server is in a transaction and the transaction was aborted.
-    /// If the client disconnects while the server is in a transaction, we will clean it up.
-    #[inline(always)]
-    pub fn in_aborted(&self) -> bool {
-        self.in_transaction && self.is_aborted && (!self.use_savepoint)
-    }
-
     /// Returns true if the server is currently in COPY mode (COPY IN or COPY OUT).
     /// In COPY mode, data transfer follows a different protocol than normal queries.
     #[inline(always)]
@@ -366,9 +352,7 @@ impl Server {
             self.cleanup_state.reset();
         }
         self.in_transaction = false;
-        self.is_aborted = false;
         self.in_copy_mode = false;
-        self.use_savepoint = false;
         Ok(())
     }
 
@@ -698,7 +682,6 @@ impl Server {
                         process_id,
                         secret_key,
                         in_transaction: false,
-                        is_aborted: false,
                         in_copy_mode: false,
                         data_available: false,
                         bad: false,
@@ -711,7 +694,6 @@ impl Server {
                         application_name,
                         last_activity: SystemTime::now(),
                         cleanup_connections,
-                        use_savepoint: false,
                         log_client_parameter_status_changes,
                         prepared_statement_cache: match prepared_statement_cache_size {
                             0 => None,
