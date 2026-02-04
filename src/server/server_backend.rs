@@ -81,6 +81,11 @@ pub struct Server {
     /// In async mode, the server doesn't wait for ReadyForQuery after each command.
     async_mode: bool,
 
+    /// Number of expected responses in async mode.
+    /// Decremented when receiving terminating messages (CommandComplete, BindComplete, etc.).
+    /// When reaches 0, we know all expected responses have been received.
+    expected_responses: u32,
+
     /// Connection health flag: true if the connection is broken and should be removed from the pool.
     /// Set to true on protocol errors, I/O errors, or unexpected server behavior.
     pub(crate) bad: bool,
@@ -381,6 +386,33 @@ impl Server {
         self.async_mode = async_mode
     }
 
+    /// Sets the number of expected responses in async mode.
+    /// This is calculated from the batch operations before sending to server.
+    #[inline(always)]
+    pub fn set_expected_responses(&mut self, count: u32) {
+        self.expected_responses = count;
+    }
+
+    /// Returns the current number of expected responses.
+    #[inline(always)]
+    pub fn expected_responses(&self) -> u32 {
+        self.expected_responses
+    }
+
+    /// Decrements the expected response counter.
+    /// Called when receiving terminating messages in async mode.
+    #[inline(always)]
+    pub fn decrement_expected(&mut self) {
+        self.expected_responses = self.expected_responses.saturating_sub(1);
+    }
+
+    /// Resets expected responses to 0.
+    /// Called on ErrorResponse in async mode since error aborts remaining operations.
+    #[inline(always)]
+    pub fn reset_expected_responses(&mut self) {
+        self.expected_responses = 0;
+    }
+
     fn add_prepared_statement_to_cache(&mut self, name: &str) -> Option<String> {
         prepared_statements::add_to_cache(&mut self.prepared_statement_cache, &self.stats, name)
     }
@@ -671,6 +703,7 @@ impl Server {
                         data_available: false,
                         bad: false,
                         async_mode: false,
+                        expected_responses: 0,
                         cleanup_state: CleanupState::new(),
                         client_server_map,
                         connected_at: chrono::offset::Utc::now().naive_utc(),

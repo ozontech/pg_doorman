@@ -387,24 +387,13 @@ where
     loop {
         server.stats.wait_reading();
 
-        // In async mode, use a short timeout to avoid blocking when no more data available
-        let (code_u8, message_len) = if server.is_async() {
-            match tokio::time::timeout(
-                Duration::from_millis(100),
-                read_message_header(&mut server.stream),
-            )
-            .await
-            {
-                Ok(result) => result?,
-                Err(_) => {
-                    // Timeout - no more data available in async mode
-                    server.data_available = false;
-                    break;
-                }
-            }
-        } else {
-            read_message_header(&mut server.stream).await?
-        };
+        // In async mode, check if all expected responses have been received
+        if server.is_async() && server.expected_responses() == 0 {
+            server.data_available = false;
+            break;
+        }
+
+        let (code_u8, message_len) = read_message_header(&mut server.stream).await?;
         // Handle large DataRow messages that exceed max_message_size
         if server.max_message_size > 0
             && message_len > server.max_message_size
@@ -472,11 +461,19 @@ where
             // ErrorResponse - server encountered an error
             'E' => {
                 handle_error_response(server, &mut message);
+                // In async mode, error aborts remaining operations in pipeline
+                if server.is_async() {
+                    server.reset_expected_responses();
+                }
             }
 
             // CommandComplete - command executed successfully
             'C' => {
                 handle_command_complete(server, &message);
+                // In async mode, this ends an Execute operation
+                if server.is_async() {
+                    server.decrement_expected();
+                }
             }
 
             // ParameterStatus - server parameter changed
@@ -524,7 +521,7 @@ where
             // Response to Parse message in extended query protocol
             '1' => {
                 if server.is_async() {
-                    server.data_available = false;
+                    server.decrement_expected();
                 }
             }
 
@@ -532,7 +529,7 @@ where
             // Response to Bind message in extended query protocol
             '2' => {
                 if server.is_async() {
-                    server.data_available = false;
+                    server.decrement_expected();
                 }
             }
 
@@ -540,7 +537,7 @@ where
             // Response to Close message in extended query protocol
             '3' => {
                 if server.is_async() {
-                    server.data_available = false;
+                    server.decrement_expected();
                 }
             }
 
@@ -548,7 +545,7 @@ where
             // Response to Describe message for a statement
             't' => {
                 if server.is_async() {
-                    server.data_available = false;
+                    server.decrement_expected();
                 }
             }
 
@@ -556,7 +553,7 @@ where
             // Indicates that Execute completed but portal still has rows
             's' => {
                 if server.is_async() {
-                    server.data_available = false;
+                    server.decrement_expected();
                 }
             }
 
@@ -565,11 +562,27 @@ where
             // https://www.postgresql.org/docs/current/protocol-flow.html
             'n' => {
                 if server.is_async() {
-                    server.data_available = false;
+                    server.decrement_expected();
                 }
             }
 
-            // Anything else, e.g. errors, notices, etc.
+            // RowDescription
+            // Response to Describe for a portal (or statement if it returns rows)
+            'T' => {
+                if server.is_async() {
+                    server.decrement_expected();
+                }
+            }
+
+            // EmptyQueryResponse
+            // Response to Execute with an empty query string
+            'I' => {
+                if server.is_async() {
+                    server.decrement_expected();
+                }
+            }
+
+            // Anything else, e.g. notices, etc.
             // Keep buffering until ReadyForQuery shows up.
             _ => (),
         };

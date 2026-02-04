@@ -1,5 +1,6 @@
 .idea
 .junie
+/.beads
 /target
 .DS_Store
 .direnv
@@ -22,3 +23,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# Claude AI agent rules
+.clinerules
+.clauderules
