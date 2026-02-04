@@ -35,6 +35,14 @@ pub struct Args {
         help = "inherit listener file descriptor from parent process (for binary upgrade in foreground mode)"
     )]
     pub inherit_fd: Option<i32>,
+
+    #[arg(
+        short = 't',
+        long = "test-config",
+        default_value_t = false,
+        help = "test configuration file and exit"
+    )]
+    pub test_config: bool,
 }
 
 #[derive(Subcommand, Debug)]

@@ -137,6 +137,15 @@ impl DoormanWorld {
                 userlist_file.path().to_str().unwrap(),
             );
         }
+        if let Some(ref config_file) = self.doorman_config_file {
+            result = result.replace(
+                "${DOORMAN_CONFIG_FILE}",
+                config_file.path().to_str().unwrap(),
+            );
+        }
+
+        // pg_doorman binary path (set at compile time by cargo)
+        result = result.replace("${DOORMAN_BINARY}", env!("CARGO_BIN_EXE_pg_doorman"));
 
         // Benchmarking parameters from environment variables
         let doorman_workers = std::env::var("BENCH_DOORMAN_WORKERS")
