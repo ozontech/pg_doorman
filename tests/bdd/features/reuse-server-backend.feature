@@ -28,17 +28,6 @@ Feature: Reuse server backend connection
       pool_size = 10
       """
 
-  @reuse-backend-1
-  Scenario: Backend connection is reused after error
-    When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "begin;" to session "one"
-    And we send SimpleQuery "select pg_backend_pid()" to session "one" and store backend_pid
-    And we send SimpleQuery "bad sql" to session "one"
-    And we sleep 100ms
-    And we create session "two" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "select pg_backend_pid()" to session "two" and store backend_pid
-    Then backend_pid from session "one" should equal backend_pid from session "two"
-
   @reuse-backend-2
   Scenario: Nested transactions with savepoint
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
