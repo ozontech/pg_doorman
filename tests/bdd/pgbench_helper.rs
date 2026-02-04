@@ -1103,7 +1103,9 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     if let Some(jobs) = pgbench_jobs {
         env_info.push(format!("- **pgbench jobs**: {} (global override)", jobs));
     } else {
-        env_info.push("- **pgbench jobs**: variable (c1: 1, c40: 4, c120: 4, c500: 4, c10k: 4)".to_string());
+        env_info.push(
+            "- **pgbench jobs**: variable (c1: 1, c40: 4, c120: 4, c500: 4, c10k: 4)".to_string(),
+        );
     }
 
     // Record end time

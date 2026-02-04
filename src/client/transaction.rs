@@ -357,6 +357,11 @@ where
         server: &mut Server,
         query_start_at: quanta::Instant,
     ) -> Result<TransactionAction, Error> {
+        // Simple query always ends with ReadyForQuery, so disable async mode
+        // to wait for 'Z' instead of using expected_responses counter
+        server.set_async_mode(false);
+        server.set_expected_responses(0);
+
         self.execute_server_roundtrip(Some(message), server).await?;
         self.stats.query();
         server.stats.query(
@@ -397,6 +402,22 @@ where
             self.stats.set_async_client();
             debug!("Client requested flush, going async");
 
+            // Calculate expected responses from batch operations BEFORE any clearing
+            let mut expected: u32 = 0;
+            for op in &self.prepared.batch_operations {
+                match op {
+                    BatchOperation::ParseSent { .. } => expected += 1, // ParseComplete
+                    BatchOperation::Bind { .. } => expected += 1,      // BindComplete
+                    BatchOperation::Describe { .. } => expected += 2,  // ParamDesc + RowDesc/NoData
+                    BatchOperation::DescribePortal => expected += 1,   // RowDesc/NoData
+                    BatchOperation::Execute => expected += 1, // CommandComplete/EmptyQuery/Suspended
+                    BatchOperation::Close => expected += 1,   // CloseComplete
+                    BatchOperation::ParseSkipped { .. } => {} // No server response expected
+                }
+            }
+            server.set_expected_responses(expected);
+            debug!("Flush: expecting {} responses from server", expected);
+
             // If there are skipped Parse operations, send synthetic ParseComplete to client
             // BEFORE waiting for server response. This is necessary because:
             // 1. Parse was skipped (statement already cached), so server didn't receive it
@@ -420,6 +441,7 @@ where
         } else {
             // For Sync, exit async mode
             server.set_async_mode(false);
+            server.set_expected_responses(0);
         }
 
         self.execute_server_roundtrip(None, server).await?;
