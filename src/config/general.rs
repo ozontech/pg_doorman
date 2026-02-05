@@ -76,6 +76,12 @@ pub struct General {
     #[serde(default = "General::default_retain_connections_time")]
     pub retain_connections_time: Duration,
 
+    /// Maximum number of idle connections to close per retain cycle.
+    /// 0 means unlimited (close all idle connections that exceed timeout).
+    /// Default: 0 (unlimited)
+    #[serde(default = "General::default_retain_connections_max")]
+    pub retain_connections_max: usize,
+
     #[serde(default = "General::default_server_round_robin")] // False
     pub server_round_robin: bool,
 
@@ -170,6 +176,10 @@ impl General {
 
     pub fn default_retain_connections_time() -> Duration {
         Duration::from_secs(60) // 60 seconds
+    }
+
+    pub fn default_retain_connections_max() -> usize {
+        0 // unlimited
     }
 
     pub fn default_connect_timeout() -> Duration {
@@ -357,6 +367,7 @@ impl Default for General {
             admin_password: String::from("admin"),
             server_lifetime: Self::default_server_lifetime(),
             retain_connections_time: Self::default_retain_connections_time(),
+            retain_connections_max: Self::default_retain_connections_max(),
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
