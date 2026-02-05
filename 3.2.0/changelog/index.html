@@ -1529,6 +1529,9 @@
 <li>
 <p><strong>Configuration validation before binary upgrade</strong>: When receiving SIGINT for graceful shutdown/binary upgrade, the server now validates the new binary's configuration using <code>-t</code> flag before proceeding. If the configuration test fails, the shutdown is cancelled and critical error messages are logged to alert the operator. This prevents accidental downtime from deploying a binary with invalid configuration.</p>
 </li>
+<li>
+<p><strong>New <code>retain_connections_max</code> configuration parameter</strong>: Controls the maximum number of idle connections to close per retain cycle. When set to <code>0</code> (default), all idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code> are closed immediately, ensuring aggressive cleanup of unused connections. Previously, only 1 connection was closed per cycle, which could lead to slow connection cleanup when many connections became idle simultaneously. Connection closures are now logged for better observability.</p>
+</li>
 </ul>
 <p><strong>Simplification:</strong></p>
 <ul>

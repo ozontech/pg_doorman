@@ -1106,6 +1106,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#retain_connections_max" class="md-nav__link">
+    <span class="md-ellipsis">
+      retain_connections_max
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#server_round_robin" class="md-nav__link">
     <span class="md-ellipsis">
       server_round_robin
@@ -1751,6 +1760,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#retain_connections_max" class="md-nav__link">
+    <span class="md-ellipsis">
+      retain_connections_max
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#server_round_robin" class="md-nav__link">
     <span class="md-ellipsis">
       server_round_robin
@@ -2174,6 +2192,14 @@ Modern tokio versions handle this well by default, so this parameter is optional
 <h3 id="server_lifetime">server_lifetime</h3>
 <p>Server lifetime in milliseconds.</p>
 <p>Default: <code>300000</code> (5 min).</p>
+<h3 id="retain_connections_max">retain_connections_max</h3>
+<p>Maximum number of idle connections to close per retain cycle.
+When set to <code>0</code>, all idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code> will be closed immediately.
+When set to a positive value, at most that many connections will be closed per cycle across all pools.</p>
+<p>This parameter controls how aggressively pg_doorman closes idle connections. With the default value of <code>0</code> (unlimited),
+all expired connections are closed in each retain cycle, ensuring quick cleanup. If you need to limit the rate of
+connection closures (e.g., to reduce load spikes), set this to a positive value.</p>
+<p>Default: <code>0</code> (unlimited).</p>
 <h3 id="server_round_robin">server_round_robin</h3>
 <p>In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
 By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.</p>
