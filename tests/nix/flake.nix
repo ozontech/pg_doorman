@@ -114,6 +114,10 @@
             # .NET SDK
             dotnet-sdk_10
 
+            # Java
+            jdk21
+            maven
+
             # Rust toolchain
             rustToolchain
 
@@ -249,6 +253,8 @@ EOF
                 "DOTNET_CLI_HOME=/root/.dotnet"
                 "DOTNET_NOLOGO=1"
                 "NPM_CONFIG_PREFIX=/root/.npm-global"
+                "JAVA_HOME=${pkgs.jdk21}"
+                "M2_HOME=${pkgs.maven}"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "PKG_CONFIG_PATH=${pkgs.openssl.dev}/lib/pkgconfig"
@@ -282,6 +288,8 @@ EOF
               export DOTNET_CLI_HOME="$HOME/.dotnet"
               export DOTNET_NOLOGO=1
               export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+              export JAVA_HOME="${pkgs.jdk21}"
+              export M2_HOME="${pkgs.maven}"
 
               export PATH="$CARGO_HOME/bin:$GOPATH/bin:$NPM_CONFIG_PREFIX/bin:$PATH"
 
@@ -293,6 +301,8 @@ EOF
               echo "  - Python: $(python3 --version)"
               echo "  - .NET: $(dotnet --version)"
               echo "  - Rust: $(rustc --version)"
+              echo "  - Java: $(java --version 2>&1 | head -1)"
+              echo "  - Maven: $(mvn --version 2>&1 | head -1)"
               echo ""
               echo "Run 'setup-test-deps' to install language-specific dependencies"
             '';
