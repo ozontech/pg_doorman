@@ -14,6 +14,12 @@ title: Changelog
 
 - **New `retain_connections_max` configuration parameter**: Controls the maximum number of idle connections to close per retain cycle. When set to `0` (default), all idle connections that exceed `idle_timeout` or `server_lifetime` are closed immediately, ensuring aggressive cleanup of unused connections. Previously, only 1 connection was closed per cycle, which could lead to slow connection cleanup when many connections became idle simultaneously. Connection closures are now logged for better observability.
 
+- **New `server_idle_check_timeout` configuration parameter**: Time after which an idle server connection should be checked before being given to a client (default: 30s). This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts. When a connection has been idle longer than this timeout, pg_doorman sends a minimal query (`;`) to verify the connection is alive before returning it to the client. Set to `0` to disable.
+
+- **Enhanced `server_lifetime` enforcement**: The `server_lifetime` parameter now applies to all connections, not just idle ones. Connections that exceed their lifetime are now rejected during recycle (when being reused), ensuring that long-running connections are properly rotated regardless of their activity state.
+
+- **Oldest-first connection closure**: When `retain_connections_max > 0`, connections are now closed in order of age (oldest first) rather than in queue order. This ensures that the oldest connections are always prioritized for closure, providing more predictable connection rotation behavior.
+
 **Simplification:**
 
 - **Removed `wait_rollback` mechanism**: The pooler no longer attempts to automatically wait for ROLLBACK from clients when a transaction enters an aborted state. This complex mechanism was causing protocol desynchronization issues with async clients and extended query protocol. Server connections in aborted transactions are now simply returned to the pool and cleaned up normally via ROLLBACK during checkin.

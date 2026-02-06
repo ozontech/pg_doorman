@@ -95,6 +95,13 @@ general:
   # Default: 0 (unlimited)
   retain_connections_max: 0
 
+  # Time after which an idle server connection should be checked before being
+  # given to a client. This helps detect dead connections caused by PostgreSQL
+  # restart, network issues, or server-side idle timeouts.
+  # 0 means disabled (no check).
+  # Default: "30s"
+  server_idle_check_timeout: "30s"
+
   # Graceful shutdown timeout.
   # Supports human-readable format: "10s", "10000ms", or 10000 (milliseconds)
   # Default: "10s" (10000 ms)

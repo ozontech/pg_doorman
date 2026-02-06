@@ -11,41 +11,47 @@ impl ConnectionPool {
     /// Retain pool connections based on idle timeout and lifetime settings.
     /// Returns the number of connections closed.
     /// If `max` is 0, all expired connections will be closed (unlimited).
-    /// If `max` > 0, at most `max` connections will be closed across all pools.
+    /// If `max` > 0, at most `max` connections will be closed across all pools,
+    /// prioritizing the oldest connections first.
     pub fn retain_pool_connections(&self, count: Arc<AtomicUsize>, max: usize) -> usize {
-        let status_before = self.database.status();
-        let size_before = status_before.size;
+        let idle_timeout_ms = self.settings.idle_timeout_ms;
+        let life_time_ms = self.settings.life_time_ms;
 
-        self.database.retain(|_, metrics| {
-            // If max > 0, check if we've reached the limit
-            if max > 0 && count.load(Ordering::Relaxed) >= max {
-                return true;
-            }
+        // Closure to determine if a connection should be closed
+        let should_close = |_: &crate::server::Server, metrics: &crate::pool::Metrics| -> bool {
             if let Some(v) = metrics.recycled {
-                if (v.elapsed().as_millis() as u64) > self.settings.idle_timeout_ms {
-                    count.fetch_add(1, Ordering::Relaxed);
-                    return false;
+                if (v.elapsed().as_millis() as u64) > idle_timeout_ms {
+                    return true;
                 }
             }
-            if (metrics.age().as_millis() as u64) > self.settings.life_time_ms {
-                count.fetch_add(1, Ordering::Relaxed);
-                return false;
+            if (metrics.age().as_millis() as u64) > life_time_ms {
+                return true;
             }
-            true
-        });
+            false
+        };
 
-        let status_after = self.database.status();
-        let closed = size_before.saturating_sub(status_after.size);
+        // Calculate remaining quota for this pool
+        let current_count = count.load(Ordering::Relaxed);
+        let remaining = if max > 0 {
+            max.saturating_sub(current_count)
+        } else {
+            0 // 0 means unlimited
+        };
+
+        // Use retain_oldest_first which sorts by age when max > 0
+        let closed = self.database.retain_oldest_first(should_close, remaining);
+        count.fetch_add(closed, Ordering::Relaxed);
 
         if closed > 0 {
             info!(
-                "[pool: {}][user: {}] closed {} idle connection{} (idle_timeout: {}ms, lifetime: {}ms)",
+                "[pool: {}][user: {}] closed {} idle connection{} (idle_timeout: {}ms, lifetime: {}ms, oldest_first: {})",
                 self.address.pool_name,
                 self.address.username,
                 closed,
                 if closed == 1 { "" } else { "s" },
-                self.settings.idle_timeout_ms,
-                self.settings.life_time_ms,
+                idle_timeout_ms,
+                life_time_ms,
+                max > 0,
             );
         }
 

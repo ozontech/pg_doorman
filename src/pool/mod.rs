@@ -1,6 +1,6 @@
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
-use log::info;
+use log::{debug, info, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
@@ -203,6 +203,9 @@ impl ConnectionPool {
                     prepared_statements_cache_size,
                     application_name,
                     config.general.max_concurrent_creates,
+                    config.general.server_lifetime.as_millis(),
+                    config.general.server_idle_check_timeout.as_millis(),
+                    config.general.connect_timeout.as_std(),
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -341,6 +344,15 @@ pub struct ServerPool {
 
     /// Counter for total connections created (for logging).
     connection_counter: AtomicU64,
+
+    /// Server lifetime in milliseconds (0 = unlimited).
+    lifetime_ms: u64,
+
+    /// Time after which idle connections should be checked before reuse (0 = disabled).
+    idle_check_timeout_ms: u64,
+
+    /// Connect timeout for alive checks.
+    connect_timeout: Duration,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -379,6 +391,9 @@ impl ServerPool {
         prepared_statement_cache_size: usize,
         application_name: String,
         max_concurrent_creates: usize,
+        lifetime_ms: u64,
+        idle_check_timeout_ms: u64,
+        connect_timeout: Duration,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -391,6 +406,9 @@ impl ServerPool {
             create_semaphore: Arc::new(Semaphore::new(max_concurrent_creates)),
             connection_counter: AtomicU64::new(0),
             application_name,
+            lifetime_ms,
+            idle_check_timeout_ms,
+            connect_timeout,
         }
     }
 
@@ -445,10 +463,45 @@ impl ServerPool {
     }
 
     /// Checks if the connection can be recycled.
-    pub async fn recycle(&self, conn: &mut Server, _: &Metrics) -> RecycleResult {
+    /// Performs lifetime check and alive check for idle connections.
+    pub async fn recycle(&self, conn: &mut Server, metrics: &Metrics) -> RecycleResult {
         if conn.is_bad() {
             return Err(RecycleError::StaticMessage("Bad connection"));
         }
+
+        // Check server_lifetime - applies to all connections, not just idle
+        if self.lifetime_ms > 0 {
+            let age_ms = metrics.age().as_millis() as u64;
+            if age_ms > self.lifetime_ms {
+                warn!(
+                    "Connection {} exceeded lifetime ({}ms > {}ms)",
+                    conn, age_ms, self.lifetime_ms
+                );
+                return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
+            }
+        }
+
+        // Check if connection was idle too long and needs alive check
+        if self.idle_check_timeout_ms > 0 {
+            if let Some(recycled) = metrics.recycled {
+                let idle_time_ms = recycled.elapsed().as_millis() as u64;
+                if idle_time_ms > self.idle_check_timeout_ms {
+                    debug!(
+                        "Connection {} idle for {}ms, checking alive...",
+                        conn, idle_time_ms
+                    );
+                    if conn.check_alive(self.connect_timeout).await.is_err() {
+                        warn!(
+                            "Connection {} failed alive check after {}ms idle",
+                            conn, idle_time_ms
+                        );
+                        return Err(RecycleError::StaticMessage("Connection failed alive check"));
+                    }
+                    debug!("Connection {} passed alive check", conn);
+                }
+            }
+        }
+
         Ok(())
     }
 }

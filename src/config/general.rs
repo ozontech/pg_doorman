@@ -82,6 +82,14 @@ pub struct General {
     #[serde(default = "General::default_retain_connections_max")]
     pub retain_connections_max: usize,
 
+    /// Time after which an idle server connection should be checked before being
+    /// given to a client. This helps detect dead connections caused by PostgreSQL
+    /// restart, network issues, or server-side idle timeouts.
+    /// 0 means disabled (no check).
+    /// Default: 30s
+    #[serde(default = "General::default_server_idle_check_timeout")]
+    pub server_idle_check_timeout: Duration,
+
     #[serde(default = "General::default_server_round_robin")] // False
     pub server_round_robin: bool,
 
@@ -180,6 +188,10 @@ impl General {
 
     pub fn default_retain_connections_max() -> usize {
         0 // unlimited
+    }
+
+    pub fn default_server_idle_check_timeout() -> Duration {
+        Duration::from_secs(30) // 30 seconds
     }
 
     pub fn default_connect_timeout() -> Duration {
@@ -368,6 +380,7 @@ impl Default for General {
             server_lifetime: Self::default_server_lifetime(),
             retain_connections_time: Self::default_retain_connections_time(),
             retain_connections_max: Self::default_retain_connections_max(),
+            server_idle_check_timeout: Self::default_server_idle_check_timeout(),
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),

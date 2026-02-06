@@ -63,7 +63,10 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         false, // log_client_parameter_status_changes
         0,     // prepared_statement_cache_size
         "pool_bench".to_string(),
-        4, // max_concurrent_creates
+        4,                       // max_concurrent_creates
+        0,                       // lifetime_ms (0 = unlimited)
+        0,                       // idle_check_timeout_ms (0 = disabled)
+        Duration::from_secs(10), // connect_timeout
     );
 
     // Create Pool with configuration
