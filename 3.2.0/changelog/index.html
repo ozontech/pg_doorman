@@ -1532,6 +1532,15 @@
 <li>
 <p><strong>New <code>retain_connections_max</code> configuration parameter</strong>: Controls the maximum number of idle connections to close per retain cycle. When set to <code>0</code> (default), all idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code> are closed immediately, ensuring aggressive cleanup of unused connections. Previously, only 1 connection was closed per cycle, which could lead to slow connection cleanup when many connections became idle simultaneously. Connection closures are now logged for better observability.</p>
 </li>
+<li>
+<p><strong>New <code>server_idle_check_timeout</code> configuration parameter</strong>: Time after which an idle server connection should be checked before being given to a client (default: 30s). This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts. When a connection has been idle longer than this timeout, pg_doorman sends a minimal query (<code>;</code>) to verify the connection is alive before returning it to the client. Set to <code>0</code> to disable.</p>
+</li>
+<li>
+<p><strong>Enhanced <code>server_lifetime</code> enforcement</strong>: The <code>server_lifetime</code> parameter now applies to all connections, not just idle ones. Connections that exceed their lifetime are now rejected during recycle (when being reused), ensuring that long-running connections are properly rotated regardless of their activity state.</p>
+</li>
+<li>
+<p><strong>Oldest-first connection closure</strong>: When <code>retain_connections_max &gt; 0</code>, connections are now closed in order of age (oldest first) rather than in queue order. This ensures that the oldest connections are always prioritized for closure, providing more predictable connection rotation behavior.</p>
+</li>
 </ul>
 <p><strong>Simplification:</strong></p>
 <ul>

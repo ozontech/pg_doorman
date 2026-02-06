@@ -1115,6 +1115,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#server_idle_check_timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      server_idle_check_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#server_round_robin" class="md-nav__link">
     <span class="md-ellipsis">
       server_round_robin
@@ -1769,6 +1778,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#server_idle_check_timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      server_idle_check_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#server_round_robin" class="md-nav__link">
     <span class="md-ellipsis">
       server_round_robin
@@ -2200,6 +2218,15 @@ When set to a positive value, at most that many connections will be closed per c
 all expired connections are closed in each retain cycle, ensuring quick cleanup. If you need to limit the rate of
 connection closures (e.g., to reduce load spikes), set this to a positive value.</p>
 <p>Default: <code>0</code> (unlimited).</p>
+<h3 id="server_idle_check_timeout">server_idle_check_timeout</h3>
+<p>Time after which an idle server connection should be checked before being given to a client.
+This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts.</p>
+<p>When a connection has been idle in the pool longer than this timeout, pg_doorman will send a minimal query (<code>;</code>)
+to verify the connection is still alive before returning it to the client. If the check fails, the connection
+is discarded and a new one is obtained.</p>
+<p>Set to <code>0</code> to disable the check (not recommended for production environments with potential network instability
+or PostgreSQL restarts).</p>
+<p>Default: <code>30s</code> (30 seconds).</p>
 <h3 id="server_round_robin">server_round_robin</h3>
 <p>In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
 By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.</p>
