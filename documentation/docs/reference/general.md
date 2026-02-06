@@ -313,6 +313,20 @@ connection closures (e.g., to reduce load spikes), set this to a positive value.
 
 Default: `0` (unlimited).
 
+### server_idle_check_timeout
+
+Time after which an idle server connection should be checked before being given to a client.
+This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts.
+
+When a connection has been idle in the pool longer than this timeout, pg_doorman will send a minimal query (`;`)
+to verify the connection is still alive before returning it to the client. If the check fails, the connection
+is discarded and a new one is obtained.
+
+Set to `0` to disable the check (not recommended for production environments with potential network instability
+or PostgreSQL restarts).
+
+Default: `30s` (30 seconds).
+
 ### server_round_robin
 
 In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.

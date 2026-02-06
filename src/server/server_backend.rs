@@ -169,6 +169,29 @@ impl Server {
         Ok(())
     }
 
+    /// Check if the connection is alive by sending a minimal query (`;`).
+    /// Uses the provided timeout for the operation.
+    /// Returns Ok(()) if connection is alive, Err if dead or timeout exceeded.
+    pub async fn check_alive(&mut self, timeout: Duration) -> Result<(), Error> {
+        let query = simple_query(";");
+
+        self.send_and_flush_timeout(&query, timeout).await?;
+
+        let mut noop = tokio::io::sink();
+        loop {
+            match self.recv(&mut noop, None).await {
+                Ok(_) => (),
+                Err(err) => return Err(err),
+            }
+
+            if !self.data_available {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Returns the PostgreSQL backend process ID for this connection.
     /// Used for query cancellation and connection tracking.
     #[inline(always)]

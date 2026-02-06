@@ -529,6 +529,66 @@ impl Pool {
         guard.size -= len_before - guard.vec.len();
     }
 
+    /// Retains connections, closing oldest first when max limit is set.
+    /// If max is 0, behaves like regular retain (closes all matching).
+    /// If max > 0, closes at most `max` connections, prioritizing oldest by creation time.
+    /// Returns the number of connections closed.
+    pub fn retain_oldest_first(
+        &self,
+        should_close: impl Fn(&Server, &Metrics) -> bool,
+        max_to_close: usize,
+    ) -> usize {
+        let mut guard = self.inner.slots.lock();
+
+        if max_to_close == 0 {
+            // Unlimited - close all matching connections
+            let len_before = guard.vec.len();
+            guard
+                .vec
+                .retain_mut(|obj| !should_close(&obj.obj, &obj.metrics));
+            let closed = len_before - guard.vec.len();
+            guard.size -= closed;
+            return closed;
+        }
+
+        // Collect indices of connections that should be closed with their ages
+        let mut candidates: Vec<(usize, u128)> = guard
+            .vec
+            .iter()
+            .enumerate()
+            .filter(|(_, obj)| should_close(&obj.obj, &obj.metrics))
+            .map(|(idx, obj)| (idx, obj.metrics.age().as_millis()))
+            .collect();
+
+        if candidates.is_empty() {
+            return 0;
+        }
+
+        // Sort by age descending (oldest first - highest age value)
+        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Take at most max_to_close oldest connections
+        let to_close: std::collections::HashSet<usize> = candidates
+            .into_iter()
+            .take(max_to_close)
+            .map(|(idx, _)| idx)
+            .collect();
+
+        // Remove selected connections by rebuilding the vec
+        let len_before = guard.vec.len();
+        let mut new_vec = VecDeque::with_capacity(guard.vec.capacity());
+        for (idx, obj) in guard.vec.drain(..).enumerate() {
+            if !to_close.contains(&idx) {
+                new_vec.push_back(obj);
+            }
+        }
+        guard.vec = new_vec;
+
+        let closed = len_before - guard.vec.len();
+        guard.size -= closed;
+        closed
+    }
+
     /// Get current timeout configuration.
     #[inline(always)]
     pub fn timeouts(&self) -> Timeouts {
