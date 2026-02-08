@@ -69,4 +69,15 @@ pub fn configure_tcp_socket(stream: &TcpStream) {
         }
         Err(err) => error!("Could not configure socket: {err}"),
     }
+
+    // TCP_USER_TIMEOUT is only supported on Linux
+    #[cfg(target_os = "linux")]
+    if conf.general.tcp_user_timeout > 0 {
+        match sock_ref
+            .set_tcp_user_timeout(Some(Duration::from_secs(conf.general.tcp_user_timeout)))
+        {
+            Ok(_) => (),
+            Err(err) => error!("Could not configure tcp_user_timeout for socket: {err}"),
+        }
+    }
 }

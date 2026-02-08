@@ -20,6 +20,8 @@ title: Changelog
 
 - **Oldest-first connection closure**: When `retain_connections_max > 0`, connections are now closed in order of age (oldest first) rather than in queue order. This ensures that the oldest connections are always prioritized for closure, providing more predictable connection rotation behavior.
 
+- **New `tcp_user_timeout` configuration parameter**: Sets the `TCP_USER_TIMEOUT` socket option for client connections (in seconds). This helps detect dead client connections faster than keepalive probes when the connection is actively sending data but the remote end has become unreachable. Prevents 15-16 minute delays caused by TCP retransmission timeout. Only supported on Linux. Set to `0` to disable (default).
+
 **Simplification:**
 
 - **Removed `wait_rollback` mechanism**: The pooler no longer attempts to automatically wait for ROLLBACK from clients when a transaction enters an aborted state. This complex mechanism was causing protocol desynchronization issues with async clients and extended query protocol. Server connections in aborted transactions are now simply returned to the pool and cleaned up normally via ROLLBACK during checkin.
