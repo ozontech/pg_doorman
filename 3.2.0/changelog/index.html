@@ -1541,6 +1541,9 @@
 <li>
 <p><strong>Oldest-first connection closure</strong>: When <code>retain_connections_max &gt; 0</code>, connections are now closed in order of age (oldest first) rather than in queue order. This ensures that the oldest connections are always prioritized for closure, providing more predictable connection rotation behavior.</p>
 </li>
+<li>
+<p><strong>New <code>tcp_user_timeout</code> configuration parameter</strong>: Sets the <code>TCP_USER_TIMEOUT</code> socket option for client connections (in seconds). This helps detect dead client connections faster than keepalive probes when the connection is actively sending data but the remote end has become unreachable. Prevents 15-16 minute delays caused by TCP retransmission timeout. Only supported on Linux. Set to <code>0</code> to disable (default).</p>
+</li>
 </ul>
 <p><strong>Simplification:</strong></p>
 <ul>

@@ -1187,6 +1187,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#tcp_user_timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      tcp_user_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unix_socket_buffer_size" class="md-nav__link">
     <span class="md-ellipsis">
       unix_socket_buffer_size
@@ -1850,6 +1859,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#tcp_user_timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      tcp_user_timeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unix_socket_buffer_size" class="md-nav__link">
     <span class="md-ellipsis">
       unix_socket_buffer_size
@@ -2250,6 +2268,17 @@ you can consider creating a separate pool for each application and using the <co
 <p>Default: <code>5</code>.</p>
 <h3 id="tcp_keepalives_interval">tcp_keepalives_interval</h3>
 <p>Default: <code>1</code>.</p>
+<h3 id="tcp_user_timeout">tcp_user_timeout</h3>
+<p>Sets the <code>TCP_USER_TIMEOUT</code> socket option for client connections (in seconds). This option specifies
+the maximum time that transmitted data may remain unacknowledged before TCP will forcibly close the
+connection. This helps detect dead client connections faster than keepalive probes when the connection
+is actively sending data but the remote end has become unreachable (e.g., network failure, client crash).</p>
+<p>When set to a non-zero value, if data remains unacknowledged for this duration, the connection will
+be terminated. This is particularly useful to avoid 15-16 minute delays caused by TCP retransmission
+timeout when keepalive cannot help (e.g., during active data transmission).</p>
+<p><strong>Note:</strong> This option is only supported on Linux. On other operating systems, this setting is ignored.</p>
+<p>Set to <code>0</code> to disable (use OS default).</p>
+<p>Default: <code>0</code> (disabled).</p>
 <h3 id="unix_socket_buffer_size">unix_socket_buffer_size</h3>
 <p>Buffer size for read and write operations when connecting to PostgreSQL via a unix socket.</p>
 <p>Default: <code>1048576</code>.</p>
