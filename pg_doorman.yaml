@@ -134,6 +134,12 @@ general:
   # Default: true
   tcp_no_delay: true
 
+  # TCP_USER_TIMEOUT for client connections (in seconds).
+  # Helps detect dead connections faster when data remains unacknowledged.
+  # Only supported on Linux. Set to 0 to disable.
+  # Default: 0 (disabled)
+  tcp_user_timeout: 0
+
   # Buffer size for read/write operations when connecting via unix socket.
   # Supports human-readable format: "1MB", "1M", or 1048576 (bytes)
   # Default: "1MB" (1048576 bytes)

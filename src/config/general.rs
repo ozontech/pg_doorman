@@ -44,6 +44,14 @@ pub struct General {
     #[serde(default = "General::default_tcp_no_delay")]
     pub tcp_no_delay: bool,
 
+    /// TCP_USER_TIMEOUT for client connections (in seconds).
+    /// Helps detect dead connections faster than keepalive by setting a timeout
+    /// on unacknowledged data. Only supported on Linux.
+    /// 0 means disabled (uses OS default).
+    /// Default: 0 (disabled)
+    #[serde(default = "General::default_tcp_user_timeout")]
+    pub tcp_user_timeout: u64,
+
     #[serde(default = "General::default_unix_socket_buffer_size")]
     pub unix_socket_buffer_size: ByteSize,
 
@@ -255,6 +263,11 @@ impl General {
         5 // 5 seconds
     }
 
+    /// Default: 0 (disabled - uses OS default)
+    pub fn default_tcp_user_timeout() -> u64 {
+        0
+    }
+
     pub fn default_idle_timeout() -> Duration {
         Duration::from_millis(300_000_000) // 5000 minutes
     }
@@ -364,6 +377,7 @@ impl Default for General {
             tcp_keepalives_interval: Self::default_tcp_keepalives_interval(),
             tcp_so_linger: Self::default_tcp_so_linger(),
             tcp_no_delay: Self::default_tcp_no_delay(),
+            tcp_user_timeout: Self::default_tcp_user_timeout(),
             unix_socket_buffer_size: Self::default_unix_socket_buffer_size(),
             log_client_connections: true,
             log_client_disconnections: true,

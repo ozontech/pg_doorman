@@ -99,6 +99,12 @@ tcp_so_linger = 0
 # Default: true
 tcp_no_delay = true
 
+# TCP_USER_TIMEOUT for client connections (in seconds).
+# Helps detect dead connections faster when data remains unacknowledged.
+# Only supported on Linux. Set to 0 to disable.
+# Default: 0 (disabled)
+tcp_user_timeout = 0
+
 # Buffer size for read/write operations when connecting via unix socket.
 # Default: 1048576 (1 MB)
 unix_socket_buffer_size = 1048576
