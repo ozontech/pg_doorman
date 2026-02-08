@@ -369,6 +369,23 @@ Default: `5`.
 
 Default: `1`.
 
+### tcp_user_timeout
+
+Sets the `TCP_USER_TIMEOUT` socket option for client connections (in seconds). This option specifies
+the maximum time that transmitted data may remain unacknowledged before TCP will forcibly close the
+connection. This helps detect dead client connections faster than keepalive probes when the connection
+is actively sending data but the remote end has become unreachable (e.g., network failure, client crash).
+
+When set to a non-zero value, if data remains unacknowledged for this duration, the connection will
+be terminated. This is particularly useful to avoid 15-16 minute delays caused by TCP retransmission
+timeout when keepalive cannot help (e.g., during active data transmission).
+
+**Note:** This option is only supported on Linux. On other operating systems, this setting is ignored.
+
+Set to `0` to disable (use OS default).
+
+Default: `0` (disabled).
+
 ### unix_socket_buffer_size
 
 Buffer size for read and write operations when connecting to PostgreSQL via a unix socket.
