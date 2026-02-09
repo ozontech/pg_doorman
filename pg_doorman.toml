@@ -59,15 +59,15 @@ retain_connections_time = 30000
 
 # Maximum number of idle connections to close per retain cycle.
 # 0 means unlimited (close all idle connections that exceed timeout).
-# Default: 0 (unlimited)
-retain_connections_max = 0
+# Default: 3
+retain_connections_max = 3
 
 # Time after which an idle server connection should be checked before being
 # given to a client. This helps detect dead connections caused by PostgreSQL
 # restart, network issues, or server-side idle timeouts.
 # 0 means disabled (no check).
-# Default: 30s
-server_idle_check_timeout = "30s"
+# Default: 60s
+server_idle_check_timeout = "60s"
 
 # Graceful shutdown timeout in milliseconds.
 # Default: 10000 (10 sec)
@@ -102,8 +102,8 @@ tcp_no_delay = true
 # TCP_USER_TIMEOUT for client connections (in seconds).
 # Helps detect dead connections faster when data remains unacknowledged.
 # Only supported on Linux. Set to 0 to disable.
-# Default: 0 (disabled)
-tcp_user_timeout = 0
+# Default: 60
+tcp_user_timeout = 60
 
 # Buffer size for read/write operations when connecting via unix socket.
 # Default: 1048576 (1 MB)

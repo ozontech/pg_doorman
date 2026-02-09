@@ -314,11 +314,11 @@ Maximum number of idle connections to close per retain cycle.
 When set to `0`, all idle connections that exceed `idle_timeout` or `server_lifetime` will be closed immediately.
 When set to a positive value, at most that many connections will be closed per cycle across all pools.
 
-This parameter controls how aggressively pg_doorman closes idle connections. With the default value of `0` (unlimited),
-all expired connections are closed in each retain cycle, ensuring quick cleanup. If you need to limit the rate of
-connection closures (e.g., to reduce load spikes), set this to a positive value.
+This parameter controls how aggressively pg_doorman closes idle connections. With the default value of `3`,
+up to 3 connections are closed per retain cycle, providing controlled cleanup. If you need faster cleanup of
+expired connections, set to `0` (unlimited) to close all expired connections in each retain cycle.
 
-Default: `0` (unlimited).
+Default: `3`.
 
 ### server_idle_check_timeout
 
@@ -332,7 +332,7 @@ is discarded and a new one is obtained.
 Set to `0` to disable the check (not recommended for production environments with potential network instability
 or PostgreSQL restarts).
 
-Default: `30s` (30 seconds).
+Default: `60s` (60 seconds).
 
 ### server_round_robin
 
@@ -391,7 +391,7 @@ timeout when keepalive cannot help (e.g., during active data transmission).
 
 Set to `0` to disable (use OS default).
 
-Default: `0` (disabled).
+Default: `60` (60 seconds).
 
 ### unix_socket_buffer_size
 

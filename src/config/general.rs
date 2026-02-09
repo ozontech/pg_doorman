@@ -195,11 +195,11 @@ impl General {
     }
 
     pub fn default_retain_connections_max() -> usize {
-        0 // unlimited
+        3 // close up to 3 connections per retain cycle
     }
 
     pub fn default_server_idle_check_timeout() -> Duration {
-        Duration::from_secs(30) // 30 seconds
+        Duration::from_secs(60) // 60 seconds
     }
 
     pub fn default_connect_timeout() -> Duration {
@@ -263,9 +263,9 @@ impl General {
         5 // 5 seconds
     }
 
-    /// Default: 0 (disabled - uses OS default)
+    /// Default: 60 seconds
     pub fn default_tcp_user_timeout() -> u64 {
-        0
+        60 // 60 seconds
     }
 
     pub fn default_idle_timeout() -> Duration {
