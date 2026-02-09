@@ -14,11 +14,7 @@ title: Changelog
 
 - **New `retain_connections_max` configuration parameter**: Controls the maximum number of idle connections to close per retain cycle. When set to `0` (default), all idle connections that exceed `idle_timeout` or `server_lifetime` are closed immediately, ensuring aggressive cleanup of unused connections. Previously, only 1 connection was closed per cycle, which could lead to slow connection cleanup when many connections became idle simultaneously. Connection closures are now logged for better observability.
 
-- **New `server_idle_check_timeout` configuration parameter**: Time after which an idle server connection should be checked before being given to a client (default: 30s). This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts. When a connection has been idle longer than this timeout, pg_doorman sends a minimal query (`;`) to verify the connection is alive before returning it to the client. Set to `0` to disable.
-
-- **Enhanced `server_lifetime` enforcement**: The `server_lifetime` parameter now applies to all connections, not just idle ones. Connections that exceed their lifetime are now rejected during recycle (when being reused), ensuring that long-running connections are properly rotated regardless of their activity state.
-
-- **Oldest-first connection closure**: When `retain_connections_max > 0`, connections are now closed in order of age (oldest first) rather than in queue order. This ensures that the oldest connections are always prioritized for closure, providing more predictable connection rotation behavior.
+- **Changed default for `retain_connections_time`**: The default interval for the connection retain task has been reduced from 60 seconds to 30 seconds, providing faster cleanup of expired idle connections.
 
 - **New `tcp_user_timeout` configuration parameter**: Sets the `TCP_USER_TIMEOUT` socket option for client connections (in seconds). This helps detect dead client connections faster than keepalive probes when the connection is actively sending data but the remote end has become unreachable. Prevents 15-16 minute delays caused by TCP retransmission timeout. Only supported on Linux. Set to `0` to disable (default).
 

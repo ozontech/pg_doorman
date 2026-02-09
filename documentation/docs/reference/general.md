@@ -301,6 +301,13 @@ Server lifetime in milliseconds.
 
 Default: `300000` (5 min).
 
+### retain_connections_time
+
+Interval for checking and closing idle connections that exceed `idle_timeout` or `server_lifetime`.
+The retain task runs periodically at this interval to clean up expired connections.
+
+Default: `30000` (30 sec).
+
 ### retain_connections_max
 
 Maximum number of idle connections to close per retain cycle.
