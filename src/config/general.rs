@@ -191,7 +191,7 @@ impl General {
     }
 
     pub fn default_retain_connections_time() -> Duration {
-        Duration::from_secs(60) // 60 seconds
+        Duration::from_secs(30) // 30 seconds
     }
 
     pub fn default_retain_connections_max() -> usize {

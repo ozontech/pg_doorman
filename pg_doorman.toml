@@ -53,9 +53,9 @@ idle_timeout = 300000
 # Default: 300000 (5 min)
 server_lifetime = 300000
 
-# Time to retain idle connections before closing them, in milliseconds.
-# Default: 60000 (60 sec)
-retain_connections_time = 60000
+# Interval for checking and closing idle connections, in milliseconds.
+# Default: 30000 (30 sec)
+retain_connections_time = 30000
 
 # Maximum number of idle connections to close per retain cycle.
 # 0 means unlimited (close all idle connections that exceed timeout).
