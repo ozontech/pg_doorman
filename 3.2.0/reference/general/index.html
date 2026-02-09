@@ -1106,6 +1106,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#retain_connections_time" class="md-nav__link">
+    <span class="md-ellipsis">
+      retain_connections_time
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#retain_connections_max" class="md-nav__link">
     <span class="md-ellipsis">
       retain_connections_max
@@ -1778,6 +1787,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#retain_connections_time" class="md-nav__link">
+    <span class="md-ellipsis">
+      retain_connections_time
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#retain_connections_max" class="md-nav__link">
     <span class="md-ellipsis">
       retain_connections_max
@@ -2228,6 +2246,10 @@ Modern tokio versions handle this well by default, so this parameter is optional
 <h3 id="server_lifetime">server_lifetime</h3>
 <p>Server lifetime in milliseconds.</p>
 <p>Default: <code>300000</code> (5 min).</p>
+<h3 id="retain_connections_time">retain_connections_time</h3>
+<p>Interval for checking and closing idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code>.
+The retain task runs periodically at this interval to clean up expired connections.</p>
+<p>Default: <code>30000</code> (30 sec).</p>
 <h3 id="retain_connections_max">retain_connections_max</h3>
 <p>Maximum number of idle connections to close per retain cycle.
 When set to <code>0</code>, all idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code> will be closed immediately.
