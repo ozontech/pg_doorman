@@ -477,10 +477,11 @@ impl Pool {
         }
 
         permit.forget();
+        let lifetime_ms = self.inner.server_pool.lifetime_ms();
         Ok(Object {
             inner: Some(ObjectInner {
                 obj,
-                metrics: Metrics::default(),
+                metrics: Metrics::new_with_lifetime(lifetime_ms),
             }),
             pool: Arc::downgrade(&self.inner),
         })

@@ -4,6 +4,12 @@ title: Changelog
 
 # Changelog
 
+### 3.2.3 <small>Feb 10, 2026</small> { id="3.2.3" }
+
+**Improvements:**
+
+- **Jitter for `server_lifetime` (±20%)**: Connection lifetimes now have a random ±20% jitter applied to prevent mass disconnections from PostgreSQL. When pg_doorman is under heavy load, it creates many connections simultaneously, which previously caused them all to expire at the same time, creating spikes of connection closures. Now each connection gets an individual lifetime calculated as `base_lifetime ± random(20%)`. For example, with `server_lifetime: 300000` (5 minutes), actual lifetimes range from 240s to 360s, spreading connection closures evenly over time.
+
 ### 3.2.2 <small>Feb 9, 2026</small> { id="3.2.2" }
 
 **New Features:**
