@@ -462,6 +462,11 @@ impl ServerPool {
         }
     }
 
+    /// Returns the base lifetime in milliseconds for connections in this pool.
+    pub fn lifetime_ms(&self) -> u64 {
+        self.lifetime_ms
+    }
+
     /// Checks if the connection can be recycled.
     /// Performs lifetime check and alive check for idle connections.
     pub async fn recycle(&self, conn: &mut Server, metrics: &Metrics) -> RecycleResult {
@@ -470,12 +475,13 @@ impl ServerPool {
         }
 
         // Check server_lifetime - applies to all connections, not just idle
-        if self.lifetime_ms > 0 {
+        // Uses per-connection lifetime with jitter to prevent mass closures
+        if metrics.lifetime_ms > 0 {
             let age_ms = metrics.age().as_millis() as u64;
-            if age_ms > self.lifetime_ms {
+            if age_ms > metrics.lifetime_ms {
                 warn!(
                     "Connection {} exceeded lifetime ({}ms > {}ms)",
-                    conn, age_ms, self.lifetime_ms
+                    conn, age_ms, metrics.lifetime_ms
                 );
                 return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
             }

@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::utils::clock;
+use rand::Rng as _;
 
 /// Connection scaling configuration for gradual pool growth.
 #[derive(Clone, Copy, Debug)]
@@ -133,9 +134,34 @@ pub struct Metrics {
     pub recycled: Option<quanta::Instant>,
     /// The number of times the object was recycled.
     pub recycle_count: usize,
+    /// Individual lifetime for this connection in milliseconds (with jitter applied).
+    pub lifetime_ms: u64,
 }
 
 impl Metrics {
+    /// Jitter ratio for lifetime randomization (±20%).
+    const LIFETIME_JITTER_RATIO: f64 = 0.2;
+
+    /// Creates new Metrics with lifetime jitter applied.
+    /// Applies ±20% random jitter to the base lifetime to prevent
+    /// mass connection closures when connections are created simultaneously.
+    pub fn new_with_lifetime(base_lifetime_ms: u64) -> Self {
+        let lifetime_ms = if base_lifetime_ms > 0 {
+            let jitter_range = (base_lifetime_ms as f64 * Self::LIFETIME_JITTER_RATIO) as i64;
+            let offset = rand::rng().random_range(-jitter_range..=jitter_range);
+            (base_lifetime_ms as i64 + offset).max(1) as u64
+        } else {
+            0
+        };
+
+        Self {
+            created: clock::now(),
+            recycled: None,
+            recycle_count: 0,
+            lifetime_ms,
+        }
+    }
+
     /// Access the age of this object.
     pub fn age(&self) -> Duration {
         self.created.elapsed()
@@ -153,6 +179,7 @@ impl Default for Metrics {
             created: clock::now(),
             recycled: None,
             recycle_count: 0,
+            lifetime_ms: 0,
         }
     }
 }

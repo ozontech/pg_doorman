@@ -15,16 +15,17 @@ impl ConnectionPool {
     /// prioritizing the oldest connections first.
     pub fn retain_pool_connections(&self, count: Arc<AtomicUsize>, max: usize) -> usize {
         let idle_timeout_ms = self.settings.idle_timeout_ms;
-        let life_time_ms = self.settings.life_time_ms;
 
         // Closure to determine if a connection should be closed
+        // Uses per-connection lifetime with jitter to prevent mass closures
         let should_close = |_: &crate::server::Server, metrics: &crate::pool::Metrics| -> bool {
             if let Some(v) = metrics.recycled {
                 if (v.elapsed().as_millis() as u64) > idle_timeout_ms {
                     return true;
                 }
             }
-            if (metrics.age().as_millis() as u64) > life_time_ms {
+            // Use individual connection lifetime (with jitter applied)
+            if metrics.lifetime_ms > 0 && (metrics.age().as_millis() as u64) > metrics.lifetime_ms {
                 return true;
             }
             false
@@ -44,13 +45,13 @@ impl ConnectionPool {
 
         if closed > 0 {
             info!(
-                "[pool: {}][user: {}] closed {} idle connection{} (idle_timeout: {}ms, lifetime: {}ms, oldest_first: {})",
+                "[pool: {}][user: {}] closed {} idle connection{} (idle_timeout: {}ms, base_lifetime: {}ms±20%, oldest_first: {})",
                 self.address.pool_name,
                 self.address.username,
                 closed,
                 if closed == 1 { "" } else { "s" },
                 idle_timeout_ms,
-                life_time_ms,
+                self.settings.life_time_ms,
                 max > 0,
             );
         }
