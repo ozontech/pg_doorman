@@ -610,9 +610,20 @@ where
                     debug!("Sending deferred BEGIN to server for client {}", self.addr);
 
                     // Send BEGIN to server
-                    server
+                    if let Err(err) = server
                         .send_and_flush_timeout(&begin_msg, Duration::from_secs(5))
-                        .await?;
+                        .await
+                    {
+                        if matches!(err, Error::FlushTimeout) {
+                            let _ = error_response_terminal(
+                                &mut self.write,
+                                "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
+                                "58006",
+                            )
+                            .await;
+                        }
+                        return Err(err);
+                    }
 
                     // Receive and discard response (client already got synthetic response)
                     // Using sink() to avoid forwarding to client
@@ -806,9 +817,25 @@ where
         let message = message.unwrap_or(&self.buffer);
 
         // Send message with timeout
-        server
+        if let Err(err) = server
             .send_and_flush_timeout(message, Duration::from_secs(5))
-            .await?;
+            .await
+        {
+            if matches!(err, Error::FlushTimeout) {
+                // Send ErrorResponse to client before closing connection.
+                // Without this, the client gets a bare TCP RST which causes
+                // "protocol violation" in drivers like Npgsql.
+                // Use the same SQLSTATE 58006 and "pooler is shut down" pattern
+                // as graceful shutdown so that clients can detect reconnection.
+                let _ = error_response_terminal(
+                    &mut self.write,
+                    "pooler is shut down now (flush timeout: server did not accept data within the timeout period)",
+                    "58006",
+                )
+                .await;
+            }
+            return Err(err);
+        }
 
         // Debug log: client -> server
         log_client_to_server(&self.addr.to_string(), server.get_process_id(), message);

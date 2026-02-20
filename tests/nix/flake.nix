@@ -92,6 +92,8 @@
             psycopg2
             aiopg
             pytest
+            sqlalchemy
+            sqlmodel
           ]);
 
           # All runtime packages

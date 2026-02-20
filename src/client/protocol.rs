@@ -493,6 +493,7 @@ where
     /// Process Close message immediately without buffering.
     /// For prepared statements: removes from cache and increments pending_close_complete counter.
     /// For others: adds data directly to self.buffer.
+    #[inline]
     pub(crate) fn process_close_immediate(&mut self, message: BytesMut) -> Result<(), Error> {
         let close: Close = (&message).try_into()?;
 
@@ -512,6 +513,7 @@ where
         Ok(())
     }
 
+    #[inline]
     pub(crate) fn reset_buffered_state(&mut self) {
         self.buffer.clear();
         self.prepared.pending_close_complete = 0;

@@ -468,6 +468,17 @@ impl Server {
             if !bytes.is_empty() {
                 bytes.extend_from_slice(&sync());
 
+                // Temporarily disable async mode so that recv() waits for
+                // ReadyForQuery instead of exiting immediately when
+                // expected_responses == 0.  Without this, CloseComplete and
+                // ReadyForQuery from eviction stay in the TCP buffer and
+                // corrupt the next server roundtrip.
+                let was_async = self.is_async();
+                let saved_expected = self.expected_responses();
+                if was_async {
+                    self.set_async_mode(false);
+                }
+
                 self.send_and_flush(&bytes).await?;
 
                 let mut noop = tokio::io::sink();
@@ -477,6 +488,12 @@ impl Server {
                     if !self.is_data_available() {
                         break;
                     }
+                }
+
+                // Restore async mode state for the ongoing client pipeline.
+                if was_async {
+                    self.set_async_mode(true);
+                    self.set_expected_responses(saved_expected);
                 }
             }
         };

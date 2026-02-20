@@ -4,6 +4,14 @@ title: Changelog
 
 # Changelog
 
+### 3.2.4 <small>Feb 20, 2026</small> { id="3.2.4" }
+
+**Bug Fixes:**
+
+- **Fixed protocol desynchronization on prepared statement cache eviction in async mode**: When asyncpg/SQLAlchemy uses `Flush` (instead of `Sync`) for pipelined `Parse+Describe` batches and the prepared statement LRU cache is full, eviction sends `Close+Sync` to the server. In async mode, `recv()` was exiting immediately when `expected_responses==0`, leaving `CloseComplete` and `ReadyForQuery` unread in the TCP buffer. The next `recv()` call would then read these stale messages instead of the expected response, causing protocol desynchronization. Fixed by temporarily disabling async mode during eviction so that `recv()` waits for `ReadyForQuery` as the natural loop terminator.
+
+- **Fixed protocol violation on flush timeout — client now receives ErrorResponse**: When the 5-second flush timeout fires (server TCP write blocks because the backend is overloaded or unreachable), the `FlushTimeout` error was propagating via `?` through `handle_sync_flush` → transaction loop → `handle()` without sending any PostgreSQL protocol message to the client. The TCP connection was simply dropped, causing drivers like Npgsql to report "protocol violation" due to unexpected EOF. Now pg_doorman sends a proper `ErrorResponse` with SQLSTATE `58006` and message containing "pooler is shut down now" before closing the connection, allowing client drivers to detect the error and reconnect gracefully.
+
 ### 3.2.3 <small>Feb 10, 2026</small> { id="3.2.3" }
 
 **Improvements:**

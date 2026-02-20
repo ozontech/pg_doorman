@@ -43,6 +43,7 @@ pub enum PreparedStatementCache {
 impl PreparedStatementCache {
     /// Returns a reference to the value corresponding to the key.
     /// Updates LRU order for Limited cache.
+    #[inline]
     pub fn get(&mut self, key: &PreparedStatementKey) -> Option<&CachedStatement> {
         match self {
             Self::Unlimited(m) => m.get(key),
@@ -52,6 +53,7 @@ impl PreparedStatementCache {
 
     /// Inserts a key-value pair into the cache.
     /// For Limited cache, may evict the oldest entry.
+    #[inline]
     pub fn put(&mut self, key: PreparedStatementKey, value: CachedStatement) {
         match self {
             Self::Unlimited(m) => {
@@ -64,6 +66,7 @@ impl PreparedStatementCache {
     }
 
     /// Removes a key from the cache, returning the value if it existed.
+    #[inline]
     pub fn pop(&mut self, key: &PreparedStatementKey) -> Option<CachedStatement> {
         match self {
             Self::Unlimited(m) => m.remove(key),
@@ -72,6 +75,7 @@ impl PreparedStatementCache {
     }
 
     /// Returns the number of elements in the cache.
+    #[inline]
     pub fn len(&self) -> usize {
         match self {
             Self::Unlimited(m) => m.len(),
@@ -80,6 +84,7 @@ impl PreparedStatementCache {
     }
 
     /// Clears the cache.
+    #[inline]
     pub fn clear(&mut self) {
         match self {
             Self::Unlimited(m) => m.clear(),
