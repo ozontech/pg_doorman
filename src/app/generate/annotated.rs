@@ -798,7 +798,7 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     if let Some(ref name) = g.syslog_prog_name {
         w.kv(fi, "syslog_prog_name", &w.str_val(name));
     } else {
-        w.kv(fi, "syslog_prog_name", &w.str_val("pg_doorman"));
+        w.commented_kv(fi, "syslog_prog_name", &w.str_val("pg_doorman"));
     }
     w.blank();
 
@@ -1349,7 +1349,7 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         ),
     );
     w.comment(fi, "Default: \"/tmp/pg_doorman.pid\"");
-    w.kv(fi, "daemon_pid_file", &w.str_val(&g.daemon_pid_file));
+    w.commented_kv(fi, "daemon_pid_file", &w.str_val(&g.daemon_pid_file));
     w.blank();
 
     // --- Access Control (Legacy) ---

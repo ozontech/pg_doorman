@@ -181,7 +181,7 @@ general:
   # Syslog program name. When specified, pg_doorman sends messages to syslog.
   # Comment out to log to stdout.
   # Default: None
-  syslog_prog_name: "pg_doorman"
+  # syslog_prog_name: "pg_doorman"
 
   # --------------------------------------------------------------------------
   # Worker Settings
@@ -322,7 +322,7 @@ general:
   # PID file path for daemon mode.
   # Setting this enables daemon mode. Comment out for foreground mode with `-d`.
   # Default: "/tmp/pg_doorman.pid"
-  daemon_pid_file: "/tmp/pg_doorman.pid"
+  # daemon_pid_file: "/tmp/pg_doorman.pid"
 
   # --------------------------------------------------------------------------
   # Access Control (Legacy)
