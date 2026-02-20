@@ -94,6 +94,8 @@ pub struct DoormanWorld {
     pub last_database: Option<String>,
     /// Abort handle for slow scenario warning task (to cancel it when scenario finishes)
     pub slow_warning_abort: Option<tokio::task::AbortHandle>,
+    /// Generated config file (from `pg_doorman generate` command)
+    pub generated_config_file: Option<NamedTempFile>,
 }
 
 impl DoormanWorld {
