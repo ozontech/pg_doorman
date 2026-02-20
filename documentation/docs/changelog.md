@@ -6,9 +6,33 @@ title: Changelog
 
 ### 3.2.4 <small>Feb 20, 2026</small> { id="3.2.4" }
 
+**New Features:**
+
+- **Annotated config generation**: The `generate` command now produces well-documented configuration files with inline comments for every parameter by default. Previously it only did plain serde serialization without any documentation.
+
+- **`--reference` flag**: Generates a complete reference config with example values without requiring a PostgreSQL connection. The root `pg_doorman.toml` and `pg_doorman.yaml` are now auto-generated from this flag, ensuring they always stay in sync with the codebase.
+
+- **`--format` (`-f`) flag**: Explicitly choose output format (`yaml` or `toml`). Default output format changed from TOML to YAML. When `--output` is specified, format is auto-detected from file extension; `--format` overrides auto-detection.
+
+- **`--russian-comments` (`--ru`) flag**: Generates comments in Russian for quick start guide. All ~100+ comment strings are translated to clear, simple Russian.
+
+- **`--no-comments` flag**: Disables inline comments for minimal config output (plain serde serialization, the old default behavior).
+
+- **Server authentication documentation**: Prominently documents the `server_username`/`server_password` requirement in generated configs, README, reference docs, and troubleshooting guide — the #1 issue for new users who get authentication errors because PostgreSQL rejects MD5/SCRAM hashes as passwords.
+
+**Testing:**
+
+- **Config field coverage guarantee**: New test parses config struct source files (`general.rs`, `pool.rs`, `user.rs`, etc.) at compile time and verifies every `pub` field appears in annotated output. If someone adds a new config parameter but forgets to add it to `annotated.rs`, CI will fail with a clear message listing the missing fields.
+
+- **BDD tests for generate command**: End-to-end tests that generate TOML and YAML configs, start pg_doorman with them, and verify client connectivity.
+
 **Bug Fixes:**
 
 - **Fixed protocol desynchronization on prepared statement cache eviction in async mode**: When asyncpg/SQLAlchemy uses `Flush` (instead of `Sync`) for pipelined `Parse+Describe` batches and the prepared statement LRU cache is full, eviction sends `Close+Sync` to the server. In async mode, `recv()` was exiting immediately when `expected_responses==0`, leaving `CloseComplete` and `ReadyForQuery` unread in the TCP buffer. The next `recv()` call would then read these stale messages instead of the expected response, causing protocol desynchronization. Fixed by temporarily disabling async mode during eviction so that `recv()` waits for `ReadyForQuery` as the natural loop terminator.
+
+- **Fixed generated config startup failure**: `syslog_prog_name` and `daemon_pid_file` are now commented out by default in generated configs. Previously they were uncommented, causing pg_doorman to fail when started in foreground mode or when syslog was unavailable.
+
+- **Fixed Go test goroutine leak**: `TestLibPQPrepared` now uses `sync.WaitGroup` to wait for all goroutines before test exit, fixing sporadic panics caused by logging after test completion.
 
 - **Fixed protocol violation on flush timeout — client now receives ErrorResponse**: When the 5-second flush timeout fires (server TCP write blocks because the backend is overloaded or unreachable), the `FlushTimeout` error was propagating via `?` through `handle_sync_flush` → transaction loop → `handle()` without sending any PostgreSQL protocol message to the client. The TCP connection was simply dropped, causing drivers like Npgsql to report "protocol violation" due to unexpected EOF. Now pg_doorman sends a proper `ErrorResponse` with SQLSTATE `58006` and message containing "pooler is shut down now" before closing the connection, allowing client drivers to detect the error and reconnect gracefully.
 
