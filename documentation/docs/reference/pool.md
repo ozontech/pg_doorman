@@ -100,15 +100,34 @@ The pam-service that is responsible for client authorization. In this case, pg_d
 
 ### server_username
 
-The real server user of the database who connects to this database.
+The real PostgreSQL username used to connect to the database server.
+
+By default, PgDoorman uses the same `username` for both client authentication and server connections. However, if the client `password` is an MD5 or SCRAM hash (which is the typical setup), PostgreSQL will **reject the connection** because it expects a plaintext password, not a hash.
+
+To fix this, set `server_username` and `server_password` to the actual PostgreSQL credentials. Both must be specified together.
 
 Example: `"exampledb_server_user"`.
 
 ### server_password
 
-The password (plain text) of real server user of the database who connects to this database.
+The plaintext password for the PostgreSQL server user specified in `server_username`.
 
-Example: `"password"`.
+This is needed because PgDoorman stores client passwords as MD5/SCRAM hashes for client authentication, but PostgreSQL requires a plaintext password during server-side authentication.
+
+Example: `"real_password_here"`.
+
+!!! warning "Common Setup Issue"
+    If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that `server_username` and `server_password` are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the `password` field, which PostgreSQL rejects.
+
+    **Solution:** Set both `server_username` and `server_password` to the actual PostgreSQL credentials:
+
+    ```yaml
+    users:
+      - username: "app_user"
+        password: "md5..."                # hash for client authentication
+        server_username: "app_user"       # real PostgreSQL username
+        server_password: "plaintext_pwd"  # real PostgreSQL password
+    ```
 
 ### pool_size
 
