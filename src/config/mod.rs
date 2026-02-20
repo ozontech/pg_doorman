@@ -80,6 +80,25 @@ fn parse_config_content<T: serde::de::DeserializeOwned>(
     }
 }
 
+/// Recursively remove null values from a JSON value.
+/// TOML does not support null, so we strip them before conversion.
+fn remove_json_nulls(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, v| !v.is_null());
+            for v in map.values_mut() {
+                remove_json_nulls(v);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                remove_json_nulls(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Convert configuration content to TOML string for merging.
 /// This allows mixing YAML and TOML files in include.files.
 fn content_to_toml_string(contents: &str, format: ConfigFormat) -> Result<String, Error> {
@@ -87,8 +106,10 @@ fn content_to_toml_string(contents: &str, format: ConfigFormat) -> Result<String
         ConfigFormat::Toml => Ok(contents.to_string()),
         ConfigFormat::Yaml => {
             // Parse YAML to serde_json::Value as intermediate format
-            let yaml_value: serde_json::Value = serde_yaml::from_str(contents)
+            let mut yaml_value: serde_json::Value = serde_yaml::from_str(contents)
                 .map_err(|err| Error::BadConfig(format!("YAML parse error: {err}")))?;
+            // Remove null values — TOML does not support them
+            remove_json_nulls(&mut yaml_value);
             // Convert JSON value to TOML string
             toml::to_string_pretty(&yaml_value)
                 .map_err(|err| Error::BadConfig(format!("YAML to TOML conversion error: {err}")))

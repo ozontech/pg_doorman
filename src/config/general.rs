@@ -18,10 +18,10 @@ pub struct General {
     #[serde(default = "General::default_port")]
     pub port: u16,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokio_global_queue_interval: Option<u32>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokio_event_interval: Option<u32>,
 
     #[serde(default = "General::default_connect_timeout")]
@@ -114,10 +114,10 @@ pub struct General {
     #[serde(default = "General::default_worker_cpu_affinity_pinning")]
     pub worker_cpu_affinity_pinning: bool,
     // worker_stack_size: размера стэка каждого воркера.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_stack_size: Option<ByteSize>,
     // max_blocking_threads: максимальное количество блокирующих потоков tokio.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_blocking_threads: Option<usize>,
     // tcp backlog.
     #[serde(default = "General::default_backlog")]
@@ -126,11 +126,16 @@ pub struct General {
     // pooler_check_query: ping pooler with simple query like '/* ping pooler */;'.
     #[serde(default = "General::default_pooler_check_query")]
     pub pooler_check_query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pooler_check_query_request_bytes: Option<Vec<u8>>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_certificate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_ca_cert: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_mode: Option<String>,
     #[serde(default = "General::default_tls_rate_limit_per_second")]
     pub tls_rate_limit_per_second: usize,
@@ -161,6 +166,7 @@ pub struct General {
     #[serde(default = "General::default_daemon_pid_file")]
     pub daemon_pid_file: String, // can be enabled only in daemon mode.
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub syslog_prog_name: Option<String>,
 
     #[serde(

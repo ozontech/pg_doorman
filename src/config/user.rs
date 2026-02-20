@@ -14,15 +14,21 @@ pub struct User {
     pub username: String,
     pub password: String,
     pub pool_size: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub min_pool_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pool_mode: Option<PoolMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_lifetime: Option<u64>,
     // If the server_username parameter is specified,
     // authorization on the server will be performed using the credentials
     // of THIS server_user and server_password.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_password: Option<String>,
     // Pam auth
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_pam_service: Option<String>,
 }
 
