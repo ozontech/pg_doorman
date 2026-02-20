@@ -2649,6 +2649,96 @@ mod tests {
         );
     }
 
+    /// Extract public field names from a Rust source file.
+    /// Matches lines like `pub field_name: Type` inside struct bodies.
+    fn extract_pub_fields(source: &str) -> Vec<String> {
+        source
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                // Must start with "pub " and contain ":", but not be a function/struct/etc
+                if !trimmed.starts_with("pub ") || !trimmed.contains(':') {
+                    return None;
+                }
+                // Skip pub fn, pub mod, pub struct, pub enum, pub use, pub type, pub const
+                if trimmed.starts_with("pub fn ")
+                    || trimmed.starts_with("pub mod ")
+                    || trimmed.starts_with("pub struct ")
+                    || trimmed.starts_with("pub enum ")
+                    || trimmed.starts_with("pub use ")
+                    || trimmed.starts_with("pub type ")
+                    || trimmed.starts_with("pub const ")
+                {
+                    return None;
+                }
+                // "pub field_name: Type" -> extract "field_name"
+                let after_pub = trimmed.strip_prefix("pub ")?;
+                // Handle "pub(crate) field: Type" style
+                let after_vis = if after_pub.starts_with('(') {
+                    let paren_end = after_pub.find(')')?;
+                    after_pub[paren_end + 1..].trim()
+                } else {
+                    after_pub
+                };
+                let field_name = after_vis.split(':').next()?.trim();
+                if field_name.contains('(') || field_name.is_empty() {
+                    return None;
+                }
+                Some(field_name.to_string())
+            })
+            .collect()
+    }
+
+    /// Verify that all public fields from config source files appear in the
+    /// generated annotated config. This catches missing fields when someone
+    /// adds a new config parameter but forgets to add it to annotated.rs.
+    #[test]
+    fn test_annotated_config_covers_all_config_fields() {
+        let annotated_toml = generate_reference_config(ConfigFormat::Toml, false);
+        let annotated_yaml = generate_reference_config(ConfigFormat::Yaml, false);
+        let combined = format!("{annotated_toml}\n{annotated_yaml}");
+
+        // Fields that are internal/structural and not config parameters
+        let skip_fields: &[&str] = &[
+            "users", // structural: rendered as a sub-section, not a scalar field
+            "pools", // structural: rendered as a section
+            "path",  // internal: not a config parameter
+        ];
+
+        let sources: &[(&str, &str)] = &[
+            ("General", include_str!("../../config/general.rs")),
+            ("Pool", include_str!("../../config/pool.rs")),
+            ("User", include_str!("../../config/user.rs")),
+            ("Prometheus", include_str!("../../config/prometheus.rs")),
+            ("Talos", include_str!("../../config/talos.rs")),
+            ("Include", include_str!("../../config/include.rs")),
+        ];
+
+        let mut missing = Vec::new();
+
+        for (struct_name, source) in sources {
+            let fields = extract_pub_fields(source);
+            for field in &fields {
+                if skip_fields.contains(&field.as_str()) {
+                    continue;
+                }
+                if !combined.contains(field.as_str()) {
+                    missing.push(format!("{struct_name}::{field}"));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "The following config fields are NOT covered in annotated config generation.\n\
+             Add them to src/app/generate/annotated.rs:\n  - {}\n\n\
+             After adding, regenerate reference configs:\n  \
+             cargo run --bin pg_doorman -- generate --reference -o pg_doorman.toml\n  \
+             cargo run --bin pg_doorman -- generate --reference -o pg_doorman.yaml",
+            missing.join("\n  - ")
+        );
+    }
+
     #[test]
     fn test_russian_reference_config_yaml_is_parseable() {
         let yaml_str = generate_reference_config(ConfigFormat::Yaml, true);
