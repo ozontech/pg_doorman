@@ -1557,10 +1557,46 @@
 
 <h1 id="changelog">Changelog</h1>
 <h3 id="3.2.4">3.2.4 <small>Feb 20, 2026</small></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>Annotated config generation</strong>: The <code>generate</code> command now produces well-documented configuration files with inline comments for every parameter by default. Previously it only did plain serde serialization without any documentation.</p>
+</li>
+<li>
+<p><strong><code>--reference</code> flag</strong>: Generates a complete reference config with example values without requiring a PostgreSQL connection. The root <code>pg_doorman.toml</code> and <code>pg_doorman.yaml</code> are now auto-generated from this flag, ensuring they always stay in sync with the codebase.</p>
+</li>
+<li>
+<p><strong><code>--format</code> (<code>-f</code>) flag</strong>: Explicitly choose output format (<code>yaml</code> or <code>toml</code>). Default output format changed from TOML to YAML. When <code>--output</code> is specified, format is auto-detected from file extension; <code>--format</code> overrides auto-detection.</p>
+</li>
+<li>
+<p><strong><code>--russian-comments</code> (<code>--ru</code>) flag</strong>: Generates comments in Russian for quick start guide. All ~100+ comment strings are translated to clear, simple Russian.</p>
+</li>
+<li>
+<p><strong><code>--no-comments</code> flag</strong>: Disables inline comments for minimal config output (plain serde serialization, the old default behavior).</p>
+</li>
+<li>
+<p><strong>Server authentication documentation</strong>: Prominently documents the <code>server_username</code>/<code>server_password</code> requirement in generated configs, README, reference docs, and troubleshooting guide — the #1 issue for new users who get authentication errors because PostgreSQL rejects MD5/SCRAM hashes as passwords.</p>
+</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li>
+<p><strong>Config field coverage guarantee</strong>: New test parses config struct source files (<code>general.rs</code>, <code>pool.rs</code>, <code>user.rs</code>, etc.) at compile time and verifies every <code>pub</code> field appears in annotated output. If someone adds a new config parameter but forgets to add it to <code>annotated.rs</code>, CI will fail with a clear message listing the missing fields.</p>
+</li>
+<li>
+<p><strong>BDD tests for generate command</strong>: End-to-end tests that generate TOML and YAML configs, start pg_doorman with them, and verify client connectivity.</p>
+</li>
+</ul>
 <p><strong>Bug Fixes:</strong></p>
 <ul>
 <li>
 <p><strong>Fixed protocol desynchronization on prepared statement cache eviction in async mode</strong>: When asyncpg/SQLAlchemy uses <code>Flush</code> (instead of <code>Sync</code>) for pipelined <code>Parse+Describe</code> batches and the prepared statement LRU cache is full, eviction sends <code>Close+Sync</code> to the server. In async mode, <code>recv()</code> was exiting immediately when <code>expected_responses==0</code>, leaving <code>CloseComplete</code> and <code>ReadyForQuery</code> unread in the TCP buffer. The next <code>recv()</code> call would then read these stale messages instead of the expected response, causing protocol desynchronization. Fixed by temporarily disabling async mode during eviction so that <code>recv()</code> waits for <code>ReadyForQuery</code> as the natural loop terminator.</p>
+</li>
+<li>
+<p><strong>Fixed generated config startup failure</strong>: <code>syslog_prog_name</code> and <code>daemon_pid_file</code> are now commented out by default in generated configs. Previously they were uncommented, causing pg_doorman to fail when started in foreground mode or when syslog was unavailable.</p>
+</li>
+<li>
+<p><strong>Fixed Go test goroutine leak</strong>: <code>TestLibPQPrepared</code> now uses <code>sync.WaitGroup</code> to wait for all goroutines before test exit, fixing sporadic panics caused by logging after test completion.</p>
 </li>
 <li>
 <p><strong>Fixed protocol violation on flush timeout — client now receives ErrorResponse</strong>: When the 5-second flush timeout fires (server TCP write blocks because the backend is overloaded or unreachable), the <code>FlushTimeout</code> error was propagating via <code>?</code> through <code>handle_sync_flush</code> → transaction loop → <code>handle()</code> without sending any PostgreSQL protocol message to the client. The TCP connection was simply dropped, causing drivers like Npgsql to report "protocol violation" due to unexpected EOF. Now pg_doorman sends a proper <code>ErrorResponse</code> with SQLSTATE <code>58006</code> and message containing "pooler is shut down now" before closing the connection, allowing client drivers to detect the error and reconnect gracefully.</p>

@@ -1605,12 +1605,24 @@
 </span></code></pre></div>
 <p>For a complete list of configuration options and their descriptions, see the <a href="../../reference/general/">Settings Reference Guide</a>.</p>
 <h3 id="automatic-configuration-generation">Automatic Configuration Generation</h3>
-<p>PgDoorman provides a powerful <code>generate</code> command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users:</p>
+<p>PgDoorman provides a powerful <code>generate</code> command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users. By default, the generated config includes detailed inline comments explaining every parameter.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># View all available options</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--help
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Generate a configuration file with default settings</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--output<span class="w"> </span>pg_doorman.toml
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Generate a YAML configuration file (recommended)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--output<span class="w"> </span>pg_doorman.yaml
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Generate a TOML configuration file (for backward compatibility)</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--output<span class="w"> </span>pg_doorman.toml
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Generate a reference config with all settings (no PG connection needed)</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--reference<span class="w"> </span>--output<span class="w"> </span>pg_doorman.yaml
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="c1"># Generate a reference config with Russian comments for quick start</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--reference<span class="w"> </span>--ru<span class="w"> </span>--output<span class="w"> </span>pg_doorman.yaml
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="c1"># Generate a config without comments (plain serialization)</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--no-comments<span class="w"> </span>--output<span class="w"> </span>pg_doorman.yaml
 </span></code></pre></div>
 <p>The <code>generate</code> command supports several options:</p>
 <table>
@@ -1661,16 +1673,40 @@
 <td><code>--server-host</code></td>
 <td>Override server_host in config (uses the host parameter if not specified)</td>
 </tr>
+<tr>
+<td><code>--no-comments</code></td>
+<td>Disable inline comments in generated config (by default, comments are included)</td>
+</tr>
+<tr>
+<td><code>--reference</code></td>
+<td>Generate a complete reference config with example values, no PG connection needed</td>
+</tr>
+<tr>
+<td><code>--russian-comments</code>, <code>--ru</code></td>
+<td>Generate comments in Russian for quick start guide</td>
+</tr>
+<tr>
+<td><code>--format</code>, <code>-f</code></td>
+<td>Output format: <code>yaml</code> (default) or <code>toml</code>. If <code>--output</code> is specified, format is auto-detected from file extension. This flag overrides auto-detection</td>
+</tr>
 </tbody>
 </table>
-<p>The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.</p>
+<p>The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file. This is especially useful for quickly setting up PgDoorman in new environments.</p>
 <div class="admonition note">
 <p class="admonition-title">PostgreSQL Environment Variables</p>
 <p>The <code>generate</code> command also respects standard PostgreSQL environment variables like <code>PGHOST</code>, <code>PGPORT</code>, <code>PGUSER</code>, <code>PGPASSWORD</code>, and <code>PGDATABASE</code>.</p>
 </div>
 <div class="admonition warning">
-<p class="admonition-title">Authentication Required</p>
-<p>If your PostgreSQL server requires authentication in pg_hba.conf, you will need to manually set the <code>server_password</code> parameter in the configuration file after using the <code>generate</code> command.</p>
+<p class="admonition-title">Server Authentication (Common Issue)</p>
+<p>By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), <strong>PostgreSQL will reject the connection</strong> because it expects a plaintext password, not a hash.</p>
+<p><strong>To fix this</strong>, set <code>server_username</code> and <code>server_password</code> in the user configuration:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">users</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;app_user&quot;</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;md5...&quot;</span><span class="w">              </span><span class="c1"># for client authentication</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">server_username</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;app_user&quot;</span><span class="w">     </span><span class="c1"># for PostgreSQL server</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">server_password</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;real_password&quot;</span><span class="w"> </span><span class="c1"># plaintext password for PostgreSQL</span>
+</span></code></pre></div>
+<p>The generated config includes detailed comments about this. See also <a href="../../reference/pool/#server_username">Pool User Settings</a>.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Superuser Privileges</p>
@@ -1683,33 +1719,33 @@ You can embed rules directly in the config or reference a file path. See the <a 
 mirroring PostgreSQL behavior. TLS-related rule types are honored: <code>hostssl</code> requires TLS, <code>hostnossl</code> forbids TLS.</p>
 <h3 id="running-pgdoorman">Running PgDoorman</h3>
 <p>After creating your configuration file, you can run PgDoorman from the command line:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>$<span class="w"> </span>pg_doorman<span class="w"> </span>pg_doorman.toml
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>$<span class="w"> </span>pg_doorman<span class="w"> </span>pg_doorman.toml
 </span></code></pre></div>
 <p>If you don't specify a configuration file, PgDoorman will look for <code>pg_doorman.toml</code> in the current directory.</p>
 <h3 id="connecting-to-postgresql-via-pgdoorman">Connecting to PostgreSQL via PgDoorman</h3>
 <p>Once PgDoorman is running, connect to it instead of connecting directly to your PostgreSQL database:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>$<span class="w"> </span>psql<span class="w"> </span>-h<span class="w"> </span>localhost<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span><span class="w"> </span>-U<span class="w"> </span>doorman<span class="w"> </span>exampledb
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>$<span class="w"> </span>psql<span class="w"> </span>-h<span class="w"> </span>localhost<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span><span class="w"> </span>-U<span class="w"> </span>doorman<span class="w"> </span>exampledb
 </span></code></pre></div>
 <p>Your application's connection string should be updated to point to PgDoorman instead of directly to PostgreSQL:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>postgresql://doorman:password@localhost:6432/exampledb
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>postgresql://doorman:password@localhost:6432/exampledb
 </span></code></pre></div>
 <p>PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.</p>
 <h2 id="administration">Administration</h2>
 <h3 id="admin-console">Admin Console</h3>
 <p>PgDoorman provides a powerful administrative interface that allows you to monitor and manage the connection pooler. You can access this interface by connecting to the special administration database named <strong>pgdoorman</strong>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>$<span class="w"> </span>psql<span class="w"> </span>-h<span class="w"> </span>localhost<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span><span class="w"> </span>-U<span class="w"> </span>admin<span class="w"> </span>pgdoorman
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>$<span class="w"> </span>psql<span class="w"> </span>-h<span class="w"> </span>localhost<span class="w"> </span>-p<span class="w"> </span><span class="m">6432</span><span class="w"> </span>-U<span class="w"> </span>admin<span class="w"> </span>pgdoorman
 </span></code></pre></div>
 <p>Once connected, you can view available commands:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">HELP</span><span class="p">;</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">NOTICE</span><span class="p">:</span><span class="w">  </span><span class="n">Console</span><span class="w"> </span><span class="k">usage</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">DETAIL</span><span class="p">:</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">HELP</span><span class="o">|</span><span class="n">CONFIG</span><span class="o">|</span><span class="n">DATABASES</span><span class="o">|</span><span class="n">POOLS</span><span class="o">|</span><span class="n">POOLS_EXTENDED</span><span class="o">|</span><span class="n">CLIENTS</span><span class="o">|</span><span class="n">SERVERS</span><span class="o">|</span><span class="n">USERS</span><span class="o">|</span><span class="k">VERSION</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">LISTS</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">CONNECTIONS</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">STATS</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">    </span><span class="n">RELOAD</span>
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">    </span><span class="n">SHUTDOWN</span>
-</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">    </span><span class="k">SHOW</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">HELP</span><span class="p">;</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">NOTICE</span><span class="p">:</span><span class="w">  </span><span class="n">Console</span><span class="w"> </span><span class="k">usage</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">DETAIL</span><span class="p">:</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">HELP</span><span class="o">|</span><span class="n">CONFIG</span><span class="o">|</span><span class="n">DATABASES</span><span class="o">|</span><span class="n">POOLS</span><span class="o">|</span><span class="n">POOLS_EXTENDED</span><span class="o">|</span><span class="n">CLIENTS</span><span class="o">|</span><span class="n">SERVERS</span><span class="o">|</span><span class="n">USERS</span><span class="o">|</span><span class="k">VERSION</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">LISTS</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">CONNECTIONS</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">    </span><span class="k">SHOW</span><span class="w"> </span><span class="n">STATS</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="n">RELOAD</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="n">SHUTDOWN</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">    </span><span class="k">SHOW</span>
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Protocol Compatibility</p>
@@ -1720,8 +1756,8 @@ Some database drivers use the extended query protocol for all commands, making t
 <p class="admonition-title">Security</p>
 <p>Only the user specified by <code>admin_username</code> in the configuration file is allowed to log in to the admin console.
 If your <code>general.pg_hba</code> rules allow it, the admin console can also be accessed using the <code>trust</code> method (no password prompt), for example:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a># Allow only local admin to access the admin DB without a password
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>host  pgdoorman  admin  127.0.0.1/32  trust
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a># Allow only local admin to access the admin DB without a password
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>host  pgdoorman  admin  127.0.0.1/32  trust
 </span></code></pre></div>
 <p>Use <code>trust</code> with extreme caution. Always restrict it by address and, where possible, require TLS via <code>hostssl</code>. In production, prefer password-based methods unless you fully understand the implications.</p>
 </div>
@@ -1738,7 +1774,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 <p>These commands are described in detail in the <a href="#admin-console-commands">Admin Console Commands</a> section below.</p>
 <h3 id="reloading-configuration">Reloading Configuration</h3>
 <p>If you make changes to the <code>pg_doorman.toml</code> file, you can apply them without restarting the service:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">pgdoorman</span><span class="o">=#</span><span class="w"> </span><span class="n">RELOAD</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">pgdoorman</span><span class="o">=#</span><span class="w"> </span><span class="n">RELOAD</span><span class="p">;</span>
 </span></code></pre></div>
 <p>When you reload the configuration:</p>
 <ol>
@@ -1754,7 +1790,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 <p>The <code>SHOW</code> commands display information about PgDoorman's operation. Each command provides different insights into the pooler's performance and current state.</p>
 <h4 id="show-stats">SHOW STATS</h4>
 <p>The <code>SHOW STATS</code> command displays comprehensive statistics about PgDoorman's operation:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">STATS</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">STATS</span><span class="p">;</span>
 </span></code></pre></div>
 <p>Statistics are presented per database with the following metrics:</p>
 <table>
@@ -1837,7 +1873,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 </div>
 <h4 id="show-servers">SHOW SERVERS</h4>
 <p>The <code>SHOW SERVERS</code> command displays detailed information about all server connections:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">SERVERS</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">SERVERS</span><span class="p">;</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -1919,7 +1955,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 </div>
 <h4 id="show-clients">SHOW CLIENTS</h4>
 <p>The <code>SHOW CLIENTS</code> command displays information about all client connections to PgDoorman:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">CLIENTS</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">CLIENTS</span><span class="p">;</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -1977,7 +2013,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 </div>
 <h4 id="show-pools">SHOW POOLS</h4>
 <p>The <code>SHOW POOLS</code> command displays information about connection pools. A new pool entry is created for each (database, user) pair:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">POOLS</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">POOLS</span><span class="p">;</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -2035,7 +2071,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 </div>
 <h4 id="show-users">SHOW USERS</h4>
 <p>The <code>SHOW USERS</code> command displays information about all configured users:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">USERS</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">USERS</span><span class="p">;</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -2057,7 +2093,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 </table>
 <h4 id="show-databases">SHOW DATABASES</h4>
 <p>The <code>SHOW DATABASES</code> command displays information about all configured database pools:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">DATABASES</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">DATABASES</span><span class="p">;</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -2111,19 +2147,19 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 </div>
 <h4 id="show-sockets">SHOW SOCKETS</h4>
 <p>The <code>SHOW SOCKETS</code> command displays low-level information about network sockets:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">SOCKETS</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="n">SOCKETS</span><span class="p">;</span>
 </span></code></pre></div>
 <p>This command includes all information shown in <code>SHOW CLIENTS</code> and <code>SHOW SERVERS</code> plus additional low-level details about the socket connections.</p>
 <h4 id="show-version">SHOW VERSION</h4>
 <p>The <code>SHOW VERSION</code> command displays the PgDoorman version information:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="k">VERSION</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="k">SHOW</span><span class="w"> </span><span class="k">VERSION</span><span class="p">;</span>
 </span></code></pre></div>
 <p>This is useful for verifying which version you're running, especially after upgrades.</p>
 <h3 id="control-commands">Control Commands</h3>
 <p>PgDoorman provides control commands that allow you to manage the service operation directly from the admin console.</p>
 <h4 id="shutdown">SHUTDOWN</h4>
 <p>The <code>SHUTDOWN</code> command gracefully terminates the PgDoorman process:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="n">SHUTDOWN</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="n">SHUTDOWN</span><span class="p">;</span>
 </span></code></pre></div>
 <p>When executed:</p>
 <ol>
@@ -2138,7 +2174,7 @@ If your <code>general.pg_hba</code> rules allow it, the admin console can also b
 </div>
 <h4 id="reload">RELOAD</h4>
 <p>The <code>RELOAD</code> command refreshes PgDoorman's configuration without restarting the service:</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="n">RELOAD</span><span class="p">;</span>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">pgdoorman</span><span class="o">=&gt;</span><span class="w"> </span><span class="n">RELOAD</span><span class="p">;</span>
 </span></code></pre></div>
 <p>This command:</p>
 <ol>

@@ -2087,13 +2087,48 @@
 </span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">pool_size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">40</span>
 </span></code></pre></div>
 <h3 id="generate-command">Generate Command</h3>
-<p>The <code>generate</code> command can output configuration in either format. The format is determined by the output file extension:</p>
+<p>The <code>generate</code> command can output configuration in either format. The format is determined by the output file extension. By default, the generated config includes detailed inline comments explaining every parameter.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Generate YAML configuration (recommended)</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--output<span class="w"> </span>config.yaml
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Generate TOML configuration (for backward compatibility)</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--output<span class="w"> </span>config.toml
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Generate a complete reference config without PG connection</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--reference<span class="w"> </span>--output<span class="w"> </span>config.yaml
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Generate reference config with Russian comments</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--reference<span class="w"> </span>--ru<span class="w"> </span>--output<span class="w"> </span>config.yaml
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="c1"># Generate config without comments (plain serialization)</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>pg_doorman<span class="w"> </span>generate<span class="w"> </span>--no-comments<span class="w"> </span>--output<span class="w"> </span>config.yaml
 </span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--no-comments</code></td>
+<td>Disable inline comments in generated config (by default, comments are included)</td>
+</tr>
+<tr>
+<td><code>--reference</code></td>
+<td>Generate a complete reference config with example values, no PostgreSQL connection needed</td>
+</tr>
+<tr>
+<td><code>--russian-comments</code>, <code>--ru</code></td>
+<td>Generate comments in Russian for quick start guide</td>
+</tr>
+<tr>
+<td><code>--format</code>, <code>-f</code></td>
+<td>Output format: <code>yaml</code> (default) or <code>toml</code>. If <code>--output</code> is specified, format is auto-detected from file extension. This flag overrides auto-detection</td>
+</tr>
+</tbody>
+</table>
 <h3 id="include-files">Include Files</h3>
 <p>Include files can be in either format, and you can mix formats. For example, a YAML main config can include TOML files and vice versa:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">include</span><span class="p">:</span>

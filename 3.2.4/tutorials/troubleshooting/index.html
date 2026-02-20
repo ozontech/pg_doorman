@@ -650,6 +650,19 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -661,6 +674,52 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#authentication-errors-when-connecting-to-postgresql" class="md-nav__link">
+    <span class="md-ellipsis">
+      Authentication Errors When Connecting to PostgreSQL
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-file-not-found" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration File Not Found
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pool-size-too-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pool Size Too Small
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -889,6 +948,41 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#authentication-errors-when-connecting-to-postgresql" class="md-nav__link">
+    <span class="md-ellipsis">
+      Authentication Errors When Connecting to PostgreSQL
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-file-not-found" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration File Not Found
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pool-size-too-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pool Size Too Small
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -908,7 +1002,48 @@
 
 <h1 id="troubleshooting">Troubleshooting</h1>
 <p>This guide helps you resolve common issues when using PgDoorman.</p>
-<h1 id="todo">TODO</h1>
+<h2 id="authentication-errors-when-connecting-to-postgresql">Authentication Errors When Connecting to PostgreSQL</h2>
+<p><strong>Symptom:</strong> PgDoorman starts successfully but clients get authentication errors like <code>password authentication failed</code> when trying to execute queries.</p>
+<p><strong>Cause:</strong> By default, PgDoorman uses the same <code>username</code> and <code>password</code> for both client authentication and connecting to the PostgreSQL server. If the <code>password</code> field contains an MD5 or SCRAM hash (which is the typical and recommended setup), PostgreSQL will reject it because it expects a plaintext password.</p>
+<p><strong>Solution:</strong> Set <code>server_username</code> and <code>server_password</code> in your user configuration to the actual PostgreSQL credentials:</p>
+<p>=== "YAML"</p>
+<div class="language-text highlight"><pre><span></span><code>```yaml
+pools:
+  mydb:
+    server_host: &quot;127.0.0.1&quot;
+    server_port: 5432
+    users:
+      - username: &quot;app_user&quot;
+        password: &quot;md5...&quot;                # MD5/SCRAM hash for client auth
+        server_username: &quot;app_user&quot;       # real PostgreSQL username
+        server_password: &quot;plaintext_pwd&quot;  # real PostgreSQL password
+        pool_size: 40
+```
+</code></pre></div>
+<p>=== "TOML"</p>
+<div class="language-text highlight"><pre><span></span><code>```toml
+[pools.mydb.users.0]
+username = &quot;app_user&quot;
+password = &quot;md5...&quot;                # MD5/SCRAM hash for client auth
+server_username = &quot;app_user&quot;       # real PostgreSQL username
+server_password = &quot;plaintext_pwd&quot;  # real PostgreSQL password
+pool_size = 40
+```
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">How to get the password hash</p>
+<p>You can get user password hashes from PostgreSQL using: <code>SELECT usename, passwd FROM pg_shadow;</code></p>
+<p>Or use the <code>pg_doorman generate</code> command which automatically retrieves them.</p>
+</div>
+<h2 id="configuration-file-not-found">Configuration File Not Found</h2>
+<p><strong>Symptom:</strong> PgDoorman exits with "configuration file not found" error.</p>
+<p><strong>Solution:</strong> Specify the configuration file path explicitly:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pg_doorman<span class="w"> </span>/path/to/pg_doorman.yaml
+</span></code></pre></div>
+<p>By default, PgDoorman looks for <code>pg_doorman.toml</code> in the current directory.</p>
+<h2 id="pool-size-too-small">Pool Size Too Small</h2>
+<p><strong>Symptom:</strong> Clients experience high wait times or receive errors about too many connections.</p>
+<p><strong>Solution:</strong> Increase <code>pool_size</code> for the affected user, or check the <code>SHOW POOLS</code> admin command to see <code>cl_waiting</code> and <code>maxwait</code> values. If <code>maxwait</code> is consistently high, your pool is undersized for your workload.</p>
 <hr />
 <div class="admonition tip">
 <p class="admonition-title">Still having issues?</p>

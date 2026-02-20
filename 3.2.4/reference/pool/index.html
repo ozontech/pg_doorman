@@ -1384,11 +1384,25 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <h3 id="auth_pam_service">auth_pam_service</h3>
 <p>The pam-service that is responsible for client authorization. In this case, pg_doorman will ignore the <code>password</code> value.</p>
 <h3 id="server_username">server_username</h3>
-<p>The real server user of the database who connects to this database.</p>
+<p>The real PostgreSQL username used to connect to the database server.</p>
+<p>By default, PgDoorman uses the same <code>username</code> for both client authentication and server connections. However, if the client <code>password</code> is an MD5 or SCRAM hash (which is the typical setup), PostgreSQL will <strong>reject the connection</strong> because it expects a plaintext password, not a hash.</p>
+<p>To fix this, set <code>server_username</code> and <code>server_password</code> to the actual PostgreSQL credentials. Both must be specified together.</p>
 <p>Example: <code>"exampledb_server_user"</code>.</p>
 <h3 id="server_password">server_password</h3>
-<p>The password (plain text) of real server user of the database who connects to this database.</p>
-<p>Example: <code>"password"</code>.</p>
+<p>The plaintext password for the PostgreSQL server user specified in <code>server_username</code>.</p>
+<p>This is needed because PgDoorman stores client passwords as MD5/SCRAM hashes for client authentication, but PostgreSQL requires a plaintext password during server-side authentication.</p>
+<p>Example: <code>"real_password_here"</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Common Setup Issue</p>
+<p>If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that <code>server_username</code> and <code>server_password</code> are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the <code>password</code> field, which PostgreSQL rejects.</p>
+<p><strong>Solution:</strong> Set both <code>server_username</code> and <code>server_password</code> to the actual PostgreSQL credentials:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">users</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;app_user&quot;</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;md5...&quot;</span><span class="w">                </span><span class="c1"># hash for client authentication</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">server_username</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;app_user&quot;</span><span class="w">       </span><span class="c1"># real PostgreSQL username</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">server_password</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;plaintext_pwd&quot;</span><span class="w">  </span><span class="c1"># real PostgreSQL password</span>
+</span></code></pre></div>
+</div>
 <h3 id="pool_size">pool_size</h3>
 <p>The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.</p>
 <p>Default: <code>40</code>.</p>
