@@ -55,7 +55,7 @@ pool_size = 40
 
 ### Generate Command
 
-The `generate` command can output configuration in either format. The format is determined by the output file extension:
+The `generate` command can output configuration in either format. The format is determined by the output file extension. By default, the generated config includes detailed inline comments explaining every parameter.
 
 ```bash
 # Generate YAML configuration (recommended)
@@ -63,7 +63,23 @@ pg_doorman generate --output config.yaml
 
 # Generate TOML configuration (for backward compatibility)
 pg_doorman generate --output config.toml
+
+# Generate a complete reference config without PG connection
+pg_doorman generate --reference --output config.yaml
+
+# Generate reference config with Russian comments
+pg_doorman generate --reference --ru --output config.yaml
+
+# Generate config without comments (plain serialization)
+pg_doorman generate --no-comments --output config.yaml
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--no-comments` | Disable inline comments in generated config (by default, comments are included) |
+| `--reference` | Generate a complete reference config with example values, no PostgreSQL connection needed |
+| `--russian-comments`, `--ru` | Generate comments in Russian for quick start guide |
+| `--format`, `-f` | Output format: `yaml` (default) or `toml`. If `--output` is specified, format is auto-detected from file extension. This flag overrides auto-detection |
 
 ### Include Files
 

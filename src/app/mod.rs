@@ -12,7 +12,7 @@ pub use logger::init_logging;
 pub use panic::install_panic_hook;
 pub use server::run_server;
 
-pub use args::{parse, Args, Commands, GenerateConfig, LogFormat};
+pub use args::{parse, Args, Commands, GenerateConfig, LogFormat, OutputFormat};
 
 pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
     use crate::config::ConfigFormat;
@@ -22,18 +22,41 @@ pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
 
     match &cli.command {
         Some(Commands::Generate { config }) => {
-            let pg_doorman_config = generate::generate_config(config)?;
+            // Determine output format: --format flag > file extension > YAML default
+            let format = if let Some(ref fmt) = config.format {
+                match fmt {
+                    OutputFormat::Yaml => ConfigFormat::Yaml,
+                    OutputFormat::Toml => ConfigFormat::Toml,
+                }
+            } else if let Some(ref path) = config.output {
+                ConfigFormat::detect(path)
+            } else {
+                ConfigFormat::Yaml
+            };
 
-            // Determine output format based on file extension (default to TOML)
-            let format = config
-                .output
-                .as_ref()
-                .map(|p| ConfigFormat::detect(p))
-                .unwrap_or(ConfigFormat::Toml);
+            let russian = config.russian_comments;
 
-            let data = match format {
-                ConfigFormat::Yaml => serde_yaml::to_string(&pg_doorman_config)?,
-                ConfigFormat::Toml => toml::to_string_pretty(&pg_doorman_config)?,
+            let data = if config.reference {
+                // --reference: generate reference config with example data, no PG connection needed
+                generate::annotated::generate_reference_config(format, russian)
+            } else {
+                // Connect to PG and generate config
+                let pg_doorman_config = generate::generate_config(config)?;
+
+                if config.no_comments {
+                    // --no-comments: plain serde serialization without comments
+                    match format {
+                        ConfigFormat::Yaml => serde_yaml::to_string(&pg_doorman_config)?,
+                        ConfigFormat::Toml => toml::to_string_pretty(&pg_doorman_config)?,
+                    }
+                } else {
+                    // Default: annotated config with comments
+                    generate::annotated::generate_annotated_config(
+                        &pg_doorman_config,
+                        format,
+                        russian,
+                    )
+                }
             };
 
             if let Some(output_path) = &config.output {
@@ -42,7 +65,6 @@ pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
             } else {
                 println!("{data}");
             }
-            // Для `generate` сервер не запускаем.
             std::process::exit(0);
         }
         None => (),

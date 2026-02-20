@@ -127,7 +127,7 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
 
 /// Helper function to wait for pg_doorman to be ready (max 5 seconds)
 /// This is a custom implementation that captures logs on failure
-async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
+pub(crate) async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
     use std::io::Read;
 
     let mut success = false;

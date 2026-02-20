@@ -92,14 +92,26 @@ For a complete list of configuration options and their descriptions, see the [Se
 
 ### Automatic Configuration Generation
 
-PgDoorman provides a powerful `generate` command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users:
+PgDoorman provides a powerful `generate` command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users. By default, the generated config includes detailed inline comments explaining every parameter.
 
 ```bash
 # View all available options
 pg_doorman generate --help
 
-# Generate a configuration file with default settings
+# Generate a YAML configuration file (recommended)
+pg_doorman generate --output pg_doorman.yaml
+
+# Generate a TOML configuration file (for backward compatibility)
 pg_doorman generate --output pg_doorman.toml
+
+# Generate a reference config with all settings (no PG connection needed)
+pg_doorman generate --reference --output pg_doorman.yaml
+
+# Generate a reference config with Russian comments for quick start
+pg_doorman generate --reference --ru --output pg_doorman.yaml
+
+# Generate a config without comments (plain serialization)
+pg_doorman generate --no-comments --output pg_doorman.yaml
 ```
 
 The `generate` command supports several options:
@@ -116,14 +128,30 @@ The `generate` command supports several options:
 | `--session-pool-mode`, `-s` | Session pool mode for the generated configuration |
 | `--output`, `-o` | Output file for the generated configuration (uses stdout if not specified) |
 | `--server-host` | Override server_host in config (uses the host parameter if not specified) |
+| `--no-comments` | Disable inline comments in generated config (by default, comments are included) |
+| `--reference` | Generate a complete reference config with example values, no PG connection needed |
+| `--russian-comments`, `--ru` | Generate comments in Russian for quick start guide |
+| `--format`, `-f` | Output format: `yaml` (default) or `toml`. If `--output` is specified, format is auto-detected from file extension. This flag overrides auto-detection |
 
-The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
+The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file. This is especially useful for quickly setting up PgDoorman in new environments.
 
 !!! note "PostgreSQL Environment Variables"
     The `generate` command also respects standard PostgreSQL environment variables like `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE`.
 
-!!! warning "Authentication Required"
-    If your PostgreSQL server requires authentication in pg_hba.conf, you will need to manually set the `server_password` parameter in the configuration file after using the `generate` command.
+!!! warning "Server Authentication (Common Issue)"
+    By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), **PostgreSQL will reject the connection** because it expects a plaintext password, not a hash.
+
+    **To fix this**, set `server_username` and `server_password` in the user configuration:
+
+    ```yaml
+    users:
+      - username: "app_user"
+        password: "md5..."              # for client authentication
+        server_username: "app_user"     # for PostgreSQL server
+        server_password: "real_password" # plaintext password for PostgreSQL
+    ```
+
+    The generated config includes detailed comments about this. See also [Pool User Settings](../reference/pool.md#server_username).
 
 !!! warning "Superuser Privileges"
     Reading user information from PostgreSQL requires superuser privileges to access the `pg_shadow` table.

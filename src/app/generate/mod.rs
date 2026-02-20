@@ -1,3 +1,5 @@
+pub mod annotated;
+
 use std::error::Error;
 
 use crate::app::args::GenerateConfig;

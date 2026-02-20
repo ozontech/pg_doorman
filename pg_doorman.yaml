@@ -39,9 +39,9 @@ include:
   #   - "/etc/pg_doorman/pools.yaml"
   #   - "/etc/pg_doorman/hba.yaml"
 
-# ============================================================================
+# ############################################################################
 # GENERAL SETTINGS
-# ============================================================================
+# ############################################################################
 general:
   # --------------------------------------------------------------------------
   # Network Settings
@@ -76,7 +76,7 @@ general:
   query_wait_timeout: "5s"
 
   # Server idle timeout.
-  # Supports human-readable format: "5m", "300000ms", or 300000 (milliseconds)
+  # Supports human-readable format: "5m", "300000000ms", or 300000000 (milliseconds)
   # Default: "5m" (300000 ms)
   idle_timeout: "5m"
 
@@ -86,7 +86,7 @@ general:
   server_lifetime: "5m"
 
   # Interval for checking and closing idle connections.
-  # Supports human-readable format: "30s", "1m", or 30000 (milliseconds)
+  # Supports human-readable format: "30s", "30000ms", or 30000 (milliseconds)
   # Default: "30s" (30000 ms)
   retain_connections_time: "30s"
 
@@ -99,6 +99,7 @@ general:
   # given to a client. This helps detect dead connections caused by PostgreSQL
   # restart, network issues, or server-side idle timeouts.
   # 0 means disabled (no check).
+  # Supports human-readable format: "60s", "60000ms", or 60000 (milliseconds)
   # Default: "60s"
   server_idle_check_timeout: "60s"
 
@@ -180,7 +181,7 @@ general:
   # Syslog program name. When specified, pg_doorman sends messages to syslog.
   # Comment out to log to stdout.
   # Default: None
-  syslog_prog_name: "pg_doorman"
+  # syslog_prog_name: "pg_doorman"
 
   # --------------------------------------------------------------------------
   # Worker Settings
@@ -285,7 +286,7 @@ general:
   # tls_private_key: "/etc/pg_doorman/server.key"
 
   # Path to the CA certificate for client certificate verification.
-  # Used with tls_mode: "verify-full"
+  # Used with tls_mode = "verify-full"
   # tls_ca_cert: "/etc/pg_doorman/ca.crt"
 
   # TLS mode for incoming connections:
@@ -321,7 +322,7 @@ general:
   # PID file path for daemon mode.
   # Setting this enables daemon mode. Comment out for foreground mode with `-d`.
   # Default: "/tmp/pg_doorman.pid"
-  daemon_pid_file: "/tmp/pg_doorman.pid"
+  # daemon_pid_file: "/tmp/pg_doorman.pid"
 
   # --------------------------------------------------------------------------
   # Access Control (Legacy)
@@ -374,9 +375,9 @@ general:
   #   # Reject all other connections
   #   host all all 0.0.0.0/0 reject
 
-# ============================================================================
+# ############################################################################
 # PROMETHEUS METRICS
-# ============================================================================
+# ############################################################################
 prometheus:
   # Enable Prometheus metrics exporter.
   # Default: false
@@ -390,9 +391,9 @@ prometheus:
   # Default: 9127
   port: 9127
 
-# ============================================================================
+# ############################################################################
 # TALOS AUTHENTICATION (Optional)
-# ============================================================================
+# ############################################################################
 # Talos is an optional authentication mechanism using public key cryptography.
 # talos:
 #   # List of public key files for Talos authentication.
@@ -404,13 +405,14 @@ prometheus:
 #     - "talos_db1"
 #     - "talos_db2"
 
-# ============================================================================
+# ############################################################################
 # CONNECTION POOLS
-# ============================================================================
+# ############################################################################
 # Each pool represents a virtual database that clients can connect to.
 # Pool names are visible to clients as database names.
 pools:
-  # Example pool configuration
+
+    # Example pool configuration
   exampledb:
     # --------------------------------------------------------------------------
     # Server Connection Settings
@@ -473,44 +475,57 @@ pools:
     # Array of users allowed to connect to this pool.
     # Each user must have a unique username within the pool.
     users:
-      - # Username for client authentication.
-        username: "app_user"
+        # Username for client authentication.
+      - username: "app_user"
 
-        # Password for client authentication.
-        # Supported formats:
-        # - MD5: "md5" + md5(password + username)
-        # - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
-        # - JWT public key: "jwt-pkey-fpath:/path/to/public.pem"
-        #
-        # Generate MD5: echo -n "passwordusername" | md5sum
-        # Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+      # Password for client authentication.
+      # Supported formats:
+      # - MD5: "md5" + md5(password + username)
+      # - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
+      # - JWT public key: "jwt-pkey-fpath:/path/to/public.pem"
+      #
+      # Generate MD5: echo -n "passwordusername" | md5sum
+      # Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
         password: "md5dd9a0f26a4302744db881776a09bbfad"
 
-        # Maximum connections to PostgreSQL for this user.
-        # Default: 40
+      # Maximum connections to PostgreSQL for this user.
+      # Default: 40
         pool_size: 40
 
-        # Minimum connections to maintain in the pool.
-        # Must be <= pool_size.
+      # Minimum connections to maintain in the pool.
+      # Must be <= pool_size.
         # min_pool_size: 5
 
-        # Override pool-level pool_mode for this user.
+      # Override pool-level pool_mode for this user.
         # pool_mode: "session"
 
-        # Override pool-level server_lifetime for this user (in milliseconds).
+      # Override pool-level server_lifetime for this user (in milliseconds).
         # server_lifetime: 600000
 
-        # Server-side credentials (if different from client credentials).
-        # Both must be specified together.
+      # Server-side credentials for connecting to PostgreSQL.
+      #
+      # IMPORTANT: By default pg_doorman uses the same username and password
+      # to authenticate on the PostgreSQL server. If the client password is
+      # an MD5/SCRAM hash (which is typical), PostgreSQL will REJECT it because
+      # the server expects the real plaintext password, not a hash.
+      #
+      # To fix this, set server_username and server_password to the actual
+      # PostgreSQL credentials (plaintext password). Both must be specified together.
+      #
+      # Example: client authenticates with MD5 hash, server uses real password:
+      #   username = "app_user"
+      #   password = "md5..."                    # for client auth
+      #   server_username = "app_user"            # for PostgreSQL auth
+      #   server_password = "real_password_here"  # plaintext password
         # server_username: "actual_pg_user"
         # server_password: "actual_pg_password"
 
-        # PAM service name for PAM authentication (requires 'pam' feature).
+      # PAM service name for PAM authentication (requires 'pam' feature).
         # auth_pam_service: "pg_doorman"
 
-  # --------------------------------------------------------------------------
-  # Additional Pool Examples
-  # --------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # Additional Pool Examples
+    # --------------------------------------------------------------------------
 
   # Example: Pool with multiple users
   # multi_user_db:

@@ -66,14 +66,17 @@ pub struct Pool {
     pub pool_mode: PoolMode,
 
     /// Maximum time to allow for establishing a new server connection.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub connect_timeout: Option<u64>,
 
     /// Close idle connections that have been opened for longer than this.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_timeout: Option<u64>,
 
     /// Close server connections that have been opened for longer than this.
     /// Only applied to idle connections. If the connection is actively used for
     /// longer than this period, the pool will not interrupt it.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_lifetime: Option<u64>,
 
     #[serde(default = "Pool::default_cleanup_server_connections")]
@@ -82,6 +85,7 @@ pub struct Pool {
     #[serde(default)] // False
     pub log_client_parameter_status_changes: bool,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub application_name: Option<String>,
 
     #[serde(default = "Pool::default_server_host")]
@@ -91,8 +95,10 @@ pub struct Pool {
     pub server_port: u16,
 
     // The real name of the database on the server. If it is not specified, the pool name is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_database: Option<String>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_statements_cache_size: Option<usize>,
 
     #[serde(

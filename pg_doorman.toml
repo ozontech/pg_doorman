@@ -11,9 +11,9 @@
 [include]
 # files = ["/etc/pg_doorman/pools.toml", "/etc/pg_doorman/hba.toml"]
 
-# ============================================================================
+# ############################################################################
 # GENERAL SETTINGS
-# ============================================================================
+# ############################################################################
 [general]
 # --------------------------------------------------------------------------
 # Network Settings
@@ -36,25 +36,25 @@ backlog = 0
 # Connection Timeouts
 # --------------------------------------------------------------------------
 
-# Connection timeout to server in milliseconds.
-# Default: 3000 (3 sec)
+# Connection timeout to server.
+# Default: 3000 (3000 ms)
 connect_timeout = 3000
 
-# Maximum time to wait for a query to complete, in milliseconds.
+# Maximum time to wait for a query to complete.
 # Analog of query_wait_timeout in PgBouncer.
-# Default: 5000 (5 sec)
+# Default: 5000 (5000 ms)
 query_wait_timeout = 5000
 
-# Server idle timeout in milliseconds.
-# Default: 300000000 (5000 min)
-idle_timeout = 300000
+# Server idle timeout.
+# Default: 300000000 (300000 ms)
+idle_timeout = 300000000
 
-# Server lifetime in milliseconds. Only applied to idle connections.
-# Default: 300000 (5 min)
+# Server lifetime. Only applied to idle connections.
+# Default: 300000 (300000 ms)
 server_lifetime = 300000
 
-# Interval for checking and closing idle connections, in milliseconds.
-# Default: 30000 (30 sec)
+# Interval for checking and closing idle connections.
+# Default: 30000 (30000 ms)
 retain_connections_time = 30000
 
 # Maximum number of idle connections to close per retain cycle.
@@ -66,15 +66,15 @@ retain_connections_max = 3
 # given to a client. This helps detect dead connections caused by PostgreSQL
 # restart, network issues, or server-side idle timeouts.
 # 0 means disabled (no check).
-# Default: 60s
-server_idle_check_timeout = "60s"
+# Default: "60s"
+server_idle_check_timeout = 60000
 
-# Graceful shutdown timeout in milliseconds.
-# Default: 10000 (10 sec)
+# Graceful shutdown timeout.
+# Default: 10000 (10000 ms)
 shutdown_timeout = 10000
 
-# Timeout for COPY data operations in milliseconds.
-# Default: 15000 (15 sec)
+# Timeout for COPY data operations.
+# Default: 15000 (15000 ms)
 proxy_copy_data_timeout = 15000
 
 # --------------------------------------------------------------------------
@@ -106,7 +106,7 @@ tcp_no_delay = true
 tcp_user_timeout = 60
 
 # Buffer size for read/write operations when connecting via unix socket.
-# Default: 1048576 (1 MB)
+# Default: 1048576 (1048576 bytes)
 unix_socket_buffer_size = 1048576
 
 # --------------------------------------------------------------------------
@@ -123,9 +123,9 @@ max_connections = 8192
 # Default: 4
 max_concurrent_creates = 4
 
-# Maximum memory usage for internal buffers (in bytes).
+# Maximum memory usage for internal buffers.
 # If exceeded, clients receive an error.
-# Default: 268435456 (256 MB)
+# Default: 268435456 (268435456 bytes)
 max_memory_usage = 268435456
 
 # --------------------------------------------------------------------------
@@ -143,7 +143,7 @@ log_client_disconnections = true
 # Syslog program name. When specified, pg_doorman sends messages to syslog.
 # Comment out to log to stdout.
 # Default: None
-syslog_prog_name = "pg_doorman"
+# syslog_prog_name = "pg_doorman"
 
 # --------------------------------------------------------------------------
 # Worker Settings
@@ -195,7 +195,7 @@ server_round_robin = false
 sync_server_parameters = false
 
 # Data responses larger than this value are transmitted in chunks.
-# Default: 1048576 (1 MB)
+# Default: 1048576 (1048576 bytes)
 message_size_to_be_stream = 1048576
 
 # Query that won't be sent to server (used for connection health checks).
@@ -282,7 +282,7 @@ verify_server_certificate = false
 # PID file path for daemon mode.
 # Setting this enables daemon mode. Comment out for foreground mode with `-d`.
 # Default: "/tmp/pg_doorman.pid"
-daemon_pid_file = "/tmp/pg_doorman.pid"
+# daemon_pid_file = "/tmp/pg_doorman.pid"
 
 # --------------------------------------------------------------------------
 # Access Control (Legacy)
@@ -335,9 +335,9 @@ hba = []
 # host all all 0.0.0.0/0 reject
 # """
 
-# ============================================================================
+# ############################################################################
 # PROMETHEUS METRICS
-# ============================================================================
+# ############################################################################
 [prometheus]
 # Enable Prometheus metrics exporter.
 # Default: false
@@ -351,9 +351,9 @@ host = "0.0.0.0"
 # Default: 9127
 port = 9127
 
-# ============================================================================
+# ############################################################################
 # TALOS AUTHENTICATION (Optional)
-# ============================================================================
+# ############################################################################
 # Talos is an optional authentication mechanism using public key cryptography.
 # [talos]
 # # List of public key files for Talos authentication.
@@ -361,9 +361,9 @@ port = 9127
 # # List of databases that use Talos authentication.
 # databases = ["talos_db1", "talos_db2"]
 
-# ============================================================================
+# ############################################################################
 # CONNECTION POOLS
-# ============================================================================
+# ############################################################################
 # Each pool represents a virtual database that clients can connect to.
 # Pool names are visible to clients as database names.
 [pools]
@@ -459,8 +459,21 @@ pool_size = 40
 # Override pool-level server_lifetime for this user (in milliseconds).
 # server_lifetime = 600000
 
-# Server-side credentials (if different from client credentials).
-# Both must be specified together.
+# Server-side credentials for connecting to PostgreSQL.
+#
+# IMPORTANT: By default pg_doorman uses the same username and password
+# to authenticate on the PostgreSQL server. If the client password is
+# an MD5/SCRAM hash (which is typical), PostgreSQL will REJECT it because
+# the server expects the real plaintext password, not a hash.
+#
+# To fix this, set server_username and server_password to the actual
+# PostgreSQL credentials (plaintext password). Both must be specified together.
+#
+# Example: client authenticates with MD5 hash, server uses real password:
+#   username = "app_user"
+#   password = "md5..."                    # for client auth
+#   server_username = "app_user"            # for PostgreSQL auth
+#   server_password = "real_password_here"  # plaintext password
 # server_username = "actual_pg_user"
 # server_password = "actual_pg_password"
 

@@ -461,6 +461,32 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
             cargo test --test bdd -- --tags @fuzz
 
+  # Job: Run Generate BDD tests
+  generate-tests:
+    name: Generate BDD Tests
+    needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull test image from GHCR
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+
+      - name: Run Generate BDD tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test bdd -- --tags @generate
+
   # Job 10: Run BDD tests for patroni_proxy
   patroni-proxy-tests:
     name: Patroni Proxy BDD Tests

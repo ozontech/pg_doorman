@@ -191,19 +191,37 @@ pg_doorman generate --ssl --output pg_doorman.yaml
 
 # Set custom pool size and pool mode
 pg_doorman generate --pool-size 20 --session-pool-mode --output pg_doorman.yaml
+
+# Generate a reference config with all settings and comments (no PG connection needed)
+pg_doorman generate --reference --output pg_doorman.yaml
+
+# Generate a reference config with Russian comments for quick start
+pg_doorman generate --reference --russian-comments --output pg_doorman.yaml
+
+# Generate a config without comments (plain serialization)
+pg_doorman generate --no-comments --output pg_doorman.yaml
+
+# Output to stdout in YAML format (default)
+pg_doorman generate --reference
+
+# Output to stdout in TOML format
+pg_doorman generate --reference --format toml
 ```
 
-The `generate` command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
-
-**Warning:** If your PostgreSQL server requires authentication in pg_hba.conf, you will need to manually set the `server_password` parameter in the configuration file after using the `generate` command.
+The `generate` command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file with inline comments explaining every parameter. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
 
 Key features of the `generate` command:
 - Automatically detects all non-template databases
 - Retrieves user authentication information from PostgreSQL
-- Configures appropriate pool settings for each database
-- Supports both regular and SSL/TLS connections
+- Generates annotated configs with detailed comments for every parameter (default)
+- `--reference` flag generates a complete reference config without requiring a PG connection
+- `--russian-comments` (alias `--ru`) generates comments in Russian for quick start
+- `--no-comments` flag produces a minimal config without comments
+- Supports both YAML and TOML output formats (auto-detected by file extension, or set via `--format`)
 - Can use standard PostgreSQL environment variables (PGHOST, PGPORT, etc.)
-- Allows customization of pool size and pool mode
+
+> **Important: Server Authentication**
+> By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), PostgreSQL will reject them because it expects plaintext passwords. To fix this, set `server_username` and `server_password` in the user configuration to the actual PostgreSQL credentials. See the generated config comments for details.
 
 ### Client access control (pg_hba)
 

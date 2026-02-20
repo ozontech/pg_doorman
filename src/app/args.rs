@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use std::fmt;
 use tracing::Level;
 
 /// PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat).
@@ -100,6 +101,20 @@ pub struct GenerateConfig {
     /// If not specified, it uses the ` host ` parameter.
     #[arg(long)]
     pub(crate) server_host: Option<String>,
+    /// Disable comments in generated config (by default, comments are included).
+    #[arg(long, default_value = "false")]
+    pub(crate) no_comments: bool,
+    /// Generate reference config without PG connection (uses example values).
+    #[arg(long, default_value = "false")]
+    pub(crate) reference: bool,
+    /// Generate comments in Russian for quick start guide.
+    #[arg(long, alias = "ru", default_value = "false")]
+    pub(crate) russian_comments: bool,
+    /// Output format: yaml (default) or toml.
+    /// If --output is specified, format is auto-detected from file extension.
+    /// This flag overrides the auto-detected format.
+    #[arg(short, long, value_enum)]
+    pub(crate) format: Option<OutputFormat>,
 }
 
 pub fn parse() -> Args {
@@ -111,4 +126,19 @@ pub enum LogFormat {
     Text,
     Structured,
     Debug,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum OutputFormat {
+    Yaml,
+    Toml,
+}
+
+impl fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OutputFormat::Yaml => write!(f, "yaml"),
+            OutputFormat::Toml => write!(f, "toml"),
+        }
+    }
 }

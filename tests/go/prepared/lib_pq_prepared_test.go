@@ -3,6 +3,7 @@ package doorman_test
 import (
 	"database/sql"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,13 +34,16 @@ func TestLibPQPrepared(t *testing.T) {
 	assert.NoError(t, err)
 	concurrency := make(chan struct{}, 100)
 	var count uint32
+	var wg sync.WaitGroup
 	for {
-		concurrency <- struct{}{}
 		if atomic.LoadUint32(&count) >= 20000 {
-			return
+			break
 		}
+		concurrency <- struct{}{}
+		wg.Add(1)
 		go func() {
 			defer func() {
+				wg.Done()
 				<-concurrency
 			}()
 			tx, err := db.Begin()
@@ -67,4 +71,5 @@ func TestLibPQPrepared(t *testing.T) {
 			assert.NoError(t, tx.Commit())
 		}()
 	}
+	wg.Wait()
 }

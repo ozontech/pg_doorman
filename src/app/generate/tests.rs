@@ -97,6 +97,10 @@ fn test_generate_config_with_default_parameters() {
         session_pool_mode: false,
         output: None,
         server_host: None,
+        no_comments: false,
+        reference: false,
+        russian_comments: false,
+        format: None,
     };
 
     // Create mock data
@@ -161,6 +165,10 @@ fn test_generate_config_with_custom_parameters() {
         session_pool_mode: true,
         output: None,
         server_host: None,
+        no_comments: false,
+        reference: false,
+        russian_comments: false,
+        format: None,
     };
 
     // Create mock data
@@ -221,6 +229,10 @@ fn test_generate_config_with_ssl_enabled() {
         session_pool_mode: false,
         output: None,
         server_host: None,
+        no_comments: false,
+        reference: false,
+        russian_comments: false,
+        format: None,
     };
 
     // Create mock data
@@ -261,6 +273,10 @@ fn test_generate_config_with_database_error() {
         session_pool_mode: false,
         output: None,
         server_host: None,
+        no_comments: false,
+        reference: false,
+        russian_comments: false,
+        format: None,
     };
 
     // Create a simple error type for testing
