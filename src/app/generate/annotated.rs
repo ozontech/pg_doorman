@@ -2739,6 +2739,56 @@ mod tests {
         );
     }
 
+    /// Verify that all public fields from config source files are documented
+    /// in the reference documentation (documentation/docs/reference/*.md).
+    /// This catches missing fields when someone adds a new config parameter
+    /// but forgets to document it.
+    #[test]
+    fn test_reference_docs_cover_all_config_fields() {
+        let general_md = include_str!("../../../documentation/docs/reference/general.md");
+        let pool_md = include_str!("../../../documentation/docs/reference/pool.md");
+
+        // Fields that are internal/structural and not documented as standalone params
+        let skip_fields: &[&str] = &[
+            "users",   // structural: documented as a section in pool.md
+            "pools",   // structural: section header
+            "path",    // internal: not a config parameter
+            "include", // structural: section in general.md, not a field heading
+            "files",   // part of include section
+        ];
+
+        let checks: &[(&str, &str, &str)] = &[
+            (
+                "General",
+                include_str!("../../config/general.rs"),
+                general_md,
+            ),
+            ("Pool", include_str!("../../config/pool.rs"), pool_md),
+            ("User", include_str!("../../config/user.rs"), pool_md),
+        ];
+
+        let mut missing = Vec::new();
+
+        for (struct_name, source, doc) in checks {
+            let fields = extract_pub_fields(source);
+            for field in &fields {
+                if skip_fields.contains(&field.as_str()) {
+                    continue;
+                }
+                if !doc.contains(field.as_str()) {
+                    missing.push(format!("{struct_name}::{field}"));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "The following config fields are NOT documented in reference docs.\n\
+             Add them to documentation/docs/reference/general.md or pool.md:\n  - {}",
+            missing.join("\n  - ")
+        );
+    }
+
     #[test]
     fn test_russian_reference_config_yaml_is_parseable() {
         let yaml_str = generate_reference_config(ConfigFormat::Yaml, true);

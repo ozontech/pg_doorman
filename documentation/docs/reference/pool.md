@@ -74,6 +74,12 @@ When enabled, the pool will automatically clean up server connections that are n
 
 Default: `true`.
 
+### prepared_statements_cache_size
+
+Override the global `prepared_statements_cache_size` for this pool. Controls the number of prepared statements cached at the pool level (shared across all clients connecting to the same pool).
+
+Default: `None` (uses global setting).
+
 ## Pool Users Settings
 
 ```toml

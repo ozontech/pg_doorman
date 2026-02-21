@@ -192,9 +192,9 @@ The TLS mode for incoming connections. It can be one of the following:
 
 Default: `"allow"`.
 
-### tls_ca_file
+### tls_ca_cert
 
-The file containing the CA certificate to verify the client certificate. This is required when `tls_mode` is set to `verify-full`.
+The path to the CA certificate file for client certificate verification. This is required when `tls_mode` is set to `verify-full`.
 
 Default: `None`.
 
