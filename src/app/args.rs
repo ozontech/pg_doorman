@@ -53,6 +53,19 @@ pub enum Commands {
         #[clap(flatten)]
         config: GenerateConfig,
     },
+    /// Generate reference documentation (Markdown) for all configuration parameters
+    GenerateDocs {
+        /// Output directory for generated documentation files.
+        /// If not specified, prints to stdout.
+        #[arg(short, long)]
+        output_dir: Option<String>,
+        /// Generate docs for all languages (EN + RU).
+        #[arg(long, default_value = "false")]
+        all_languages: bool,
+        /// Generate docs in Russian only (by default generates English).
+        #[arg(long, alias = "ru", default_value = "false")]
+        russian: bool,
+    },
 }
 
 #[derive(Debug, Clone, Parser)]

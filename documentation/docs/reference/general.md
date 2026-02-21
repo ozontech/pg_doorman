@@ -157,7 +157,7 @@ Default: `"0.0.0.0"`.
 
 Listen port for incoming connections.
 
-Default: `6432`.
+Default: `5432`.
 
 ### backlog
 
@@ -168,6 +168,7 @@ Default: `0`.
 ### max_connections
 
 The maximum number of clients that can connect to the pooler simultaneously. When this limit is reached:
+
 * A client connecting without SSL will receive the expected error (code: `53300`, message: `sorry, too many clients already`).
 * A client connecting via SSL will see a message indicating that the server does not support the SSL protocol.
 
@@ -192,7 +193,7 @@ The TLS mode for incoming connections. It can be one of the following:
 
 Default: `"allow"`.
 
-### tls_ca_file
+### tls_ca_cert
 
 The file containing the CA certificate to verify the client certificate. This is required when `tls_mode` is set to `verify-full`.
 
@@ -222,7 +223,7 @@ Default: `0`.
 
 Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground with `-d`.
 
-Default: `None`.
+Default: `"/tmp/pg_doorman.pid"`.
 
 ### syslog_prog_name
 
@@ -231,13 +232,13 @@ Comment this out if you want to log to stdout.
 
 Default: `None`.
 
-### log_client_connections 
+### log_client_connections
 
 Log client connections for monitoring.
 
 Default: `true`.
 
-### log_client_disconnections 
+### log_client_disconnections
 
 Log client disconnections for monitoring.
 
@@ -266,7 +267,7 @@ Default: `false`.
 Controls how often the scheduler checks the global task queue.
 Modern tokio versions handle this well by default, so this parameter is optional.
 
-Default: not set (uses tokio's default).
+Default: `not set (uses tokio's default)`.
 
 ### tokio_event_interval
 
@@ -274,7 +275,7 @@ Default: not set (uses tokio's default).
 Controls how often the scheduler checks for external events (I/O, timers).
 Modern tokio versions handle this well by default, so this parameter is optional.
 
-Default: not set (uses tokio's default).
+Default: `not set (uses tokio's default)`.
 
 ### worker_stack_size
 
@@ -282,7 +283,7 @@ Default: not set (uses tokio's default).
 Sets the stack size for worker threads.
 Modern tokio versions handle this well by default, so this parameter is optional.
 
-Default: not set (uses tokio's default).
+Default: `not set (uses tokio's default)`.
 
 ### max_blocking_threads
 
@@ -290,39 +291,38 @@ Default: not set (uses tokio's default).
 Sets the maximum number of threads for blocking operations.
 Modern tokio versions handle this well by default, so this parameter is optional.
 
-Default: not set (uses tokio's default).
-
+Default: `not set (uses tokio's default)`.
 
 ### connect_timeout
 
 Connection timeout to server in milliseconds.
 
-Default: `3000` (3 sec).
+Default: `3000 (3 sec)`.
 
 ### query_wait_timeout
 
 Maximum time to wait for a query to complete, in milliseconds.
 
-Default: `5000` (5 sec).
+Default: `5000 (5 sec)`.
 
 ### idle_timeout
 
 Server idle timeout in milliseconds.
 
-Default: `300000000` (5000 min).
+Default: `300000000 (5000 min)`.
 
 ### server_lifetime
 
 Server lifetime in milliseconds.
 
-Default: `300000` (5 min).
+Default: `300000 (5 min)`.
 
 ### retain_connections_time
 
 Interval for checking and closing idle connections that exceed `idle_timeout` or `server_lifetime`.
 The retain task runs periodically at this interval to clean up expired connections.
 
-Default: `30000` (30 sec).
+Default: `30000 (30 sec)`.
 
 ### retain_connections_max
 
@@ -348,7 +348,7 @@ is discarded and a new one is obtained.
 Set to `0` to disable the check (not recommended for production environments with potential network instability
 or PostgreSQL restarts).
 
-Default: `60s` (60 seconds).
+Default: `60s (60 seconds)`.
 
 ### server_round_robin
 
@@ -386,11 +386,15 @@ Default: `5`.
 
 ### tcp_keepalives_idle
 
+Keepalive enabled by default and overwrite OS defaults.
+
 Default: `5`.
 
 ### tcp_keepalives_interval
 
-Default: `1`.
+TCP keepalive interval in seconds.
+
+Default: `5`.
 
 ### tcp_user_timeout
 
@@ -407,7 +411,7 @@ timeout when keepalive cannot help (e.g., during active data transmission).
 
 Set to `0` to disable (use OS default).
 
-Default: `60` (60 seconds).
+Default: `60`.
 
 ### unix_socket_buffer_size
 
@@ -436,24 +440,24 @@ Default: `true`.
 
 ### prepared_statements_cache_size
 
-Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool). 
+Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
 This cache stores the mapping from query hash to rewritten prepared statement name.
 
 Default: `8192`.
 
 ### client_prepared_statements_cache_size
 
-Maximum number of prepared statements cached per client connection. This is a protection mechanism against 
-malicious or misbehaving clients that don't call `DEALLOCATE` and could cause memory exhaustion by creating 
+Maximum number of prepared statements cached per client connection. This is a protection mechanism against
+malicious or misbehaving clients that don't call `DEALLOCATE` and could cause memory exhaustion by creating
 unlimited prepared statements over long-running connections.
 
-When the limit is reached, the oldest entry is evicted from the client's cache. The evicted statement 
-can still be re-used later because the pool-level cache (`prepared_statements_cache_size`) retains the 
+When the limit is reached, the oldest entry is evicted from the client's cache. The evicted statement
+can still be re-used later because the pool-level cache (`prepared_statements_cache_size`) retains the
 query-to-server-name mapping.
 
 Set to `0` to disable the limit (unlimited cache size, relies on client calling `DEALLOCATE`).
 
-Default: `0` (unlimited).
+Default: `0 (unlimited)`.
 
 ### message_size_to_be_stream
 
@@ -479,8 +483,7 @@ Default: `10000`.
 
 Maximum time to wait for data copy operations during proxying, in milliseconds.
 
-Default: `15000` (15 sec).
-
+Default: `15000 (15 sec)`.
 
 ### server_tls
 
@@ -497,6 +500,8 @@ Default: `false`.
 ### hba
 
 The list of IP addresses from which it is permitted to connect to the pg-doorman.
+
+Default: `[]`.
 
 ### pg_hba
 
@@ -560,4 +565,5 @@ Notes and limitations:
 This query will not be sent to the server if it is run as a SimpleQuery.
 It can be used to check the connection at the application level.
 
-Default: `;`.
+Default: `";"`.
+

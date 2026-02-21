@@ -1,4 +1,5 @@
 pub mod annotated;
+pub mod docs;
 
 use std::error::Error;
 

@@ -85,6 +85,10 @@ nav:
         - reference/general.md
         - reference/pool.md
         - reference/prometheus.md
+    - 'Reference (RU)':
+        - reference/ru/general.md
+        - reference/ru/pool.md
+        - reference/ru/prometheus.md
     - Changelog: changelog.md
     - Contributing: tutorials/contributing.md
 plugins:
