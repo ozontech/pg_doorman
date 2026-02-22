@@ -126,7 +126,11 @@ JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,backgro
 This repository also includes `patroni_proxy` — a TCP proxy for Patroni-managed PostgreSQL clusters. Zero-downtime failover: existing connections are preserved during cluster topology changes.
 
 <p align="center">
-  <img src="static/patroni_proxy_architecture.png" alt="patroni_proxy architecture" width="700" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/patroni_proxy_architecture_dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="static/patroni_proxy_architecture_light.png" />
+    <img src="static/patroni_proxy_architecture_light.png" alt="patroni_proxy architecture" width="700" />
+  </picture>
 </p>
 
 - **pg_doorman** deploys on the same host as PostgreSQL — connection pooling and prepared statement caching benefit from low latency to the database
