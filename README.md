@@ -40,10 +40,8 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Full extended query protocol | Yes | Yes | Partial |
 | Zero-downtime binary upgrade | Yes | Yes | No |
 | Deferred `BEGIN` (lazy server acquire) | Yes | No | No |
-| Dead connection probing | Yes | No | No |
 | Auto-config from PostgreSQL | Yes | No | No |
-| YAML config | Yes | No | No |
-| `pg_hba.conf` access control | Yes | Yes | No |
+| Native `pg_hba.conf` format | Yes | Yes | No (own format) |
 | PAM / JWT auth | Both | No | PAM only |
 | Prometheus metrics | Built-in | External | Built-in |
 
