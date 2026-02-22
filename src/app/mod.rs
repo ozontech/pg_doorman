@@ -67,45 +67,24 @@ pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             std::process::exit(0);
         }
-        Some(Commands::GenerateDocs {
-            output_dir,
-            all_languages,
-            russian,
-        }) => {
-            let languages: Vec<bool> = if *all_languages {
-                vec![false, true] // EN then RU
+        Some(Commands::GenerateDocs { output_dir }) => {
+            let docs = vec![
+                ("general.md", generate::docs::generate_general_doc()),
+                ("pool.md", generate::docs::generate_pool_doc()),
+                ("prometheus.md", generate::docs::generate_prometheus_doc()),
+            ];
+
+            if let Some(ref dir) = output_dir {
+                std::fs::create_dir_all(dir)?;
+                for (name, content) in &docs {
+                    let path = format!("{dir}/{name}");
+                    std::fs::write(&path, content)?;
+                    info!("Written: {path}");
+                }
             } else {
-                vec![*russian]
-            };
-
-            for russian in &languages {
-                let docs = vec![
-                    ("general.md", generate::docs::generate_general_doc(*russian)),
-                    ("pool.md", generate::docs::generate_pool_doc(*russian)),
-                    (
-                        "prometheus.md",
-                        generate::docs::generate_prometheus_doc(*russian),
-                    ),
-                ];
-
-                if let Some(ref base_dir) = output_dir {
-                    let dir = if *russian {
-                        format!("{base_dir}/../../../ru/src/reference")
-                    } else {
-                        base_dir.clone()
-                    };
-                    std::fs::create_dir_all(&dir)?;
-                    for (name, content) in &docs {
-                        let path = format!("{dir}/{name}");
-                        std::fs::write(&path, content)?;
-                        info!("Written: {path}");
-                    }
-                } else {
-                    for (name, content) in &docs {
-                        let lang = if *russian { "RU" } else { "EN" };
-                        println!("--- {name} ({lang}) ---");
-                        println!("{content}");
-                    }
+                for (name, content) in &docs {
+                    println!("--- {name} ---");
+                    println!("{content}");
                 }
             }
             std::process::exit(0);

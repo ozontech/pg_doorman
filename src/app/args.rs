@@ -59,12 +59,6 @@ pub enum Commands {
         /// If not specified, prints to stdout.
         #[arg(short, long)]
         output_dir: Option<String>,
-        /// Generate docs for all languages (EN + RU).
-        #[arg(long, default_value = "false")]
-        all_languages: bool,
-        /// Generate docs in Russian only (by default generates English).
-        #[arg(long, alias = "ru", default_value = "false")]
-        russian: bool,
     },
 }
 

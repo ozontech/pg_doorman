@@ -36,8 +36,9 @@ impl I18n {
 pub(crate) struct FieldDesc {
     #[serde(default)]
     pub config: Option<I18n>,
+    /// Rich description for reference documentation (EN only).
     #[serde(default)]
-    pub doc: Option<I18n>,
+    pub doc: Option<String>,
     #[serde(default)]
     pub default: Option<String>,
 }
