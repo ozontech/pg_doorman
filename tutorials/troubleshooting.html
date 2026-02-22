@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Home - PgDoorman Documentation</title>
+        <title>Troubleshooting - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -12,34 +12,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="highlight.css">
-        <link rel="stylesheet" href="tomorrow-night.css">
-        <link rel="stylesheet" href="ayu-highlight.css">
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="css/custom.css">
-        <link rel="stylesheet" href="mdbook-admonish.css">
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
 
 
         <!-- Provide site root to javascript -->
         <script>
-            var path_to_root = "";
+            var path_to_root = "../";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="body-container">
@@ -91,7 +91,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -125,13 +125,13 @@
                     <h1 class="menu-title">PgDoorman Documentation</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/index.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/troubleshooting.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,48 +160,75 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="pgdoorman-postgresql-pooler"><a class="header" href="#pgdoorman-postgresql-pooler">PgDoorman: PostgreSQL Pooler</a></h2>
-<p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
-It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
-Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.2.4</a></p>
-<h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
-<p>Run PgDoorman instantly using Docker:</p>
-<pre><code class="language-bash">docker run -p 6432:6432 \
-  -v $(pwd)/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
-  ghcr.io/ozontech/pg_doorman
+                        <h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
+<p>This guide helps you resolve common issues when using PgDoorman.</p>
+<h2 id="authentication-errors-when-connecting-to-postgresql"><a class="header" href="#authentication-errors-when-connecting-to-postgresql">Authentication Errors When Connecting to PostgreSQL</a></h2>
+<p><strong>Symptom:</strong> PgDoorman starts successfully but clients get authentication errors like <code>password authentication failed</code> when trying to execute queries.</p>
+<p><strong>Cause:</strong> By default, PgDoorman uses the same <code>username</code> and <code>password</code> for both client authentication and connecting to the PostgreSQL server. If the <code>password</code> field contains an MD5 or SCRAM hash (which is the typical and recommended setup), PostgreSQL will reject it because it expects a plaintext password.</p>
+<p><strong>Solution:</strong> Set <code>server_username</code> and <code>server_password</code> in your user configuration to the actual PostgreSQL credentials:</p>
+<h3 id="yaml"><a class="header" href="#yaml">YAML</a></h3>
+<pre><code class="language-yaml">pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    users:
+      - username: "app_user"
+        password: "md5..."                # MD5/SCRAM hash for client auth
+        server_username: "app_user"       # real PostgreSQL username
+        server_password: "plaintext_pwd"  # real PostgreSQL password
+        pool_size: 40
 </code></pre>
-<p><em>For more details, see the <a href="tutorials/installation.html">Installation Guide</a>.</em></p>
-<h3 id="why-not-multi-pgbouncer"><a class="header" href="#why-not-multi-pgbouncer">Why not multi-PgBouncer?</a></h3>
-<p>Why do we think that using <a href="https://www.pgbouncer.org/config.html#so_reuseport">multiple instances of PgBouncer</a> is not a suitable solution?
-This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
-Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
-but each client can disconnect at any time, leading to an imbalance after prolonged use.</p>
-<h3 id="why-not-odyssey"><a class="header" href="#why-not-odyssey">Why not Odyssey?</a></h3>
-<p>We had difficulties using NPGSQL and SCRAM, as well as with <code>prepared_statements</code> support.
-However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.</p>
-<h3 id="differences-from-pgcat"><a class="header" href="#differences-from-pgcat">Differences from PgCat</a></h3>
-<p>While PgDoorman was initially based on the PgCat project, it has since evolved into a standalone solution with its own set of features.
-Some of the key differences include:</p>
-<ul>
-<li>Performance improvements compared to PgCat/PgBouncer/Odyssey.</li>
-<li>Support for extended protocol with popular programming language drivers.</li>
-<li>Enhanced monitoring metrics to improve visibility into database activity.</li>
-<li>Careful resource management to avoid memory issues (<code>max_memory_usage</code>, <code>message_size_to_be_stream</code>).</li>
-<li>SCRAM client/server authentication support.</li>
-<li><a href="tutorials/binary-upgrade.html">Gracefully binary upgrade</a>.</li>
-<li>Supporting JWT for service-to-database authentication.</li>
-<li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
-</ul>
-<h3 id="additional-binary-patroni_proxy"><a class="header" href="#additional-binary-patroni_proxy">Additional Binary: patroni_proxy</a></h3>
-<p>This repository also includes <a href="tutorials/patroni-proxy.html">patroni_proxy</a> — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.</p>
+<h3 id="toml"><a class="header" href="#toml">TOML</a></h3>
+<pre><code class="language-toml">[pools.mydb.users.0]
+username = "app_user"
+password = "md5..."                # MD5/SCRAM hash for client auth
+server_username = "app_user"       # real PostgreSQL username
+server_password = "plaintext_pwd"  # real PostgreSQL password
+pool_size = 40
+</code></pre>
+<div id="admonition-how-to-get-the-password-hash" class="admonition admonish-tip" role="note" aria-labelledby="admonition-how-to-get-the-password-hash-title">
+<div class="admonition-title">
+<div id="admonition-how-to-get-the-password-hash-title">
+<p>How to get the password hash</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-how-to-get-the-password-hash"></a>
+</div>
+<div>
+<p>You can get user password hashes from PostgreSQL using: <code>SELECT usename, passwd FROM pg_shadow;</code></p>
+<p>Or use the <code>pg_doorman generate</code> command which automatically retrieves them.</p>
+</div>
+</div>
+<h2 id="configuration-file-not-found"><a class="header" href="#configuration-file-not-found">Configuration File Not Found</a></h2>
+<p><strong>Symptom:</strong> PgDoorman exits with "configuration file not found" error.</p>
+<p><strong>Solution:</strong> Specify the configuration file path explicitly:</p>
+<pre><code class="language-bash">pg_doorman /path/to/pg_doorman.yaml
+</code></pre>
+<p>By default, PgDoorman looks for <code>pg_doorman.toml</code> in the current directory.</p>
+<h2 id="pool-size-too-small"><a class="header" href="#pool-size-too-small">Pool Size Too Small</a></h2>
+<p><strong>Symptom:</strong> Clients experience high wait times or receive errors about too many connections.</p>
+<p><strong>Solution:</strong> Increase <code>pool_size</code> for the affected user, or check the <code>SHOW POOLS</code> admin command to see <code>cl_waiting</code> and <code>maxwait</code> values. If <code>maxwait</code> is consistently high, your pool is undersized for your workload.</p>
+<hr />
+<div id="admonition-still-having-issues" class="admonition admonish-tip" role="note" aria-labelledby="admonition-still-having-issues-title">
+<div class="admonition-title">
+<div id="admonition-still-having-issues-title">
+<p>Still having issues?</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-still-having-issues"></a>
+</div>
+<div>
+<p>If you encounter a problem not listed here, please <a href="https://github.com/ozontech/pg_doorman/issues">open an issue on GitHub</a>.</p>
+</div>
+</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/patroni-proxy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
 
-                            <a rel="next prefetch" href="tutorials/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/general.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -211,8 +238,11 @@ Some of the key differences include:</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/patroni-proxy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
 
-                    <a rel="next prefetch" href="tutorials/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/general.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -227,17 +257,17 @@ Some of the key differences include:</p>
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid-init.js"></script>
-        <script src="mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
 
 
     </div>

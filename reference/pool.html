@@ -1,0 +1,298 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Pool Settings - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/reference/pool.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h2 id="pool-settings"><a class="header" href="#pool-settings">Pool Settings</a></h2>
+<p>Each record in the pool is the name of the virtual database that the pg-doorman client can connect to.</p>
+<pre><code class="language-toml">[pools.exampledb] # Declaring the 'exampledb' database
+</code></pre>
+<h3 id="server_host"><a class="header" href="#server_host">server_host</a></h3>
+<p>The directory with unix sockets or the IPv4 address of the PostgreSQL server that serves this pool.</p>
+<p>Example: <code>"/var/run/postgresql"</code> or <code>"127.0.0.1"</code>.</p>
+<p>Default: <code>"127.0.0.1"</code>.</p>
+<h3 id="server_port"><a class="header" href="#server_port">server_port</a></h3>
+<p>The port through which PostgreSQL server accepts incoming connections.</p>
+<p>Default: <code>5432</code>.</p>
+<h3 id="server_database"><a class="header" href="#server_database">server_database</a></h3>
+<p>Optional parameter that determines which database should be connected to on the PostgreSQL server.</p>
+<h3 id="application_name"><a class="header" href="#application_name">application_name</a></h3>
+<p>Parameter application_name, is sent to the server when opening a connection with PostgreSQL. It may be useful with the sync_server_parameters = false setting.</p>
+<h3 id="connect_timeout"><a class="header" href="#connect_timeout">connect_timeout</a></h3>
+<p>Maximum time to allow for establishing a new server connection for this pool, in milliseconds. If not specified, the global connect_timeout setting is used.</p>
+<p>Default: <code>None (uses global setting)</code>.</p>
+<h3 id="idle_timeout"><a class="header" href="#idle_timeout">idle_timeout</a></h3>
+<p>Close idle connections in this pool that have been opened for longer than this value, in milliseconds. If not specified, the global idle_timeout setting is used.</p>
+<p>Default: <code>None (uses global setting)</code>.</p>
+<h3 id="server_lifetime"><a class="header" href="#server_lifetime">server_lifetime</a></h3>
+<p>Close server connections in this pool that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the global server_lifetime setting is used.</p>
+<p>Default: <code>None (uses global setting)</code>.</p>
+<h3 id="pool_mode"><a class="header" href="#pool_mode">pool_mode</a></h3>
+<ul>
+<li><code>session</code> — Server is released back to pool after client disconnects.</li>
+<li><code>transaction</code> — Server is released back to pool after transaction finishes.</li>
+</ul>
+<p>Default: <code>"transaction"</code>.</p>
+<h3 id="log_client_parameter_status_changes"><a class="header" href="#log_client_parameter_status_changes">log_client_parameter_status_changes</a></h3>
+<p>Log information about any SET command in the log.</p>
+<p>Default: <code>false</code>.</p>
+<h3 id="cleanup_server_connections"><a class="header" href="#cleanup_server_connections">cleanup_server_connections</a></h3>
+<p>When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections.</p>
+<p>Default: <code>true</code>.</p>
+<h2 id="pool-users-settings"><a class="header" href="#pool-users-settings">Pool Users Settings</a></h2>
+<pre><code class="language-toml">[pools.exampledb.users.0]
+username = "exampledb-user-0" # A virtual user who can connect to this virtual database.
+</code></pre>
+<h3 id="username"><a class="header" href="#username">username</a></h3>
+<p>A virtual username who can connect to this virtual database (pool).</p>
+<h3 id="password"><a class="header" href="#password">password</a></h3>
+<p>The password for the virtual pool user.
+Password can be specified in <code>MD5</code>, <code>SCRAM-SHA-256</code>, or <code>JWT</code> format.
+Also, you can create a mirror list of users using secrets from the PostgreSQL instance: <code>select usename, passwd from pg_shadow</code>.</p>
+<h3 id="auth_pam_service"><a class="header" href="#auth_pam_service">auth_pam_service</a></h3>
+<p>The pam-service that is responsible for client authorization. In this case, pg_doorman will ignore the <code>password</code> value.</p>
+<h3 id="server_username"><a class="header" href="#server_username">server_username</a></h3>
+<p>The real PostgreSQL username used to connect to the database server.</p>
+<p>By default, PgDoorman uses the same <code>username</code> for both client authentication and server connections. However, if the client <code>password</code> is an MD5 or SCRAM hash (which is the typical setup), PostgreSQL will <strong>reject the connection</strong> because it expects a plaintext password, not a hash.</p>
+<p>To fix this, set <code>server_username</code> and <code>server_password</code> to the actual PostgreSQL credentials. Both must be specified together.</p>
+<h3 id="server_password"><a class="header" href="#server_password">server_password</a></h3>
+<p>The plaintext password for the PostgreSQL server user specified in <code>server_username</code>.</p>
+<p>This is needed because PgDoorman stores client passwords as MD5/SCRAM hashes for client authentication, but PostgreSQL requires a plaintext password during server-side authentication.</p>
+<h3 id="pool_size"><a class="header" href="#pool_size">pool_size</a></h3>
+<p>The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.</p>
+<p>Default: <code>40</code>.</p>
+<h3 id="min_pool_size"><a class="header" href="#min_pool_size">min_pool_size</a></h3>
+<p>The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="server_lifetime-1"><a class="header" href="#server_lifetime-1">server_lifetime</a></h3>
+<p>Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used.</p>
+<p>Default: <code>None (uses pool setting)</code>.</p>
+<div id="admonition-common-setup-issue" class="admonition admonish-warning" role="note" aria-labelledby="admonition-common-setup-issue-title">
+<div class="admonition-title">
+<div id="admonition-common-setup-issue-title">
+<p>Common Setup Issue</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-common-setup-issue"></a>
+</div>
+<div>
+<p>If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that <code>server_username</code> and <code>server_password</code> are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the <code>password</code> field, which PostgreSQL rejects.</p>
+<p><strong>Solution:</strong> Set both <code>server_username</code> and <code>server_password</code> to the actual PostgreSQL credentials:</p>
+<pre><code class="language-yaml">users:
+  - username: "app_user"
+    password: "md5..."                # hash for client authentication
+    server_username: "app_user"       # real PostgreSQL username
+    server_password: "plaintext_pwd"  # real PostgreSQL password
+</code></pre>
+</div>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/general.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/prometheus.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/general.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/prometheus.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+
+
+    </div>
+    </body>
+</html>

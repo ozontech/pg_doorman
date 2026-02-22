@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Home - PgDoorman Documentation</title>
+        <title>Overview - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -12,34 +12,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="highlight.css">
-        <link rel="stylesheet" href="tomorrow-night.css">
-        <link rel="stylesheet" href="ayu-highlight.css">
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="css/custom.css">
-        <link rel="stylesheet" href="mdbook-admonish.css">
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
 
 
         <!-- Provide site root to javascript -->
         <script>
-            var path_to_root = "";
+            var path_to_root = "../";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="body-container">
@@ -91,7 +91,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -125,13 +125,13 @@
                     <h1 class="menu-title">PgDoorman Documentation</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/index.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,48 +160,75 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="pgdoorman-postgresql-pooler"><a class="header" href="#pgdoorman-postgresql-pooler">PgDoorman: PostgreSQL Pooler</a></h2>
-<p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
-It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
-Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.2.4</a></p>
-<h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
-<p>Run PgDoorman instantly using Docker:</p>
-<pre><code class="language-bash">docker run -p 6432:6432 \
-  -v $(pwd)/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
-  ghcr.io/ozontech/pg_doorman
-</code></pre>
-<p><em>For more details, see the <a href="tutorials/installation.html">Installation Guide</a>.</em></p>
-<h3 id="why-not-multi-pgbouncer"><a class="header" href="#why-not-multi-pgbouncer">Why not multi-PgBouncer?</a></h3>
-<p>Why do we think that using <a href="https://www.pgbouncer.org/config.html#so_reuseport">multiple instances of PgBouncer</a> is not a suitable solution?
-This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
-Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
-but each client can disconnect at any time, leading to an imbalance after prolonged use.</p>
-<h3 id="why-not-odyssey"><a class="header" href="#why-not-odyssey">Why not Odyssey?</a></h3>
-<p>We had difficulties using NPGSQL and SCRAM, as well as with <code>prepared_statements</code> support.
-However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.</p>
-<h3 id="differences-from-pgcat"><a class="header" href="#differences-from-pgcat">Differences from PgCat</a></h3>
-<p>While PgDoorman was initially based on the PgCat project, it has since evolved into a standalone solution with its own set of features.
-Some of the key differences include:</p>
+                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
+<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
+<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
+<pre class="mermaid">graph LR
+    App1[Application A] --&gt; Pooler(PgDoorman)
+    App2[Application B] --&gt; Pooler
+    App3[Application C] --&gt; Pooler
+    Pooler --&gt; DB[(PostgreSQL)]
+</pre>
+<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
+<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
 <ul>
-<li>Performance improvements compared to PgCat/PgBouncer/Odyssey.</li>
-<li>Support for extended protocol with popular programming language drivers.</li>
-<li>Enhanced monitoring metrics to improve visibility into database activity.</li>
-<li>Careful resource management to avoid memory issues (<code>max_memory_usage</code>, <code>message_size_to_be_stream</code>).</li>
-<li>SCRAM client/server authentication support.</li>
-<li><a href="tutorials/binary-upgrade.html">Gracefully binary upgrade</a>.</li>
-<li>Supporting JWT for service-to-database authentication.</li>
-<li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
+<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
+<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
+<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
+<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
 </ul>
-<h3 id="additional-binary-patroni_proxy"><a class="header" href="#additional-binary-patroni_proxy">Additional Binary: patroni_proxy</a></h3>
-<p>This repository also includes <a href="tutorials/patroni-proxy.html">patroni_proxy</a> — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.</p>
+<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
+<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
+<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
+<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
+<div class="admonition-title">
+<div id="admonition-recommended-for-most-use-cases-title">
+<p>Recommended for most use cases</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
+</div>
+<div>
+<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
+</div>
+</div>
+<ul>
+<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
+<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+</ul>
+<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
+<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
+<div class="admonition-title">
+<div id="admonition-useful-for-specific-legacy-needs-title">
+<p>Useful for specific legacy needs</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
+</div>
+<div>
+<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
+</div>
+</div>
+<ul>
+<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
+<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
+</ul>
+<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
+<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
+<ul>
+<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
+<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
+<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
+</ul>
+<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
 
-                            <a rel="next prefetch" href="tutorials/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -211,8 +238,11 @@ Some of the key differences include:</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
 
-                    <a rel="next prefetch" href="tutorials/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -227,17 +257,17 @@ Some of the key differences include:</p>
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid-init.js"></script>
-        <script src="mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
 
 
     </div>

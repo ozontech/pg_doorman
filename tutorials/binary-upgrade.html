@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Home - PgDoorman Documentation</title>
+        <title>Binary Upgrade - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -12,34 +12,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="highlight.css">
-        <link rel="stylesheet" href="tomorrow-night.css">
-        <link rel="stylesheet" href="ayu-highlight.css">
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="css/custom.css">
-        <link rel="stylesheet" href="mdbook-admonish.css">
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
 
 
         <!-- Provide site root to javascript -->
         <script>
-            var path_to_root = "";
+            var path_to_root = "../";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="body-container">
@@ -91,7 +91,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -125,13 +125,13 @@
                     <h1 class="menu-title">PgDoorman Documentation</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/index.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/binary-upgrade.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,48 +160,58 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="pgdoorman-postgresql-pooler"><a class="header" href="#pgdoorman-postgresql-pooler">PgDoorman: PostgreSQL Pooler</a></h2>
-<p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
-It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
-Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.2.4</a></p>
-<h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
-<p>Run PgDoorman instantly using Docker:</p>
-<pre><code class="language-bash">docker run -p 6432:6432 \
-  -v $(pwd)/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
-  ghcr.io/ozontech/pg_doorman
-</code></pre>
-<p><em>For more details, see the <a href="tutorials/installation.html">Installation Guide</a>.</em></p>
-<h3 id="why-not-multi-pgbouncer"><a class="header" href="#why-not-multi-pgbouncer">Why not multi-PgBouncer?</a></h3>
-<p>Why do we think that using <a href="https://www.pgbouncer.org/config.html#so_reuseport">multiple instances of PgBouncer</a> is not a suitable solution?
-This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
-Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
-but each client can disconnect at any time, leading to an imbalance after prolonged use.</p>
-<h3 id="why-not-odyssey"><a class="header" href="#why-not-odyssey">Why not Odyssey?</a></h3>
-<p>We had difficulties using NPGSQL and SCRAM, as well as with <code>prepared_statements</code> support.
-However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.</p>
-<h3 id="differences-from-pgcat"><a class="header" href="#differences-from-pgcat">Differences from PgCat</a></h3>
-<p>While PgDoorman was initially based on the PgCat project, it has since evolved into a standalone solution with its own set of features.
-Some of the key differences include:</p>
-<ul>
-<li>Performance improvements compared to PgCat/PgBouncer/Odyssey.</li>
-<li>Support for extended protocol with popular programming language drivers.</li>
-<li>Enhanced monitoring metrics to improve visibility into database activity.</li>
-<li>Careful resource management to avoid memory issues (<code>max_memory_usage</code>, <code>message_size_to_be_stream</code>).</li>
-<li>SCRAM client/server authentication support.</li>
-<li><a href="tutorials/binary-upgrade.html">Gracefully binary upgrade</a>.</li>
-<li>Supporting JWT for service-to-database authentication.</li>
-<li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
-</ul>
-<h3 id="additional-binary-patroni_proxy"><a class="header" href="#additional-binary-patroni_proxy">Additional Binary: patroni_proxy</a></h3>
-<p>This repository also includes <a href="tutorials/patroni-proxy.html">patroni_proxy</a> — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.</p>
+                        <h1 id="binary-upgrade-process"><a class="header" href="#binary-upgrade-process">Binary Upgrade Process</a></h1>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>PgDoorman supports seamless binary upgrades that allow you to update the software with minimal disruption to your database connections. This document explains how the upgrade process works and what to expect during an upgrade.</p>
+<h2 id="how-the-upgrade-process-works"><a class="header" href="#how-the-upgrade-process-works">How the Upgrade Process Works</a></h2>
+<p>When you send a <code>SIGINT</code> signal to the PgDoorman process, the binary upgrade process is initiated:</p>
+<ol>
+<li>The current PgDoorman instance executes the exec command and starts a new, daemonized process</li>
+<li>The new process uses the <code>SO_REUSE_PORT</code> socket option, allowing the operating system to distribute incoming traffic to the new instance</li>
+<li>The old instance then closes its socket for incoming connections</li>
+<li>Existing connections are handled gracefully during the transition</li>
+</ol>
+<h2 id="handling-existing-connections"><a class="header" href="#handling-existing-connections">Handling Existing Connections</a></h2>
+<p>During the upgrade process, PgDoorman handles existing connections as follows:</p>
+<ol>
+<li>Current queries and transactions are allowed to complete within the specified <code>shutdown_timeout</code> (default: 10 seconds)</li>
+<li>After each query or transaction completes successfully, PgDoorman returns error code <code>58006</code> to the client</li>
+<li>This error code indicates to the client that they need to reconnect to the server</li>
+<li>After reconnecting, clients can safely retry their queries with the new PgDoorman instance</li>
+</ol>
+<h2 id="important-considerations"><a class="header" href="#important-considerations">Important Considerations</a></h2>
+<div id="admonition-query-repetition" class="admonition admonish-warning" role="note" aria-labelledby="admonition-query-repetition-title">
+<div class="admonition-title">
+<div id="admonition-query-repetition-title">
+<p>Query Repetition</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-query-repetition"></a>
+</div>
+<div>
+<p>Repeating a query without receiving error code <code>58006</code> may cause problems as described in <a href="https://github.com/lib/pq/issues/939">this issue</a>. Make sure your client application properly handles reconnection scenarios.</p>
+</div>
+</div>
+<div id="admonition-client-library-compatibility" class="admonition admonish-tip" role="note" aria-labelledby="admonition-client-library-compatibility-title">
+<div class="admonition-title">
+<div id="admonition-client-library-compatibility-title">
+<p>Client Library Compatibility</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-client-library-compatibility"></a>
+</div>
+<div>
+<p>Be careful when using client libraries like <code>github.com/lib/pq</code> or Go's standard <code>database/sql</code> package. Ensure they properly handle the reconnection process during binary upgrades.</p>
+</div>
+</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/basic-usage.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
 
-                            <a rel="next prefetch" href="tutorials/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../tutorials/patroni-proxy.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -211,8 +221,11 @@ Some of the key differences include:</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/basic-usage.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
 
-                    <a rel="next prefetch" href="tutorials/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../tutorials/patroni-proxy.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -227,17 +240,17 @@ Some of the key differences include:</p>
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid-init.js"></script>
-        <script src="mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
 
 
     </div>

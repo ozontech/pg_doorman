@@ -1,0 +1,711 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Basic Usage - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/basic-usage.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="pgdoorman-basic-usage-guide"><a class="header" href="#pgdoorman-basic-usage-guide">PgDoorman Basic Usage Guide</a></h1>
+<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. This comprehensive guide will help you get started with configuring, running, and managing PgDoorman for your PostgreSQL environment.</p>
+<h2 id="command-line-options"><a class="header" href="#command-line-options">Command Line Options</a></h2>
+<p>PgDoorman offers several command-line options to customize its behavior when starting the service:</p>
+<pre><code class="language-bash">$ pg_doorman --help
+
+PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
+
+Usage: pg_doorman [OPTIONS] [CONFIG_FILE] [COMMAND]
+
+Commands:
+  generate  Generate configuration for pg_doorman by connecting to PostgreSQL and auto-detecting databases and users
+  help      Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [CONFIG_FILE]  [env: CONFIG_FILE=] [default: pg_doorman.toml]
+
+Options:
+  -l, --log-level &lt;LOG_LEVEL&gt;    [env: LOG_LEVEL=] [default: INFO]
+  -F, --log-format &lt;LOG_FORMAT&gt;  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
+  -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
+  -d, --daemon                   run as daemon [env: DAEMON=]
+  -h, --help                     Print help
+  -V, --version                  Print version
+</code></pre>
+<h3 id="available-options"><a class="header" href="#available-options">Available Options</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>-d</code>, <code>--daemon</code></td><td>Run in the background. Without this option, the process will run in the foreground.<br><br>In daemon mode, setting <code>daemon_pid_file</code> and <code>syslog_prog_name</code> is required. No log messages will be written to stderr after going into the background.</td></tr>
+<tr><td><code>-l</code>, <code>--log-level</code></td><td>Set log level: <code>INFO</code>, <code>DEBUG</code>, or <code>WARN</code>.</td></tr>
+<tr><td><code>-F</code>, <code>--log-format</code></td><td>Set log format. Possible values: <code>text</code>, <code>structured</code>, <code>debug</code>.</td></tr>
+<tr><td><code>-n</code>, <code>--no-color</code></td><td>Disable colors in the log output.</td></tr>
+<tr><td><code>-V</code>, <code>--version</code></td><td>Show version information.</td></tr>
+<tr><td><code>-h</code>, <code>--help</code></td><td>Show help information.</td></tr>
+</tbody></table>
+</div>
+<h2 id="setup-and-configuration"><a class="header" href="#setup-and-configuration">Setup and Configuration</a></h2>
+<h3 id="configuration-file-structure"><a class="header" href="#configuration-file-structure">Configuration File Structure</a></h3>
+<p>PgDoorman supports both <a href="https://yaml.org/">YAML</a> and <a href="https://toml.io/">TOML</a> configuration formats. YAML is recommended for new setups. The configuration is organized into several sections:</p>
+<pre><code class="language-yaml">general:        # Global settings for the PgDoorman service
+pools:
+  &lt;name&gt;:       # Settings for a specific database pool
+    users:
+      - ...     # User settings for this pool
+</code></pre>
+<div id="admonition-important" class="admonition admonish-tip" role="note" aria-labelledby="admonition-important-title">
+<div class="admonition-title">
+<div id="admonition-important-title">
+<p>Important</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-important"></a>
+</div>
+<div>
+<p>Some parameters <strong>must</strong> be specified in the configuration file for PgDoorman to start, even if they have default values. For example, you must specify an admin username and password to access the administrative console.</p>
+</div>
+</div>
+<h3 id="minimal-configuration-example"><a class="header" href="#minimal-configuration-example">Minimal Configuration Example</a></h3>
+<p>Here's a minimal configuration example to get you started:</p>
+<h4 id="yaml-recommended"><a class="header" href="#yaml-recommended">YAML (recommended)</a></h4>
+<pre><code class="language-yaml">general:
+  host: "0.0.0.0"         # Listen on all interfaces
+  port: 6432               # Port for client connections
+  admin_username: "admin"
+  admin_password: "admin"  # Change this in production!
+
+pools:
+  exampledb:
+    server_host: "127.0.0.1"  # PostgreSQL server address
+    server_port: 5432          # PostgreSQL server port
+    pool_mode: "transaction"   # Connection pooling mode
+    users:
+      - pool_size: 40
+        username: "doorman"
+        password: "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+</code></pre>
+<h4 id="toml"><a class="header" href="#toml">TOML</a></h4>
+<pre><code class="language-toml">[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin"
+
+[pools.exampledb]
+server_host = "127.0.0.1"
+server_port = 5432
+pool_mode = "transaction"
+
+[pools.exampledb.users.0]
+pool_size = 40
+username = "doorman"
+password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+</code></pre>
+<p>For a complete list of configuration options and their descriptions, see the <a href="../reference/general.html">Settings Reference Guide</a>.</p>
+<h3 id="automatic-configuration-generation"><a class="header" href="#automatic-configuration-generation">Automatic Configuration Generation</a></h3>
+<p>PgDoorman provides a powerful <code>generate</code> command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users. By default, the generated config includes detailed inline comments explaining every parameter.</p>
+<pre><code class="language-bash"># View all available options
+pg_doorman generate --help
+
+# Generate a YAML configuration file (recommended)
+pg_doorman generate --output pg_doorman.yaml
+
+# Generate a TOML configuration file (for backward compatibility)
+pg_doorman generate --output pg_doorman.toml
+
+# Generate a reference config with all settings (no PG connection needed)
+pg_doorman generate --reference --output pg_doorman.yaml
+
+# Generate a reference config with Russian comments for quick start
+pg_doorman generate --reference --ru --output pg_doorman.yaml
+
+# Generate a config without comments (plain serialization)
+pg_doorman generate --no-comments --output pg_doorman.yaml
+</code></pre>
+<p>The <code>generate</code> command supports several options:</p>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>--host</code></td><td>PostgreSQL host to connect to (uses localhost if not specified)</td></tr>
+<tr><td><code>--port</code>, <code>-p</code></td><td>PostgreSQL port to connect to (default: 5432)</td></tr>
+<tr><td><code>--user</code>, <code>-u</code></td><td>PostgreSQL user to connect as (requires superuser privileges to read pg_shadow)</td></tr>
+<tr><td><code>--password</code></td><td>PostgreSQL password to connect with</td></tr>
+<tr><td><code>--database</code>, <code>-d</code></td><td>PostgreSQL database to connect to (uses same name as user if not specified)</td></tr>
+<tr><td><code>--ssl</code></td><td>PostgreSQL connection to server via SSL/TLS</td></tr>
+<tr><td><code>--pool-size</code></td><td>Pool size for the generated configuration (default: 40)</td></tr>
+<tr><td><code>--session-pool-mode</code>, <code>-s</code></td><td>Session pool mode for the generated configuration</td></tr>
+<tr><td><code>--output</code>, <code>-o</code></td><td>Output file for the generated configuration (uses stdout if not specified)</td></tr>
+<tr><td><code>--server-host</code></td><td>Override server_host in config (uses the host parameter if not specified)</td></tr>
+<tr><td><code>--no-comments</code></td><td>Disable inline comments in generated config (by default, comments are included)</td></tr>
+<tr><td><code>--reference</code></td><td>Generate a complete reference config with example values, no PG connection needed</td></tr>
+<tr><td><code>--russian-comments</code>, <code>--ru</code></td><td>Generate comments in Russian for quick start guide</td></tr>
+<tr><td><code>--format</code>, <code>-f</code></td><td>Output format: <code>yaml</code> (default) or <code>toml</code>. If <code>--output</code> is specified, format is auto-detected from file extension. This flag overrides auto-detection</td></tr>
+</tbody></table>
+</div>
+<p>The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file. This is especially useful for quickly setting up PgDoorman in new environments.</p>
+<div id="admonition-postgresql-environment-variables" class="admonition admonish-note" role="note" aria-labelledby="admonition-postgresql-environment-variables-title">
+<div class="admonition-title">
+<div id="admonition-postgresql-environment-variables-title">
+<p>PostgreSQL Environment Variables</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-postgresql-environment-variables"></a>
+</div>
+<div>
+<p>The <code>generate</code> command also respects standard PostgreSQL environment variables like <code>PGHOST</code>, <code>PGPORT</code>, <code>PGUSER</code>, <code>PGPASSWORD</code>, and <code>PGDATABASE</code>.</p>
+</div>
+</div>
+<div id="admonition-server-authentication-common-issue" class="admonition admonish-warning" role="note" aria-labelledby="admonition-server-authentication-common-issue-title">
+<div class="admonition-title">
+<div id="admonition-server-authentication-common-issue-title">
+<p>Server Authentication (Common Issue)</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-server-authentication-common-issue"></a>
+</div>
+<div>
+<p>By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), <strong>PostgreSQL will reject the connection</strong> because it expects a plaintext password, not a hash.</p>
+<p><strong>To fix this</strong>, set <code>server_username</code> and <code>server_password</code> in the user configuration:</p>
+<pre><code class="language-yaml">users:
+  - username: "app_user"
+    password: "md5..."              # for client authentication
+    server_username: "app_user"     # for PostgreSQL server
+    server_password: "real_password" # plaintext password for PostgreSQL
+</code></pre>
+<p>The generated config includes detailed comments about this. See also <a href="../reference/pool.html#server_username">Pool User Settings</a>.</p>
+</div>
+</div>
+<div id="admonition-superuser-privileges" class="admonition admonish-warning" role="note" aria-labelledby="admonition-superuser-privileges-title">
+<div class="admonition-title">
+<div id="admonition-superuser-privileges-title">
+<p>Superuser Privileges</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-superuser-privileges"></a>
+</div>
+<div>
+<p>Reading user information from PostgreSQL requires superuser privileges to access the <code>pg_shadow</code> table.</p>
+</div>
+</div>
+<h3 id="client-access-control-pg_hba"><a class="header" href="#client-access-control-pg_hba">Client access control (pg_hba)</a></h3>
+<p>PgDoorman can enforce client access rules using PostgreSQL-style <code>pg_hba.conf</code> semantics via the <code>general.pg_hba</code> parameter.
+You can embed rules directly in the config or reference a file path. See the <a href="../reference/general.html#pg_hba">reference section</a> for full examples.</p>
+<p>Trust mode: when a matching rule uses <code>trust</code>, PgDoorman will accept connections without prompting the client for a password,
+mirroring PostgreSQL behavior. TLS-related rule types are honored: <code>hostssl</code> requires TLS, <code>hostnossl</code> forbids TLS.</p>
+<h3 id="running-pgdoorman"><a class="header" href="#running-pgdoorman">Running PgDoorman</a></h3>
+<p>After creating your configuration file, you can run PgDoorman from the command line:</p>
+<pre><code class="language-bash">$ pg_doorman pg_doorman.toml
+</code></pre>
+<p>If you don't specify a configuration file, PgDoorman will look for <code>pg_doorman.toml</code> in the current directory.</p>
+<h3 id="connecting-to-postgresql-via-pgdoorman"><a class="header" href="#connecting-to-postgresql-via-pgdoorman">Connecting to PostgreSQL via PgDoorman</a></h3>
+<p>Once PgDoorman is running, connect to it instead of connecting directly to your PostgreSQL database:</p>
+<pre><code class="language-bash">$ psql -h localhost -p 6432 -U doorman exampledb
+</code></pre>
+<p>Your application's connection string should be updated to point to PgDoorman instead of directly to PostgreSQL:</p>
+<pre><code>postgresql://doorman:password@localhost:6432/exampledb
+</code></pre>
+<p>PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.</p>
+<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
+<h3 id="admin-console"><a class="header" href="#admin-console">Admin Console</a></h3>
+<p>PgDoorman provides a powerful administrative interface that allows you to monitor and manage the connection pooler. You can access this interface by connecting to the special administration database named <strong>pgdoorman</strong>:</p>
+<pre><code class="language-bash">$ psql -h localhost -p 6432 -U admin pgdoorman
+</code></pre>
+<p>Once connected, you can view available commands:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW HELP;
+NOTICE:  Console usage
+DETAIL:
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
+	SHOW LISTS
+	SHOW CONNECTIONS
+	SHOW STATS
+	RELOAD
+    SHUTDOWN
+	SHOW
+</code></pre>
+<div id="admonition-protocol-compatibility" class="admonition admonish-note" role="note" aria-labelledby="admonition-protocol-compatibility-title">
+<div class="admonition-title">
+<div id="admonition-protocol-compatibility-title">
+<p>Protocol Compatibility</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-protocol-compatibility"></a>
+</div>
+<div>
+<p>The admin console currently supports only the simple query protocol.
+Some database drivers use the extended query protocol for all commands, making them unsuitable for admin console access. In such cases, use the <code>psql</code> command-line client for administration.</p>
+</div>
+</div>
+<div id="admonition-security" class="admonition admonish-warning" role="note" aria-labelledby="admonition-security-title">
+<div class="admonition-title">
+<div id="admonition-security-title">
+<p>Security</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-security"></a>
+</div>
+<div>
+<p>Only the user specified by <code>admin_username</code> in the configuration file is allowed to log in to the admin console.
+If your <code>general.pg_hba</code> rules allow it, the admin console can also be accessed using the <code>trust</code> method (no password prompt), for example:</p>
+<pre><code># Allow only local admin to access the admin DB without a password
+host  pgdoorman  admin  127.0.0.1/32  trust
+</code></pre>
+<p>Use <code>trust</code> with extreme caution. Always restrict it by address and, where possible, require TLS via <code>hostssl</code>. In production, prefer password-based methods unless you fully understand the implications.</p>
+</div>
+</div>
+<h3 id="monitoring-pgdoorman"><a class="header" href="#monitoring-pgdoorman">Monitoring PgDoorman</a></h3>
+<p>The admin console provides several commands to monitor the current state of PgDoorman:</p>
+<ul>
+<li><code>SHOW STATS</code> - View performance statistics</li>
+<li><code>SHOW CLIENTS</code> - List current client connections</li>
+<li><code>SHOW SERVERS</code> - List current server connections</li>
+<li><code>SHOW POOLS</code> - View connection pool status</li>
+<li><code>SHOW DATABASES</code> - List configured databases</li>
+<li><code>SHOW USERS</code> - List configured users</li>
+</ul>
+<p>These commands are described in detail in the <a href="#admin-console-commands">Admin Console Commands</a> section below.</p>
+<h3 id="reloading-configuration"><a class="header" href="#reloading-configuration">Reloading Configuration</a></h3>
+<p>If you make changes to the <code>pg_doorman.toml</code> file, you can apply them without restarting the service:</p>
+<pre><code class="language-sql">pgdoorman=# RELOAD;
+</code></pre>
+<p>When you reload the configuration:</p>
+<ol>
+<li>PgDoorman reads the updated configuration file</li>
+<li>Changes to database connection parameters are detected</li>
+<li>Existing server connections are closed when they're next released (according to the pooling mode)</li>
+<li>New server connections immediately use the updated parameters</li>
+</ol>
+<p>This allows you to make configuration changes with minimal disruption to your applications.</p>
+<h2 id="admin-console-commands"><a class="header" href="#admin-console-commands">Admin Console Commands</a></h2>
+<p>The admin console provides a set of commands to monitor and manage PgDoorman. These commands follow a SQL-like syntax and can be executed from any PostgreSQL client connected to the admin console.</p>
+<h3 id="show-commands"><a class="header" href="#show-commands">Show Commands</a></h3>
+<p>The <code>SHOW</code> commands display information about PgDoorman's operation. Each command provides different insights into the pooler's performance and current state.</p>
+<h4 id="show-stats"><a class="header" href="#show-stats">SHOW STATS</a></h4>
+<p>The <code>SHOW STATS</code> command displays comprehensive statistics about PgDoorman's operation:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW STATS;
+</code></pre>
+<p>Statistics are presented per database with the following metrics:</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>database</code></td><td>The database name these statistics apply to</td></tr>
+<tr><td><code>total_xact_count</code></td><td>Total number of SQL transactions processed since startup</td></tr>
+<tr><td><code>total_query_count</code></td><td>Total number of SQL commands processed since startup</td></tr>
+<tr><td><code>total_received</code></td><td>Total bytes of network traffic received from clients</td></tr>
+<tr><td><code>total_sent</code></td><td>Total bytes of network traffic sent to clients</td></tr>
+<tr><td><code>total_xact_time</code></td><td>Total microseconds spent in transactions (including idle in transaction)</td></tr>
+<tr><td><code>total_query_time</code></td><td>Total microseconds spent actively executing queries</td></tr>
+<tr><td><code>total_wait_time</code></td><td>Total microseconds clients spent waiting for a server connection</td></tr>
+<tr><td><code>avg_xact_count</code></td><td>Average transactions per second in the last 15-second period</td></tr>
+<tr><td><code>avg_query_count</code></td><td>Average queries per second in the last 15-second period</td></tr>
+<tr><td><code>avg_server_assignment_count</code></td><td>Average server assignments per second in the last 15-second period</td></tr>
+<tr><td><code>avg_recv</code></td><td>Average bytes received per second from clients</td></tr>
+<tr><td><code>avg_sent</code></td><td>Average bytes sent per second to clients</td></tr>
+<tr><td><code>avg_xact_time</code></td><td>Average transaction duration in microseconds</td></tr>
+<tr><td><code>avg_query_time</code></td><td>Average query duration in microseconds</td></tr>
+<tr><td><code>avg_wait_time</code></td><td>Average time clients spent waiting for a server in microseconds</td></tr>
+</tbody></table>
+</div><div id="admonition-performance-monitoring" class="admonition admonish-tip" role="note" aria-labelledby="admonition-performance-monitoring-title">
+<div class="admonition-title">
+<div id="admonition-performance-monitoring-title">
+<p>Performance Monitoring</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-performance-monitoring"></a>
+</div>
+<div>
+<p>Pay special attention to the <code>avg_wait_time</code> metric. If this value is consistently high, it may indicate that your pool size is too small for your workload.</p>
+</div>
+</div>
+<h4 id="show-servers"><a class="header" href="#show-servers">SHOW SERVERS</a></h4>
+<p>The <code>SHOW SERVERS</code> command displays detailed information about all server connections:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW SERVERS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Column</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>server_id</code></td><td>Unique identifier for the server connection</td></tr>
+<tr><td><code>server_process_id</code></td><td>PID of the backend PostgreSQL server process (if available)</td></tr>
+<tr><td><code>database_name</code></td><td>Name of the database this connection is using</td></tr>
+<tr><td><code>user</code></td><td>Username PgDoorman uses to connect to the PostgreSQL server</td></tr>
+<tr><td><code>application_name</code></td><td>Value of the <code>application_name</code> parameter set on the server connection</td></tr>
+<tr><td><code>state</code></td><td>Current state of the connection: <strong>active</strong>, <strong>idle</strong>, or <strong>used</strong></td></tr>
+<tr><td><code>wait</code></td><td>Wait state of the connection: <strong>idle</strong>, <strong>read</strong>, or <strong>write</strong></td></tr>
+<tr><td><code>transaction_count</code></td><td>Total number of transactions processed by this connection</td></tr>
+<tr><td><code>query_count</code></td><td>Total number of queries processed by this connection</td></tr>
+<tr><td><code>bytes_sent</code></td><td>Total bytes sent to the PostgreSQL server</td></tr>
+<tr><td><code>bytes_received</code></td><td>Total bytes received from the PostgreSQL server</td></tr>
+<tr><td><code>age_seconds</code></td><td>Lifetime of the current server connection in seconds</td></tr>
+<tr><td><code>prepare_cache_hit</code></td><td>Number of prepared statement cache hits</td></tr>
+<tr><td><code>prepare_cache_miss</code></td><td>Number of prepared statement cache misses</td></tr>
+<tr><td><code>prepare_cache_size</code></td><td>Number of unique prepared statements in the cache</td></tr>
+</tbody></table>
+</div><div id="admonition-connection-states" class="admonition admonish-info" role="note" aria-labelledby="admonition-connection-states-title">
+<div class="admonition-title">
+<div id="admonition-connection-states-title">
+<p>Connection States</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-connection-states"></a>
+</div>
+<div>
+<ul>
+<li><strong>active</strong>: The connection is currently executing a query</li>
+<li><strong>idle</strong>: The connection is available for use</li>
+<li><strong>used</strong>: The connection is allocated to a client but not currently executing a query</li>
+</ul>
+</div>
+</div>
+<h4 id="show-clients"><a class="header" href="#show-clients">SHOW CLIENTS</a></h4>
+<p>The <code>SHOW CLIENTS</code> command displays information about all client connections to PgDoorman:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW CLIENTS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Column</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>client_id</code></td><td>Unique identifier for the client connection</td></tr>
+<tr><td><code>database</code></td><td>Name of the database (pool) the client is connected to</td></tr>
+<tr><td><code>user</code></td><td>Username the client used to connect</td></tr>
+<tr><td><code>addr</code></td><td>Client's IP address and port (IP:port)</td></tr>
+<tr><td><code>tls</code></td><td>Whether the connection uses TLS encryption (<strong>true</strong> or <strong>false</strong>)</td></tr>
+<tr><td><code>state</code></td><td>Current state of the client connection: <strong>active</strong>, <strong>idle</strong>, or <strong>waiting</strong></td></tr>
+<tr><td><code>wait</code></td><td>Wait state of the client connection: <strong>idle</strong>, <strong>read</strong>, or <strong>write</strong></td></tr>
+<tr><td><code>transaction_count</code></td><td>Total number of transactions processed for this client</td></tr>
+<tr><td><code>query_count</code></td><td>Total number of queries processed for this client</td></tr>
+<tr><td><code>age_seconds</code></td><td>Lifetime of the client connection in seconds</td></tr>
+</tbody></table>
+</div><div id="admonition-monitoring-long-running-connections" class="admonition admonish-tip" role="note" aria-labelledby="admonition-monitoring-long-running-connections-title">
+<div class="admonition-title">
+<div id="admonition-monitoring-long-running-connections-title">
+<p>Monitoring Long-Running Connections</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-monitoring-long-running-connections"></a>
+</div>
+<div>
+<p>The <code>age_seconds</code> column can help identify long-running connections that might be holding resources unnecessarily. Consider implementing connection timeouts in your application for idle connections.</p>
+</div>
+</div>
+<h4 id="show-pools"><a class="header" href="#show-pools">SHOW POOLS</a></h4>
+<p>The <code>SHOW POOLS</code> command displays information about connection pools. A new pool entry is created for each (database, user) pair:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW POOLS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Column</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>database</code></td><td>Name of the database</td></tr>
+<tr><td><code>user</code></td><td>Username associated with this pool</td></tr>
+<tr><td><code>pool_mode</code></td><td>Pooling mode in use: <strong>session</strong> or <strong>transaction</strong></td></tr>
+<tr><td><code>cl_active</code></td><td>Number of active client connections (linked to servers or idle)</td></tr>
+<tr><td><code>cl_waiting</code></td><td>Number of client connections waiting for a server connection</td></tr>
+<tr><td><code>sv_active</code></td><td>Number of server connections linked to clients</td></tr>
+<tr><td><code>sv_idle</code></td><td>Number of idle server connections available for immediate use</td></tr>
+<tr><td><code>sv_login</code></td><td>Number of server connections currently in the login process</td></tr>
+<tr><td><code>maxwait</code></td><td>Maximum wait time in seconds for the oldest client in the queue</td></tr>
+<tr><td><code>maxwait_us</code></td><td>Microsecond part of the maximum waiting time</td></tr>
+</tbody></table>
+</div><div id="admonition-performance-alert" class="admonition admonish-warning" role="note" aria-labelledby="admonition-performance-alert-title">
+<div class="admonition-title">
+<div id="admonition-performance-alert-title">
+<p>Performance Alert</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-performance-alert"></a>
+</div>
+<div>
+<p>If the <code>maxwait</code> value starts increasing, your server pool may not be handling requests quickly enough. This could be due to an overloaded PostgreSQL server or insufficient <code>pool_size</code> setting.</p>
+</div>
+</div>
+<h4 id="show-users"><a class="header" href="#show-users">SHOW USERS</a></h4>
+<p>The <code>SHOW USERS</code> command displays information about all configured users:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW USERS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Column</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>name</code></td><td>Username as configured in PgDoorman</td></tr>
+<tr><td><code>pool_mode</code></td><td>Pooling mode assigned to this user: <strong>session</strong> or <strong>transaction</strong></td></tr>
+</tbody></table>
+</div>
+<h4 id="show-databases"><a class="header" href="#show-databases">SHOW DATABASES</a></h4>
+<p>The <code>SHOW DATABASES</code> command displays information about all configured database pools:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW DATABASES;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Column</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>database</code></td><td>Name of the configured database pool</td></tr>
+<tr><td><code>host</code></td><td>Hostname of the PostgreSQL server PgDoorman connects to</td></tr>
+<tr><td><code>port</code></td><td>Port number of the PostgreSQL server</td></tr>
+<tr><td><code>pool_size</code></td><td>Maximum number of server connections for this database</td></tr>
+<tr><td><code>min_pool_size</code></td><td>Minimum number of server connections to maintain</td></tr>
+<tr><td><code>reserve_pool_size</code></td><td>Maximum number of additional connections allowed</td></tr>
+<tr><td><code>pool_mode</code></td><td>Default pooling mode for this database</td></tr>
+<tr><td><code>max_connections</code></td><td>Maximum allowed server connections (from <code>max_db_connections</code>)</td></tr>
+<tr><td><code>current_connections</code></td><td>Current number of server connections for this database</td></tr>
+</tbody></table>
+</div><div id="admonition-connection-management" class="admonition admonish-tip" role="note" aria-labelledby="admonition-connection-management-title">
+<div class="admonition-title">
+<div id="admonition-connection-management-title">
+<p>Connection Management</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-connection-management"></a>
+</div>
+<div>
+<p>Monitor the ratio between <code>current_connections</code> and <code>pool_size</code> to ensure your pool is properly sized. If <code>current_connections</code> frequently reaches <code>pool_size</code>, consider increasing the pool size.</p>
+</div>
+</div>
+<h4 id="show-sockets"><a class="header" href="#show-sockets">SHOW SOCKETS</a></h4>
+<p>The <code>SHOW SOCKETS</code> command displays low-level information about network sockets:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW SOCKETS;
+</code></pre>
+<p>This command includes all information shown in <code>SHOW CLIENTS</code> and <code>SHOW SERVERS</code> plus additional low-level details about the socket connections.</p>
+<h4 id="show-version"><a class="header" href="#show-version">SHOW VERSION</a></h4>
+<p>The <code>SHOW VERSION</code> command displays the PgDoorman version information:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW VERSION;
+</code></pre>
+<p>This is useful for verifying which version you're running, especially after upgrades.</p>
+<h3 id="control-commands"><a class="header" href="#control-commands">Control Commands</a></h3>
+<p>PgDoorman provides control commands that allow you to manage the service operation directly from the admin console.</p>
+<h4 id="shutdown"><a class="header" href="#shutdown">SHUTDOWN</a></h4>
+<p>The <code>SHUTDOWN</code> command gracefully terminates the PgDoorman process:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHUTDOWN;
+</code></pre>
+<p>When executed:</p>
+<ol>
+<li>PgDoorman stops accepting new client connections</li>
+<li>Existing transactions are allowed to complete (within the configured timeout)</li>
+<li>All connections are closed</li>
+<li>The process exits</li>
+</ol>
+<div id="admonition-service-interruption" class="admonition admonish-warning" role="note" aria-labelledby="admonition-service-interruption-title">
+<div class="admonition-title">
+<div id="admonition-service-interruption-title">
+<p>Service Interruption</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-service-interruption"></a>
+</div>
+<div>
+<p>Using the <code>SHUTDOWN</code> command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.</p>
+</div>
+</div>
+<h4 id="reload"><a class="header" href="#reload">RELOAD</a></h4>
+<p>The <code>RELOAD</code> command refreshes PgDoorman's configuration without restarting the service:</p>
+<pre><code class="language-sql">pgdoorman=&gt; RELOAD;
+</code></pre>
+<p>This command:</p>
+<ol>
+<li>Rereads the configuration file</li>
+<li>Updates all changeable settings</li>
+<li>Applies changes to connection parameters for new connections</li>
+<li>Maintains existing connections until they're released back to the pool</li>
+</ol>
+<div id="admonition-zero-downtime-configuration-changes" class="admonition admonish-tip" role="note" aria-labelledby="admonition-zero-downtime-configuration-changes-title">
+<div class="admonition-title">
+<div id="admonition-zero-downtime-configuration-changes-title">
+<p>Zero-Downtime Configuration Changes</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-zero-downtime-configuration-changes"></a>
+</div>
+<div>
+<p>The <code>RELOAD</code> command allows you to modify most configuration parameters without disrupting existing connections. This is ideal for production environments where downtime must be minimized.</p>
+</div>
+</div>
+<h2 id="signal-handling"><a class="header" href="#signal-handling">Signal Handling</a></h2>
+<p>PgDoorman responds to standard Unix signals for control and management. These signals can be sent using the <code>kill</code> command (e.g., <code>kill -HUP &lt;pid&gt;</code>).</p>
+<div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Description</th><th>Effect</th></tr></thead><tbody>
+<tr><td><strong>SIGHUP</strong></td><td>Configuration reload</td><td>Equivalent to the <code>RELOAD</code> command in the admin console. Rereads the configuration file and applies changes to settings.</td></tr>
+<tr><td><strong>SIGTERM</strong></td><td>Immediate shutdown</td><td>Forces PgDoorman to exit immediately. Active connections may be terminated abruptly.</td></tr>
+<tr><td><strong>SIGINT</strong></td><td>Graceful shutdown</td><td>Initiates a binary upgrade process. The current process starts a new instance and gracefully transfers connections. See <a href="binary-upgrade.html">Binary Upgrade Process</a> for details.</td></tr>
+</tbody></table>
+</div><div id="admonition-process-management" class="admonition admonish-note" role="note" aria-labelledby="admonition-process-management-title">
+<div class="admonition-title">
+<div id="admonition-process-management-title">
+<p>Process Management</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-process-management"></a>
+</div>
+<div>
+<p>In systemd-based environments, you can use <code>systemctl reload pg_doorman</code> to send SIGHUP and <code>systemctl restart pg_doorman</code> for a complete restart.</p>
+</div>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/installation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/binary-upgrade.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/installation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/binary-upgrade.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+
+
+    </div>
+    </body>
+</html>

@@ -3,7 +3,8 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Home - PgDoorman Documentation</title>
+        <title>Page not found - PgDoorman Documentation</title>
+        <base href="/">
 
 
         <!-- Custom HTML head -->
@@ -131,9 +132,6 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/index.md" title="Suggest an edit" aria-label="Suggest an edit">
-                            <i id="git-edit-button" class="fa fa-edit"></i>
-                        </a>
 
                     </div>
                 </div>
@@ -160,50 +158,14 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="pgdoorman-postgresql-pooler"><a class="header" href="#pgdoorman-postgresql-pooler">PgDoorman: PostgreSQL Pooler</a></h2>
-<p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
-It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
-Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.2.4</a></p>
-<h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
-<p>Run PgDoorman instantly using Docker:</p>
-<pre><code class="language-bash">docker run -p 6432:6432 \
-  -v $(pwd)/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
-  ghcr.io/ozontech/pg_doorman
-</code></pre>
-<p><em>For more details, see the <a href="tutorials/installation.html">Installation Guide</a>.</em></p>
-<h3 id="why-not-multi-pgbouncer"><a class="header" href="#why-not-multi-pgbouncer">Why not multi-PgBouncer?</a></h3>
-<p>Why do we think that using <a href="https://www.pgbouncer.org/config.html#so_reuseport">multiple instances of PgBouncer</a> is not a suitable solution?
-This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
-Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
-but each client can disconnect at any time, leading to an imbalance after prolonged use.</p>
-<h3 id="why-not-odyssey"><a class="header" href="#why-not-odyssey">Why not Odyssey?</a></h3>
-<p>We had difficulties using NPGSQL and SCRAM, as well as with <code>prepared_statements</code> support.
-However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.</p>
-<h3 id="differences-from-pgcat"><a class="header" href="#differences-from-pgcat">Differences from PgCat</a></h3>
-<p>While PgDoorman was initially based on the PgCat project, it has since evolved into a standalone solution with its own set of features.
-Some of the key differences include:</p>
-<ul>
-<li>Performance improvements compared to PgCat/PgBouncer/Odyssey.</li>
-<li>Support for extended protocol with popular programming language drivers.</li>
-<li>Enhanced monitoring metrics to improve visibility into database activity.</li>
-<li>Careful resource management to avoid memory issues (<code>max_memory_usage</code>, <code>message_size_to_be_stream</code>).</li>
-<li>SCRAM client/server authentication support.</li>
-<li><a href="tutorials/binary-upgrade.html">Gracefully binary upgrade</a>.</li>
-<li>Supporting JWT for service-to-database authentication.</li>
-<li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
-</ul>
-<h3 id="additional-binary-patroni_proxy"><a class="header" href="#additional-binary-patroni_proxy">Additional Binary: patroni_proxy</a></h3>
-<p>This repository also includes <a href="tutorials/patroni-proxy.html">patroni_proxy</a> — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.</p>
+                        <h1 id="document-not-found-404"><a class="header" href="#document-not-found-404">Document not found (404)</a></h1>
+<p>This URL is invalid, sorry. Please use the navigation bar or search to continue.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
 
-                            <a rel="next prefetch" href="tutorials/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
-                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -212,9 +174,6 @@ Some of the key differences include:</p>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
 
-                    <a rel="next prefetch" href="tutorials/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
-                    </a>
             </nav>
 
         </div>

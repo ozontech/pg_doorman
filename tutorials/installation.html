@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Home - PgDoorman Documentation</title>
+        <title>Installation - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -12,34 +12,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="highlight.css">
-        <link rel="stylesheet" href="tomorrow-night.css">
-        <link rel="stylesheet" href="ayu-highlight.css">
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="css/custom.css">
-        <link rel="stylesheet" href="mdbook-admonish.css">
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
 
 
         <!-- Provide site root to javascript -->
         <script>
-            var path_to_root = "";
+            var path_to_root = "../";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="body-container">
@@ -91,7 +91,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -125,13 +125,13 @@
                     <h1 class="menu-title">PgDoorman Documentation</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/index.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/installation.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,48 +160,91 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="pgdoorman-postgresql-pooler"><a class="header" href="#pgdoorman-postgresql-pooler">PgDoorman: PostgreSQL Pooler</a></h2>
-<p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
-It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
-Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.2.4</a></p>
-<h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
-<p>Run PgDoorman instantly using Docker:</p>
-<pre><code class="language-bash">docker run -p 6432:6432 \
-  -v $(pwd)/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
-  ghcr.io/ozontech/pg_doorman
-</code></pre>
-<p><em>For more details, see the <a href="tutorials/installation.html">Installation Guide</a>.</em></p>
-<h3 id="why-not-multi-pgbouncer"><a class="header" href="#why-not-multi-pgbouncer">Why not multi-PgBouncer?</a></h3>
-<p>Why do we think that using <a href="https://www.pgbouncer.org/config.html#so_reuseport">multiple instances of PgBouncer</a> is not a suitable solution?
-This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
-Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
-but each client can disconnect at any time, leading to an imbalance after prolonged use.</p>
-<h3 id="why-not-odyssey"><a class="header" href="#why-not-odyssey">Why not Odyssey?</a></h3>
-<p>We had difficulties using NPGSQL and SCRAM, as well as with <code>prepared_statements</code> support.
-However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.</p>
-<h3 id="differences-from-pgcat"><a class="header" href="#differences-from-pgcat">Differences from PgCat</a></h3>
-<p>While PgDoorman was initially based on the PgCat project, it has since evolved into a standalone solution with its own set of features.
-Some of the key differences include:</p>
+                        <h1 id="installing-pgdoorman"><a class="header" href="#installing-pgdoorman">Installing PgDoorman</a></h1>
+<p>This guide covers different methods for installing and running PgDoorman on your system.</p>
+<h2 id="system-requirements"><a class="header" href="#system-requirements">System Requirements</a></h2>
 <ul>
-<li>Performance improvements compared to PgCat/PgBouncer/Odyssey.</li>
-<li>Support for extended protocol with popular programming language drivers.</li>
-<li>Enhanced monitoring metrics to improve visibility into database activity.</li>
-<li>Careful resource management to avoid memory issues (<code>max_memory_usage</code>, <code>message_size_to_be_stream</code>).</li>
-<li>SCRAM client/server authentication support.</li>
-<li><a href="tutorials/binary-upgrade.html">Gracefully binary upgrade</a>.</li>
-<li>Supporting JWT for service-to-database authentication.</li>
-<li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
+<li>Linux (recommended) or macOS</li>
+<li>PostgreSQL server (version 10 or higher)</li>
+<li>Sufficient memory for connection pooling (depends on expected load)</li>
 </ul>
-<h3 id="additional-binary-patroni_proxy"><a class="header" href="#additional-binary-patroni_proxy">Additional Binary: patroni_proxy</a></h3>
-<p>This repository also includes <a href="tutorials/patroni-proxy.html">patroni_proxy</a> — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.</p>
+<h2 id="installation-methods"><a class="header" href="#installation-methods">Installation Methods</a></h2>
+<h3 id="pre-built-binaries-recommended"><a class="header" href="#pre-built-binaries-recommended">Pre-built Binaries (Recommended)</a></h3>
+<p>The simplest way to install PgDoorman is to download a pre-built binary from the <a href="https://github.com/ozontech/pg_doorman/releases">GitHub releases page</a>.</p>
+<ol>
+<li>Download the appropriate binary for your platform</li>
+<li>Make the file executable: <code>chmod +x pg_doorman</code></li>
+<li>Move it to a directory in your PATH: <code>sudo mv pg_doorman /usr/local/bin/</code></li>
+<li>Create a configuration file (see <a href="./basic-usage.html">Basic Usage</a> for details)</li>
+</ol>
+<h3 id="building-from-source"><a class="header" href="#building-from-source">Building from Source</a></h3>
+<p>If you prefer to build from source, you'll need to clone the repository first:</p>
+<pre><code class="language-bash">git clone https://github.com/ozontech/pg_doorman.git
+cd pg_doorman
+</code></pre>
+<p>Then follow the instructions in the <a href="./contributing.html">Contributing guide</a> to build the project.</p>
+<h2 id="docker-installation"><a class="header" href="#docker-installation">Docker Installation</a></h2>
+<h3 id="using-the-official-docker-image-recommended"><a class="header" href="#using-the-official-docker-image-recommended">Using the Official Docker Image (Recommended)</a></h3>
+<p>PgDoorman provides an official Docker image that you can use directly:</p>
+<pre><code class="language-bash"># Pull the official Docker image
+docker pull ghcr.io/ozontech/pg_doorman
+
+# Run PgDoorman with your configuration
+docker run -p 6432:6432 \
+  -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
+  --rm -t -i ghcr.io/ozontech/pg_doorman
+</code></pre>
+<h3 id="using-the-dockerfile"><a class="header" href="#using-the-dockerfile">Using the Dockerfile</a></h3>
+<p>You can build and run PgDoorman using Docker:</p>
+<pre><code class="language-bash"># Build the Docker image
+docker build -t pg_doorman -f Dockerfile .
+
+# Run PgDoorman with your configuration
+docker run -p 6432:6432 \
+  -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
+  --rm -t -i pg_doorman
+</code></pre>
+<h3 id="using-nix-with-docker"><a class="header" href="#using-nix-with-docker">Using Nix with Docker</a></h3>
+<p>If you use Nix, you can build a Docker image:</p>
+<pre><code class="language-bash"># Build the Docker image using Nix
+nix build .#dockerImage
+
+# Load the image into Docker
+docker load -i result
+
+# Run PgDoorman with your configuration
+docker run -p 6432:6432 \
+  -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
+  --rm -t -i pg_doorman
+</code></pre>
+<h2 id="using-docker-compose-or-podman-compose"><a class="header" href="#using-docker-compose-or-podman-compose">Using Docker Compose or Podman Compose</a></h2>
+<p>For a more complete setup including PostgreSQL, you can use Docker Compose or Podman Compose.</p>
+<p>A minimal compose configuration file is available in the <a href="https://github.com/ozontech/pg_doorman/tree/master/example">repository examples directory</a>.</p>
+<h3 id="running-with-docker-compose"><a class="header" href="#running-with-docker-compose">Running with Docker Compose</a></h3>
+<pre><code class="language-bash">docker compose up -d
+</code></pre>
+<h3 id="running-with-podman-compose"><a class="header" href="#running-with-podman-compose">Running with Podman Compose</a></h3>
+<pre><code class="language-bash">podman-compose up -d
+</code></pre>
+<h2 id="verifying-installation"><a class="header" href="#verifying-installation">Verifying Installation</a></h2>
+<p>After installation, you can verify that PgDoorman is running correctly by:</p>
+<ol>
+<li>Checking the process: <code>ps aux | grep pg_doorman</code></li>
+<li>Connecting to the admin console: <code>psql -h localhost -p 6432 -U admin pgdoorman</code></li>
+<li>Running <code>SHOW VERSION;</code> in the admin console</li>
+</ol>
+<h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
+<p>After installation, see the <a href="./basic-usage.html">Basic Usage guide</a> to configure and start using PgDoorman.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/overview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
 
-                            <a rel="next prefetch" href="tutorials/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../tutorials/basic-usage.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -211,8 +254,11 @@ Some of the key differences include:</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/overview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
 
-                    <a rel="next prefetch" href="tutorials/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../tutorials/basic-usage.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -227,17 +273,17 @@ Some of the key differences include:</p>
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid-init.js"></script>
-        <script src="mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
 
 
     </div>

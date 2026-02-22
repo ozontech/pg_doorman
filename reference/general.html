@@ -1,0 +1,605 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>General Settings - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/reference/general.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="settings"><a class="header" href="#settings">Settings</a></h1>
+<h2 id="configuration-file-format"><a class="header" href="#configuration-file-format">Configuration File Format</a></h2>
+<p>pg_doorman supports two configuration file formats:</p>
+<ul>
+<li><strong>YAML</strong> (<code>.yaml</code>, <code>.yml</code>) - The primary and recommended format for new configurations.</li>
+<li><strong>TOML</strong> (<code>.toml</code>) - Supported for backward compatibility with existing configurations.</li>
+</ul>
+<p>The format is automatically detected based on the file extension. Both formats support the same configuration options and can be used interchangeably.</p>
+<h3 id="example-yaml-configuration-recommended"><a class="header" href="#example-yaml-configuration-recommended">Example YAML Configuration (Recommended)</a></h3>
+<pre><code class="language-yaml">general:
+  host: "0.0.0.0"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin"
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "myuser"
+        password: "mypassword"
+        pool_size: 40
+</code></pre>
+<h3 id="example-toml-configuration-legacy"><a class="header" href="#example-toml-configuration-legacy">Example TOML Configuration (Legacy)</a></h3>
+<pre><code class="language-toml">[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin"
+
+[pools.mydb]
+server_host = "localhost"
+server_port = 5432
+pool_mode = "transaction"
+
+[[pools.mydb.users]]
+username = "myuser"
+password = "mypassword"
+pool_size = 40
+</code></pre>
+<h3 id="generate-command"><a class="header" href="#generate-command">Generate Command</a></h3>
+<p>The <code>generate</code> command can output configuration in either format. The format is determined by the output file extension. By default, the generated config includes detailed inline comments explaining every parameter.</p>
+<pre><code class="language-bash"># Generate YAML configuration (recommended)
+pg_doorman generate --output config.yaml
+
+# Generate TOML configuration (for backward compatibility)
+pg_doorman generate --output config.toml
+
+# Generate a complete reference config without PG connection
+pg_doorman generate --reference --output config.yaml
+
+# Generate reference config with Russian comments
+pg_doorman generate --reference --ru --output config.yaml
+
+# Generate config without comments (plain serialization)
+pg_doorman generate --no-comments --output config.yaml
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>--no-comments</code></td><td>Disable inline comments in generated config (by default, comments are included)</td></tr>
+<tr><td><code>--reference</code></td><td>Generate a complete reference config with example values, no PostgreSQL connection needed</td></tr>
+<tr><td><code>--russian-comments</code>, <code>--ru</code></td><td>Generate comments in Russian for quick start guide</td></tr>
+<tr><td><code>--format</code>, <code>-f</code></td><td>Output format: <code>yaml</code> (default) or <code>toml</code>. If <code>--output</code> is specified, format is auto-detected from file extension. This flag overrides auto-detection</td></tr>
+</tbody></table>
+</div>
+<h3 id="include-files"><a class="header" href="#include-files">Include Files</a></h3>
+<p>Include files can be in either format, and you can mix formats. For example, a YAML main config can include TOML files and vice versa:</p>
+<pre><code class="language-yaml">include:
+  files:
+    - "pools.yaml"
+    - "users.toml"
+</code></pre>
+<h2 id="human-readable-values"><a class="header" href="#human-readable-values">Human-Readable Values</a></h2>
+<p>pg_doorman supports human-readable formats for duration and byte size values, while maintaining backward compatibility with numeric values.</p>
+<h3 id="duration-format"><a class="header" href="#duration-format">Duration Format</a></h3>
+<p>Duration values can be specified as:</p>
+<ul>
+<li><strong>Plain numbers</strong>: interpreted as milliseconds (e.g., <code>5000</code> = 5 seconds)</li>
+<li><strong>String with suffix</strong>:
+<ul>
+<li><code>ms</code> - milliseconds (e.g., <code>"100ms"</code>)</li>
+<li><code>s</code> - seconds (e.g., <code>"5s"</code> = 5000 milliseconds)</li>
+<li><code>m</code> - minutes (e.g., <code>"5m"</code> = 300000 milliseconds)</li>
+<li><code>h</code> - hours (e.g., <code>"1h"</code> = 3600000 milliseconds)</li>
+<li><code>d</code> - days (e.g., <code>"1d"</code> = 86400000 milliseconds)</li>
+</ul>
+</li>
+</ul>
+<p><strong>Examples:</strong></p>
+<pre><code class="language-yaml">general:
+  # All these are equivalent (3 seconds):
+  # connect_timeout: 3000      # backward compatible (milliseconds)
+  # connect_timeout: "3s"      # human-readable
+  # connect_timeout: "3000ms"  # explicit milliseconds
+  connect_timeout: "3s"
+  idle_timeout: "5m"         # 5 minutes
+  server_lifetime: "1h"      # 1 hour
+</code></pre>
+<h3 id="byte-size-format"><a class="header" href="#byte-size-format">Byte Size Format</a></h3>
+<p>Byte size values can be specified as:</p>
+<ul>
+<li><strong>Plain numbers</strong>: interpreted as bytes (e.g., <code>1048576</code> = 1 MB)</li>
+<li><strong>String with suffix</strong> (case-insensitive):
+<ul>
+<li><code>B</code> - bytes (e.g., <code>"1024B"</code>)</li>
+<li><code>K</code> or <code>KB</code> - kilobytes (e.g., <code>"1K"</code> or <code>"1KB"</code> = 1024 bytes)</li>
+<li><code>M</code> or <code>MB</code> - megabytes (e.g., <code>"1M"</code> or <code>"1MB"</code> = 1048576 bytes)</li>
+<li><code>G</code> or <code>GB</code> - gigabytes (e.g., <code>"1G"</code> or <code>"1GB"</code> = 1073741824 bytes)</li>
+</ul>
+</li>
+</ul>
+<p>Note: Uses binary prefixes (1 KB = 1024 bytes, not 1000 bytes).</p>
+<p><strong>Examples:</strong></p>
+<pre><code class="language-yaml">general:
+  # All these are equivalent (256 MB):
+  # max_memory_usage: 268435456  # backward compatible (bytes)
+  # max_memory_usage: "256MB"    # human-readable
+  # max_memory_usage: "256M"     # short form
+  max_memory_usage: "256MB"
+  unix_socket_buffer_size: "1MB" # 1 MB
+  worker_stack_size: "8MB"       # 8 MB
+</code></pre>
+<h2 id="general-settings"><a class="header" href="#general-settings">General Settings</a></h2>
+<h3 id="host"><a class="header" href="#host">host</a></h3>
+<p>Listen host (TCP v4 only).</p>
+<p>Default: <code>"0.0.0.0"</code>.</p>
+<h3 id="port"><a class="header" href="#port">port</a></h3>
+<p>Listen port for incoming connections.</p>
+<p>Default: <code>5432</code>.</p>
+<h3 id="backlog"><a class="header" href="#backlog">backlog</a></h3>
+<p>TCP backlog for incoming connections. A value of zero sets the <code>max_connections</code> as value for the TCP backlog.</p>
+<p>Default: <code>0</code>.</p>
+<h3 id="max_connections"><a class="header" href="#max_connections">max_connections</a></h3>
+<p>The maximum number of clients that can connect to the pooler simultaneously. When this limit is reached:</p>
+<ul>
+<li>A client connecting without SSL will receive the expected error (code: <code>53300</code>, message: <code>sorry, too many clients already</code>).</li>
+<li>A client connecting via SSL will see a message indicating that the server does not support the SSL protocol.</li>
+</ul>
+<p>Default: <code>8192</code>.</p>
+<h3 id="max_concurrent_creates"><a class="header" href="#max_concurrent_creates">max_concurrent_creates</a></h3>
+<p>Maximum number of server connections that can be created concurrently per pool. This setting uses a semaphore to limit parallel connection creation, which significantly improves performance during cold start and burst scenarios.</p>
+<p>Higher values allow faster pool warm-up but may increase load on the PostgreSQL server during connection storms. Lower values provide more gradual connection creation.</p>
+<p>Default: <code>4</code>.</p>
+<h3 id="tls_mode"><a class="header" href="#tls_mode">tls_mode</a></h3>
+<p>The TLS mode for incoming connections. It can be one of the following:</p>
+<ul>
+<li><code>allow</code> - TLS connections are allowed but not required. The pg_doorman will attempt to establish a TLS connection if the client requests it.</li>
+<li><code>disable</code> - TLS connections are not allowed. All connections will be established without TLS encryption.</li>
+<li><code>require</code> - TLS connections are required. The pg_doorman will only accept connections that use TLS encryption.</li>
+<li><code>verify-full</code> - TLS connections are required and the pg_doorman will verify the client certificate. This mode provides the highest level of security.</li>
+</ul>
+<p>Default: <code>"allow"</code>.</p>
+<h3 id="tls_ca_cert"><a class="header" href="#tls_ca_cert">tls_ca_cert</a></h3>
+<p>The file containing the CA certificate to verify the client certificate. This is required when <code>tls_mode</code> is set to <code>verify-full</code>.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="tls_private_key"><a class="header" href="#tls_private_key">tls_private_key</a></h3>
+<p>The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_certificate</code>.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="tls_certificate"><a class="header" href="#tls_certificate">tls_certificate</a></h3>
+<p>The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with <code>tls_private_key</code>.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="tls_rate_limit_per_second"><a class="header" href="#tls_rate_limit_per_second">tls_rate_limit_per_second</a></h3>
+<p>Limit the number of simultaneous attempts to create a TLS session.
+Any value other than zero implies that there is a queue through which clients must pass in order to establish a TLS connection.
+In some cases, this is necessary in order to launch an application that opens many connections at startup (the so-called "hot start").</p>
+<p>Default: <code>0</code>.</p>
+<h3 id="daemon_pid_file"><a class="header" href="#daemon_pid_file">daemon_pid_file</a></h3>
+<p>Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground with <code>-d</code>.</p>
+<p>Default: <code>"/tmp/pg_doorman.pid"</code>.</p>
+<h3 id="syslog_prog_name"><a class="header" href="#syslog_prog_name">syslog_prog_name</a></h3>
+<p>When specified, pg_doorman starts sending messages to syslog (using /dev/log or /var/run/syslog).
+Comment this out if you want to log to stdout.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="log_client_connections"><a class="header" href="#log_client_connections">log_client_connections</a></h3>
+<p>Log client connections for monitoring.</p>
+<p>Default: <code>true</code>.</p>
+<h3 id="log_client_disconnections"><a class="header" href="#log_client_disconnections">log_client_disconnections</a></h3>
+<p>Log client disconnections for monitoring.</p>
+<p>Default: <code>true</code>.</p>
+<h3 id="worker_threads"><a class="header" href="#worker_threads">worker_threads</a></h3>
+<p>The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
+The more workers there are, the faster the system works, but only up to a certain limit (cpu count).</p>
+<p>This parameter also controls the number of shards in internal concurrent hash maps (DashMap).
+The shard count is calculated as <code>worker_threads * 4</code> rounded up to the nearest power of 2 (minimum 4 shards).
+This is important for Kubernetes deployments where CPU count detection may be incorrect, causing unnecessary overhead.</p>
+<p>Default: <code>4</code>.</p>
+<h3 id="worker_cpu_affinity_pinning"><a class="header" href="#worker_cpu_affinity_pinning">worker_cpu_affinity_pinning</a></h3>
+<p>Automatically assign workers to different CPUs (man 3 cpu_set).</p>
+<p>Default: <code>false</code>.</p>
+<h3 id="tokio_global_queue_interval"><a class="header" href="#tokio_global_queue_interval">tokio_global_queue_interval</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.global_queue_interval">Tokio runtime settings</a>.
+Controls how often the scheduler checks the global task queue.
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="tokio_event_interval"><a class="header" href="#tokio_event_interval">tokio_event_interval</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.event_interval">Tokio runtime settings</a>.
+Controls how often the scheduler checks for external events (I/O, timers).
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="worker_stack_size"><a class="header" href="#worker_stack_size">worker_stack_size</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.thread_stack_size">Tokio runtime settings</a>.
+Sets the stack size for worker threads.
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="max_blocking_threads"><a class="header" href="#max_blocking_threads">max_blocking_threads</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.max_blocking_threads">Tokio runtime settings</a>.
+Sets the maximum number of threads for blocking operations.
+Modern tokio versions handle this well by default, so this parameter is optional.</p>
+<p>Default: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="connect_timeout"><a class="header" href="#connect_timeout">connect_timeout</a></h3>
+<p>Connection timeout to server in milliseconds.</p>
+<p>Default: <code>3000 (3 sec)</code>.</p>
+<h3 id="query_wait_timeout"><a class="header" href="#query_wait_timeout">query_wait_timeout</a></h3>
+<p>Maximum time to wait for a query to complete, in milliseconds.</p>
+<p>Default: <code>5000 (5 sec)</code>.</p>
+<h3 id="idle_timeout"><a class="header" href="#idle_timeout">idle_timeout</a></h3>
+<p>Server idle timeout in milliseconds.</p>
+<p>Default: <code>300000000 (5000 min)</code>.</p>
+<h3 id="server_lifetime"><a class="header" href="#server_lifetime">server_lifetime</a></h3>
+<p>Server lifetime in milliseconds.</p>
+<p>Default: <code>300000 (5 min)</code>.</p>
+<h3 id="retain_connections_time"><a class="header" href="#retain_connections_time">retain_connections_time</a></h3>
+<p>Interval for checking and closing idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code>.
+The retain task runs periodically at this interval to clean up expired connections.</p>
+<p>Default: <code>30000 (30 sec)</code>.</p>
+<h3 id="retain_connections_max"><a class="header" href="#retain_connections_max">retain_connections_max</a></h3>
+<p>Maximum number of idle connections to close per retain cycle.
+When set to <code>0</code>, all idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code> will be closed immediately.
+When set to a positive value, at most that many connections will be closed per cycle across all pools.</p>
+<p>This parameter controls how aggressively pg_doorman closes idle connections. With the default value of <code>3</code>,
+up to 3 connections are closed per retain cycle, providing controlled cleanup. If you need faster cleanup of
+expired connections, set to <code>0</code> (unlimited) to close all expired connections in each retain cycle.</p>
+<p>Default: <code>3</code>.</p>
+<h3 id="server_idle_check_timeout"><a class="header" href="#server_idle_check_timeout">server_idle_check_timeout</a></h3>
+<p>Time after which an idle server connection should be checked before being given to a client.
+This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts.</p>
+<p>When a connection has been idle in the pool longer than this timeout, pg_doorman will send a minimal query (<code>;</code>)
+to verify the connection is still alive before returning it to the client. If the check fails, the connection
+is discarded and a new one is obtained.</p>
+<p>Set to <code>0</code> to disable the check (not recommended for production environments with potential network instability
+or PostgreSQL restarts).</p>
+<p>Default: <code>60s (60 seconds)</code>.</p>
+<h3 id="server_round_robin"><a class="header" href="#server_round_robin">server_round_robin</a></h3>
+<p>In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
+By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.</p>
+<p>Default: <code>false</code>.</p>
+<h3 id="sync_server_parameters"><a class="header" href="#sync_server_parameters">sync_server_parameters</a></h3>
+<p>If enabled, we strive to restore the parameters (via query <code>SET</code>) that were set by the client (and application_name)
+in transaction mode in other server backends. By default, this is disabled (false) due to performance.
+If you need to know <code>application_name</code>, but don't want to experience performance issues due to constant server queries <code>SET</code>,
+you can consider creating a separate pool for each application and using the <code>application_name</code> parameter in the <code>pool</code> settings.</p>
+<p>Default: <code>false</code>.</p>
+<h3 id="tcp_so_linger"><a class="header" href="#tcp_so_linger">tcp_so_linger</a></h3>
+<p>By default, pg_doorman send <code>RST</code> instead of keeping the connection open for a long time.</p>
+<p>Default: <code>0</code>.</p>
+<h3 id="tcp_no_delay"><a class="header" href="#tcp_no_delay">tcp_no_delay</a></h3>
+<p>TCP_NODELAY to disable Nagle's algorithm for lower latency.</p>
+<p>Default: <code>true</code>.</p>
+<h3 id="tcp_keepalives_count"><a class="header" href="#tcp_keepalives_count">tcp_keepalives_count</a></h3>
+<p>Keepalive enabled by default and overwrite OS defaults.</p>
+<p>Default: <code>5</code>.</p>
+<h3 id="tcp_keepalives_idle"><a class="header" href="#tcp_keepalives_idle">tcp_keepalives_idle</a></h3>
+<p>Keepalive enabled by default and overwrite OS defaults.</p>
+<p>Default: <code>5</code>.</p>
+<h3 id="tcp_keepalives_interval"><a class="header" href="#tcp_keepalives_interval">tcp_keepalives_interval</a></h3>
+<p>TCP keepalive interval in seconds.</p>
+<p>Default: <code>5</code>.</p>
+<h3 id="tcp_user_timeout"><a class="header" href="#tcp_user_timeout">tcp_user_timeout</a></h3>
+<p>Sets the <code>TCP_USER_TIMEOUT</code> socket option for client connections (in seconds). This option specifies
+the maximum time that transmitted data may remain unacknowledged before TCP will forcibly close the
+connection. This helps detect dead client connections faster than keepalive probes when the connection
+is actively sending data but the remote end has become unreachable (e.g., network failure, client crash).</p>
+<p>When set to a non-zero value, if data remains unacknowledged for this duration, the connection will
+be terminated. This is particularly useful to avoid 15-16 minute delays caused by TCP retransmission
+timeout when keepalive cannot help (e.g., during active data transmission).</p>
+<p><strong>Note:</strong> This option is only supported on Linux. On other operating systems, this setting is ignored.</p>
+<p>Set to <code>0</code> to disable (use OS default).</p>
+<p>Default: <code>60</code>.</p>
+<h3 id="unix_socket_buffer_size"><a class="header" href="#unix_socket_buffer_size">unix_socket_buffer_size</a></h3>
+<p>Buffer size for read and write operations when connecting to PostgreSQL via a unix socket.</p>
+<p>Default: <code>1048576</code>.</p>
+<h3 id="admin_username"><a class="header" href="#admin_username">admin_username</a></h3>
+<p>Access to the virtual admin database is carried out through the administrator's username and password.</p>
+<p>Default: <code>"admin"</code>.</p>
+<h3 id="admin_password"><a class="header" href="#admin_password">admin_password</a></h3>
+<p>Access to the virtual admin database is carried out through the administrator's username and password.
+It should be replaced with your secret.</p>
+<p>Default: <code>"admin"</code>.</p>
+<h3 id="prepared_statements"><a class="header" href="#prepared_statements">prepared_statements</a></h3>
+<p>Switcher to enable/disable caching of prepared statements.</p>
+<p>Default: <code>true</code>.</p>
+<h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size">prepared_statements_cache_size</a></h3>
+<p>Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
+This cache stores the mapping from query hash to rewritten prepared statement name.</p>
+<p>Default: <code>8192</code>.</p>
+<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size">client_prepared_statements_cache_size</a></h3>
+<p>Maximum number of prepared statements cached per client connection. This is a protection mechanism against
+malicious or misbehaving clients that don't call <code>DEALLOCATE</code> and could cause memory exhaustion by creating
+unlimited prepared statements over long-running connections.</p>
+<p>When the limit is reached, the oldest entry is evicted from the client's cache. The evicted statement
+can still be re-used later because the pool-level cache (<code>prepared_statements_cache_size</code>) retains the
+query-to-server-name mapping.</p>
+<p>Set to <code>0</code> to disable the limit (unlimited cache size, relies on client calling <code>DEALLOCATE</code>).</p>
+<p>Default: <code>0 (unlimited)</code>.</p>
+<h3 id="message_size_to_be_stream"><a class="header" href="#message_size_to_be_stream">message_size_to_be_stream</a></h3>
+<p>Data responses from the server (message type 'D') greater than this value will be
+transmitted through the proxy in small chunks (1 MB).</p>
+<p>Default: <code>1048576</code>.</p>
+<h3 id="max_memory_usage"><a class="header" href="#max_memory_usage">max_memory_usage</a></h3>
+<p>We calculate the total amount of memory used by the internal buffers for all current queries.
+If the limit is reached, the client will receive an error (256 MB).</p>
+<p>Default: <code>268435456</code>.</p>
+<h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout">shutdown_timeout</a></h3>
+<p>With a graceful shutdown, we wait for transactions to be completed within this time limit (10 seconds).</p>
+<p>Default: <code>10000</code>.</p>
+<h3 id="proxy_copy_data_timeout"><a class="header" href="#proxy_copy_data_timeout">proxy_copy_data_timeout</a></h3>
+<p>Maximum time to wait for data copy operations during proxying, in milliseconds.</p>
+<p>Default: <code>15000 (15 sec)</code>.</p>
+<h3 id="server_tls"><a class="header" href="#server_tls">server_tls</a></h3>
+<p>Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers.</p>
+<p>Default: <code>false</code>.</p>
+<h3 id="verify_server_certificate"><a class="header" href="#verify_server_certificate">verify_server_certificate</a></h3>
+<p>Verify the PostgreSQL server's TLS certificate when connecting with TLS. This setting is only relevant when <code>server_tls</code> is enabled.</p>
+<p>Default: <code>false</code>.</p>
+<h3 id="hba"><a class="header" href="#hba">hba</a></h3>
+<p>The list of IP addresses from which it is permitted to connect to the pg-doorman.</p>
+<p>Default: <code>[]</code>.</p>
+<h3 id="pg_hba"><a class="header" href="#pg_hba">pg_hba</a></h3>
+<p>New-style client access control in native PostgreSQL <code>pg_hba.conf</code> format. This allows you to define fine-grained access rules similar to PostgreSQL, including per-database, per-user, address ranges, and TLS requirements.</p>
+<p>You can specify <code>general.pg_hba</code> in three ways:</p>
+<ul>
+<li>As a multi-line string with the contents of a <code>pg_hba.conf</code> file</li>
+<li>As an object with <code>path</code> that points to a file on disk</li>
+<li>As an object with <code>content</code> containing the rules as a string</li>
+</ul>
+<p>Examples:</p>
+<pre><code class="language-toml">[general]
+# Inline content (triple-quoted TOML string)
+pg_hba = """
+# type   database  user   address         method
+host     all       all    10.0.0.0/8      md5
+hostssl  all       all    0.0.0.0/0       scram-sha-256
+hostnossl all      all    192.168.1.0/24  trust
+"""
+
+# Or load from file
+# pg_hba = { path = "./pg_hba.conf" }
+
+# Or embed as a single-line string
+# pg_hba = { content = "host all all 127.0.0.1/32 trust" }
+</code></pre>
+<p>Supported fields and methods:</p>
+<ul>
+<li>Connection types: <code>local</code>, <code>host</code>, <code>hostssl</code>, <code>hostnossl</code> (TLS-aware matching is honored)</li>
+<li>Database matcher: a name or <code>all</code></li>
+<li>User matcher: a name or <code>all</code></li>
+<li>Address: CIDR form like <code>1.2.3.4/32</code> or <code>::1/128</code> (required for non-<code>local</code> rules)</li>
+<li>Methods: <code>trust</code>, <code>md5</code>, <code>scram-sha-256</code> (unknown methods are parsed but treated as not-allowed by the checker)</li>
+</ul>
+<p>Precedence and compatibility:</p>
+<ul>
+<li><code>general.pg_hba</code> supersedes the legacy <code>general.hba</code> list. You cannot set both at the same time; configuration validation will reject this combination.</li>
+<li>Rules are evaluated in order; the first matching rule decides the outcome.</li>
+</ul>
+<p>Behavior of method = trust:</p>
+<ul>
+<li>When a matching rule has <code>trust</code>, PgDoorman will accept the connection without requesting a password. This mirrors PostgreSQL behavior.</li>
+<li>Specifically, if <code>trust</code> matches, PgDoorman will skip password verification even if the user has an <code>md5</code> or <code>scram-sha-256</code> password stored. This affects both MD5 and SCRAM flows.</li>
+<li>TLS constraints from the rule are respected: <code>hostssl</code> requires TLS, <code>hostnossl</code> forbids TLS.</li>
+</ul>
+<p>Admin console access:</p>
+<ul>
+<li><code>general.pg_hba</code> rules apply to the special admin database <code>pgdoorman</code> as well.</li>
+<li>This means you can allow admin access with the <code>trust</code> method when a matching rule is present, for example:
+<pre><code>host  pgdoorman  admin  127.0.0.1/32  trust
+</code></pre>
+</li>
+</ul>
+<p>Notes and limitations:</p>
+<ul>
+<li>Only a minimal subset of <code>pg_hba.conf</code> is supported that is sufficient for most proxy use-cases (type, database, user, address, method). Additional options (like <code>clientcert</code>) are currently ignored.</li>
+<li>For authentication methods other than <code>trust</code>, PgDoorman performs the corresponding challenge/response with the client.</li>
+<li>For Talos/JWT/PAM flows configured at the pool/user level, <code>trust</code> still bypasses the client password prompt; however, those modes may be used when <code>trust</code> does not match.</li>
+</ul>
+<h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
+<p>This query will not be sent to the server if it is run as a SimpleQuery.
+It can be used to check the connection at the application level.</p>
+<p>Default: <code>";"</code>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/troubleshooting.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/pool.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/troubleshooting.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/pool.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+
+
+    </div>
+    </body>
+</html>

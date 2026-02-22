@@ -1,0 +1,381 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Patroni Proxy - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/patroni-proxy.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="patroni-proxy"><a class="header" href="#patroni-proxy">Patroni Proxy</a></h1>
+<p><code>patroni_proxy</code> is a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", it focuses exclusively on TCP load balancing and failover for Patroni clusters.</p>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>Unlike traditional solutions like HAProxy, <code>patroni_proxy</code> provides seamless connection management without disrupting existing connections during cluster topology changes. When a new replica is added or removed, only the affected connections are handled — all other connections continue working without interruption.</p>
+<h2 id="key-features"><a class="header" href="#key-features">Key Features</a></h2>
+<h3 id="zero-downtime-connection-management"><a class="header" href="#zero-downtime-connection-management">Zero-Downtime Connection Management</a></h3>
+<p>The main advantage over HAProxy is that <code>patroni_proxy</code> <strong>does not terminate existing connections</strong> when the upstream configuration changes. This is critical for long-running transactions and connection-heavy applications.</p>
+<h3 id="hot-upstream-updates"><a class="header" href="#hot-upstream-updates">Hot Upstream Updates</a></h3>
+<ul>
+<li>Automatic discovery of cluster members via Patroni REST API (<code>/cluster</code> endpoint)</li>
+<li>Periodic polling with configurable interval (<code>cluster_update_interval</code>)</li>
+<li>Immediate updates via HTTP API (<code>/update_clusters</code> endpoint)</li>
+<li>Configuration reload via SIGHUP signal without restart</li>
+</ul>
+<h3 id="role-based-routing"><a class="header" href="#role-based-routing">Role-Based Routing</a></h3>
+<p>Route connections based on PostgreSQL node roles:</p>
+<div class="table-wrapper"><table><thead><tr><th>Role</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>leader</code></td><td>Primary/master node</td></tr>
+<tr><td><code>sync</code></td><td>Synchronous standby replicas</td></tr>
+<tr><td><code>async</code></td><td>Asynchronous replicas</td></tr>
+<tr><td><code>any</code></td><td>Any available node</td></tr>
+</tbody></table>
+</div>
+<h3 id="intelligent-load-balancing"><a class="header" href="#intelligent-load-balancing">Intelligent Load Balancing</a></h3>
+<ul>
+<li><strong>Least Connections</strong> strategy for distributing connections across backends</li>
+<li>Connection counters are preserved during cluster updates</li>
+<li>Automatic exclusion of nodes with <code>noloadbalance</code> tag</li>
+</ul>
+<h3 id="replication-lag-awareness"><a class="header" href="#replication-lag-awareness">Replication Lag Awareness</a></h3>
+<ul>
+<li>Configurable <code>max_lag_in_bytes</code> per port</li>
+<li>Automatic disconnection of clients when replica lag exceeds threshold</li>
+<li>Only affects replica connections (leader has no lag)</li>
+</ul>
+<h3 id="member-state-filtering"><a class="header" href="#member-state-filtering">Member State Filtering</a></h3>
+<ul>
+<li>Only members with <code>state: "running"</code> are used as backends</li>
+<li>Members in <code>starting</code>, <code>stopped</code>, <code>crashed</code> states are automatically excluded</li>
+<li>Dynamic state changes are handled during periodic updates</li>
+</ul>
+<h2 id="recommended-deployment-architecture"><a class="header" href="#recommended-deployment-architecture">Recommended Deployment Architecture</a></h2>
+<p>For optimal performance, we recommend a two-tier architecture:</p>
+<pre class="mermaid">graph TD
+    App1[Application A] --&gt; PP(patroni_proxy&lt;br/&gt;TCP load balancing)
+    App2[Application B] --&gt; PP
+    App3[Application C] --&gt; PP
+
+    PP --&gt; D1(pg_doorman&lt;br/&gt;pooling)
+    PP --&gt; D2(pg_doorman&lt;br/&gt;pooling)
+    PP --&gt; D3(pg_doorman&lt;br/&gt;pooling)
+
+    D1 --&gt; PG1[(PostgreSQL&lt;br/&gt;leader)]
+    D2 --&gt; PG2[(PostgreSQL&lt;br/&gt;sync replica)]
+    D3 --&gt; PG3[(PostgreSQL&lt;br/&gt;async replica)]
+</pre>
+<ul>
+<li><strong>pg_doorman</strong> should be deployed <strong>close to PostgreSQL servers</strong> — it handles connection pooling, prepared statement caching, and protocol-level optimizations that benefit from low latency to the database</li>
+<li><strong>patroni_proxy</strong> should be deployed <strong>close to application clients</strong> — it handles TCP routing and failover, distributing connections across the cluster without the overhead of connection pooling</li>
+</ul>
+<p>This separation allows each component to excel at its specific task while providing both high availability and optimal performance.</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Example <code>patroni_proxy.yaml</code>:</p>
+<pre><code class="language-yaml"># Cluster update interval in seconds (default: 3)
+cluster_update_interval: 3
+
+# HTTP API listen address for health checks and manual updates (default: 127.0.0.1:8009)
+listen_address: "127.0.0.1:8009"
+
+clusters:
+  my_cluster:
+    # Patroni API endpoints (multiple for redundancy)
+    hosts:
+      - "http://192.168.1.1:8008"
+      - "http://192.168.1.2:8008"
+      - "http://192.168.1.3:8008"
+    
+    # Optional: TLS configuration for Patroni API
+    # tls:
+    #   ca_cert: "/path/to/ca.crt"
+    #   client_cert: "/path/to/client.crt"
+    #   client_key: "/path/to/client.key"
+    #   skip_verify: false
+    
+    ports:
+      # Primary/master connections
+      master:
+        listen: "0.0.0.0:6432"
+        roles: ["leader"]
+        host_port: 5432
+      
+      # Read-only connections to replicas
+      replicas:
+        listen: "0.0.0.0:6433"
+        roles: ["sync", "async"]
+        host_port: 5432
+        max_lag_in_bytes: 16777216  # 16MB
+</code></pre>
+<h3 id="configuration-options"><a class="header" href="#configuration-options">Configuration Options</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Option</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>cluster_update_interval</code></td><td>3</td><td>Interval in seconds between Patroni API polls</td></tr>
+<tr><td><code>listen_address</code></td><td>127.0.0.1:8009</td><td>HTTP API listen address</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.hosts</code></td><td>-</td><td>List of Patroni API endpoints</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.tls</code></td><td>-</td><td>Optional TLS configuration for Patroni API</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.listen</code></td><td>-</td><td>Listen address for this port</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.roles</code></td><td>-</td><td>List of allowed roles</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.host_port</code></td><td>-</td><td>PostgreSQL port on backend hosts</td></tr>
+<tr><td><code>clusters.&lt;name&gt;.ports.&lt;name&gt;.max_lag_in_bytes</code></td><td>-</td><td>Maximum replication lag (optional)</td></tr>
+</tbody></table>
+</div>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<h3 id="starting-patroni_proxy"><a class="header" href="#starting-patroni_proxy">Starting patroni_proxy</a></h3>
+<pre><code class="language-bash"># Start with configuration file
+patroni_proxy /path/to/patroni_proxy.yaml
+
+# With debug logging
+RUST_LOG=debug patroni_proxy /path/to/patroni_proxy.yaml
+</code></pre>
+<h3 id="configuration-reload"><a class="header" href="#configuration-reload">Configuration Reload</a></h3>
+<p>Reload configuration without restart (add/remove ports, update hosts):</p>
+<pre><code class="language-bash">kill -HUP $(pidof patroni_proxy)
+</code></pre>
+<h3 id="manual-cluster-update"><a class="header" href="#manual-cluster-update">Manual Cluster Update</a></h3>
+<p>Trigger immediate update of all cluster members via HTTP API:</p>
+<pre><code class="language-bash">curl http://127.0.0.1:8009/update_clusters
+</code></pre>
+<h2 id="http-api"><a class="header" href="#http-api">HTTP API</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Endpoint</th><th>Method</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>/update_clusters</code></td><td>GET</td><td>Trigger immediate update of all cluster members</td></tr>
+<tr><td><code>/</code></td><td>GET</td><td>Health check (returns "OK")</td></tr>
+</tbody></table>
+</div>
+<h2 id="comparison-with-haproxy--confd"><a class="header" href="#comparison-with-haproxy--confd">Comparison with HAProxy + confd</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th>patroni_proxy</th><th>HAProxy + confd</th></tr></thead><tbody>
+<tr><td>Connection preservation on update</td><td>✅ Yes</td><td>❌ No (reload drops connections)</td></tr>
+<tr><td>Hot upstream updates</td><td>✅ Native</td><td>⚠️ Requires confd + reload</td></tr>
+<tr><td>Replication lag awareness</td><td>✅ Built-in</td><td>⚠️ Requires custom checks</td></tr>
+<tr><td>Configuration complexity</td><td>✅ Single YAML</td><td>❌ Multiple configs</td></tr>
+<tr><td>Resource usage</td><td>✅ Lightweight</td><td>⚠️ HAProxy + confd processes</td></tr>
+<tr><td>Role-based routing</td><td>✅ Native</td><td>⚠️ Requires custom templates</td></tr>
+</tbody></table>
+</div>
+<h2 id="building"><a class="header" href="#building">Building</a></h2>
+<pre><code class="language-bash"># Build release binary
+cargo build --release --bin patroni_proxy
+
+# Run tests
+cargo test --test patroni_proxy_bdd
+</code></pre>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="no-backends-available"><a class="header" href="#no-backends-available">No backends available</a></h3>
+<p>If you see warnings like <code>no backends available</code>, check:</p>
+<ol>
+<li>Patroni API is accessible from patroni_proxy host</li>
+<li>Cluster members have <code>state: "running"</code></li>
+<li>Roles in configuration match actual member roles</li>
+<li>If using <code>max_lag_in_bytes</code>, check replica lag values</li>
+</ol>
+<h3 id="connection-drops-after-update"><a class="header" href="#connection-drops-after-update">Connection drops after update</a></h3>
+<p>This should not happen with patroni_proxy. If connections are being dropped:</p>
+<ol>
+<li>Check if the backend host was actually removed from the cluster</li>
+<li>Verify <code>max_lag_in_bytes</code> threshold is not being exceeded</li>
+<li>Enable debug logging to see detailed connection lifecycle</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/binary-upgrade.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/binary-upgrade.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+
+
+    </div>
+    </body>
+</html>
