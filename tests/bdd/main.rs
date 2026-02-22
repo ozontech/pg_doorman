@@ -1,3 +1,4 @@
+mod auth_query_helper;
 mod doorman_helper;
 mod extended;
 mod fuzz_client;

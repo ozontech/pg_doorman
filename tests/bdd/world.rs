@@ -96,6 +96,10 @@ pub struct DoormanWorld {
     pub slow_warning_abort: Option<tokio::task::AbortHandle>,
     /// Generated config file (from `pg_doorman generate` command)
     pub generated_config_file: Option<NamedTempFile>,
+    /// AuthQueryExecutor instance for auth_query BDD tests
+    pub auth_query_executor: Option<pg_doorman::auth::auth_query::AuthQueryExecutor>,
+    /// Last result from AuthQueryExecutor.fetch_password()
+    pub auth_query_last_result: Option<Result<Option<(String, String)>, pg_doorman::errors::Error>>,
 }
 
 impl DoormanWorld {
