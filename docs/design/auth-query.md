@@ -142,14 +142,58 @@ In this mode each dynamic user gets their OWN data pool.
 Client connects as username@database
   │
   ├─ username found in static users with password?
-  │   ├─ Yes → static authentication (current mechanism)
+  │   ├─ Yes → static authentication (current mechanism, no changes)
   │   └─ No → auth_query configured for pool?
-  │       ├─ Yes → auth_query authentication
+  │       ├─ Yes → auth_query authentication (see flow below)
   │       └─ No → reject "unknown user"
 ```
 
 Static users with explicit `password` ALWAYS take priority. This cleanly resolves
 PgBouncer's #484 (static vs dynamic user conflict).
+
+### HBA Integration
+
+Current code determines auth method from the password prefix (`md5...` or `SCRAM-SHA-256$...`)
+BEFORE running auth. For auth_query users, we don't know the password type until we
+fetch from PG. This requires a **two-phase HBA check**:
+
+**Phase 1: HBA pre-check** (BEFORE auth_query, to avoid unnecessary PG queries)
+
+```
+Evaluate hba_md5 and hba_scram for this client IP + username + database:
+  → Both Deny/NotMatched? → REJECT immediately (don't waste an auth_query call)
+  → At least one Trust?   → Set trust_mode = true, continue
+  → At least one Allow?   → Continue normally
+```
+
+This saves an auth_query round-trip for connections that HBA would reject anyway.
+
+**Phase 2: HBA post-check** (AFTER auth_query returns the password type)
+
+```
+Password hash from auth_query:
+  → Starts with "md5"            → check hba_md5  → Deny? → REJECT
+  → Starts with "SCRAM-SHA-256$" → check hba_scram → Deny? → REJECT
+```
+
+This ensures the specific auth method is allowed by HBA.
+
+**Trust mode for dynamic users:**
+
+When HBA says `trust`, pg_doorman still executes auth_query to verify that the user
+exists in PostgreSQL (and to cache the password type for future use). But the password
+challenge-response is skipped — the client connects without providing a password.
+This matches the behavior for static users where `trust` skips the password check
+but the user must still be configured.
+
+**pg_hba.conf on PostgreSQL side (documentation requirements):**
+
+1. **Executor connections**: PG must allow `auth_query.user` from pg_doorman's IP
+   to `auth_query.database`. Failure → startup error with clear message.
+2. **Passthrough mode**: PG must allow dynamic users from pg_doorman's IP to the
+   target database. Mismatched rules → clear error at connection time.
+3. **Dedicated server_user mode**: PG must allow `server_user` from pg_doorman's IP.
+   Only one rule needed regardless of how many dynamic users connect.
 
 ### Cache Design
 
@@ -179,51 +223,56 @@ AuthQueryCache (per-pool, DashMap<String, CacheEntry>)
 
 ```
 1. Client connects as "alice"@"mydb"
+
 2. Look up static User with username="alice" → not found
+
 3. Check auth_query configured for pool "mydb" → yes
-4. Get password hash (cache or fetch):
 
-   4a. Cache HIT (not expired by cache_ttl):
+4. HBA pre-check:
+   → hba_md5=Deny AND hba_scram=Deny? → REJECT (no auth_query needed)
+   → hba_md5=Trust OR hba_scram=Trust? → trust_mode = true
+   → Otherwise: trust_mode = false
+
+5. Get password hash (cache or fetch):
+   5a. Cache HIT (not expired by cache_ttl):
        → Use cached password_hash
-   4b. Cache MISS or expired:
-       → Fetch from PG (step 7) → cache result
+   5b. Cache MISS or expired:
+       → Fetch from PG (step 8) → cache result
 
-5. Authenticate client against the hash:
+6. HBA post-check (now we know the password type):
+   → md5 hash + hba_md5=Deny? → REJECT "auth method not allowed by HBA"
+   → SCRAM verifier + hba_scram=Deny? → REJECT "auth method not allowed by HBA"
+
+7. Authenticate client:
+   → trust_mode? → skip password challenge (user verified to exist in step 5)
    → MD5 prefix "md5": MD5 challenge-response
    → SCRAM prefix "SCRAM-SHA-256$": SCRAM-SHA-256 handshake
    → NULL password: REJECT
-   → Success? Done.
-   → Failure? Go to step 6
+   → Success? Create/reuse dynamic user pool → Done.
+   → Failure? Go to step 7a
 
-6. Auth failed — maybe password changed in PG? Re-fetch:
+   7a. Auth failed — maybe password changed in PG? Re-fetch:
+       → Was the cached entry used (not a fresh fetch)?
+         → No (just fetched in step 5b): REJECT — password is wrong
+         → Yes: continue to 7b
+       → 7b. Rate limit: last re-fetch for "alice" was < min_interval (1s) ago?
+         → Yes: REJECT — won't hammer PG for the same user
+         → No: re-fetch from PG (step 8), then retry step 7
 
-   6a. Was the cached entry used (not a fresh fetch)?
-       → No (just fetched in step 4b): REJECT — password is wrong
-       → Yes: continue to 6b
-
-   6b. Rate limit: last re-fetch for "alice" was < min_interval (1s) ago?
-       → Yes: REJECT — won't hammer PG for the same user
-       → No: re-fetch from PG (step 7)
-
-7. Execute auth_query:
-
-   7a. Get connection from auth_query executor pool (always open since startup)
-       → Executor pool unavailable (PG restart)? FAIL FAST, clear error
+8. Execute auth_query:
+   8a. Get connection from executor pool (always open since startup)
+       → Executor unavailable (PG restart)? FAIL FAST, clear error
          (never retry-loop — PgBouncer #649 lesson)
 
-   7b. Execute: SELECT usename, passwd FROM pg_shadow WHERE usename = $1
+   8b. Execute: SELECT usename, passwd FROM pg_shadow WHERE usename = $1
        ($1 = "alice", parameterized — Odyssey #149 lesson)
 
-   7c. Parse response:
+   8c. Parse response:
        → 0 rows: cache negative entry, REJECT ("user not found")
          (NEVER fall through to auth_user — PgBouncer #69 lesson)
-       → 1 row: cache password hash
+       → 1 row: cache password hash, return to caller
        → >1 rows: log warning, take first row
        → SQL error: log error, REJECT (fail fast)
-
-8. Re-authenticate with fresh hash:
-   → Success? Done (password was rotated, new hash works)
-   → Failure? REJECT — password is wrong
 ```
 
 ### Pool Architecture
@@ -334,6 +383,30 @@ but same `ClientKey`).
   since both come from pg_shadow via auth_query)
 
 This is the same technique PgBouncer uses. Odyssey does NOT support it.
+
+### Server Parameters for Dynamic Users
+
+After successful authentication, pg_doorman sends `ServerParameters` to the client
+(server_version, client_encoding, DateStyle, etc.). These are fetched from the data
+pool via `pool.get_server_parameters()`.
+
+**Problem:** For a new dynamic user, the data pool doesn't exist yet at auth time.
+
+**Solution:** Server parameters depend on the PG server, not the user. They are
+identical for all connections to the same server. Two approaches by mode:
+
+- **`server_user` mode (shared pool):** The shared pool is created eagerly (like
+  the executor pool). Server params are fetched once and cached — all dynamic users
+  get the same params. No issue.
+
+- **Passthrough mode (per-user pools):** The per-user pool is created AFTER
+  successful auth. Server params can be fetched from the **executor pool connections**
+  (same PG server, same params) or from any existing data pool for this database.
+  Cache them at pool-level (per database, not per user).
+
+Implementation: add a pool-level `Arc<Mutex<ServerParameters>>` on the auth_query
+config that is shared across all dynamic users. Populated on first use from any
+available connection (executor or data).
 
 ### Security Mitigations
 
@@ -466,6 +539,37 @@ Scenario: SCRAM passthrough — incompatible auth methods
   And PG backend uses SCRAM-SHA-256 authentication
   When "alice" authenticates via auth_query with MD5 (no ClientKey)
   Then backend connection fails with clear error about incompatible auth
+
+# --- HBA integration ---
+
+Scenario: HBA denies both MD5 and SCRAM — no auth_query executed
+  Given auth_query is configured for pool "mydb"
+  And HBA denies both md5 and scram for client IP
+  When client connects as "alice"
+  Then connection is rejected immediately
+  And no auth_query is executed against PG
+
+Scenario: HBA trust — user exists
+  Given auth_query is configured for pool "mydb"
+  And HBA trusts connections from client IP
+  And user "alice" exists in pg_shadow
+  When client connects as "alice" without password
+  Then auth_query verifies user exists
+  And authentication succeeds without password challenge
+
+Scenario: HBA trust — user does not exist
+  Given auth_query is configured for pool "mydb"
+  And HBA trusts connections from client IP
+  When client connects as "nonexistent" without password
+  Then auth_query finds no rows
+  And authentication fails with "user not found"
+
+Scenario: HBA allows MD5 but denies SCRAM — user has SCRAM password
+  Given auth_query is configured for pool "mydb"
+  And HBA allows md5 but denies scram for client IP
+  And user "alice" has SCRAM password in pg_shadow
+  When client connects as "alice"
+  Then authentication fails with "auth method not allowed by HBA"
 
 # --- Executor pool ---
 
