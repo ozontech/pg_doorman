@@ -10,7 +10,7 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 ## Why PgDoorman?
 
-**Drop-in replacement. No app changes.** Most poolers in transaction mode break prepared statements, forcing you to rewrite application code. PgDoorman caches and remaps prepared statements transparently across server connections — just point your connection string at it and go. No `DISCARD ALL`, no `DEALLOCATE`, no driver hacks.
+**Drop-in replacement. No app changes.** PgDoorman caches and remaps prepared statements transparently across server connections in transaction mode — just point your connection string at it and go. No `DISCARD ALL`, no `DEALLOCATE`, no driver hacks. PgBouncer added similar support in 1.21, but remains single-threaded; Odyssey does not support prepared statements in transaction mode at all.
 
 **Battle-tested with real drivers.** Two years of production use with Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), Node.js. Protocol edge cases — pipelined batches, async Flush, Describe flow, cancel requests over TLS — are covered by comprehensive multi-language BDD tests.
 
@@ -36,7 +36,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | | PgDoorman | PgBouncer | Odyssey |
 |---|:-:|:-:|:-:|
 | Multithreaded | Yes | No | Yes |
-| Prepared statements in transaction mode | Yes | No | No |
+| Prepared statements in transaction mode | Yes | Since 1.21 | No |
 | Full extended query protocol | Yes | Yes | Partial |
 | Zero-downtime binary upgrade | Yes | Yes | No |
 | Deferred `BEGIN` (lazy server acquire) | Yes | No | No |
