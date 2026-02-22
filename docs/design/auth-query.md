@@ -585,6 +585,171 @@ Scenario: Executor connection loss — fallback to cache
   When client connects as "alice" with correct password
   Then authentication succeeds using cached hash
   And pg_doorman reconnects executor in background
+
+# --- SCRAM password rotation (requires reconnect) ---
+
+Scenario: SCRAM password rotation — stale cache, client reconnects
+  Given auth_query is configured for pool "mydb"
+  And user "alice" has SCRAM password cached
+  When "alice" password is changed in PostgreSQL
+  And client connects as "alice" with new password using SCRAM
+  Then authentication fails (salt mismatch — old ServerFirst already sent)
+  And cache entry for "alice" is invalidated
+  When client reconnects as "alice" with new password using SCRAM
+  Then pg_doorman fetches new verifier with new salt
+  And authentication succeeds
+
+Scenario: MD5 password rotation — works in single attempt
+  Given auth_query is configured for pool "mydb"
+  And user "alice" has MD5 password cached
+  When "alice" password is changed in PostgreSQL
+  And client connects as "alice" with new password using MD5
+  Then pg_doorman re-fetches hash and retries within same connection
+  And authentication succeeds
+
+# --- Request coalescing ---
+
+Scenario: Concurrent cache miss — only one auth_query executed
+  Given auth_query is configured for pool "mydb"
+  And cache for "alice" is empty
+  When 10 clients connect as "alice" simultaneously
+  Then only 1 auth_query is executed against PG
+  And all 10 clients authenticate successfully
+
+Scenario: Concurrent cache miss — different users not blocked
+  Given auth_query is configured for pool "mydb"
+  And cache is empty
+  When "alice" and "bob" connect simultaneously
+  Then auth_query for "alice" and "bob" execute in parallel
+  And neither blocks the other
+
+# --- Cache TTL expiration ---
+
+Scenario: Positive cache entry expires — fresh fetch
+  Given auth_query is configured with cache_ttl "5s"
+  And user "alice" hash is cached
+  When 6 seconds pass
+  And client connects as "alice" with correct password
+  Then pg_doorman fetches fresh hash from PG (cache expired)
+  And authentication succeeds
+
+# --- Executor failure scenarios ---
+
+Scenario: Executor bad credentials — clear error at startup
+  Given auth_query is configured with wrong user/password
+  When pg_doorman starts
+  Then executor pool fails to connect
+  And error message clearly indicates auth_query credential problem
+
+Scenario: Executor database does not exist — clear error
+  Given auth_query is configured with database "nonexistent"
+  When pg_doorman starts
+  Then executor pool fails to connect
+  And error message indicates database not found
+
+Scenario: auth_query SQL returns permission denied
+  Given auth_query executor connects successfully
+  But auth_query.user has no access to pg_shadow
+  When client connects as "alice"
+  Then auth_query fails with SQL error
+  And client is rejected with clear error (not a hang)
+
+Scenario: Executor pool busy — client waits up to connect_timeout
+  Given auth_query is configured with pool_size 1
+  And executor connection is busy with slow query
+  When client connects as "alice"
+  Then client waits for executor connection (up to connect_timeout)
+  And if timeout reached, authentication fails with clear error
+
+# --- auth_query SQL edge cases ---
+
+Scenario: auth_query returns NULL password
+  Given auth_query is configured for pool "mydb"
+  And user "alice" exists in pg_shadow with NULL passwd
+  When client connects as "alice"
+  Then authentication fails with "user has no password"
+
+Scenario: auth_query returns empty string password
+  Given auth_query is configured for pool "mydb"
+  And auth_query returns empty string for "alice" passwd
+  When client connects as "alice"
+  Then authentication fails with "user has no password"
+
+Scenario: auth_query returns multiple rows
+  Given auth_query is configured with custom query returning 2 rows
+  When client connects as "alice"
+  Then pg_doorman logs warning about multiple rows
+  And uses first row for authentication
+
+# --- RELOAD behavior ---
+
+Scenario: RELOAD removes auth_query — dynamic pools destroyed
+  Given auth_query is configured for pool "mydb"
+  And "alice" has active dynamic pool
+  When auth_query section is removed from config
+  And admin runs RELOAD
+  Then "alice" dynamic pool is destroyed
+  And new connections as "alice" are rejected with "unknown user"
+
+Scenario: RELOAD adds static user matching dynamic — static wins
+  Given auth_query is configured for pool "mydb"
+  And "alice" has active dynamic pool via auth_query
+  When static user "alice" is added to config
+  And admin runs RELOAD
+  Then "alice" dynamic pool is destroyed
+  And "alice" authenticates via static config (not auth_query)
+
+Scenario: RELOAD changes server_user — all dynamic pools reset
+  Given auth_query is configured WITHOUT server_user (passthrough)
+  And "alice" and "bob" have active dynamic pools
+  When server_user is added to auth_query config
+  And admin runs RELOAD
+  Then all dynamic pools are destroyed
+  And cache is cleared
+  And new connections use shared pool mode
+
+# --- Passthrough mode edge cases ---
+
+Scenario: Dynamic pool creation — PG max_connections reached
+  Given auth_query is configured in passthrough mode
+  And PG max_connections is exhausted
+  When new user "charlie" authenticates via auth_query
+  Then client auth succeeds (from cache)
+  But first query fails with "too many connections" from PG
+  And error is clear, not a hang
+
+Scenario: Idle dynamic pool garbage collection
+  Given auth_query is configured in passthrough mode
+  And "alice" dynamic pool has idle_timeout "10s"
+  When no client uses "alice" pool for 11 seconds
+  Then "alice" dynamic pool is destroyed
+  And backend connections are closed
+  When "alice" connects again
+  Then new dynamic pool is created
+
+Scenario: Concurrent first connection — single pool creation
+  Given auth_query is configured in passthrough mode
+  And no pool exists for "alice"
+  When 5 clients connect as "alice" simultaneously
+  Then only 1 dynamic pool is created for "alice"
+  And all 5 clients use the same pool
+
+# --- Security edge cases ---
+
+Scenario: Very long username — no memory leak
+  Given auth_query is configured for pool "mydb"
+  When client connects with 10000-character username
+  Then connection is rejected with "user not found"
+  And lock map does not retain the long username entry
+
+Scenario: Rate limit blocks legitimate password change
+  Given auth_query is configured with min_interval "1s"
+  And "alice" connects with wrong password (triggers re-fetch)
+  When "alice" password is actually changed in PG
+  And "alice" connects with new password within 1 second
+  Then authentication fails (rate limited)
+  When "alice" connects again after 1 second
+  Then pg_doorman re-fetches and authentication succeeds
 ```
 
 ### Comparison Table
