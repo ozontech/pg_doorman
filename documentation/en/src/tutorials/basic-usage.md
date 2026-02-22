@@ -59,30 +59,44 @@ Some parameters **must** be specified in the configuration file for PgDoorman to
 
 Here's a minimal configuration example to get you started:
 
+#### YAML (recommended)
+
+```yaml
+general:
+  host: "0.0.0.0"         # Listen on all interfaces
+  port: 6432               # Port for client connections
+  admin_username: "admin"
+  admin_password: "admin"  # Change this in production!
+
+pools:
+  exampledb:
+    server_host: "127.0.0.1"  # PostgreSQL server address
+    server_port: 5432          # PostgreSQL server port
+    pool_mode: "transaction"   # Connection pooling mode
+    users:
+      - pool_size: 40
+        username: "doorman"
+        password: "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+```
+
+#### TOML
+
 ```toml
-# Global settings
 [general]
-host = "0.0.0.0"    # Listen on all interfaces
-port = 6432         # Port for client connections
-
-# Admin credentials for the management console
+host = "0.0.0.0"
+port = 6432
 admin_username = "admin"
-admin_password = "admin"  # Change this in production!
+admin_password = "admin"
 
-# Database pools section
-[pools]
-
-# Example database pool
 [pools.exampledb]
-server_host = "127.0.0.1"  # PostgreSQL server address
-server_port = 5432         # PostgreSQL server port
-pool_mode = "transaction"  # Connection pooling mode
+server_host = "127.0.0.1"
+server_port = 5432
+pool_mode = "transaction"
 
-# User configuration for this pool
 [pools.exampledb.users.0]
-pool_size = 40             # Maximum number of connections in the pool
-username = "doorman"       # Username for PostgreSQL server
-password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="  # Hashed password
+pool_size = 40
+username = "doorman"
+password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
 ```
 
 For a complete list of configuration options and their descriptions, see the [Settings Reference Guide](../reference/general.md).
