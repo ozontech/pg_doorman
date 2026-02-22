@@ -12,6 +12,8 @@ module. No behavioral changes — just data structures and access.
 Add new struct after `Pool`:
 
 ```rust
+use crate::config::Duration;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AuthQueryConfig {
     /// SQL query to fetch credentials. Must return (username, password).
@@ -46,25 +48,26 @@ pub struct AuthQueryConfig {
     #[serde(default = "AuthQueryConfig::default_data_pool_size")]
     pub default_pool_size: u32,
 
-    /// Max cache age for positive entries (default: 3600 = 1 hour).
+    /// Max cache age for positive entries (default: "1h").
+    /// Uses project's Duration type: supports "1h", "30s", "5m", or raw ms.
     #[serde(default = "AuthQueryConfig::default_cache_ttl")]
-    pub cache_ttl: u64,
+    pub cache_ttl: Duration,
 
-    /// Cache TTL for "user not found" entries (default: 30 seconds).
+    /// Cache TTL for "user not found" entries (default: "30s").
     #[serde(default = "AuthQueryConfig::default_cache_failure_ttl")]
-    pub cache_failure_ttl: u64,
+    pub cache_failure_ttl: Duration,
 
-    /// Min interval between re-fetches for same username on auth failure (default: 1 sec).
+    /// Min interval between re-fetches for same username on auth failure (default: "1s").
     #[serde(default = "AuthQueryConfig::default_min_interval")]
-    pub min_interval: u64,
+    pub min_interval: Duration,
 }
 
 impl AuthQueryConfig {
     fn default_pool_size() -> u32 { 2 }
     fn default_data_pool_size() -> u32 { 40 }
-    fn default_cache_ttl() -> u64 { 3600 }
-    fn default_cache_failure_ttl() -> u64 { 30 }
-    fn default_min_interval() -> u64 { 1 }
+    fn default_cache_ttl() -> Duration { Duration::from_hours(1) }
+    fn default_cache_failure_ttl() -> Duration { Duration::from_secs(30) }
+    fn default_min_interval() -> Duration { Duration::from_secs(1) }
 
     /// Returns true if dedicated server_user mode is configured.
     pub fn is_dedicated_mode(&self) -> bool {
@@ -72,6 +75,11 @@ impl AuthQueryConfig {
     }
 }
 ```
+
+**Note:** The project has `src/config/duration.rs` with a `Duration` type that supports
+human-readable parsing (`"1h"`, `"30s"`, `"5m"`) as well as raw millisecond numbers.
+This matches the design doc's config examples (`cache_ttl: "1h"`) and is consistent
+with all other duration fields in the project (e.g., `connect_timeout`, `idle_timeout`).
 
 Add field to `Pool` struct (BEFORE the `users` field, see TOML compatibility
 comment on line 109-111):

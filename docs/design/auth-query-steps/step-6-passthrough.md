@@ -18,12 +18,17 @@ Add function to create a dynamic pool for an auth_query user:
 ```rust
 /// Create a dynamic data pool for an auth_query user (passthrough mode).
 /// Called on first successful auth for a user not in static config.
+///
+/// **Fix (Problem F):** ClientServerMap is a global (or pool-level) structure.
+/// It is NOT passed as a parameter — instead, access it the same way
+/// ConnectionPool::from_config() does (via global or config context).
+/// Investigate the actual source during implementation.
 pub async fn create_dynamic_pool(
     pool_name: &str,
     username: &str,
     pool_config: &crate::config::Pool,
     aq_config: &AuthQueryConfig,
-    client_server_map: ClientServerMap,
+    backend_auth: BackendAuthMethod,
 ) -> Result<ConnectionPool, Error> {
     let config = get_config();
     let identifier = PoolIdentifier::new(pool_name, username);
@@ -60,9 +65,13 @@ pub async fn create_dynamic_pool(
     };
 
     // ... build ServerPool, ConnectionPool similar to from_config() ...
-    // ... insert into POOLS atomically ...
 
-    // Atomic insert into global POOLS map
+    // ClientServerMap: obtained from the same source as from_config().
+    // In current code, it's created once and passed through — for dynamic pools,
+    // reuse the existing global CLIENT_SERVER_MAP or create a new one scoped
+    // to this pool. Implementation detail to resolve by reading from_config().
+
+    // ... insert into POOLS atomically ...
     let pools = POOLS.load();
     let mut new_pools = (**pools).clone();
     new_pools.insert(identifier, pool.clone());
@@ -75,6 +84,11 @@ pub async fn create_dynamic_pool(
 **Race protection:** Same per-username lock from AuthQueryCache ensures only
 one pool is created per user. After lock release, others call `get_pool()` and
 find it.
+
+**ClientServerMap (Problem F):** During implementation, trace how `from_config()`
+obtains `ClientServerMap`. It is likely a global `Arc<Mutex<HashMap<...>>>` passed
+to all pools. Dynamic pools should reuse the same instance. If it's created
+per-pool, create one for the dynamic pool the same way.
 
 ## 6.2 MD5 pass-the-hash
 
@@ -150,11 +164,15 @@ backend auth. Modify it to accept `ClientKey` as an alternative to password.
 
 ## 6.4 Backend auth dispatch
 
+**Fix (Problem I):** Concrete decision on how backend auth method reaches
+`Server::startup()`.
+
 When establishing a new server connection for a dynamic pool in passthrough mode,
 the backend auth flow needs to know HOW to authenticate:
 
 ```rust
-enum BackendAuthMethod {
+#[derive(Clone, Debug)]
+pub enum BackendAuthMethod {
     /// Use password directly (static users, server_password set)
     Password(String),
     /// MD5 pass-the-hash (auth_query, MD5 hash from pg_shadow)
@@ -164,22 +182,49 @@ enum BackendAuthMethod {
 }
 ```
 
-Store in `User` or in a per-connection session context that `ServerPool::create()`
-can access.
+**Decision: Store on `Address` struct (Option B).**
 
-**Challenge:** `ServerPool::create()` and `Server::startup()` are called by the
-pool manager (deadpool/bb8), not directly by the auth code. The backend auth
-method needs to be accessible when the pool creates a new connection.
+The `Address` struct is already passed to `Server::startup()` and contains
+`password: String`. For dynamic auth_query pools, we add a new field:
 
-**Solution options:**
-- A) Store auth method in `User` struct (add new field)
-- B) Store in `Address` struct
-- C) Thread-local / task-local storage
-- D) New field on `ServerPool` that holds the auth context
+```rust
+// In src/pool/mod.rs Address struct:
+pub struct Address {
+    // ... existing fields ...
+    pub password: String,
 
-Option A or B is simplest — the `User` already has `server_password` for static
-users. Add `backend_auth: Option<BackendAuthMethod>` to `User` or a parallel
-struct.
+    /// Backend auth method for auth_query passthrough pools.
+    /// None for static users (they use `password` field as-is).
+    pub backend_auth: Option<BackendAuthMethod>,
+}
+```
+
+**Why Address, not User?**
+- `Address` is per-pool and directly available in `Server::startup()`
+- `User` is a config-level struct shared across connections
+- For SCRAM passthrough, the ClientKey may differ per client session —
+  but in practice, the last authenticated ClientKey is stored. If two
+  clients authenticate with different passwords (during rotation), the
+  newer ClientKey replaces the older one. This is acceptable because
+  the pool connects with one identity at a time.
+
+**In `Server::startup()`:**
+
+```rust
+match &address.backend_auth {
+    Some(BackendAuthMethod::Md5PassTheHash(hash)) => {
+        // PG sends AuthenticationMD5Password { salt }
+        md5_pass_the_hash(hash, &server_salt)
+    }
+    Some(BackendAuthMethod::ScramPassthrough(client_key)) => {
+        // PG sends AuthenticationSASL
+        scram_passthrough_auth(stream, client_key, &address.username).await
+    }
+    Some(BackendAuthMethod::Password(pwd)) | None => {
+        // Standard password auth (existing code path)
+    }
+}
+```
 
 ## 6.5 Incompatible auth detection
 

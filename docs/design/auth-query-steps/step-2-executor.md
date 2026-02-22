@@ -13,20 +13,28 @@ Uses `deadpool-postgres` directly (Decision from Problem 7).
 
 ### File: `Cargo.toml`
 
-Add `deadpool-postgres` and `tokio-postgres` (if not already present) to dependencies:
+The project uses a custom pool implementation (`src/pool/inner.rs`) for data
+connections. For the auth_query executor, we need a separate, lightweight pool
+that connects to a DIFFERENT database with DIFFERENT credentials.
+
+**Recommended approach: `tokio-postgres` + `Arc<Semaphore>`.**
+
+The executor needs only 2 connections — adding a full pool framework is
+overkill. A simple approach:
 
 ```toml
-deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
+# tokio-postgres may already be a transitive dependency — check Cargo.lock.
+# If not present, add explicitly:
 tokio-postgres = "0.7"
 ```
 
-Check if `deadpool-postgres` is already pulled in transitively. If the project
-uses a custom pool implementation (it does — `src/pool/inner.rs`), we still
-need `deadpool-postgres` as a separate lightweight pool for the executor.
+The executor manages a fixed set of `tokio_postgres::Client` connections
+behind an `Arc<Semaphore>` for concurrency control. This avoids adding
+`deadpool-postgres` as a new dependency.
 
-**Alternative:** If adding `deadpool-postgres` is undesirable, use `tokio-postgres`
-directly with a simple `Vec<Client>` + semaphore. The executor only needs 2
-connections — a full pool library may be overkill. Decide during implementation.
+**Alternative:** If more sophisticated connection management is needed later
+(recycling, health checks), `deadpool-postgres` can be added. But for 2
+connections that are opened eagerly and kept alive, a semaphore is sufficient.
 
 ## 2.2 AuthQueryExecutor struct
 
@@ -35,6 +43,7 @@ connections — a full pool library may be overkill. Decide during implementatio
 ```rust
 use std::sync::Arc;
 use log::{error, info, warn};
+use tokio::sync::{Semaphore, Mutex as TokioMutex};
 use tokio_postgres::{Client, NoTls, Row};
 
 use crate::config::AuthQueryConfig;
@@ -42,10 +51,12 @@ use crate::errors::Error;
 
 /// Executor pool for running auth_query SELECT statements.
 /// Wraps a small number of persistent connections to auth_query.database.
+/// Uses tokio-postgres directly with a semaphore for concurrency control
+/// (no external pool dependency needed for 2 connections).
 pub struct AuthQueryExecutor {
     config: AuthQueryConfig,
-    pool: deadpool_postgres::Pool,
-    // Or: simple connection management with Vec<Arc<Mutex<Client>>>
+    clients: Vec<Arc<TokioMutex<Client>>>,
+    semaphore: Arc<Semaphore>,
 }
 
 impl AuthQueryExecutor {
@@ -69,28 +80,27 @@ impl AuthQueryExecutor {
         pg_config.dbname(&database);
         pg_config.connect_timeout(std::time::Duration::from_secs(5));
 
-        // Build deadpool config
-        let mgr = deadpool_postgres::Manager::from_config(
-            pg_config,
-            NoTls,  // TLS support can be added later based on pool TLS config
-            deadpool_postgres::ManagerConfig {
-                recycling_method: deadpool_postgres::RecyclingMethod::Fast,
-            },
-        );
+        // Eagerly open all connections at startup
+        let mut clients = Vec::with_capacity(config.pool_size as usize);
+        for i in 0..config.pool_size {
+            let (client, connection) = pg_config.connect(NoTls).await
+                .map_err(|e| Error::BadConfig(format!(
+                    "auth_query executor connection {i} failed to \
+                     {server_host}:{server_port}/{database} as '{}': {e}",
+                    config.user
+                )))?;
 
-        let pool = deadpool_postgres::Pool::builder(mgr)
-            .max_size(config.pool_size as usize)
-            .build()
-            .map_err(|e| Error::BadConfig(format!(
-                "Failed to create auth_query executor pool: {e}"
-            )))?;
+            // Spawn the connection task (handles async protocol messages)
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    error!("auth_query executor connection lost: {e}");
+                }
+            });
 
-        // Eagerly verify at least one connection works
-        let _conn = pool.get().await.map_err(|e| Error::BadConfig(format!(
-            "auth_query executor failed to connect to {server_host}:{server_port}/{database} \
-             as user '{}': {e}",
-            config.user
-        )))?;
+            clients.push(Arc::new(TokioMutex::new(client)));
+        }
+
+        let semaphore = Arc::new(Semaphore::new(config.pool_size as usize));
 
         info!(
             "auth_query executor pool ready: {}@{server_host}:{server_port}/{database} \
@@ -100,7 +110,8 @@ impl AuthQueryExecutor {
 
         Ok(Self {
             config: config.clone(),
-            pool,
+            clients,
+            semaphore,
         })
     }
 
@@ -111,13 +122,28 @@ impl AuthQueryExecutor {
         &self,
         username: &str,
     ) -> Result<Option<(String, String)>, Error> {
-        let conn = self.pool.get().await.map_err(|e| {
-            error!("auth_query executor: failed to get connection: {e}");
-            Error::AuthQueryError(format!("executor connection unavailable: {e}"))
+        // Acquire semaphore permit (limits concurrency to pool_size)
+        let _permit = self.semaphore.acquire().await.map_err(|e| {
+            error!("auth_query executor: semaphore closed: {e}");
+            Error::AuthQueryError(format!("executor unavailable: {e}"))
+        })?;
+
+        // Round-robin or find an unlocked client
+        // (Simple approach: try each client, first unlockable one wins)
+        let mut conn_guard = None;
+        for client in &self.clients {
+            if let Ok(guard) = client.try_lock() {
+                conn_guard = Some(guard);
+                break;
+            }
+        }
+        let conn = conn_guard.ok_or_else(|| {
+            error!("auth_query executor: all connections busy");
+            Error::AuthQueryError("executor connections busy".into())
         })?;
 
         let rows = conn
-            .query(&self.config.query, &[&username])
+            .query(&self.config.query, &[&username as &(dyn tokio_postgres::types::ToSql + Sync)])
             .await
             .map_err(|e| {
                 error!("auth_query execution failed for user '{username}': {e}");
@@ -185,7 +211,7 @@ since auth_query.database is typically on the same host/network as the data pool
 
 ## Checklist
 
-- [ ] Add `deadpool-postgres` / `tokio-postgres` dependency (or decide on simpler approach)
+- [ ] Add `tokio-postgres` dependency (if not already transitive)
 - [ ] Create `src/auth/auth_query.rs` with `AuthQueryExecutor`
 - [ ] `new()` — eager connection, clear error on failure
 - [ ] `fetch_password()` — parameterized query, fail fast

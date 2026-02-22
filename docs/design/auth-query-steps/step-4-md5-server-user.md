@@ -28,7 +28,9 @@ pub static AUTH_QUERY_STATE: Lazy<ArcSwap<HashMap<String, Arc<AuthQueryState>>>>
 pub struct AuthQueryState {
     pub cache: AuthQueryCache,
     pub config: AuthQueryConfig,
-    // For server_user mode: the shared data pool identifier
+    /// For server_user mode: the shared data pool identifier.
+    /// Uses the server_user's actual username (e.g., "app_service")
+    /// as the user part of PoolIdentifier — no sentinel prefix needed.
     pub shared_pool_id: Option<PoolIdentifier>,
 }
 
@@ -58,11 +60,18 @@ for (pool_name, pool_config) in &config.pools {
         let executor = Arc::new(executor);
         let cache = AuthQueryCache::new(executor.clone(), aq_config);
 
-        // If server_user mode: create shared data pool
+        // If server_user mode: create shared data pool.
+        // The shared pool uses server_user's actual username as the identifier.
+        // No sentinel prefix ("__aq_") — the pool is indistinguishable from a
+        // static user pool in the POOLS map. This is fine because:
+        //   - If a static user with the same name exists, static takes priority
+        //     (auth_query is never checked for that user)
+        //   - The AuthQueryState.shared_pool_id field tracks which pool is the
+        //     shared auth_query pool — no need for naming conventions
         let shared_pool_id = if aq_config.is_dedicated_mode() {
             let su = aq_config.server_user.as_ref().unwrap();
             let sp = aq_config.server_password.as_ref().unwrap();
-            let identifier = PoolIdentifier::new(pool_name, &format!("__aq_{su}"));
+            let identifier = PoolIdentifier::new(pool_name, su);
             // Create the shared pool (same as static user pool creation)
             // ... create ConnectionPool with server_user credentials ...
             Some(identifier)
@@ -78,7 +87,17 @@ for (pool_name, pool_config) in &config.pools {
     }
 }
 
+// **Atomicity note (Problem H):** AUTH_QUERY_STATE and POOLS are updated
+// separately via ArcSwap::store(). There is a brief window where one is
+// updated but the other is not. This is acceptable because:
+//   1. from_config() runs under a global reload lock (no concurrent reloads)
+//   2. Client auth reads both atomically per-request (loads Arc snapshot)
+//   3. A client that races with reload may see old state — this is fine,
+//      the next attempt will see the new state
+// If stronger guarantees are needed, both can be combined into a single
+// ArcSwap<(PoolMap, AuthQueryStateMap)>, but this adds complexity.
 AUTH_QUERY_STATE.store(Arc::new(auth_query_states));
+// POOLS.store() happens in existing from_config() code nearby.
 ```
 
 ## 4.2 Auth flow integration
@@ -96,6 +115,11 @@ let mut pool = match get_pool(pool_name, client_identifier.username.as_str()) {
 
 New flow:
 
+**Fix (Problem B):** `try_auth_query()` handles the ENTIRE auth flow (HBA,
+challenge-response, pool selection) and returns a `ConnectionPool` + `ServerParameters`.
+The caller MUST NOT re-run HBA or auth dispatch — it should send `AuthenticationOk`
++ server parameters and proceed directly to query handling.
+
 ```rust
 let mut pool = match get_pool(pool_name, client_identifier.username.as_str()) {
     Some(pool) => pool,
@@ -104,23 +128,41 @@ let mut pool = match get_pool(pool_name, client_identifier.username.as_str()) {
         match try_auth_query(
             read, write, client_identifier, pool_name, username_from_parameters
         ).await {
-            Ok(pool) => pool,
+            Ok(result) => {
+                // Auth already done inside try_auth_query (MD5/SCRAM challenge-response).
+                // Send AuthenticationOk + server parameters, then return pool.
+                // IMPORTANT: Skip the remaining auth logic in authenticate_normal_user()
+                //            to avoid double HBA check / double auth.
+                auth_ok(write).await?;
+                send_server_parameters(write, &result.server_parameters).await?;
+                ready_for_query(write).await?;
+                return Ok(result.pool);
+            }
             Err(err) => return Err(err),
         }
     }
 };
 ```
 
-New function `try_auth_query()`:
+New types and function:
 
 ```rust
+/// Result of successful auth_query authentication.
+/// Contains everything needed to proceed without re-running auth.
+struct AuthQueryAuthResult {
+    pool: ConnectionPool,
+    server_parameters: ServerParameters,
+    /// ClientKey from SCRAM auth (for passthrough mode, Step 6)
+    client_key: Option<Vec<u8>>,
+}
+
 async fn try_auth_query<S, T>(
     read: &mut S,
     write: &mut T,
     client_identifier: &ClientIdentifier,
     pool_name: &str,
     username: &str,
-) -> Result<ConnectionPool, Error>
+) -> Result<AuthQueryAuthResult, Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -161,12 +203,19 @@ where
         return Err(Error::AuthError("Unsupported auth method for auth_query".into()));
     }
 
-    // 4. Get the data pool
+    // 4. Get the data pool + server parameters
     //    server_user mode: return shared pool
     //    passthrough mode: create/get per-user pool (Step 6)
     if let Some(ref shared_id) = aq_state.shared_pool_id {
         match get_pool(&shared_id.db, &shared_id.user) {
-            Some(pool) => Ok(pool),
+            Some(pool) => {
+                let server_parameters = pool.get_server_parameters();
+                Ok(AuthQueryAuthResult {
+                    pool,
+                    server_parameters,
+                    client_key: None, // Set in Step 5 for SCRAM
+                })
+            }
             None => {
                 error_response(write, "Internal pool error", "58000").await?;
                 Err(Error::AuthError("Shared auth_query pool not found".into()))

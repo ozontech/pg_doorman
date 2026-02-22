@@ -892,8 +892,25 @@ typically "postgres") than the data pools. It uses different credentials
 (`auth_query.user`/`auth_query.password`). It's internal-only, never serves
 client traffic.
 
-**Decision: Use `deadpool-postgres` directly.** The crate is already a dependency.
-Wrap it in an `AuthQueryExecutor` struct with a single method:
-`fetch_password(username: &str) -> Result<Option<CacheEntry>>`. This avoids
-polluting `ConnectionPool` with internal-pool special cases and keeps the
+**Decision: Use `tokio-postgres` directly with `Arc<Semaphore>`.** The executor
+only needs 2 connections — a full pool library is overkill. Wrap in an
+`AuthQueryExecutor` struct with `Vec<Arc<Mutex<Client>>>` + semaphore. Single
+method: `fetch_password(username: &str) -> Result<Option<(String, String)>>`.
+This avoids adding `deadpool-postgres` as a new dependency and keeps the
 executor lightweight and purpose-built.
+
+## Implementation Review Fixes
+
+Issues found during detailed review of step plans and resolved inline:
+
+| ID | Problem | Resolution | Files |
+|----|---------|------------|-------|
+| A | `cache_ttl` / `min_interval` used raw `u64` but design doc shows `"1h"` strings | Use project's `Duration` type (`src/config/duration.rs`) | step-1, step-3 |
+| B | `try_auth_query()` returns `ConnectionPool` but caller re-runs HBA and auth dispatch | Return `AuthQueryAuthResult { pool, server_parameters, client_key }`, caller sends AuthOk and early-returns | step-4 |
+| C | SCRAM `ClientKey` needed by pool connections created asynchronously later | Store in `CacheEntry.client_key` + `Address.backend_auth` | step-3, step-5, step-6 |
+| D | `deadpool-postgres` not in project dependencies | Use `tokio-postgres` + `Arc<Semaphore>` instead (2 connections don't need a pool library) | step-2 |
+| E | Shared pool uses `__aq_` sentinel identifier prefix | Use server_user's actual username; `AuthQueryState.shared_pool_id` tracks which pool is shared | step-4 |
+| F | `ClientServerMap` not available in `try_auth_query()` / `create_dynamic_pool()` | Reuse existing global/pool-level `ClientServerMap` (same source as `from_config()`) | step-6 |
+| G | `refetch_on_failure()` doesn't use per-username lock → concurrent refetches | Added same per-username lock as `get_or_fetch()` | step-3 |
+| H | `AUTH_QUERY_STATE` and `POOLS` updated non-atomically | Acceptable: `from_config()` holds global reload lock; clients see consistent Arc snapshots | step-4, step-8 |
+| I | `BackendAuthMethod` dispatch to `Server::startup()` unresolved | Store `BackendAuthMethod` on `Address` struct; dispatch in `Server::startup()` | step-6 |

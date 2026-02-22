@@ -30,6 +30,11 @@ pub struct CacheEntry {
     pub is_negative: bool,
     /// When was the last re-fetch attempted for this user (rate limiting)
     pub last_refetch_at: Option<Instant>,
+    /// SCRAM ClientKey extracted from client's proof (Step 5).
+    /// Stored here so that pool connections created asynchronously later
+    /// can use it for SCRAM passthrough to backend PG (Step 6).
+    /// None for MD5 users or before first SCRAM auth.
+    pub client_key: Option<Vec<u8>>,
 }
 
 impl CacheEntry {
@@ -39,6 +44,7 @@ impl CacheEntry {
             fetched_at: Instant::now(),
             is_negative: false,
             last_refetch_at: None,
+            client_key: None,
         }
     }
 
@@ -48,12 +54,17 @@ impl CacheEntry {
             fetched_at: Instant::now(),
             is_negative: true,
             last_refetch_at: None,
+            client_key: None,
         }
     }
 
-    fn is_expired(&self, ttl_secs: u64, failure_ttl_secs: u64) -> bool {
-        let ttl = if self.is_negative { failure_ttl_secs } else { ttl_secs };
-        self.fetched_at.elapsed().as_secs() >= ttl
+    fn is_expired(&self, cache_ttl: &Duration, cache_failure_ttl: &Duration) -> bool {
+        let ttl_ms = if self.is_negative {
+            cache_failure_ttl.as_millis()
+        } else {
+            cache_ttl.as_millis()
+        };
+        self.fetched_at.elapsed().as_millis() as u64 >= ttl_ms
     }
 }
 
@@ -70,9 +81,10 @@ pub struct AuthQueryCache {
     executor: Arc<AuthQueryExecutor>,
 
     /// Config for TTLs and rate limiting.
-    cache_ttl: u64,
-    cache_failure_ttl: u64,
-    min_interval: u64,
+    /// Uses project's Duration type (internally milliseconds).
+    cache_ttl: Duration,
+    cache_failure_ttl: Duration,
+    min_interval: Duration,
 }
 
 impl AuthQueryCache {
@@ -96,7 +108,7 @@ impl AuthQueryCache {
     pub async fn get_or_fetch(&self, username: &str) -> Result<Option<CacheEntry>, Error> {
         // Fast path: check cache without lock
         if let Some(entry) = self.entries.get(username) {
-            if !entry.is_expired(self.cache_ttl, self.cache_failure_ttl) {
+            if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
                 return if entry.is_negative { Ok(None) } else { Ok(Some(entry.clone())) };
             }
         }
@@ -111,7 +123,7 @@ impl AuthQueryCache {
 
         // Double-check after acquiring lock
         if let Some(entry) = self.entries.get(username) {
-            if !entry.is_expired(self.cache_ttl, self.cache_failure_ttl) {
+            if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
                 return if entry.is_negative { Ok(None) } else { Ok(Some(entry.clone())) };
             }
         }
@@ -141,14 +153,25 @@ impl AuthQueryCache {
     /// Returns Ok(Some(entry)) if re-fetched, Ok(None) if rate-limited or user gone.
     ///
     /// Rate limiting: won't re-fetch if last re-fetch was < min_interval ago.
+    ///
+    /// **Fix (Problem G):** Uses the same per-username lock as get_or_fetch()
+    /// to prevent concurrent refetches for the same user.
     pub async fn refetch_on_failure(
         &self,
         username: &str,
     ) -> Result<Option<CacheEntry>, Error> {
-        // Check rate limit
+        // Acquire per-username lock (same lock as get_or_fetch)
+        let lock = self.locks
+            .entry(username.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+
+        let _guard = lock.lock().await;
+
+        // Check rate limit (under lock to avoid TOCTOU)
         if let Some(entry) = self.entries.get(username) {
             if let Some(last) = entry.last_refetch_at {
-                if last.elapsed().as_secs() < self.min_interval {
+                if last.elapsed() < self.min_interval.as_std() {
                     return Ok(None); // Rate limited — reject
                 }
             }
@@ -177,6 +200,14 @@ impl AuthQueryCache {
     pub fn clear(&self) {
         self.entries.clear();
         self.locks.clear();  // Safe: no one holds locks during RELOAD
+    }
+
+    /// Store ClientKey for a cached user (called after successful SCRAM auth).
+    /// Used by passthrough mode to authenticate to backend PG.
+    pub fn set_client_key(&self, username: &str, client_key: Vec<u8>) {
+        if let Some(mut entry) = self.entries.get_mut(username) {
+            entry.client_key = Some(client_key);
+        }
     }
 
     /// Number of cached entries (for metrics/admin).

@@ -103,6 +103,10 @@ for id in &pools_to_remove {
 }
 DYNAMIC_POOLS.store(Arc::new(new_dynamic));
 
+// **Atomicity note (Problem H):** POOLS, DYNAMIC_POOLS, and AUTH_QUERY_STATE
+// are updated sequentially (not in a single atomic operation). This is safe
+// because from_config() holds a global reload lock — no concurrent reloads.
+// Client requests that race with RELOAD see a consistent snapshot via Arc.
 POOLS.store(Arc::new(new_pools));
 ```
 
