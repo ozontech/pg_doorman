@@ -1,3 +1,4 @@
+pub mod auth_query;
 pub mod hba;
 #[cfg(test)]
 mod hba_eval_tests;

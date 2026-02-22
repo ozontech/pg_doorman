@@ -39,6 +39,14 @@ pub enum Error {
     JWTValidate(String),
     ProxyTimeout,
     ConvertError(String),
+    /// PostgreSQL unreachable, connection lost. Transient — retry on next request.
+    AuthQueryConnectionError(String),
+    /// Bad query, wrong columns, >1 row, executor auth failed. Permanent until config fix.
+    AuthQueryConfigError(String),
+    /// SQL execution failed (permissions, PG overloaded). May be transient or permanent.
+    AuthQueryQueryError(String),
+    /// Executor pool is closed (shutting down).
+    AuthQueryPoolClosed,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -152,6 +160,16 @@ impl std::fmt::Display for Error {
             Error::JWTValidate(msg) => write!(f, "JWT validation error: {msg}"),
             Error::ProxyTimeout => write!(f, "Proxy operation timed out"),
             Error::ConvertError(msg) => write!(f, "Data conversion error: {msg}"),
+            Error::AuthQueryConnectionError(msg) => {
+                write!(f, "Auth query connection error: {msg}")
+            }
+            Error::AuthQueryConfigError(msg) => {
+                write!(f, "Auth query configuration error: {msg}")
+            }
+            Error::AuthQueryQueryError(msg) => {
+                write!(f, "Auth query execution error: {msg}")
+            }
+            Error::AuthQueryPoolClosed => write!(f, "Auth query executor pool is closed"),
         }
     }
 }
