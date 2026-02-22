@@ -53,6 +53,13 @@ pub enum Commands {
         #[clap(flatten)]
         config: GenerateConfig,
     },
+    /// Generate reference documentation (Markdown) for all configuration parameters
+    GenerateDocs {
+        /// Output directory for generated documentation files.
+        /// If not specified, prints to stdout.
+        #[arg(short, long)]
+        output_dir: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Parser)]

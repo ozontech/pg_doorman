@@ -1,0 +1,21 @@
+[book]
+title = "PgDoorman Documentation"
+authors = ["PgDoorman Contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../book"
+
+[output.html]
+git-repository-url = "https://github.com/ozontech/pg_doorman"
+edit-url-template = "https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/{path}"
+additional-css = ["css/custom.css", "mdbook-admonish.css"]
+additional-js = ["mermaid-init.js", "mermaid.min.js"]
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.1.0"
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

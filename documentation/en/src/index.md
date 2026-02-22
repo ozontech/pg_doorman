@@ -1,17 +1,10 @@
----
-hide:
-- navigation
-- toc
-title: Home
----
-
 ## PgDoorman: PostgreSQL Pooler
 
 PgDoorman is a stable and high-performance alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), or [PgCat](https://github.com/postgresml/pgcat).
 It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
 Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
 
-[:fontawesome-solid-download: Get PgDoorman {{ version }}](tutorials/installation.md){ .md-button .md-button--primary }
+[Get PgDoorman {{VERSION}}](tutorials/installation.md)
 
 ### Quick Start
 
@@ -55,4 +48,3 @@ Some of the key differences include:
 ### Additional Binary: patroni_proxy
 
 This repository also includes [patroni_proxy](tutorials/patroni-proxy.md) — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.
-

@@ -1,7 +1,3 @@
----
-title: Installation Guide
----
-
 # Installing PgDoorman
 
 This guide covers different methods for installing and running PgDoorman on your system.

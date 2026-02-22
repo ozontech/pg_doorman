@@ -1,11 +1,6 @@
----
-title: Changelog
----
-
 # Changelog
 
-### 3.2.4 <small>Feb 20, 2026</small> { id="3.2.4" }
-
+### 3.2.4 <small>Feb 20, 2026</small>
 **New Features:**
 
 - **Annotated config generation**: The `generate` command now produces well-documented configuration files with inline comments for every parameter by default. Previously it only did plain serde serialization without any documentation.
@@ -36,13 +31,13 @@ title: Changelog
 
 - **Fixed protocol violation on flush timeout — client now receives ErrorResponse**: When the 5-second flush timeout fires (server TCP write blocks because the backend is overloaded or unreachable), the `FlushTimeout` error was propagating via `?` through `handle_sync_flush` → transaction loop → `handle()` without sending any PostgreSQL protocol message to the client. The TCP connection was simply dropped, causing drivers like Npgsql to report "protocol violation" due to unexpected EOF. Now pg_doorman sends a proper `ErrorResponse` with SQLSTATE `58006` and message containing "pooler is shut down now" before closing the connection, allowing client drivers to detect the error and reconnect gracefully.
 
-### 3.2.3 <small>Feb 10, 2026</small> { id="3.2.3" }
+### 3.2.3 <small>Feb 10, 2026</small>
 
 **Improvements:**
 
 - **Jitter for `server_lifetime` (±20%)**: Connection lifetimes now have a random ±20% jitter applied to prevent mass disconnections from PostgreSQL. When pg_doorman is under heavy load, it creates many connections simultaneously, which previously caused them all to expire at the same time, creating spikes of connection closures. Now each connection gets an individual lifetime calculated as `base_lifetime ± random(20%)`. For example, with `server_lifetime: 300000` (5 minutes), actual lifetimes range from 240s to 360s, spreading connection closures evenly over time.
 
-### 3.2.2 <small>Feb 9, 2026</small> { id="3.2.2" }
+### 3.2.2 <small>Feb 9, 2026</small>
 
 **New Features:**
 
@@ -70,7 +65,7 @@ title: Changelog
 
 - **Removed timeout-based waiting in async protocol**: The pooler now tracks expected responses based on batch operations (Parse, Bind, Execute, etc.) and exits immediately when all responses are received. This eliminates unnecessary latency in pipeline/async workloads.
 
-### 3.1.8 <small>Jan 31, 2026</small> { id="3.1.8" }
+### 3.1.8 <small>Jan 31, 2026</small>
 
 **Bug Fixes:**
 
@@ -79,7 +74,7 @@ title: Changelog
 - **Fixed incorrect `use_savepoint` state persistence**: Fixed a bug where the `use_savepoint` flag (which disables automatic rollback on connection return if a savepoint was used) was not reset after a transaction ended.
 
 
-### 3.1.7 <small>Jan 28, 2026</small> { id="3.1.7" }
+### 3.1.7 <small>Jan 28, 2026</small>
 
 **Memory Optimization:**
 
@@ -87,7 +82,7 @@ title: Changelog
 
 - **New `client_prepared_statements_cache_size` configuration parameter**: Added protection against malicious or misbehaving clients that don't call `DEALLOCATE` and could exhaust server memory by creating unlimited prepared statements. When the per-client cache limit is reached, the oldest entry is evicted automatically. Set to `0` for unlimited (default, relies on client calling `DEALLOCATE`). Example: `client_prepared_statements_cache_size: 1024` limits each client to 1024 cached prepared statements.
 
-### 3.1.6 <small>Jan 27, 2026</small> { id="3.1.6" }
+### 3.1.6 <small>Jan 27, 2026</small>
 
 **Bug Fixes:**
 
@@ -105,7 +100,7 @@ title: Changelog
   - Internal representation changed from milliseconds to microseconds for higher precision
   - Full backward compatibility maintained: plain numbers are still interpreted as milliseconds
 
-### 3.1.5 <small>Jan 25, 2026</small> { id="3.1.5" }
+### 3.1.5 <small>Jan 25, 2026</small>
 
 **Bug Fixes:**
 
@@ -119,7 +114,7 @@ title: Changelog
   - If client sends Terminate (`X`) after `BEGIN`, no server connection is acquired at all
   - The deferred `BEGIN` is automatically sent to the server before the actual query
 
-### 3.1.0 <small>Jan 18, 2026</small> { id="3.1.0" }
+### 3.1.0 <small>Jan 18, 2026</small>
 
 **New Features:**
 
@@ -147,7 +142,7 @@ title: Changelog
   - Replaced `VecDeque` with HDR histograms (`hdrhistogram` crate) for percentile calculations — O(1) percentile queries instead of O(n log n) sorting, ~95% memory reduction for latency tracking.
   - Histograms are now reset after each stats period (15 seconds) to provide accurate rolling window percentiles.
 
-### 3.0.5 <small>Jan 16, 2026</small> { id="3.0.5" }
+### 3.0.5 <small>Jan 16, 2026</small>
 
 **Bug Fixes:**
 
@@ -162,7 +157,7 @@ title: Changelog
 
 - Added dedicated fuzz test job in GitHub Actions workflow (without retries, as fuzz tests should not be flaky).
 
-### 3.0.4 <small>Jan 16, 2026</small> { id="3.0.4" }
+### 3.0.4 <small>Jan 16, 2026</small>
 
 **New Features:**
 
@@ -174,7 +169,7 @@ title: Changelog
 - Fixed potential protocol violation when client disconnects during batch operations with cached prepared statements: disabled fast_release optimization when there are pending prepared statement operations.
 - Fixed ParseComplete insertion for Describe flow: now correctly inserts one ParseComplete before each ParameterDescription ('t') or NoData ('n') message instead of inserting all at once.
 
-### 3.0.3 <small>Jan 15, 2026</small> { id="3.0.3" }
+### 3.0.3 <small>Jan 15, 2026</small>
 
 **Bug Fixes:**
 
@@ -185,13 +180,13 @@ title: Changelog
 - Added comprehensive .NET client tests for Describe flow with cached prepared statements (`describe_flow_cached.cs`).
 - Added aggressive mixed tests combining batch operations, prepared statements, and extended protocol (`aggressive_mixed.cs`).
 
-### 3.0.2 <small>Jan 14, 2026</small> { id="3.0.2" }
+### 3.0.2 <small>Jan 14, 2026</small>
 
 **Bug Fixes:**
 
 - Fixed protocol mismatch for .NET clients (Npgsql) using named prepared statements with `Prepare()`: ParseComplete messages are now correctly inserted before ParameterDescription and NoData messages in the Describe flow, not just before BindComplete.
 
-### 3.0.1 <small>Jan 14, 2026</small> { id="3.0.1" }
+### 3.0.1 <small>Jan 14, 2026</small>
 
 **Bug Fixes:**
 
@@ -201,7 +196,7 @@ title: Changelog
 
 - Extended Node.js client test coverage with additional scenarios for prepared statements, error handling, transactions, and edge cases.
 
-### 3.0.0 <small>Jan 12, 2026</small> { id="3.0.0" }
+### 3.0.0 <small>Jan 12, 2026</small>
 
 **Major Release — Complete Architecture Refactoring**
 
@@ -228,7 +223,7 @@ This release represents a significant milestone with a complete codebase refacto
 - **xxhash3 for prepared statement hashing** — faster hash computation for prepared statement cache
 - **Comprehensive BDD testing framework** — multi-language integration tests (Go, Rust, Python, Node.js, .NET) with Docker-based reproducible environment
 
-### 2.5.0 <small>Nov 18, 2025</small> { id="2.5.0" }
+### 2.5.0 <small>Nov 18, 2025</small>
 
 **Improvements:**
 - Reworked the statistics collection system, yielding up to 20% performance gain on fast queries.
@@ -238,13 +233,13 @@ This release represents a significant milestone with a complete codebase refacto
 - Less aggressive behavior on write errors when sending a response to the client: the server connection is no longer immediately marked as "bad" and evicted from the pool. We now read the remaining server response and clean up its state, returning the connection to the pool in a clean state. This improves performance during client reconnections.
 
 
-### 2.4.3 <small>Nov 15, 2025</small> { id="2.4.3" }
+### 2.4.3 <small>Nov 15, 2025</small>
 
 **Bug Fixes:**
 - Fixed handling of nested transactions via `SAVEPOINT`: auto-rollback now correctly rolls back to the savepoint instead of breaking the outer transaction. This prevents clients from getting stuck in an inconsistent transactional state.
 
 
-### 2.4.2 <small>Nov 13, 2025</small> { id="2.4.2" }
+### 2.4.2 <small>Nov 13, 2025</small>
 
 **Improvements:**
 - `pg_hba` rules now apply to the admin console as well; the `trust` method can be used for admin connections when a matching rule is present (use with caution; restrict by address/TLS).
@@ -254,7 +249,7 @@ This release represents a significant milestone with a complete codebase refacto
 
 
 
-### 2.4.1 <small>Nov 12, 2025</small> { id="2.4.1" }
+### 2.4.1 <small>Nov 12, 2025</small>
 
 **Improvements:**
 - Performance optimizations in request handling and message processing paths to reduce latency and CPU usage.
@@ -264,7 +259,7 @@ This release represents a significant milestone with a complete codebase refacto
 - Corrected logic where `COMMIT` could be mishandled similarly to `ROLLBACK` in certain error states; now transactional state handling is aligned with PostgreSQL semantics.
 
 
-### 2.4.0 <small>Nov 10, 2025</small> { id="2.4.0" }
+### 2.4.0 <small>Nov 10, 2025</small>
 
 **Features:**
 - Added `pg_hba` support to control client access in PostgreSQL format. New `general.pg_hba` setting supports inline content or file path.
@@ -275,7 +270,7 @@ This release represents a significant milestone with a complete codebase refacto
 - Added configuration validation to prevent simultaneous use of legacy `general.hba` CIDR list with the new `general.pg_hba` rules.
 - Improved validation and error messages for Talos token authentication.
 
-### 2.2.2 <small>Aug 17, 2025</small> { id="2.2.2" }
+### 2.2.2 <small>Aug 17, 2025</small>
 
 **Features:**
 - Added new generate feature functionality
@@ -283,39 +278,39 @@ This release represents a significant milestone with a complete codebase refacto
 **Bug Fixes:**
 - Fixed deallocate issues with PGX5 compatibility
 
-### 2.2.1 <small>Aug 6, 2025</small> { id="2.2.1" }
+### 2.2.1 <small>Aug 6, 2025</small>
 
 **Features:**
 - Improve Prometheus exporter functionality
 
-### 2.2.0 <small>Aug 5, 2025</small> { id="2.2.0" }
+### 2.2.0 <small>Aug 5, 2025</small>
 
 **Features:**
 - Added Prometheus exporter functionality that provides metrics about connections, memory usage, pools, queries, and transactions
 
-### 2.1.2 <small>Aug 4, 2025</small> { id="2.1.2" }
+### 2.1.2 <small>Aug 4, 2025</small>
 
 **Features:**
 - Added docker image `ghcr.io/ozontech/pg_doorman`
 
 
-### 2.1.0 <small>Aug 1, 2025</small> { id="2.1.0" }
+### 2.1.0 <small>Aug 1, 2025</small>
 
 **Features:**
 - The new command `generate` connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
 
 
-### 2.0.1 <small>July 24, 2025</small> { id="2.0.1" }
+### 2.0.1 <small>July 24, 2025</small>
 
 **Bug Fixes:**
 - Fixed `max_memory_usage` counter leak when clients disconnect improperly.
 
-### 2.0.0 <small>July 22, 2025</small> { id="2.0.0" }
+### 2.0.0 <small>July 22, 2025</small>
 
 **Features:**
 - Added `tls_mode` configuration option to enhance security with flexible TLS connection management and client certificate validation capabilities.
 
-### 1.9.0 <small>July 20, 2025</small> { id="1.9.0" }
+### 1.9.0 <small>July 20, 2025</small>
 
 **Features:**
 - Added PAM authentication support.
@@ -325,13 +320,13 @@ This release represents a significant milestone with a complete codebase refacto
 - Implemented streaming for COPY protocol with large columns to prevent memory exhaustion.
 - Updated Rust and Tokio dependencies.
 
-### 1.8.3 <small>Jun 11, 2025</small> { id="1.8.3" }
+### 1.8.3 <small>Jun 11, 2025</small>
 
 **Bug Fixes:**
 - Fixed critical bug where Client's buffer wasn't cleared when no free connections were available in the Server pool (query_wait_timeout), leading to incorrect response errors. [#38](https://github.com/ozontech/pg_doorman/pull/38)
 - Fixed Npgsql-related issue. [Npgsql#6115](https://github.com/npgsql/npgsql/issues/6115)
 
-### 1.8.2 <small>May 24, 2025</small> { id="1.8.2" }
+### 1.8.2 <small>May 24, 2025</small>
 
 **Features:**
 - Added `application_name` parameter in pool. [#30](https://github.com/ozontech/pg_doorman/pull/30)
@@ -344,14 +339,14 @@ This release represents a significant milestone with a complete codebase refacto
 - Fixed panics in admin console.
 - Fixed connection leakage on improperly handled errors in client's copy mode.
 
-### 1.8.1 <small>April 12, 2025</small> { id="1.8.1" }
+### 1.8.1 <small>April 12, 2025</small>
 
 **Bug Fixes:**
 - Fixed config value of prepared_statements. [#21](https://github.com/ozontech/pg_doorman/pull/21)
 - Fixed handling of declared cursors closure. [#23](https://github.com/ozontech/pg_doorman/pull/23)
 - Fixed proxy server parameters. [#25](https://github.com/ozontech/pg_doorman/pull/25)
 
-### 1.8.0 <small>Mar 20, 2025</small> { id="1.8.0" }
+### 1.8.0 <small>Mar 20, 2025</small>
 
 **Bug Fixes:**
 - Fixed dependencies issue. [#15](https://github.com/ozontech/pg_doorman/pull/15)
@@ -359,7 +354,7 @@ This release represents a significant milestone with a complete codebase refacto
 **Improvements:**
 - Added release vendor-licenses.txt file. [Related thread](https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com)
 
-### 1.7.9 <small>Mar 16, 2025</small> { id="1.7.9" }
+### 1.7.9 <small>Mar 16, 2025</small>
 
 **Improvements:**
 - Added release vendor.tar.gz for offline build. [Related thread](https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com)
@@ -367,13 +362,13 @@ This release represents a significant milestone with a complete codebase refacto
 **Bug Fixes:**
 - Fixed issues with pqCancel messages over TLS protocol. Drivers should send pqCancel messages exclusively via TLS if the primary connection was established using TLS. [Npgsql](https://github.com/npgsql/npgsql) follows this rule, while [PGX](https://github.com/jackc/pgx) currently does not. Both behaviors are now supported.
 
-### 1.7.8 <small>Mar 8, 2025</small> { id="1.7.8" }
+### 1.7.8 <small>Mar 8, 2025</small>
 
 **Bug Fixes:**
 - Fixed message ordering issue when using batch processing with the extended protocol.
 - Improved error message detail in logs for server-side login attempt failures.
 
-### 1.7.7 <small>Mar 8, 2025</small> { id="1.7.7" }
+### 1.7.7 <small>Mar 8, 2025</small>
 
 **Features:**
 - Enhanced `show clients` command with new fields: `state` (waiting/idle/active) and `wait` (read/write/idle).

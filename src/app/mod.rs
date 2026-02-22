@@ -67,6 +67,28 @@ pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             std::process::exit(0);
         }
+        Some(Commands::GenerateDocs { output_dir }) => {
+            let docs = vec![
+                ("general.md", generate::docs::generate_general_doc()),
+                ("pool.md", generate::docs::generate_pool_doc()),
+                ("prometheus.md", generate::docs::generate_prometheus_doc()),
+            ];
+
+            if let Some(ref dir) = output_dir {
+                std::fs::create_dir_all(dir)?;
+                for (name, content) in &docs {
+                    let path = format!("{dir}/{name}");
+                    std::fs::write(&path, content)?;
+                    info!("Written: {path}");
+                }
+            } else {
+                for (name, content) in &docs {
+                    println!("--- {name} ---");
+                    println!("{content}");
+                }
+            }
+            std::process::exit(0);
+        }
         None => (),
     }
 

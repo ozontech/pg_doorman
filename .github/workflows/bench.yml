@@ -110,7 +110,7 @@ jobs:
 
           # Save the updated benchmarks.md BEFORE switching branches
           # (docker run modifies the file in the workspace)
-          cp documentation/docs/benchmarks.md /tmp/benchmarks.md
+          cp documentation/en/src/benchmarks.md /tmp/benchmarks.md
           
           # Create a unique branch name with timestamp
           BRANCH_NAME="benchmark-results-$(date +%Y%m%d-%H%M%S)"
@@ -120,10 +120,10 @@ jobs:
           git checkout -b "$BRANCH_NAME" origin/master
           
           # Copy the saved benchmarks.md back
-          cp /tmp/benchmarks.md documentation/docs/benchmarks.md
+          cp /tmp/benchmarks.md documentation/en/src/benchmarks.md
           
           # Check if there are any changes to commit
-          git add documentation/docs/benchmarks.md
+          git add documentation/en/src/benchmarks.md
           if git diff --staged --quiet; then
             echo "No changes to benchmark results, skipping PR creation"
             exit 0
@@ -136,6 +136,6 @@ jobs:
           # Create Pull Request to master
           gh pr create \
             --title "Update benchmark results" \
-            --body "Automated benchmark results update from CI workflow. This PR updates the benchmark comparison table in documentation/docs/benchmarks.md." \
+            --body "Automated benchmark results update from CI workflow. This PR updates the benchmark comparison table in documentation/en/src/benchmarks.md." \
             --base "master" \
             --head "$BRANCH_NAME"
