@@ -81,6 +81,8 @@ This approach (proposed in PgBouncer #1302 discussion) provides:
 
 All auth_query settings are grouped in a nested `auth_query` section within the pool:
 
+**Example 1: Dedicated server user** (all dynamic users → one PG identity)
+
 ```yaml
 pools:
   mydb:
@@ -90,40 +92,48 @@ pools:
 
     auth_query:
       query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
-      user: "pg_doorman_auth"         # user to execute the query
-      password: "secret"              # plaintext password for that user
-      database: "postgres"            # database for auth queries (default: pool name)
-      pool_size: 2                    # connections for executing auth queries (default: 2)
-      default_pool_size: 40           # pool_size per dynamic user (default: 40)
+      user: "pg_doorman_auth"         # executor: runs SELECT FROM pg_shadow
+      password: "secret_exec"         # executor password (plaintext)
+      database: "postgres"            # executor database (default: pool name)
+      pool_size: 2                    # executor connections (default: 2, opened at startup)
+      server_user: "app_service"      # backend user for data connections
+      server_password: "secret_app"   # backend password (plaintext)
+      default_pool_size: 40           # data pool size (default: 40)
       cache_ttl: "1h"                 # max cache age (default: 1h)
       cache_failure_ttl: "30s"        # "user not found" cache TTL (default: 30s)
-      min_interval: "1s"              # rate limit re-fetch per user on auth failure (default: 1s)
+      min_interval: "1s"              # rate limit re-fetch on auth failure (default: 1s)
+```
 
+In this mode all dynamic users share ONE data pool (same backend identity).
+
+**Example 2: Passthrough** (each dynamic user → their own PG identity)
+
+```yaml
+pools:
+  mydb:
+    auth_query:
+      query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+      user: "pg_doorman_auth"
+      password: "secret_exec"
+      database: "postgres"
+      pool_size: 2
+      # server_user/server_password NOT set → passthrough mode:
+      #   MD5 backend:  pass-the-hash (hash from pg_shadow used directly)
+      #   SCRAM backend: SCRAM passthrough (ClientKey extracted from client's proof)
+      default_pool_size: 40
+```
+
+In this mode each dynamic user gets their OWN data pool.
+
+**Static users** always work as before — auth_query is not used for them:
+
+```yaml
     users:
-      # Static user — auth_query NOT used (explicit password takes priority)
       - username: "app_static"
         password: "md5..."
         pool_size: 40
         server_username: "app"
         server_password: "secret"
-
-      # Dynamic users via auth_query don't need entries here.
-      # Each gets their own pool (pool_size from auth_query.default_pool_size).
-```
-
-TOML equivalent:
-
-```toml
-[pools.mydb.auth_query]
-query = "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
-user = "pg_doorman_auth"
-password = "secret"
-database = "postgres"
-pool_size = 2
-default_pool_size = 40
-cache_ttl = "1h"
-cache_failure_ttl = "30s"
-min_interval = "1s"
 ```
 
 ### Authentication Source Resolution
@@ -218,9 +228,8 @@ AuthQueryCache (per-pool, DashMap<String, CacheEntry>)
 
 ### Pool Architecture
 
-Two types of pools serve auth_query:
+#### Executor Pool (`auth_query.pool_size`, default: 2)
 
-**1. Auth query executor pool** (`auth_query.pool_size`, default: 2)
 - Connects to `auth_query.database` (typically "postgres") as `auth_query.user`
 - Used ONLY for executing `SELECT FROM pg_shadow` queries
 - **Opened eagerly at startup** and kept alive permanently
@@ -247,26 +256,84 @@ This solves PgBouncer's bootstrap problem (#967) — `auth_query.user` and
 `auth_query.password` are in the config, no separate auth_file needed.
 Simpler than Odyssey's approach (which requires trust in pg_hba.conf).
 
-**2. Per-user data pools** (`auth_query.default_pool_size`, default: 40)
-- Each dynamic user gets their OWN connection pool (like static users)
-- Connects to the target database as `auth_query.user`
-- Pool is created on first successful authentication
-- Inactive pools are cleaned up after `idle_timeout` (from general config)
+#### Data Pools — Two Modes
+
+The mode is determined by whether `server_user`/`server_password` are set:
+
+**Mode 1: Dedicated server user** (`server_user` IS set)
+
+All dynamic users share ONE data pool. Backend identity is `server_user`.
 
 ```
 Pool "mydb":
-  ├─ app_static → own pool (pool_size=40, server_user="app")      ← static
-  ├─ alice      → own pool (pool_size=40, server_user="pg_doorman_auth") ← dynamic
-  ├─ bob        → own pool (pool_size=40, server_user="pg_doorman_auth") ← dynamic
+  ├─ app_static  → own pool (pool_size=40, backend="app")             ← static
+  ├─ [auth_query data pool] (pool_size=40, backend="app_service")     ← shared
+  │    ├─ alice (client auth via cache)
+  │    ├─ bob   (client auth via cache)
+  │    └─ ...all dynamic users
   └─ [auth_query executor] (pool_size=2, database="postgres")
-       └─ SELECT FROM pg_shadow only
 ```
 
-Dynamic user pools use `auth_query.user`/`auth_query.password` as backend
-credentials (server_username/server_password). Inactive dynamic pools are
-garbage-collected using the existing `idle_timeout` mechanism — when all
-connections in a dynamic user's pool have been idle beyond the timeout,
-the pool is removed entirely.
+Simple, works with any backend auth method (MD5, SCRAM, trust).
+All dynamic users' queries appear as `server_user` in PG logs/pg_stat_activity.
+Best for: microservices where per-user backend identity is not needed.
+
+**Mode 2: Passthrough** (`server_user` NOT set)
+
+Each dynamic user gets their OWN data pool. Backend identity = the user themselves.
+
+```
+Pool "mydb":
+  ├─ app_static → own pool (pool_size=40, backend="app")           ← static
+  ├─ alice      → own pool (pool_size=40, backend="alice")         ← dynamic
+  ├─ bob        → own pool (pool_size=40, backend="bob")           ← dynamic
+  └─ [auth_query executor] (pool_size=2, database="postgres")
+```
+
+How pg_doorman authenticates to PG backend per dynamic user:
+
+| Client auth | Backend auth | Mechanism |
+|-------------|-------------|-----------|
+| SCRAM | SCRAM | **SCRAM passthrough**: extract `ClientKey` from client's SCRAM proof, reuse for backend |
+| MD5 | MD5 | **Pass-the-hash**: use md5 hash from pg_shadow for backend MD5 second pass |
+| SCRAM | MD5 | **Pass-the-hash**: compute md5 from... N/A, we only have SCRAM verifier → **FAIL** |
+| MD5 | SCRAM | No `ClientKey` available → **FAIL** |
+| Any | trust | No auth needed → works |
+
+Incompatible client/backend auth combinations fail with a clear error at connection time.
+
+Best for: setups requiring per-user PG identity (audit, RLS, pg_stat_activity).
+Inactive dynamic user pools are garbage-collected via `idle_timeout`.
+
+#### SCRAM Passthrough — How It Works
+
+During client SCRAM authentication, pg_doorman acts as SCRAM server and receives
+`ClientProof` from the client. The math:
+
+```
+ClientProof     = ClientKey XOR ClientSignature
+ClientSignature = HMAC(StoredKey, AuthMessage)
+```
+
+pg_doorman knows `StoredKey` (from pg_shadow cache) and `AuthMessage` (from the
+handshake), so it can compute `ClientSignature` and extract:
+
+```
+ClientKey = ClientProof XOR ClientSignature
+```
+
+This `ClientKey` is stored in the client session. When a backend SCRAM challenge
+arrives, pg_doorman uses the stored `ClientKey` to compute a fresh `ClientProof`
+for the backend's challenge (different `AuthMessage`, different `ClientSignature`,
+but same `ClientKey`).
+
+**Requirements:**
+- Client MUST authenticate with SCRAM (not MD5)
+- Backend MUST request SCRAM
+- The SCRAM verifier in pg_doorman's cache must match what PG has (naturally true
+  since both come from pg_shadow via auth_query)
+
+This is the same technique PgBouncer uses. Odyssey does NOT support it.
 
 ### Security Mitigations
 
@@ -280,7 +347,7 @@ the pool is removed entirely.
 | VALID UNTIL bypass | Recommended query includes `valuntil` check |
 | Client blocking | Fail fast with `connect_timeout` |
 | Memory safety (segfaults) | Rust ownership model eliminates this class |
-| Pool explosion | Per-user pools with idle GC (PgBouncer #1085 lesson) |
+| Pool explosion | Shared pool with `server_user` OR per-user with idle GC (PgBouncer #1085) |
 
 ### Recommended Auth Function
 
@@ -306,11 +373,115 @@ SET search_path = pg_catalog, pg_temp;
 
 | File | Changes |
 |------|---------|
-| `src/config/pool.rs` | New `AuthQueryConfig` struct as `Option<AuthQueryConfig>` field on `Pool` |
+| `src/config/pool.rs` | New `AuthQueryConfig` struct with all fields as `Option<AuthQueryConfig>` on `Pool` |
 | `src/auth/mod.rs` | New branch in `authenticate_normal_user()` for auth_query lookup |
 | `src/auth/auth_query.rs` (new) | `AuthQueryCache`, `AuthQueryExecutor`, query + cache logic |
-| `src/pool/mod.rs` | Dynamic pool creation on first auth, idle pool GC |
-| `src/server/server_backend.rs` | `query_one_row()` method to return DataRow |
+| `src/auth/scram.rs` | Extract `ClientKey` from `ClientProof` during SCRAM handshake |
+| `src/pool/mod.rs` | Dynamic pool creation on first auth, idle pool GC, shared pool mode |
+| `src/server/server_backend.rs` | `query_one_row()` method; MD5 pass-the-hash; SCRAM passthrough with stored `ClientKey` |
+
+### BDD Test Scenarios
+
+```gherkin
+# --- Client auth via auth_query ---
+
+Scenario: Auth query with MD5 — valid password
+  Given auth_query is configured for pool "mydb"
+  And user "alice" exists in pg_shadow with MD5 password
+  When client connects as "alice" with correct password
+  Then authentication succeeds
+
+Scenario: Auth query with SCRAM — valid password
+  Given auth_query is configured for pool "mydb"
+  And user "alice" exists in pg_shadow with SCRAM password
+  When client connects as "alice" with correct password using SCRAM
+  Then authentication succeeds
+
+Scenario: Auth query — wrong password, then password rotation
+  Given auth_query is configured for pool "mydb"
+  And user "alice" password hash is cached
+  When "alice" password is changed in PostgreSQL
+  And client connects as "alice" with new password
+  Then pg_doorman re-fetches hash from PG
+  And authentication succeeds
+
+Scenario: Auth query — wrong password, no rotation
+  Given auth_query is configured for pool "mydb"
+  When client connects as "alice" with wrong password
+  Then authentication fails with "password authentication failed"
+
+Scenario: Auth query — user not found
+  Given auth_query is configured for pool "mydb"
+  When client connects as "nonexistent" with any password
+  Then authentication fails with "user not found"
+
+Scenario: Auth query — static user takes priority
+  Given auth_query is configured for pool "mydb"
+  And static user "app" is configured with password
+  When client connects as "app"
+  Then static authentication is used (not auth_query)
+
+Scenario: Auth query — rate limiting on re-fetch
+  Given auth_query is configured with min_interval "1s"
+  And user "alice" password hash is cached
+  When client connects as "alice" with wrong password
+  And another client connects as "alice" with wrong password within 1s
+  Then only one auth_query is executed against PG
+
+Scenario: Auth query — negative cache TTL
+  Given auth_query is configured with cache_failure_ttl "30s"
+  When client connects as "nonexistent"
+  Then "nonexistent" is cached as negative entry
+  And next attempt within 30s does NOT query PG
+
+# --- Backend auth: dedicated server user ---
+
+Scenario: Dedicated server user — all dynamic users share pool
+  Given auth_query is configured with server_user "app_service"
+  When "alice" and "bob" authenticate via auth_query
+  Then both use backend connections as "app_service"
+  And pg_stat_activity shows "app_service" for both
+
+# --- Backend auth: MD5 pass-the-hash ---
+
+Scenario: MD5 passthrough — dynamic user as themselves
+  Given auth_query is configured WITHOUT server_user
+  And PG backend uses MD5 authentication
+  When "alice" authenticates via auth_query with MD5
+  Then backend connection authenticates as "alice" using hash from pg_shadow
+  And pg_stat_activity shows "alice"
+
+# --- Backend auth: SCRAM passthrough ---
+
+Scenario: SCRAM passthrough — dynamic user as themselves
+  Given auth_query is configured WITHOUT server_user
+  And PG backend uses SCRAM-SHA-256 authentication
+  When "alice" authenticates via auth_query with SCRAM
+  Then pg_doorman extracts ClientKey from client's SCRAM proof
+  And backend connection authenticates as "alice" using SCRAM passthrough
+  And pg_stat_activity shows "alice"
+
+Scenario: SCRAM passthrough — incompatible auth methods
+  Given auth_query is configured WITHOUT server_user
+  And PG backend uses SCRAM-SHA-256 authentication
+  When "alice" authenticates via auth_query with MD5 (no ClientKey)
+  Then backend connection fails with clear error about incompatible auth
+
+# --- Executor pool ---
+
+Scenario: Executor connections reserved at startup
+  Given auth_query is configured with pool_size 2
+  When pg_doorman starts
+  Then 2 connections to auth_query.database are established immediately
+  And they persist even when data pools are full
+
+Scenario: Executor connection loss — fallback to cache
+  Given auth_query executor connection is lost
+  And user "alice" hash is in cache
+  When client connects as "alice" with correct password
+  Then authentication succeeds using cached hash
+  And pg_doorman reconnects executor in background
+```
 
 ### Comparison Table
 
@@ -320,7 +491,10 @@ SET search_path = pg_catalog, pg_temp;
 | Rate limiting | Configurable per-username | None | Implicit via TTL |
 | Auth user credentials | Nested in pool config | Separate auth_file | trust in pg_hba.conf |
 | Auth database | Configurable `database` | `auth_dbname` | `auth_query_db` |
-| Dynamic user pools | Per-user with idle GC | Per-user (no GC, explosion) | Per-user (no GC) |
+| Backend auth: dedicated user | Yes (`server_user`) | No (uses client identity) | Yes (`storage_user`) |
+| Backend auth: MD5 pass-the-hash | Yes | Yes | No |
+| Backend auth: SCRAM passthrough | Yes | Yes | No |
+| Dynamic user pools | Per-user with idle GC / shared | Per-user (no GC, explosion) | Per-user (no GC) |
 | SQL injection protection | Parameterized `$1` | Parameterized `$1` | Parameterized `$1` |
 | Memory safety | Rust (no segfaults) | C (segfaults reported) | C (segfaults reported) |
 | SCRAM support | Full | Buggy under concurrency | Full (after fixes) |
