@@ -4,7 +4,7 @@ PgDoorman is a stable and high-performance alternative to [PgBouncer](https://ww
 It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
 Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
 
-[Get PgDoorman 3.2.4](tutorials/installation.md)
+[Get PgDoorman {{VERSION}}](tutorials/installation.md)
 
 ### Quick Start
 
