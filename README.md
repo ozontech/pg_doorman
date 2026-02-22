@@ -2,17 +2,50 @@
 
 # PgDoorman
 
+[![BDD Tests](https://github.com/ozontech/pg_doorman/actions/workflows/bdd-tests.yml/badge.svg)](https://github.com/ozontech/pg_doorman/actions/workflows/bdd-tests.yml)
+[![Library Tests](https://github.com/ozontech/pg_doorman/actions/workflows/lib-tests.yml/badge.svg)](https://github.com/ozontech/pg_doorman/actions/workflows/lib-tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A high-performance multithreaded PostgreSQL connection pooler built in Rust. Does one thing and does it well — pools connections so your PostgreSQL handles thousands of clients without breaking a sweat.
 
 ## Why PgDoorman?
 
 **Drop-in replacement. No app changes.** Most poolers in transaction mode break prepared statements, forcing you to rewrite application code. PgDoorman caches and remaps prepared statements transparently across server connections — just point your connection string at it and go. No `DISCARD ALL`, no `DEALLOCATE`, no driver hacks.
 
-**Battle-tested with real drivers.** Free years of production use with Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), Node.js. Protocol edge cases — pipelined batches, async Flush, Describe flow, cancel requests over TLS — are covered by comprehensive multi-language BDD tests.
+**Battle-tested with real drivers.** Two years of production use with Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), Node.js. Protocol edge cases — pipelined batches, async Flush, Describe flow, cancel requests over TLS — are covered by comprehensive multi-language BDD tests.
 
 **Natively multithreaded.** PgBouncer is single-threaded. Running multiple instances via `SO_REUSE_PORT` leads to unbalanced pools: clients connect evenly but disconnect unpredictably, leaving some instances overloaded while others sit idle. PgDoorman uses a single shared pool across all worker threads, ensuring correct connection distribution at any scale.
 
-**Full extended query protocol support.** Odyssey does not fully support the PostgreSQL extended query protocol in transaction pooling mode, resulting in significantly degraded performance for modern drivers that rely on it. PgDoorman handles simple, extended, and prepared protocols equally well. See [full benchmarks](https://ozontech.github.io/pg_doorman/benchmarks.html).
+**Full extended query protocol support.** Odyssey does not fully support the PostgreSQL extended query protocol in transaction pooling mode, resulting in significantly degraded performance for modern drivers that rely on it. PgDoorman handles simple, extended, and prepared protocols equally well.
+
+## Benchmarks
+
+Automated benchmarks on AWS Fargate (16 vCPU, pool size 40, pgbench 30s per test):
+
+| Scenario | vs PgBouncer | vs Odyssey |
+|----------|-------------|------------|
+| Extended protocol, 500 clients + SSL | x3.5 | +61% |
+| Prepared statements, 500 clients + SSL | x4.0 | +5% |
+| Simple protocol, 10,000 clients | x2.8 | +20% |
+| Extended + SSL + Reconnect, 500 clients | +96% | ~0% |
+
+PgBouncer is single-threaded — these ratios reflect a single PgBouncer instance vs a single PgDoorman instance. Odyssey shows poor extended protocol performance in transaction mode. [Full benchmark results](https://ozontech.github.io/pg_doorman/benchmarks.html).
+
+## Comparison
+
+| | PgDoorman | PgBouncer | Odyssey |
+|---|:-:|:-:|:-:|
+| Multithreaded | Yes | No | Yes |
+| Prepared statements in transaction mode | Yes | No | No |
+| Full extended query protocol | Yes | Yes | Partial |
+| Zero-downtime binary upgrade | Yes | Yes | No |
+| Deferred `BEGIN` (lazy server acquire) | Yes | No | No |
+| Dead connection probing | Yes | No | No |
+| Auto-config from PostgreSQL | Yes | No | No |
+| YAML config | Yes | No | No |
+| `pg_hba.conf` access control | Yes | Yes | No |
+| PAM / JWT auth | Both | No | PAM only |
+| Prometheus metrics | Built-in | External | Built-in |
 
 ## Quick Start
 
@@ -95,7 +128,27 @@ JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,backgro
 - **pg_hba.conf** access control, TLS, PAM and JWT authentication
 - **Prometheus metrics** built-in (port 9127)
 - **Admin console** — `psql -p 6432 -U admin pgdoorman` then `SHOW POOLS`, `RELOAD`, etc.
-- **patroni_proxy** — included TCP proxy for Patroni clusters with zero-downtime failover
+
+## patroni_proxy
+
+This repository also includes `patroni_proxy` — a TCP proxy for Patroni-managed PostgreSQL clusters. Zero-downtime failover: existing connections are preserved during cluster topology changes.
+
+```mermaid
+graph TD
+    App1[Application] --> PP(patroni_proxy<br/>TCP load balancing)
+    App2[Application] --> PP
+    PP --> D1(pg_doorman<br/>pooling)
+    PP --> D2(pg_doorman<br/>pooling)
+    PP --> D3(pg_doorman<br/>pooling)
+    D1 --> PG1[(PostgreSQL<br/>leader)]
+    D2 --> PG2[(PostgreSQL<br/>sync)]
+    D3 --> PG3[(PostgreSQL<br/>async)]
+```
+
+- **pg_doorman** deploys close to PostgreSQL — connection pooling and prepared statement caching benefit from low latency to the database
+- **patroni_proxy** deploys close to clients — TCP routing and role-based failover (leader/sync/async) with least-connections balancing
+
+See [patroni_proxy documentation](https://ozontech.github.io/pg_doorman/tutorials/patroni-proxy.html) for details.
 
 ## Documentation
 
