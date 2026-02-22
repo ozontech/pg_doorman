@@ -23,7 +23,6 @@ use crate::errors::Error;
 /// PostgreSQL limits role names to NAMEDATALEN - 1 = 63 bytes.
 /// Usernames exceeding this are rejected without caching to prevent
 /// memory exhaustion from very long usernames.
-#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
 const MAX_USERNAME_LEN: usize = 63;
 
 // ---------------------------------------------------------------------------
@@ -31,9 +30,8 @@ const MAX_USERNAME_LEN: usize = 63;
 // ---------------------------------------------------------------------------
 
 /// Trait for fetching password hashes from PostgreSQL.
-/// `AuthQueryExecutor` implements this; tests can substitute a mock.
-#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
-pub(crate) trait PasswordFetcher: Send + Sync {
+/// `AuthQueryExecutor` implements this; tests and benchmarks can substitute a mock.
+pub trait PasswordFetcher: Send + Sync {
     fn fetch<'a>(
         &'a self,
         username: &'a str,
@@ -346,7 +344,6 @@ pub struct CacheEntry {
     pub client_key: Option<Vec<u8>>,
 }
 
-#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
 impl CacheEntry {
     fn positive(password_hash: String) -> Self {
         Self {
@@ -393,8 +390,7 @@ impl CacheEntry {
 ///
 /// Generic over the fetcher: defaults to `AuthQueryExecutor` in production,
 /// tests substitute a mock.
-#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
-pub(crate) struct AuthQueryCache<F = AuthQueryExecutor> {
+pub struct AuthQueryCache<F = AuthQueryExecutor> {
     /// Cached credentials keyed by username.
     entries: DashMap<String, CacheEntry>,
     /// Per-username locks for request coalescing.
@@ -410,9 +406,8 @@ pub(crate) struct AuthQueryCache<F = AuthQueryExecutor> {
     min_interval: Duration,
 }
 
-#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
 impl<F: PasswordFetcher> AuthQueryCache<F> {
-    pub(crate) fn new(executor: Arc<F>, config: &AuthQueryConfig) -> Self {
+    pub fn new(executor: Arc<F>, config: &AuthQueryConfig) -> Self {
         Self {
             entries: DashMap::new(),
             locks: DashMap::new(),
@@ -429,7 +424,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     /// - `Ok(Some(entry))` — user found (positive cache or fresh fetch)
     /// - `Ok(None)` — user not found (negative cache or fresh fetch returned 0 rows)
     /// - `Err` — executor error (PG down, SQL error, etc.)
-    pub(crate) async fn get_or_fetch(&self, username: &str) -> Result<Option<CacheEntry>, Error> {
+    pub async fn get_or_fetch(&self, username: &str) -> Result<Option<CacheEntry>, Error> {
         if username.len() > MAX_USERNAME_LEN {
             warn!(
                 "auth_query cache: rejecting username of length {} (max {MAX_USERNAME_LEN})",
@@ -486,7 +481,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
 
     /// Invalidate cache entry for a username.
     /// Called on auth failure to trigger re-fetch on next attempt.
-    pub(crate) fn invalidate(&self, username: &str) {
+    pub fn invalidate(&self, username: &str) {
         self.entries.remove(username);
     }
 
@@ -497,10 +492,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     ///
     /// Uses the same per-username lock as `get_or_fetch()` to prevent concurrent
     /// refetches for the same user.
-    pub(crate) async fn refetch_on_failure(
-        &self,
-        username: &str,
-    ) -> Result<Option<CacheEntry>, Error> {
+    pub async fn refetch_on_failure(&self, username: &str) -> Result<Option<CacheEntry>, Error> {
         // Acquire per-username lock (same lock as get_or_fetch)
         let lock = self
             .locks
@@ -537,25 +529,25 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     }
 
     /// Clear all entries (called on RELOAD when auth_query config changes).
-    pub(crate) fn clear(&self) {
+    pub fn clear(&self) {
         self.entries.clear();
         self.locks.clear();
     }
 
     /// Store ClientKey for a cached user (called after successful SCRAM auth).
-    pub(crate) fn set_client_key(&self, username: &str, client_key: Vec<u8>) {
+    pub fn set_client_key(&self, username: &str, client_key: Vec<u8>) {
         if let Some(mut entry) = self.entries.get_mut(username) {
             entry.client_key = Some(client_key);
         }
     }
 
     /// Number of cached entries (for metrics/admin).
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns true if the cache is empty.
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 }

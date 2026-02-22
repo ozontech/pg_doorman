@@ -100,6 +100,10 @@ path = "src/bin/patroni_proxy/tests/bdd/main.rs"
 name = "hash_benchmarks"
 harness = false
 
+[[bench]]
+name = "cache_benchmarks"
+harness = false
+
 [features]
 default = []
 pam = ["dep:pam-client"]
