@@ -1,0 +1,1045 @@
+# pg_doorman fields.yaml — single source of truth for all field descriptions.
+#
+# Structure:
+#   sections:  Section separator titles (EN/RU)
+#   texts:     Common texts (warnings, headers) with `config` and/or `doc` variants
+#   fields:    Per-field descriptions with `config` (short, for config comments) and `doc` (rich, for reference docs)
+#
+# Each field has:
+#   config: { en, ru }    — short inline comments for generated configs
+#   doc:    string         — rich descriptions for reference documentation
+#   default: (optional)   — default value string for display
+
+sections:
+  network:
+    en: "Network Settings"
+    ru: "Сетевые настройки"
+  timeouts:
+    en: "Connection Timeouts"
+    ru: "Таймауты подключений"
+  tcp:
+    en: "TCP Settings"
+    ru: "Настройки TCP"
+  limits:
+    en: "Connection Limits"
+    ru: "Лимиты подключений"
+  logging:
+    en: "Logging"
+    ru: "Логирование"
+  workers:
+    en: "Worker Settings"
+    ru: "Настройки воркеров"
+  pool_behavior:
+    en: "Pool Behavior"
+    ru: "Поведение пула"
+  prepared:
+    en: "Prepared Statements"
+    ru: "Подготовленные запросы (Prepared Statements)"
+  admin:
+    en: "Admin Console"
+    ru: "Консоль администратора"
+  tls_client:
+    en: "TLS Settings (Client-facing)"
+    ru: "Настройки TLS (для клиентов)"
+  tls_server:
+    en: "TLS Settings (Server-facing)"
+    ru: "Настройки TLS (для серверов PostgreSQL)"
+  daemon:
+    en: "Daemon Mode"
+    ru: "Режим демона"
+  hba_legacy:
+    en: "Access Control (Legacy)"
+    ru: "Контроль доступа (устаревший способ)"
+  hba:
+    en: "Access Control (pg_hba - Recommended)"
+    ru: "Контроль доступа (pg_hba — рекомендуется)"
+  pool_server:
+    en: "Server Connection Settings"
+    ru: "Настройки подключения к серверу"
+  pool_settings:
+    en: "Pool Settings"
+    ru: "Настройки пула"
+  pool_app:
+    en: "Application Settings"
+    ru: "Настройки приложения"
+  pool_users_toml:
+    en: "Users Configuration (TOML uses indexed format)"
+    ru: "Настройки пользователей (в TOML используется индексный формат)"
+  pool_users_yaml:
+    en: "Users Configuration"
+    ru: "Настройки пользователей"
+  pool_examples:
+    en: "Additional Pool Examples"
+    ru: "Дополнительные примеры пулов"
+
+texts:
+  header_warning:
+    en: "IMPORTANT: Use ONLY ONE configuration file format (YAML or TOML), not both."
+    ru: "ВАЖНО: Используйте ТОЛЬКО ОДИН формат конфигурации (YAML или TOML), не оба."
+  header_yaml_recommended:
+    en: "YAML format (.yaml, .yml) is recommended for new configurations."
+    ru: "Формат YAML (.yaml, .yml) рекомендуется для новых конфигураций."
+  header_toml_compat:
+    en: "TOML format (.toml) is supported for backward compatibility."
+    ru: "Формат TOML (.toml) поддерживается для обратной совместимости."
+  header_auto_detect:
+    en: "The format is automatically detected based on the file extension."
+    ru: "Формат определяется автоматически по расширению файла."
+  human_readable_title:
+    en: "HUMAN-READABLE VALUES"
+    ru: "ЧЕЛОВЕКОЧИТАЕМЫЕ ЗНАЧЕНИЯ"
+  human_readable_desc:
+    en: "pg_doorman supports human-readable formats for duration and byte size values."
+    ru: "pg_doorman поддерживает человекочитаемые форматы для значений времени и размера."
+  human_readable_compat:
+    en: "Both numeric values (for backward compatibility) and string formats are supported."
+    ru: "Поддерживаются как числовые значения (для совместимости), так и строковые форматы."
+  duration_title:
+    en: "Duration formats:"
+    ru: "Форматы времени:"
+  duration_plain:
+    en: "  - Plain numbers: interpreted as milliseconds (e.g., 5000 = 5 seconds)"
+    ru: "  - Числа: интерпретируются как миллисекунды (напр., 5000 = 5 секунд)"
+  duration_s:
+    en: "  - \"Ns\"  : seconds (e.g., \"5s\" = 5000 milliseconds)"
+    ru: "  - \"Ns\"  : секунды (напр., \"5s\" = 5000 миллисекунд)"
+  duration_m:
+    en: "  - \"Nm\"  : minutes (e.g., \"5m\" = 300000 milliseconds)"
+    ru: "  - \"Nm\"  : минуты (напр., \"5m\" = 300000 миллисекунд)"
+  duration_h:
+    en: "  - \"Nh\"  : hours (e.g., \"1h\" = 3600000 milliseconds)"
+    ru: "  - \"Nh\"  : часы (напр., \"1h\" = 3600000 миллисекунд)"
+  duration_d:
+    en: "  - \"Nd\"  : days (e.g., \"1d\" = 86400000 milliseconds)"
+    ru: "  - \"Nd\"  : дни (напр., \"1d\" = 86400000 миллисекунд)"
+  byte_size_title:
+    en: "Byte size formats:"
+    ru: "Форматы размера:"
+  byte_size_plain:
+    en: "  - Plain numbers: interpreted as bytes (e.g., 1048576 = 1 MB)"
+    ru: "  - Числа: интерпретируются как байты (напр., 1048576 = 1 МБ)"
+  example_title:
+    en: "Examples:"
+    ru: "Примеры:"
+  example_connect_timeout:
+    en: "  connect_timeout: \"3s\"        # instead of 3000"
+    ru: "  connect_timeout: \"3s\"        # вместо 3000"
+  example_idle_timeout:
+    en: "  idle_timeout: \"5m\"           # instead of 300000"
+    ru: "  idle_timeout: \"5m\"           # вместо 300000"
+  example_max_memory:
+    en: "  max_memory_usage: \"256MB\"    # instead of 268435456"
+    ru: "  max_memory_usage: \"256MB\"    # вместо 268435456"
+  include_desc:
+    en: "Include additional configuration files."
+    ru: "Подключение дополнительных файлов конфигурации."
+  include_merge:
+    en: "Files are merged in order, allowing modular configuration."
+    ru: "Файлы объединяются по порядку, что позволяет собирать конфиг из частей."
+  general_title:
+    en: "GENERAL SETTINGS"
+    ru: "ОСНОВНЫЕ НАСТРОЙКИ"
+  prometheus_title:
+    en: "PROMETHEUS METRICS"
+    ru: "МЕТРИКИ PROMETHEUS"
+  talos_title:
+    en: "TALOS AUTHENTICATION (Optional)"
+    ru: "АУТЕНТИФИКАЦИЯ TALOS (Опционально)"
+  talos_desc:
+    en: "Talos is an optional authentication mechanism using public key cryptography."
+    ru: "Talos — опциональный механизм аутентификации на основе криптографии с открытым ключом."
+  talos_keys:
+    en: "List of public key files for Talos authentication."
+    ru: "Список файлов публичных ключей для аутентификации Talos."
+  talos_databases:
+    en: "List of databases that use Talos authentication."
+    ru: "Список баз данных, использующих аутентификацию Talos."
+  pools_title:
+    en: "CONNECTION POOLS"
+    ru: "ПУЛЫ ПОДКЛЮЧЕНИЙ"
+  pools_desc:
+    en: "Each pool represents a virtual database that clients can connect to."
+    ru: "Каждый пул представляет виртуальную базу данных, к которой подключаются клиенты."
+  pools_names:
+    en: "Pool names are visible to clients as database names."
+    ru: "Имена пулов видны клиентам как имена баз данных."
+  pool_example_title:
+    en: "Example pool configuration"
+    ru: "Пример конфигурации пула"
+  pool_users_toml_indexed:
+    en: "Users are defined with numeric indices: [pools.{pool}.users.0], [pools.{pool}.users.1], etc."
+    ru: "Пользователи задаются с числовыми индексами: [pools.{pool}.users.0], [pools.{pool}.users.1] и т.д."
+  pool_users_unique:
+    en: "Each user must have a unique username within the pool."
+    ru: "Каждый пользователь должен иметь уникальный username в рамках пула."
+  pool_users_yaml_array:
+    en: "Array of users allowed to connect to this pool."
+    ru: "Массив пользователей, которым разрешено подключаться к этому пулу."
+  pg_hba_desc:
+    en: "PostgreSQL-style pg_hba.conf rules for client authentication."
+    ru: "Правила аутентификации клиентов в стиле pg_hba.conf PostgreSQL."
+  pg_hba_formats:
+    en: "Supports three formats:"
+    ru: "Поддерживает три формата:"
+  pg_hba_rule_format:
+    en: "Rule format: TYPE DATABASE USER ADDRESS METHOD"
+    ru: "Формат правил: ТИП БАЗА ПОЛЬЗОВАТЕЛЬ АДРЕС МЕТОД"
+  pg_hba_types:
+    en: "Types: local, host, hostssl, hostnossl"
+    ru: "Типы: local, host, hostssl, hostnossl"
+  pg_hba_methods:
+    en: "Methods: trust, md5, scram-sha-256, reject"
+    ru: "Методы: trust, md5, scram-sha-256, reject"
+  pg_hba_trust_1:
+    en: "Trust behavior: when a matching rule uses 'trust', pg_doorman accepts"
+    ru: "Поведение trust: если подходящее правило использует 'trust', pg_doorman принимает"
+  pg_hba_trust_2:
+    en: "the connection without asking for a password, even if the user has"
+    ru: "подключение без запроса пароля, даже если у пользователя настроен"
+  pg_hba_trust_3:
+    en: "an MD5 or SCRAM password configured."
+    ru: "пароль MD5 или SCRAM."
+  pg_hba_example_title:
+    en: "Example pg_hba rules:"
+    ru: "Пример правил pg_hba:"
+  pool_example_multi:
+    en: "Example: Pool with multiple users"
+    ru: "Пример: Пул с несколькими пользователями"
+  pool_example_unix:
+    en: "Example: Pool with unix socket connection"
+    ru: "Пример: Пул с подключением через unix socket"
+  pool_example_jwt:
+    en: "Example: Pool with JWT authentication"
+    ru: "Пример: Пул с JWT-аутентификацией"
+  pool_example_mapped:
+    en: "Example: Pool with server-side credentials mapping"
+    ru: "Пример: Пул с маппингом серверных учётных данных"
+
+fields:
+  general:
+    host:
+      config:
+        en: "Listen host for incoming connections (IPv4 only)."
+        ru: "Адрес для приёма входящих подключений (только IPv4)."
+      doc: "Listen host (TCP v4 only)."
+      default: '"0.0.0.0"'
+
+    port:
+      config:
+        en: "Listen port for incoming connections."
+        ru: "Порт для приёма входящих подключений."
+      doc: "Listen port for incoming connections."
+      default: "5432"
+
+    backlog:
+      config:
+        en: |
+          TCP backlog for incoming connections.
+          A value of zero sets max_connections as the TCP backlog value.
+        ru: |
+          TCP backlog для входящих подключений.
+          Значение 0 использует max_connections как значение TCP backlog.
+      doc: "TCP backlog for incoming connections. A value of zero sets the `max_connections` as value for the TCP backlog."
+      default: "0"
+
+    connect_timeout:
+      config:
+        en: "Connection timeout to server."
+        ru: "Таймаут подключения к серверу."
+      doc: "Connection timeout to server in milliseconds."
+      default: "3000 (3 sec)"
+
+    query_wait_timeout:
+      config:
+        en: |
+          Maximum time to wait for a query to complete.
+          Analog of query_wait_timeout in PgBouncer.
+        ru: |
+          Максимальное время ожидания выполнения запроса.
+          Аналог query_wait_timeout в PgBouncer.
+      doc: "Maximum time to wait for a query to complete, in milliseconds."
+      default: "5000 (5 sec)"
+
+    idle_timeout:
+      config:
+        en: "Server idle timeout."
+        ru: "Таймаут простоя серверного соединения."
+      doc: "Server idle timeout in milliseconds."
+      default: "300000000 (5000 min)"
+
+    server_lifetime:
+      config:
+        en: "Server lifetime. Only applied to idle connections."
+        ru: "Время жизни серверного соединения. Применяется только к простаивающим соединениям."
+      doc: "Server lifetime in milliseconds."
+      default: "300000 (5 min)"
+
+    retain_connections_time:
+      config:
+        en: "Interval for checking and closing idle connections."
+        ru: "Интервал проверки и закрытия простаивающих соединений."
+      doc: |
+        Interval for checking and closing idle connections that exceed `idle_timeout` or `server_lifetime`.
+        The retain task runs periodically at this interval to clean up expired connections.
+      default: "30000 (30 sec)"
+
+    retain_connections_max:
+      config:
+        en: |
+          Maximum number of idle connections to close per retain cycle.
+          0 means unlimited (close all idle connections that exceed timeout).
+        ru: |
+          Максимальное количество простаивающих соединений, закрываемых за один цикл.
+          0 — без ограничений (закрывать все соединения, превысившие таймаут).
+      doc: |
+        Maximum number of idle connections to close per retain cycle.
+        When set to `0`, all idle connections that exceed `idle_timeout` or `server_lifetime` will be closed immediately.
+        When set to a positive value, at most that many connections will be closed per cycle across all pools.
+
+        This parameter controls how aggressively pg_doorman closes idle connections. With the default value of `3`,
+        up to 3 connections are closed per retain cycle, providing controlled cleanup. If you need faster cleanup of
+        expired connections, set to `0` (unlimited) to close all expired connections in each retain cycle.
+      default: "3"
+
+    server_idle_check_timeout:
+      config:
+        en: |
+          Time after which an idle server connection should be checked before being
+          given to a client. This helps detect dead connections caused by PostgreSQL
+          restart, network issues, or server-side idle timeouts.
+          0 means disabled (no check).
+        ru: |
+          Время простоя серверного соединения, после которого оно проверяется перед
+          передачей клиенту. Помогает обнаружить мёртвые соединения из-за перезапуска
+          PostgreSQL, сетевых проблем или серверных таймаутов.
+          0 — проверка отключена.
+      doc: |
+        Time after which an idle server connection should be checked before being given to a client.
+        This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts.
+
+        When a connection has been idle in the pool longer than this timeout, pg_doorman will send a minimal query (`;`)
+        to verify the connection is still alive before returning it to the client. If the check fails, the connection
+        is discarded and a new one is obtained.
+
+        Set to `0` to disable the check (not recommended for production environments with potential network instability
+        or PostgreSQL restarts).
+      default: "60s (60 seconds)"
+
+    shutdown_timeout:
+      config:
+        en: "Graceful shutdown timeout."
+        ru: "Таймаут корректного завершения работы."
+      doc: "With a graceful shutdown, we wait for transactions to be completed within this time limit (10 seconds)."
+      default: "10000"
+
+    proxy_copy_data_timeout:
+      config:
+        en: "Timeout for COPY data operations."
+        ru: "Таймаут операций COPY."
+      doc: "Maximum time to wait for data copy operations during proxying, in milliseconds."
+      default: "15000 (15 sec)"
+
+    tcp_keepalives_idle:
+      config:
+        en: |
+          TCP keepalive settings (in seconds).
+          Keepalive is enabled by default and overwrites OS defaults.
+        ru: |
+          Настройки TCP keepalive (в секундах).
+          Keepalive включён по умолчанию и перезаписывает настройки ОС.
+      doc: "Keepalive enabled by default and overwrite OS defaults."
+      default: "5"
+
+    tcp_keepalives_interval:
+      config:
+        en: ""
+        ru: ""
+      doc: "TCP keepalive interval in seconds."
+      default: "5"
+
+    tcp_keepalives_count:
+      config:
+        en: ""
+        ru: ""
+      doc: "Keepalive enabled by default and overwrite OS defaults."
+      default: "5"
+
+    tcp_so_linger:
+      config:
+        en: |
+          TCP SO_LINGER setting.
+          By default, pg_doorman sends RST instead of keeping the connection open.
+        ru: |
+          Настройка TCP SO_LINGER.
+          По умолчанию pg_doorman отправляет RST вместо удержания соединения.
+      doc: "By default, pg_doorman send `RST` instead of keeping the connection open for a long time."
+      default: "0"
+
+    tcp_no_delay:
+      config:
+        en: "Enable TCP_NODELAY to disable Nagle's algorithm for lower latency."
+        ru: "Включить TCP_NODELAY для отключения алгоритма Нагла (меньше задержка)."
+      doc: "TCP_NODELAY to disable Nagle's algorithm for lower latency."
+      default: "true"
+
+    tcp_user_timeout:
+      config:
+        en: |
+          TCP_USER_TIMEOUT for client connections (in seconds).
+          Helps detect dead connections faster when data remains unacknowledged.
+          Only supported on Linux. Set to 0 to disable.
+        ru: |
+          TCP_USER_TIMEOUT для клиентских соединений (в секундах).
+          Помогает быстрее обнаружить мёртвые соединения при неподтверждённых данных.
+          Поддерживается только на Linux. 0 — отключено.
+      doc: |
+        Sets the `TCP_USER_TIMEOUT` socket option for client connections (in seconds). This option specifies
+        the maximum time that transmitted data may remain unacknowledged before TCP will forcibly close the
+        connection. This helps detect dead client connections faster than keepalive probes when the connection
+        is actively sending data but the remote end has become unreachable (e.g., network failure, client crash).
+
+        When set to a non-zero value, if data remains unacknowledged for this duration, the connection will
+        be terminated. This is particularly useful to avoid 15-16 minute delays caused by TCP retransmission
+        timeout when keepalive cannot help (e.g., during active data transmission).
+
+        **Note:** This option is only supported on Linux. On other operating systems, this setting is ignored.
+
+        Set to `0` to disable (use OS default).
+      default: "60"
+
+    unix_socket_buffer_size:
+      config:
+        en: "Buffer size for read/write operations when connecting via unix socket."
+        ru: "Размер буфера для чтения/записи при подключении через unix socket."
+      doc: "Buffer size for read and write operations when connecting to PostgreSQL via a unix socket."
+      default: "1048576"
+
+    max_connections:
+      config:
+        en: |
+          Maximum number of clients that can connect simultaneously.
+          When reached, clients receive error code 53300: "sorry, too many clients already"
+        ru: |
+          Максимальное количество одновременных клиентских подключений.
+          При превышении клиент получит ошибку 53300: "sorry, too many clients already"
+      doc: |
+        The maximum number of clients that can connect to the pooler simultaneously. When this limit is reached:
+
+        * A client connecting without SSL will receive the expected error (code: `53300`, message: `sorry, too many clients already`).
+        * A client connecting via SSL will see a message indicating that the server does not support the SSL protocol.
+      default: "8192"
+
+    max_concurrent_creates:
+      config:
+        en: |
+          Maximum number of server connections that can be created concurrently.
+          Uses a semaphore to limit parallel connection creation.
+        ru: |
+          Максимальное количество серверных соединений, создаваемых одновременно.
+          Использует семафор для ограничения параллельного создания соединений.
+      doc: |
+        Maximum number of server connections that can be created concurrently per pool. This setting uses a semaphore to limit parallel connection creation, which significantly improves performance during cold start and burst scenarios.
+
+        Higher values allow faster pool warm-up but may increase load on the PostgreSQL server during connection storms. Lower values provide more gradual connection creation.
+      default: "4"
+
+    max_memory_usage:
+      config:
+        en: |
+          Maximum memory usage for internal buffers.
+          If exceeded, clients receive an error.
+        ru: |
+          Максимальное использование памяти для внутренних буферов.
+          При превышении клиенты получат ошибку.
+      doc: |
+        We calculate the total amount of memory used by the internal buffers for all current queries.
+        If the limit is reached, the client will receive an error (256 MB).
+      default: "268435456"
+
+    log_client_connections:
+      config:
+        en: "Log client connections for monitoring."
+        ru: "Логировать подключения клиентов."
+      doc: "Log client connections for monitoring."
+      default: "true"
+
+    log_client_disconnections:
+      config:
+        en: "Log client disconnections for monitoring."
+        ru: "Логировать отключения клиентов."
+      doc: "Log client disconnections for monitoring."
+      default: "true"
+
+    syslog_prog_name:
+      config:
+        en: |
+          Syslog program name. When specified, pg_doorman sends messages to syslog.
+          Comment out to log to stdout.
+        ru: |
+          Имя программы для syslog. Если указано, pg_doorman отправляет логи в syslog.
+          Закомментируйте для вывода логов в stdout.
+      doc: |
+        When specified, pg_doorman starts sending messages to syslog (using /dev/log or /var/run/syslog).
+        Comment this out if you want to log to stdout.
+      default: "None"
+
+    worker_threads:
+      config:
+        en: |
+          Number of worker threads for async client handling.
+          More workers = better performance, up to CPU count.
+        ru: |
+          Количество рабочих потоков для асинхронной обработки клиентов.
+          Больше воркеров = выше производительность, но не больше числа CPU.
+      doc: |
+        The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
+        The more workers there are, the faster the system works, but only up to a certain limit (cpu count).
+
+        This parameter also controls the number of shards in internal concurrent hash maps (DashMap).
+        The shard count is calculated as `worker_threads * 4` rounded up to the nearest power of 2 (minimum 4 shards).
+        This is important for Kubernetes deployments where CPU count detection may be incorrect, causing unnecessary overhead.
+      default: "4"
+
+    worker_cpu_affinity_pinning:
+      config:
+        en: "Automatically pin workers to different CPUs."
+        ru: "Автоматически привязывать воркеры к разным CPU."
+      doc: "Automatically assign workers to different CPUs (man 3 cpu_set)."
+      default: "false"
+
+    tokio_settings_note:
+      config:
+        en: |
+          Tokio runtime settings (advanced, change only if you understand the implications).
+          Modern tokio versions handle these well by default, so these parameters are optional.
+          Uncomment only if you need to override tokio's defaults.
+        ru: |
+          Настройки Tokio runtime (продвинутые, меняйте только если понимаете последствия).
+          Современные версии tokio хорошо справляются по умолчанию, поэтому параметры опциональны.
+          Раскомментируйте, только если нужно переопределить значения по умолчанию.
+
+    worker_stack_size:
+      config:
+        en: "Stack size for each worker thread."
+        ru: "Размер стека каждого рабочего потока."
+      doc: |
+        [Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.thread_stack_size).
+        Sets the stack size for worker threads.
+        Modern tokio versions handle this well by default, so this parameter is optional.
+      default: "not set (uses tokio's default)"
+
+    max_blocking_threads:
+      config:
+        en: "Maximum number of threads for blocking operations."
+        ru: "Максимальное количество потоков для блокирующих операций."
+      doc: |
+        [Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.max_blocking_threads).
+        Sets the maximum number of threads for blocking operations.
+        Modern tokio versions handle this well by default, so this parameter is optional.
+      default: "not set (uses tokio's default)"
+
+    tokio_global_queue_interval:
+      config:
+        en: "Controls how often the scheduler checks the global task queue."
+        ru: "Как часто планировщик проверяет глобальную очередь задач."
+      doc: |
+        [Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.global_queue_interval).
+        Controls how often the scheduler checks the global task queue.
+        Modern tokio versions handle this well by default, so this parameter is optional.
+      default: "not set (uses tokio's default)"
+
+    tokio_event_interval:
+      config:
+        en: "Controls how often the scheduler checks for external events (I/O, timers)."
+        ru: "Как часто планировщик проверяет внешние события (I/O, таймеры)."
+      doc: |
+        [Tokio runtime settings](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.event_interval).
+        Controls how often the scheduler checks for external events (I/O, timers).
+        Modern tokio versions handle this well by default, so this parameter is optional.
+      default: "not set (uses tokio's default)"
+
+    server_round_robin:
+      config:
+        en: |
+          Server selection strategy in transaction pool mode.
+          false = LRU (Least Recently Used) - better performance
+          true = Round Robin
+        ru: |
+          Стратегия выбора сервера в режиме пула транзакций.
+          false = LRU (наименее недавно использованный) — лучшая производительность
+          true = Round Robin
+      doc: |
+        In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
+        By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.
+      default: "false"
+
+    sync_server_parameters:
+      config:
+        en: |
+          Sync server parameters (SET commands, application_name) across backends.
+          Disabled by default due to performance impact.
+          Consider using pool-level application_name instead.
+        ru: |
+          Синхронизировать серверные параметры (SET, application_name) между бэкендами.
+          Отключено по умолчанию из-за влияния на производительность.
+          Рекомендуется использовать application_name на уровне пула.
+      doc: |
+        If enabled, we strive to restore the parameters (via query `SET`) that were set by the client (and application_name)
+        in transaction mode in other server backends. By default, this is disabled (false) due to performance.
+        If you need to know `application_name`, but don't want to experience performance issues due to constant server queries `SET`,
+        you can consider creating a separate pool for each application and using the `application_name` parameter in the `pool` settings.
+      default: "false"
+
+    message_size_to_be_stream:
+      config:
+        en: "Data responses larger than this value are transmitted in chunks."
+        ru: "Ответы данных больше этого значения передаются частями (потоково)."
+      doc: |
+        Data responses from the server (message type 'D') greater than this value will be
+        transmitted through the proxy in small chunks (1 MB).
+      default: "1048576"
+
+    pooler_check_query:
+      config:
+        en: "Query that won't be sent to server (used for connection health checks)."
+        ru: "Запрос, который не отправляется на сервер (для проверки живости соединения)."
+      doc: |
+        This query will not be sent to the server if it is run as a SimpleQuery.
+        It can be used to check the connection at the application level.
+      default: '";"'
+
+    prepared_statements:
+      config:
+        en: "Enable caching of prepared statements."
+        ru: "Включить кеширование подготовленных запросов."
+      doc: "Switcher to enable/disable caching of prepared statements."
+      default: "true"
+
+    prepared_statements_cache_size:
+      config:
+        en: "Cache size for prepared statements at the pool level (shared across clients)."
+        ru: "Размер кеша подготовленных запросов на уровне пула (общий для всех клиентов)."
+      doc: |
+        Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
+        This cache stores the mapping from query hash to rewritten prepared statement name.
+      default: "8192"
+
+    client_prepared_statements_cache_size:
+      config:
+        en: |
+          Maximum prepared statements cached per client connection.
+          Protection against malicious clients that don't call DEALLOCATE.
+          Set to 0 for unlimited (relies on client calling DEALLOCATE).
+        ru: |
+          Максимум подготовленных запросов в кеше для одного клиентского соединения.
+          Защита от вредоносных клиентов, которые не вызывают DEALLOCATE.
+          0 — без ограничений (полагается на вызов DEALLOCATE клиентом).
+      doc: |
+        Maximum number of prepared statements cached per client connection. This is a protection mechanism against
+        malicious or misbehaving clients that don't call `DEALLOCATE` and could cause memory exhaustion by creating
+        unlimited prepared statements over long-running connections.
+
+        When the limit is reached, the oldest entry is evicted from the client's cache. The evicted statement
+        can still be re-used later because the pool-level cache (`prepared_statements_cache_size`) retains the
+        query-to-server-name mapping.
+
+        Set to `0` to disable the limit (unlimited cache size, relies on client calling `DEALLOCATE`).
+      default: "0 (unlimited)"
+
+    admin_username:
+      config:
+        en: "Admin username for the virtual admin database (pgdoorman)."
+        ru: "Имя администратора для виртуальной базы данных pgdoorman."
+      doc: "Access to the virtual admin database is carried out through the administrator's username and password."
+      default: '"admin"'
+
+    admin_password:
+      config:
+        en: |
+          Admin password for the virtual admin database.
+          IMPORTANT: Change this in production!
+        ru: |
+          Пароль администратора для виртуальной базы данных.
+          ВАЖНО: Обязательно смените пароль в продакшене!
+      doc: |
+        Access to the virtual admin database is carried out through the administrator's username and password.
+        It should be replaced with your secret.
+      default: '"admin"'
+
+    tls_certificate:
+      config:
+        en: |
+          Path to the TLS certificate file for incoming client connections.
+          Must be used together with tls_private_key.
+        ru: |
+          Путь к файлу TLS-сертификата для входящих клиентских подключений.
+          Должен использоваться вместе с tls_private_key.
+      doc: "The path to the certificate file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_private_key`."
+      default: "None"
+
+    tls_private_key:
+      config:
+        en: |
+          Path to the TLS private key file for incoming client connections.
+          Must be used together with tls_certificate.
+        ru: |
+          Путь к файлу приватного ключа TLS для входящих клиентских подключений.
+          Должен использоваться вместе с tls_certificate.
+      doc: "The path to the private key file for TLS connections. This is required to enable TLS for incoming client connections. Must be used together with `tls_certificate`."
+      default: "None"
+
+    tls_ca_cert:
+      config:
+        en: |
+          Path to the CA certificate for client certificate verification.
+          Used with tls_mode = "verify-full"
+        ru: |
+          Путь к CA-сертификату для верификации клиентских сертификатов.
+          Используется с tls_mode = "verify-full"
+      doc: "The file containing the CA certificate to verify the client certificate. This is required when `tls_mode` is set to `verify-full`."
+      default: "None"
+
+    tls_mode:
+      config:
+        en: |
+          TLS mode for incoming connections:
+          - "allow"       : TLS allowed but not required (default)
+          - "disable"     : TLS not allowed
+          - "require"     : TLS required
+          - "verify-full" : TLS required with client certificate verification
+        ru: |
+          Режим TLS для входящих подключений:
+          - "allow"       : TLS разрешён, но не обязателен (по умолчанию)
+          - "disable"     : TLS запрещён
+          - "require"     : TLS обязателен
+          - "verify-full" : TLS обязателен с проверкой клиентского сертификата
+      doc: |
+        The TLS mode for incoming connections. It can be one of the following:
+
+        * `allow` - TLS connections are allowed but not required. The pg_doorman will attempt to establish a TLS connection if the client requests it.
+        * `disable` - TLS connections are not allowed. All connections will be established without TLS encryption.
+        * `require` - TLS connections are required. The pg_doorman will only accept connections that use TLS encryption.
+        * `verify-full` - TLS connections are required and the pg_doorman will verify the client certificate. This mode provides the highest level of security.
+      default: '"allow"'
+
+    tls_rate_limit_per_second:
+      config:
+        en: |
+          Limit simultaneous TLS session creation attempts.
+          Useful for applications with many connections at startup ("hot start").
+          0 = no limit
+        ru: |
+          Ограничение на одновременное создание TLS-сессий.
+          Полезно для приложений с множеством подключений при старте ("горячий старт").
+          0 — без ограничений
+      doc: |
+        Limit the number of simultaneous attempts to create a TLS session.
+        Any value other than zero implies that there is a queue through which clients must pass in order to establish a TLS connection.
+        In some cases, this is necessary in order to launch an application that opens many connections at startup (the so-called "hot start").
+      default: "0"
+
+    server_tls:
+      config:
+        en: "Enable TLS for connections to PostgreSQL servers."
+        ru: "Включить TLS для подключений к серверам PostgreSQL."
+      doc: "Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers."
+      default: "false"
+
+    verify_server_certificate:
+      config:
+        en: "Verify server certificate when connecting to PostgreSQL."
+        ru: "Проверять сертификат сервера при подключении к PostgreSQL."
+      doc: "Verify the PostgreSQL server's TLS certificate when connecting with TLS. This setting is only relevant when `server_tls` is enabled."
+      default: "false"
+
+    daemon_pid_file:
+      config:
+        en: |
+          PID file path for daemon mode.
+          Setting this enables daemon mode. Comment out for foreground mode with `-d`.
+        ru: |
+          Путь к PID-файлу для режима демона.
+          Задание этого параметра активирует режим демона. Закомментируйте для запуска на переднем плане с `-d`.
+      doc: "Enabling this setting enables daemon mode. Comment this out if you want to run pg_doorman in the foreground with `-d`."
+      default: '"/tmp/pg_doorman.pid"'
+
+    hba:
+      config:
+        en: |
+          Simple IP-based access control list.
+          List of IP networks allowed to connect (e.g., "10.0.0.0/8").
+          Empty list allows all addresses.
+          For more advanced access control, use pg_hba instead.
+        ru: |
+          Простой список контроля доступа по IP.
+          Список IP-сетей, которым разрешено подключаться (напр., "10.0.0.0/8").
+          Пустой список разрешает все адреса.
+          Для более гибкого контроля доступа используйте pg_hba.
+      doc: "The list of IP addresses from which it is permitted to connect to the pg-doorman."
+      default: "[]"
+
+    pg_hba:
+      doc: |
+        New-style client access control in native PostgreSQL `pg_hba.conf` format. This allows you to define fine-grained access rules similar to PostgreSQL, including per-database, per-user, address ranges, and TLS requirements.
+
+        You can specify `general.pg_hba` in three ways:
+
+        - As a multi-line string with the contents of a `pg_hba.conf` file
+        - As an object with `path` that points to a file on disk
+        - As an object with `content` containing the rules as a string
+
+        Examples:
+
+        ```toml
+        [general]
+        # Inline content (triple-quoted TOML string)
+        pg_hba = """
+        # type   database  user   address         method
+        host     all       all    10.0.0.0/8      md5
+        hostssl  all       all    0.0.0.0/0       scram-sha-256
+        hostnossl all      all    192.168.1.0/24  trust
+        """
+
+        # Or load from file
+        # pg_hba = { path = "./pg_hba.conf" }
+
+        # Or embed as a single-line string
+        # pg_hba = { content = "host all all 127.0.0.1/32 trust" }
+        ```
+
+        Supported fields and methods:
+        - Connection types: `local`, `host`, `hostssl`, `hostnossl` (TLS-aware matching is honored)
+        - Database matcher: a name or `all`
+        - User matcher: a name or `all`
+        - Address: CIDR form like `1.2.3.4/32` or `::1/128` (required for non-`local` rules)
+        - Methods: `trust`, `md5`, `scram-sha-256` (unknown methods are parsed but treated as not-allowed by the checker)
+
+        Precedence and compatibility:
+        - `general.pg_hba` supersedes the legacy `general.hba` list. You cannot set both at the same time; configuration validation will reject this combination.
+        - Rules are evaluated in order; the first matching rule decides the outcome.
+
+        Behavior of method = trust:
+        - When a matching rule has `trust`, PgDoorman will accept the connection without requesting a password. This mirrors PostgreSQL behavior.
+        - Specifically, if `trust` matches, PgDoorman will skip password verification even if the user has an `md5` or `scram-sha-256` password stored. This affects both MD5 and SCRAM flows.
+        - TLS constraints from the rule are respected: `hostssl` requires TLS, `hostnossl` forbids TLS.
+
+        Admin console access:
+        - `general.pg_hba` rules apply to the special admin database `pgdoorman` as well.
+        - This means you can allow admin access with the `trust` method when a matching rule is present, for example:
+          ```
+          host  pgdoorman  admin  127.0.0.1/32  trust
+          ```
+
+        Notes and limitations:
+        - Only a minimal subset of `pg_hba.conf` is supported that is sufficient for most proxy use-cases (type, database, user, address, method). Additional options (like `clientcert`) are currently ignored.
+        - For authentication methods other than `trust`, PgDoorman performs the corresponding challenge/response with the client.
+        - For Talos/JWT/PAM flows configured at the pool/user level, `trust` still bypasses the client password prompt; however, those modes may be used when `trust` does not match.
+
+  pool:
+    server_host:
+      config:
+        en: |
+          PostgreSQL server host (IP address or unix socket directory).
+          Examples: "127.0.0.1", "/var/run/postgresql"
+        ru: |
+          Адрес сервера PostgreSQL (IP или директория unix socket).
+          Примеры: "127.0.0.1", "/var/run/postgresql"
+      doc: |
+        The directory with unix sockets or the IPv4 address of the PostgreSQL server that serves this pool.
+
+        Example: `"/var/run/postgresql"` or `"127.0.0.1"`.
+      default: '"127.0.0.1"'
+
+    server_port:
+      config:
+        en: "PostgreSQL server port."
+        ru: "Порт сервера PostgreSQL."
+      doc: "The port through which PostgreSQL server accepts incoming connections."
+      default: "5432"
+
+    server_database:
+      config:
+        en: |
+          Actual database name on the PostgreSQL server.
+          If not specified, the pool name is used.
+        ru: |
+          Имя реальной базы данных на сервере PostgreSQL.
+          Если не указано, используется имя пула.
+      doc: "Optional parameter that determines which database should be connected to on the PostgreSQL server."
+
+    pool_mode:
+      config:
+        en: |
+          Pooling mode:
+          - "transaction" : Server released after each transaction (recommended)
+          - "session"     : Server released when client disconnects
+        ru: |
+          Режим пулинга:
+          - "transaction" : Сервер освобождается после каждой транзакции (рекомендуется)
+          - "session"     : Сервер освобождается при отключении клиента
+      doc: |
+        * `session` — Server is released back to pool after client disconnects.
+        * `transaction` — Server is released back to pool after transaction finishes.
+      default: '"transaction"'
+
+    connect_timeout:
+      config:
+        en: "Override global connect_timeout for this pool (in milliseconds)."
+        ru: "Переопределить глобальный connect_timeout для этого пула (в миллисекундах)."
+      doc: "Maximum time to allow for establishing a new server connection for this pool, in milliseconds. If not specified, the global connect_timeout setting is used."
+      default: "None (uses global setting)"
+
+    idle_timeout:
+      config:
+        en: "Override global idle_timeout for this pool (in milliseconds)."
+        ru: "Переопределить глобальный idle_timeout для этого пула (в миллисекундах)."
+      doc: "Close idle connections in this pool that have been opened for longer than this value, in milliseconds. If not specified, the global idle_timeout setting is used."
+      default: "None (uses global setting)"
+
+    server_lifetime:
+      config:
+        en: "Override global server_lifetime for this pool (in milliseconds)."
+        ru: "Переопределить глобальный server_lifetime для этого пула (в миллисекундах)."
+      doc: "Close server connections in this pool that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the global server_lifetime setting is used."
+      default: "None (uses global setting)"
+
+    cleanup_server_connections:
+      config:
+        en: "Clean up server connections (reset state) when returning to pool."
+        ru: "Очищать серверные соединения (сброс состояния) при возврате в пул."
+      doc: "When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections."
+      default: "true"
+
+    prepared_statements_cache_size:
+      config:
+        en: "Override global prepared_statements_cache_size for this pool."
+        ru: "Переопределить глобальный prepared_statements_cache_size для этого пула."
+      doc: "Override global prepared_statements_cache_size for this pool. If not specified, the global setting is used."
+
+    application_name:
+      config:
+        en: |
+          Application name sent to PostgreSQL when opening connections.
+          Useful when sync_server_parameters is disabled.
+        ru: |
+          Имя приложения, отправляемое PostgreSQL при открытии соединений.
+          Полезно, когда sync_server_parameters отключён.
+      doc: "Parameter application_name, is sent to the server when opening a connection with PostgreSQL. It may be useful with the sync_server_parameters = false setting."
+
+    log_client_parameter_status_changes:
+      config:
+        en: "Log SET commands from clients."
+        ru: "Логировать SET-команды от клиентов."
+      doc: "Log information about any SET command in the log."
+      default: "false"
+
+  user:
+    username:
+      config:
+        en: "Username for client authentication."
+        ru: "Имя пользователя для аутентификации клиента."
+      doc: "A virtual username who can connect to this virtual database (pool)."
+
+    password:
+      config:
+        en: |
+          Password for client authentication.
+          Supported formats:
+          - MD5: "md5" + md5(password + username)
+          - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
+          - JWT public key: "jwt-pkey-fpath:/path/to/public.pem"
+
+          Generate MD5: echo -n "passwordusername" | md5sum
+          Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+        ru: |
+          Пароль для аутентификации клиента.
+          Поддерживаемые форматы:
+          - MD5: "md5" + md5(пароль + имя_пользователя)
+          - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
+          - JWT: "jwt-pkey-fpath:/path/to/public.pem"
+
+          Сгенерировать MD5: echo -n "парольимяпользователя" | md5sum
+          Получить из PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+      doc: |
+        The password for the virtual pool user.
+        Password can be specified in `MD5`, `SCRAM-SHA-256`, or `JWT` format.
+        Also, you can create a mirror list of users using secrets from the PostgreSQL instance: `select usename, passwd from pg_shadow`.
+
+    pool_size:
+      config:
+        en: "Maximum connections to PostgreSQL for this user."
+        ru: "Максимальное количество соединений с PostgreSQL для этого пользователя."
+      doc: "The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user."
+      default: "40"
+
+    min_pool_size:
+      config:
+        en: |
+          Minimum connections to maintain in the pool.
+          Must be <= pool_size.
+        ru: |
+          Минимальное количество соединений для поддержания в пуле.
+          Должно быть <= pool_size.
+      doc: "The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size."
+      default: "None"
+
+    pool_mode:
+      config:
+        en: "Override pool-level pool_mode for this user."
+        ru: "Переопределить pool_mode пула для этого пользователя."
+      doc: "Override pool-level pool_mode for this user. If not specified, the pool's pool_mode setting is used."
+
+    server_lifetime:
+      config:
+        en: "Override pool-level server_lifetime for this user (in milliseconds)."
+        ru: "Переопределить server_lifetime пула для этого пользователя (в миллисекундах)."
+      doc: "Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used."
+      default: "None (uses pool setting)"
+
+    server_username:
+      config:
+        en: ""
+        ru: ""
+      doc: |
+        The real PostgreSQL username used to connect to the database server.
+
+        By default, PgDoorman uses the same `username` for both client authentication and server connections. However, if the client `password` is an MD5 or SCRAM hash (which is the typical setup), PostgreSQL will **reject the connection** because it expects a plaintext password, not a hash.
+
+        To fix this, set `server_username` and `server_password` to the actual PostgreSQL credentials. Both must be specified together.
+
+    server_password:
+      config:
+        en: ""
+        ru: ""
+      doc: |
+        The plaintext password for the PostgreSQL server user specified in `server_username`.
+
+        This is needed because PgDoorman stores client passwords as MD5/SCRAM hashes for client authentication, but PostgreSQL requires a plaintext password during server-side authentication.
+
+    auth_pam_service:
+      config:
+        en: "PAM service name for PAM authentication (requires 'pam' feature)."
+        ru: "Имя PAM-сервиса для PAM-аутентификации (требуется фича 'pam')."
+      doc: "The pam-service that is responsible for client authorization. In this case, pg_doorman will ignore the `password` value."
+
+  prometheus:
+    enabled:
+      config:
+        en: "Enable Prometheus metrics exporter."
+        ru: "Включить экспорт метрик Prometheus."
+      doc: "Enable or disable the Prometheus metrics exporter."
+      default: "false"
+
+    host:
+      config:
+        en: "Host for the metrics HTTP endpoint."
+        ru: "Адрес HTTP-эндпоинта для метрик."
+      doc: "The host on which the Prometheus metrics exporter will listen."
+      default: '"0.0.0.0"'
+
+    port:
+      config:
+        en: "Port for the metrics HTTP endpoint."
+        ru: "Порт HTTP-эндпоинта для метрик."
+      doc: "The port on which the Prometheus metrics exporter will listen."
+      default: "9127"

@@ -1,7 +1,3 @@
----
-title: Patroni Proxy
----
-
 # Patroni Proxy
 
 `patroni_proxy` is a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", it focuses exclusively on TCP load balancing and failover for Patroni clusters.
@@ -56,29 +52,19 @@ Route connections based on PostgreSQL node roles:
 
 For optimal performance, we recommend a two-tier architecture:
 
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Application   │     │   Application   │     │   Application   │
-└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │     patroni_proxy       │  ← Close to clients
-                    │   (TCP load balancing)  │
-                    └────────────┬────────────┘
-                                 │
-         ┌───────────────────────┼───────────────────────┐
-         │                       │                       │
-┌────────▼────────┐     ┌────────▼────────┐     ┌────────▼────────┐
-│   pg_doorman    │     │   pg_doorman    │     │   pg_doorman    │  ← Close to servers
-│   (pooling)     │     │   (pooling)     │     │   (pooling)     │
-└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
-         │                       │                       │
-┌────────▼────────┐     ┌────────▼────────┐     ┌────────▼────────┐
-│   PostgreSQL    │     │   PostgreSQL    │     │   PostgreSQL    │
-│    (leader)     │     │ (sync replica)  │     │ (async replica) │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
+```mermaid
+graph TD
+    App1[Application A] --> PP(patroni_proxy<br/>TCP load balancing)
+    App2[Application B] --> PP
+    App3[Application C] --> PP
+
+    PP --> D1(pg_doorman<br/>pooling)
+    PP --> D2(pg_doorman<br/>pooling)
+    PP --> D3(pg_doorman<br/>pooling)
+
+    D1 --> PG1[(PostgreSQL<br/>leader)]
+    D2 --> PG2[(PostgreSQL<br/>sync replica)]
+    D3 --> PG3[(PostgreSQL<br/>async replica)]
 ```
 
 - **pg_doorman** should be deployed **close to PostgreSQL servers** — it handles connection pooling, prepared statement caching, and protocol-level optimizations that benefit from low latency to the database

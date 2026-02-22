@@ -1,7 +1,3 @@
----
-title: Overview
----
-
 # PgDoorman Overview
 
 ## What is PgDoorman?
@@ -31,16 +27,18 @@ To maintain proper transaction semantics while providing efficient connection po
 
 ### Transaction Pooling
 
-!!! success "Recommended for most use cases"
-    In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.
+```admonish success title="Recommended for most use cases"
+In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.
+```
 
 - **High Efficiency**: Connections are shared between clients, allowing thousands of clients to share a small pool.
 - **Ideal for**: Applications with many short-lived connections or those that don't rely on session state.
 
 ### Session Pooling
 
-!!! info "Useful for specific legacy needs"
-    In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.
+```admonish info title="Useful for specific legacy needs"
+In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.
+```
 
 - **Exclusive Allocation**: The connection remains exclusively allocated to that client until disconnection.
 - **Support for Session Features**: Ideal for applications that rely on temporary tables or session variables.

@@ -417,11 +417,11 @@ jobs:
             sed -n '/===BEGIN_BENCHMARK_RESULTS===/,/===END_BENCHMARK_RESULTS===/p' benchmark-results/stdout.txt | \
               grep -v "===BEGIN_BENCHMARK_RESULTS===" | \
               grep -v "===END_BENCHMARK_RESULTS===" | \
-              base64 -d > documentation/docs/benchmarks.md
+              base64 -d > documentation/en/src/benchmarks.md
 
-            if [ -f documentation/docs/benchmarks.md ] && [ -s documentation/docs/benchmarks.md ]; then
+            if [ -f documentation/en/src/benchmarks.md ] && [ -s documentation/en/src/benchmarks.md ]; then
               echo "✅ Benchmark results extracted successfully"
-              echo "File size: $(wc -c < documentation/docs/benchmarks.md) bytes"
+              echo "File size: $(wc -c < documentation/en/src/benchmarks.md) bytes"
             else
               echo "❌ Failed to extract benchmark results or file is empty"
               echo "Last 20 lines of logs for context:"
@@ -434,7 +434,7 @@ jobs:
           fi
 
           ls -lah benchmark-results/
-          ls -lah documentation/docs/benchmarks.md
+          ls -lah documentation/en/src/benchmarks.md
 
       - name: Upload benchmark artifacts
         if: always()
@@ -475,7 +475,7 @@ jobs:
           git config --local user.name "github-actions[bot]"
 
           # Save benchmark results to a temporary location before switching branches
-          cp documentation/docs/benchmarks.md /tmp/benchmarks.md.tmp
+          cp documentation/en/src/benchmarks.md /tmp/benchmarks.md.tmp
 
           # Create a unique branch name with timestamp
           BRANCH_NAME="fargate-benchmark-results-$(date +%Y%m%d-%H%M%S)"
@@ -485,10 +485,10 @@ jobs:
           git checkout -b "$BRANCH_NAME" origin/master
 
           # Restore benchmark results to the new branch
-          mv /tmp/benchmarks.md.tmp documentation/docs/benchmarks.md
+          mv /tmp/benchmarks.md.tmp documentation/en/src/benchmarks.md
 
           # Check if there are any changes to commit
-          git add documentation/docs/benchmarks.md
+          git add documentation/en/src/benchmarks.md
           if git diff --staged --quiet; then
             echo "No changes to benchmark results, skipping PR creation"
             exit 0
@@ -501,6 +501,6 @@ jobs:
           # Create Pull Request to master
           gh pr create \
             --title "Update AWS Fargate benchmark results" \
-            --body "Automated benchmark results from AWS Fargate. This PR updates the benchmark comparison table in documentation/docs/benchmarks.md." \
+            --body "Automated benchmark results from AWS Fargate. This PR updates the benchmark comparison table in documentation/en/src/benchmarks.md." \
             --base "master" \
             --head "$BRANCH_NAME"

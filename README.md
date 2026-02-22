@@ -1,341 +1,156 @@
 ![pg_doorman](/static/logo_color_bg.png)
 
-# PgDoorman: High-Performance PostgreSQL Connection Pooler
+# PgDoorman
 
-PgDoorman is a high-performance PostgreSQL connection pooler that acts as middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.
+[![BDD Tests](https://github.com/ozontech/pg_doorman/actions/workflows/bdd-tests.yml/badge.svg)](https://github.com/ozontech/pg_doorman/actions/workflows/bdd-tests.yml)
+[![Library Tests](https://github.com/ozontech/pg_doorman/actions/workflows/lib-tests.yml/badge.svg)](https://github.com/ozontech/pg_doorman/actions/workflows/lib-tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.
+A high-performance multithreaded PostgreSQL connection pooler built in Rust. Does one thing and does it well — pools connections so your PostgreSQL handles thousands of clients without breaking a sweat.
 
-## Key Benefits
+## Why PgDoorman?
 
-- **Reduced Connection Overhead**: Minimizes the performance impact of establishing new database connections
-- **Resource Optimization**: Limits the number of connections to your PostgreSQL server, control prepared statements
-- **Improved Scalability**: Allows more client applications to connect to your database
-- **Connection Management**: Provides tools to monitor and manage database connections
-- **Seamless Binary Upgrades**: Update the software with minimal disruption to your database connections
-- **Transparent Pooling**: Connect applications to the database without adapting them to work with transaction pool mode
+**Drop-in replacement. No app changes.** PgDoorman caches and remaps prepared statements transparently across server connections in transaction mode — just point your connection string at it and go. No `DISCARD ALL`, no `DEALLOCATE`, no driver hacks. PgBouncer added similar support in 1.21, but remains single-threaded; Odyssey added it in 1.3, but has known reliability issues in edge cases.
 
-## Comparison with Alternatives
+**Battle-tested with real drivers.** Two years of production use with Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), Node.js. Protocol edge cases — pipelined batches, async Flush, Describe flow, cancel requests over TLS — are covered by comprehensive multi-language BDD tests.
 
-PgDoorman is a good alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat).
+**Natively multithreaded.** PgBouncer is single-threaded. Running multiple instances via `SO_REUSE_PORT` leads to unbalanced pools: clients connect evenly but disconnect unpredictably, leaving some instances overloaded while others sit idle. PgDoorman uses a single shared pool across all worker threads, ensuring correct connection distribution at any scale.
 
-We aimed to create a more efficient, multithreaded version of PgBouncer with a focus on performing pooler tasks efficiently and fast, in line with the Unix philosophy. While we've removed load balancing and sharding, we believe it's more efficient to handle these at the application level.
+**Full extended query protocol support.** Benchmarks show Odyssey is up to 61% slower with the extended query protocol in transaction mode. PgDoorman handles simple, extended, and prepared protocols equally well — including pipelined batches and async Flush flow that cause issues in other poolers.
 
-A key advantage of PgDoorman is its ability to work transparently with applications in transaction pool mode. Unlike some other poolers, applications can connect to PgDoorman without requiring modifications to handle the complexities of transaction pooling, such as connection state management between transactions.
+## Benchmarks
 
-Over two years of use, we've improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.
+Automated benchmarks on AWS Fargate (16 vCPU, pool size 40, pgbench 30s per test):
 
-## Additional Binary: patroni_proxy
+| Scenario | vs PgBouncer | vs Odyssey |
+|----------|-------------|------------|
+| Extended protocol, 500 clients + SSL | x3.5 | +61% |
+| Prepared statements, 500 clients + SSL | x4.0 | +5% |
+| Simple protocol, 10,000 clients | x2.8 | +20% |
+| Extended + SSL + Reconnect, 500 clients | +96% | ~0% |
 
-This repository also includes `patroni_proxy` — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", `patroni_proxy` focuses exclusively on TCP load balancing and failover for Patroni clusters.
+PgBouncer is single-threaded — these ratios reflect a single PgBouncer instance vs a single PgDoorman instance. [Full benchmark results](https://ozontech.github.io/pg_doorman/benchmarks.html).
 
-**Key advantages over HAProxy:**
-- **Zero-downtime connection management** — existing connections are preserved during cluster topology changes
-- **Hot upstream updates** — automatic discovery of cluster members via Patroni REST API without connection drops
-- **Role-based routing** — route connections to leader, sync replicas, or async replicas based on configuration
+## Comparison
 
-### Recommended Deployment Architecture
+| | PgDoorman | PgBouncer | Odyssey |
+|---|:-:|:-:|:-:|
+| Multithreaded | Yes | No | Yes |
+| Prepared statements in transaction mode | Yes | Since 1.21 | Since 1.3 |
+| Full extended query protocol | Yes | Yes | Partial |
+| Zero-downtime binary upgrade | Yes | Yes | Yes |
+| Deferred `BEGIN` (lazy server acquire) | Yes | No | No |
+| Auto-config from PostgreSQL | Yes | No | No |
+| YAML / TOML config | Yes | No (INI) | No (own format) |
+| Human-readable durations & sizes | Yes | No | No |
+| Native `pg_hba.conf` format | Yes | Yes | Since 1.4 |
+| PAM auth | Yes | Yes | Yes |
+| LDAP auth | No | Since 1.25 | Yes |
+| Prometheus metrics | Built-in | External | Built-in |
 
-For optimal performance, we recommend a two-tier architecture:
+## Quick Start
 
-- **pg_doorman** should be deployed **close to PostgreSQL servers** — it handles connection pooling, prepared statement caching, and protocol-level optimizations that benefit from low latency to the database
-- **patroni_proxy** should be deployed **close to application clients** — it handles TCP routing and failover, distributing connections across the cluster without the overhead of connection pooling
+### Minimal config
 
-This separation allows each component to excel at its specific task while providing both high availability and optimal performance.
+```yaml
+general:
+  host: "0.0.0.0"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "change_me"
 
-For more details, see the [patroni_proxy documentation](src/bin/patroni_proxy/README.md).
+pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "app"
+        password: "md5..."           # hash for client auth (from pg_shadow)
+        pool_size: 40
+        server_username: "app"       # real PostgreSQL username
+        server_password: "secret"    # real PostgreSQL password (plaintext)
+```
+
+> **Important:** `server_username` and `server_password` are required if your client `password` is an MD5/SCRAM hash (which is typical). Without them, PgDoorman tries to authenticate to PostgreSQL using the hash itself, and PostgreSQL rejects it. This is the #1 setup issue for new users.
+
+Or generate a config automatically:
+
+```bash
+pg_doorman generate --host your-db-host --output pg_doorman.yaml
+```
+
+### Run and connect
+
+```bash
+# Start
+pg_doorman pg_doorman.yaml
+
+# Connect — same as you would to PostgreSQL directly
+psql -h localhost -p 6432 -U app mydb
+```
+
+Your application connection string changes only the host and port:
+
+```
+postgresql://app:secret@localhost:6432/mydb
+```
 
 ## Installation
 
-### System Requirements
-
-- Linux (recommended) or macOS or Windows
-- PostgreSQL server (version 10 or higher)
-- Sufficient memory for connection pooling (depends on expected load)
-
-### Pre-built Binaries (Recommended)
-
-The simplest way to install PgDoorman is to download a pre-built binary from the [GitHub releases page](https://github.com/ozontech/pg_doorman/releases).
-
-### Ubuntu/Debian (Launchpad PPA)
-
-For Ubuntu users, PgDoorman is available via Launchpad PPA:
+**Pre-built binaries:** Download from [GitHub Releases](https://github.com/ozontech/pg_doorman/releases).
 
 ```bash
-# Add the PPA repository
-sudo add-apt-repository ppa:vadv/pg-doorman
-sudo apt-get update
+# Ubuntu/Debian
+sudo add-apt-repository ppa:vadv/pg-doorman && sudo apt-get install pg-doorman
 
-# Install pg-doorman
-sudo apt-get install pg-doorman
-```
+# Fedora/RHEL/Rocky
+sudo dnf copr enable vadvya/pg-doorman && sudo dnf install pg-doorman
 
-Supported Ubuntu versions: 22.04 (Jammy), 24.04 (Noble), 25.10 (Questing).
-
-For more information, visit the [Launchpad PPA page](https://launchpad.net/~vadv/+archive/ubuntu/pg-doorman).
-
-### Fedora/RHEL/Rocky/Alma (COPR)
-
-For Fedora and RHEL-based distributions, PgDoorman is available via Fedora COPR:
-
-```bash
-# Enable the COPR repository
-sudo dnf copr enable vadvya/pg-doorman
-
-# Install pg-doorman
-sudo dnf install pg-doorman
-```
-
-Supported distributions: Fedora 39+, RHEL/Rocky/Alma 8+.
-
-For more information, visit the [COPR project page](https://copr.fedorainfracloud.org/coprs/vadvya/pg-doorman/).
-
-### Docker Installation
-
-PgDoorman provides an official Docker image that you can use directly:
-
-```bash
-# Pull the official Docker image
+# Docker
 docker pull ghcr.io/ozontech/pg_doorman
-
-# Run PgDoorman with your configuration
-docker run -p 6432:6432 \
-  -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
-  --rm -t -i ghcr.io/ozontech/pg_doorman
 ```
 
-Alternatively, you can build and run PgDoorman using Docker:
+### Building from source
 
 ```bash
-# Build the Docker image
-docker build -t pg_doorman -f Dockerfile .
+# Recommended: build with jemalloc tuning for optimal memory management
+JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto" \
+  cargo build --release
 
-# Run PgDoorman with your configuration
-docker run -p 6432:6432 \
-  -v /path/to/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
-  --rm -t -i pg_doorman
+# Binary will be at target/release/pg_doorman
 ```
 
-For a more complete setup including PostgreSQL, you can use Docker Compose:
+## patroni_proxy
 
-```bash
-cd example
-docker compose up
+This repository also includes `patroni_proxy` — a TCP proxy for Patroni-managed PostgreSQL clusters. Zero-downtime failover: existing connections are preserved during cluster topology changes.
+
+```mermaid
+graph TD
+    App1[Application] --> PP(patroni_proxy<br/>TCP load balancing)
+    App2[Application] --> PP
+    PP --> D1(pg_doorman<br/>pooling)
+    PP --> D2(pg_doorman<br/>pooling)
+    PP --> D3(pg_doorman<br/>pooling)
+    D1 --> PG1[(PostgreSQL<br/>leader)]
+    D2 --> PG2[(PostgreSQL<br/>sync)]
+    D3 --> PG3[(PostgreSQL<br/>async)]
 ```
 
-To connect to pg_doorman running in Docker Compose, use the following command:
+- **pg_doorman** deploys close to PostgreSQL — connection pooling and prepared statement caching benefit from low latency to the database
+- **patroni_proxy** deploys close to clients — TCP routing and role-based failover (leader/sync/async) with least-connections balancing
 
-```bash
-PGPASSWORD=password psql -h 127.0.0.1 -p 6432 -d exampledb -U doorman
-```
-
-## Basic Usage
-
-### Configuration
-
-PgDoorman supports **YAML** (`.yaml`, `.yml`) and **TOML** (`.toml`) configuration file formats. **YAML is the recommended format** for new configurations, while TOML remains supported for backward compatibility. The format is automatically detected based on the file extension.
-
-Here's a minimal configuration example in YAML (recommended):
-
-```yaml
-# Global settings
-general:
-  host: "0.0.0.0"           # Listen on all interfaces
-  port: 6432                # Port for client connections
-  # Admin credentials for the management console
-  admin_username: "admin"
-  admin_password: "admin"   # Change this in production!
-
-# Database pools section
-pools:
-  exampledb:
-    server_host: "127.0.0.1"   # PostgreSQL server address (or unix-domain socket like /var/run/postgresql)
-    server_port: 5432          # PostgreSQL server port
-    pool_mode: "transaction"   # Connection pooling mode
-    # User configuration for this pool (array of users, username must be unique)
-    users:
-      - pool_size: 40            # Maximum number of connections in the pool
-        username: "doorman"      # Username for PostgreSQL server
-        password: "md5xxxxxx"    # Password hash (md5/scram) for authentication
-        # server_username: "doorman"       # Username for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
-        # server_password: "your_password" # Plain password for PostgreSQL server (required if PostgreSQL server requires authentication in pg_hba.conf)
-        # server_database: "exampledb"     # Database for PostgreSQL server (optional)
-```
-
-You can use `select * from pg_shadow` or `pg_doorman generate --help` to fetch password hashes.
-
-> **Note:** TOML configuration files are still fully supported for backward compatibility. See `example/pg_doorman/pg_doorman.toml` for a TOML example.
-
-### Automatic Configuration Generation
-
-PgDoorman provides a powerful `generate` command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users:
-
-```bash
-# View all available options
-pg_doorman generate --help
-
-# Generate a YAML configuration file (recommended)
-pg_doorman generate --output pg_doorman.yaml
-
-# Generate a TOML configuration file (for backward compatibility)
-pg_doorman generate --output pg_doorman.toml
-
-# Connect to a specific PostgreSQL server
-pg_doorman generate --host db.example.com --port 5432 --output pg_doorman.yaml
-
-# Connect with specific credentials (requires superuser privileges)
-pg_doorman generate --user postgres --password secret --output pg_doorman.yaml
-
-# Generate configuration with SSL/TLS enabled
-pg_doorman generate --ssl --output pg_doorman.yaml
-
-# Set custom pool size and pool mode
-pg_doorman generate --pool-size 20 --session-pool-mode --output pg_doorman.yaml
-
-# Generate a reference config with all settings and comments (no PG connection needed)
-pg_doorman generate --reference --output pg_doorman.yaml
-
-# Generate a reference config with Russian comments for quick start
-pg_doorman generate --reference --russian-comments --output pg_doorman.yaml
-
-# Generate a config without comments (plain serialization)
-pg_doorman generate --no-comments --output pg_doorman.yaml
-
-# Output to stdout in YAML format (default)
-pg_doorman generate --reference
-
-# Output to stdout in TOML format
-pg_doorman generate --reference --format toml
-```
-
-The `generate` command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file with inline comments explaining every parameter. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.
-
-Key features of the `generate` command:
-- Automatically detects all non-template databases
-- Retrieves user authentication information from PostgreSQL
-- Generates annotated configs with detailed comments for every parameter (default)
-- `--reference` flag generates a complete reference config without requiring a PG connection
-- `--russian-comments` (alias `--ru`) generates comments in Russian for quick start
-- `--no-comments` flag produces a minimal config without comments
-- Supports both YAML and TOML output formats (auto-detected by file extension, or set via `--format`)
-- Can use standard PostgreSQL environment variables (PGHOST, PGPORT, etc.)
-
-> **Important: Server Authentication**
-> By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), PostgreSQL will reject them because it expects plaintext passwords. To fix this, set `server_username` and `server_password` in the user configuration to the actual PostgreSQL credentials. See the generated config comments for details.
-
-### Client access control (pg_hba)
-
-PgDoorman supports PostgreSQL-style `pg_hba.conf` rules via the `general.pg_hba` parameter in `pg_doorman.toml`.
-You can provide rules inline, or via `{ path = "..." }` to a file. See the full reference with examples in
-`documentation/docs/reference/general.md` (section "pg_hba").
-
-Trust behavior: when a matching rule uses `trust`, PgDoorman accepts the connection without asking the client
-for a password, even if the user has an MD5 or SCRAM password configured. TLS constraints from the rule are honored
-(`hostssl` requires TLS, `hostnossl` forbids TLS).
-
-### Running PgDoorman
-
-After creating your configuration file, you can run PgDoorman from the command line:
-
-```bash
-$ pg_doorman pg_doorman.yaml
-```
-
-### Connecting to PostgreSQL via PgDoorman
-
-Once PgDoorman is running, connect to it instead of connecting directly to your PostgreSQL database:
-
-```bash
-$ psql -h localhost -p 6432 -U doorman exampledb
-```
-
-Your application's connection string should be updated to point to PgDoorman instead of directly to PostgreSQL:
-
-```
-postgresql://doorman:password@localhost:6432/exampledb
-```
-
-## Admin Console
-
-PgDoorman provides a powerful administrative interface that allows you to monitor and manage the connection pooler. You can access this interface by connecting to the special administration database named **pgdoorman**:
-
-```bash
-$ psql -h localhost -p 6432 -U admin pgdoorman
-```
-
-The admin console provides several commands to monitor the current state of PgDoorman:
-
-- `SHOW STATS` - View performance statistics
-- `SHOW CLIENTS` - List current client connections
-- `SHOW SERVERS` - List current server connections
-- `SHOW POOLS` - View connection pool status
-- `SHOW DATABASES` - List configured databases
-- `SHOW USERS` - List configured users
-
-If you make changes to the configuration file, you can apply them without restarting the service:
-
-```sql
-pgdoorman=# RELOAD;
-```
-
-## Prometheus Metrics
-
-PgDoorman includes a built-in Prometheus exporter that runs on port 9127.
-This allows you to monitor the application using Prometheus and visualize the metrics with tools like Grafana.
-
-Read more about the available prometheus metrics in the [Prometheus Documentation](https://ozontech.github.io/pg_doorman/latest/reference/prometheus/).
-
-## Binary Upgrade Process
-
-PgDoorman supports seamless binary upgrades that allow you to update the software with minimal disruption to your database connections.
-
-When you send a `SIGINT` signal to the PgDoorman process, the binary upgrade process is initiated:
-
-1. The current PgDoorman instance executes the exec command and starts a new, daemonized process
-2. The new process uses the `SO_REUSE_PORT` socket option, allowing the operating system to distribute incoming traffic to the new instance
-3. The old instance then closes its socket for incoming connections
-4. Existing connections are handled gracefully during the transition
-
-## Contributing
-
-### Prerequisites
-
-For running integration tests, you only need:
-
-- [Docker](https://docs.docker.com/get-docker/) (required)
-- [Make](https://www.gnu.org/software/make/) (required)
-
-**Nix installation is NOT required** — test environment reproducibility is ensured by Docker containers.
-
-For local development (optional): [Rust](https://www.rust-lang.org/tools/install), [Git](https://git-scm.com/downloads)
-
-### Integration Testing
-
-PgDoorman uses BDD tests with a Docker-based test environment. All tests are **reproducible** — they run inside Docker containers with identical environments.
-
-```bash
-# From project root directory:
-
-# Pull the test image
-make pull
-
-# Run all BDD tests
-make test-bdd
-
-# Run tests with specific tag
-make test-bdd TAGS=@copy-protocol
-make test-bdd TAGS=@cancel
-make test-bdd TAGS=@go
-
-# Enable debug output
-DEBUG=1 make test-bdd TAGS=@my-tag
-
-# Open interactive shell in test container
-make shell
-```
-
-For detailed information on writing tests (shell tests, Rust protocol-level tests) and contributing, see the [Contributing Guide](https://ozontech.github.io/pg_doorman/latest/tutorials/contributing/).
+See [patroni_proxy documentation](https://ozontech.github.io/pg_doorman/tutorials/patroni-proxy.html) for details.
 
 ## Documentation
 
-For more detailed information, please visit the [PgDoorman Documentation](https://ozontech.github.io/pg_doorman/).
+Full documentation, configuration reference, and tutorials: **[ozontech.github.io/pg_doorman](https://ozontech.github.io/pg_doorman/)**
+
+## Contributing
+
+```bash
+make pull       # pull test image
+make test-bdd   # run all integration tests (Docker-based, fully reproducible)
+```
+
+See the [Contributing Guide](https://ozontech.github.io/pg_doorman/tutorials/contributing.html) for details.
