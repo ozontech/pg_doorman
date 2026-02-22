@@ -197,8 +197,8 @@ AuthQueryCache (per-pool, DashMap<String, CacheEntry>)
 
 7. Execute auth_query:
 
-   7a. Connect to auth_query.database as auth_query.user
-       → Connection error? FAIL FAST, clear error message
+   7a. Get connection from auth_query executor pool (always open since startup)
+       → Executor pool unavailable (PG restart)? FAIL FAST, clear error
          (never retry-loop — PgBouncer #649 lesson)
 
    7b. Execute: SELECT usename, passwd FROM pg_shadow WHERE usename = $1
@@ -223,8 +223,25 @@ Two types of pools serve auth_query:
 **1. Auth query executor pool** (`auth_query.pool_size`, default: 2)
 - Connects to `auth_query.database` (typically "postgres") as `auth_query.user`
 - Used ONLY for executing `SELECT FROM pg_shadow` queries
-- Small — auth queries are rare thanks to caching
-- Lazy initialization on first auth_query request
+- **Opened eagerly at startup** and kept alive permanently
+- Automatic reconnection with backoff on failure
+
+These connections are **reserved** — they must be established before the data pools
+start accepting clients. This prevents a critical deadlock scenario:
+
+> If all PG `max_connections` slots are occupied by data pool connections,
+> the executor cannot connect to PG, and no new users can authenticate.
+> Since data connections won't be freed while actively used, new auth becomes
+> permanently impossible.
+
+By opening executor connections at startup, they are guaranteed to exist regardless
+of data pool pressure. DBA must account for them: effective available connections
+for data = `max_connections` - `auth_query.pool_size` per pool.
+
+If executor connections are lost (PG restart, network issue), pg_doorman reconnects
+with exponential backoff. During reconnection, auth_query falls back to the existing
+cache. If cache has no entry for a user, authentication fails with a clear error
+message (not a hang — PgBouncer #649 lesson).
 
 This solves PgBouncer's bootstrap problem (#967) — `auth_query.user` and
 `auth_query.password` are in the config, no separate auth_file needed.
