@@ -474,6 +474,43 @@ pub async fn psql_connection_succeeds(
     assert!(status.success(), "psql connection to pg_doorman failed");
 }
 
+/// Check that psql connection to pg_doorman fails (authentication rejected)
+#[then(
+    expr = "psql connection to pg_doorman as user {string} to database {string} with password {string} fails"
+)]
+pub async fn psql_connection_fails(
+    world: &mut DoormanWorld,
+    user: String,
+    database: String,
+    password: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+
+    let status = Command::new("psql")
+        .arg("-h")
+        .arg("127.0.0.1")
+        .arg("-p")
+        .arg(doorman_port.to_string())
+        .arg("-U")
+        .arg(&user)
+        .arg("-d")
+        .arg(&database)
+        .arg("-c")
+        .arg("SELECT 1")
+        .env("PGPASSWORD", &password)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("Failed to run psql");
+
+    assert!(
+        !status.success(),
+        "psql connection to pg_doorman should have failed but succeeded (user: {}, database: {})",
+        user,
+        database
+    );
+}
+
 /// Stop PostgreSQL and pg_doorman when the world is dropped
 impl Drop for DoormanWorld {
     fn drop(&mut self) {

@@ -32,7 +32,7 @@ use crate::messages::{
     md5_hash_second_pass, plain_password_challenge, read_password, scram_server_response,
     scram_start_challenge, vec_to_string, wrong_password,
 };
-use crate::pool::{get_pool, ConnectionPool};
+use crate::pool::{get_auth_query_state, get_pool, get_pool_config, ConnectionPool};
 use crate::server::ServerParameters;
 
 /// Authenticate a user based on the provided parameters
@@ -40,7 +40,7 @@ pub async fn authenticate<S, T>(
     read: &mut S,
     write: &mut T,
     admin: bool,
-    client_identifier: &ClientIdentifier,
+    client_identifier: &mut ClientIdentifier,
     pool_name: &str,
     username_from_parameters: &str,
 ) -> Result<(bool, ServerParameters, bool), Error>
@@ -181,7 +181,7 @@ fn eval_hba_for_pool_password(pool_password: &str, ci: &ClientIdentifier) -> Che
 async fn authenticate_normal_user<S, T>(
     read: &mut S,
     write: &mut T,
-    client_identifier: &ClientIdentifier,
+    client_identifier: &mut ClientIdentifier,
     pool_name: &str,
     username_from_parameters: &str,
     prepared_statements_enabled: &mut bool,
@@ -193,16 +193,16 @@ where
     let mut pool = match get_pool(pool_name, client_identifier.username.as_str()) {
         Some(pool) => pool,
         None => {
-            error_response(
+            // Static user not found — try auth_query
+            return try_auth_query(
+                read,
                 write,
-                &format!(
-                    "No connection pool configured for database: {pool_name}, user: {username_from_parameters}. Please check your connection parameters and ensure the database/username is properly configured."
-                ),
-                "3D000",
+                client_identifier,
+                pool_name,
+                username_from_parameters,
+                prepared_statements_enabled,
             )
-            .await?;
-
-            return Err(Error::AuthError(format!("No connection pool configured for database: {pool_name}, user: {username_from_parameters}")));
+            .await;
         }
     };
 
@@ -543,6 +543,229 @@ where
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Auth query authentication (MD5, server_user mode)
+// ---------------------------------------------------------------------------
+
+/// Authenticate a user via auth_query: fetch password hash from cache/PG,
+/// run MD5 challenge-response, then return the shared pool + server params.
+///
+/// On success, mutates `client_identifier.username` to the server_user
+/// so that subsequent `get_pool()` calls find the shared data pool.
+async fn try_auth_query<S, T>(
+    read: &mut S,
+    write: &mut T,
+    client_identifier: &mut ClientIdentifier,
+    pool_name: &str,
+    username: &str,
+    prepared_statements_enabled: &mut bool,
+) -> Result<(bool, ServerParameters), Error>
+where
+    S: AsyncReadExt + Unpin,
+    T: AsyncWriteExt + Unpin,
+{
+    // 1. Check if auth_query is configured for this pool
+    let aq_state = match get_auth_query_state(pool_name) {
+        Some(state) => state,
+        None => {
+            // Differentiate: auth_query configured but executor not ready vs not configured
+            let msg = if get_pool_config(pool_name).is_some_and(|c| c.auth_query.is_some()) {
+                format!(
+                    "Auth query service temporarily unavailable for database: {pool_name}. \
+                     Please try again later."
+                )
+            } else {
+                format!(
+                    "No connection pool configured for database: {pool_name}, \
+                     user: {username}. Please check your connection parameters."
+                )
+            };
+            error_response(write, &msg, "3D000").await?;
+            return Err(Error::AuthError(msg));
+        }
+    };
+
+    // 2. Get cache (lazily initializes executor on first call)
+    let cache = match aq_state.cache().await {
+        Ok(cache) => cache,
+        Err(err) => {
+            error!("[pool: {pool_name}] auth_query: executor initialization failed: {err}");
+            error_response(
+                write,
+                "Authentication service unavailable. Please try again later.",
+                "58000",
+            )
+            .await?;
+            return Err(err);
+        }
+    };
+
+    // 3. Fetch password hash from cache or PG
+    let cache_entry = match cache.get_or_fetch(username).await {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            // User not found
+            warn!("[pool: {pool_name}] auth_query: user '{username}' not found");
+            wrong_password(write, username).await?;
+            return Err(Error::AuthError(format!(
+                "auth_query: user '{username}' not found in pool '{pool_name}'"
+            )));
+        }
+        Err(err) => {
+            error!(
+                "[pool: {pool_name}] auth_query: failed to fetch password for '{username}': {err}"
+            );
+            error_response(
+                write,
+                "Authentication service unavailable. Please try again later.",
+                "58000",
+            )
+            .await?;
+            return Err(err);
+        }
+    };
+
+    let pool_password = &cache_entry.password_hash;
+
+    // 4. HBA check
+    let hba_decision = eval_hba_for_pool_password(pool_password, client_identifier);
+    if hba_decision == CheckResult::Deny {
+        error_response_terminal(
+            write,
+            &format!(
+                "Connection from IP address {} to {}@{} is not permitted by HBA configuration.",
+                client_identifier.addr, username, pool_name
+            ),
+            "28000",
+        )
+        .await?;
+        return Err(Error::HbaForbiddenError(format!(
+            "HBA denied auth_query user '{username}' from {:?}",
+            client_identifier.addr,
+        )));
+    }
+
+    // 5. Authenticate based on password type
+    if hba_decision == CheckResult::Trust {
+        // HBA trust — skip password check
+    } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
+        // MD5 challenge-response
+        let salt = md5_challenge(write).await?;
+        let password_response = read_password(read).await?;
+        let expected = md5_hash_second_pass(pool_password.strip_prefix("md5").unwrap(), &salt);
+
+        if expected != password_response {
+            // Password mismatch — try re-fetch (password may have changed in PG)
+            let mut auth_ok = false;
+            if let Ok(Some(new_entry)) = cache.refetch_on_failure(username).await {
+                if new_entry.password_hash != *pool_password
+                    && new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX)
+                {
+                    let new_expected = md5_hash_second_pass(
+                        new_entry.password_hash.strip_prefix("md5").unwrap(),
+                        &salt,
+                    );
+                    if new_expected == password_response {
+                        auth_ok = true;
+                        info!(
+                            "[pool: {pool_name}] auth_query: re-fetched password for '{username}' matched"
+                        );
+                    }
+                }
+            }
+            if !auth_ok {
+                error!(
+                    "[pool: {pool_name}] auth_query: MD5 authentication failed for user '{username}'"
+                );
+                wrong_password(write, username).await?;
+                return Err(Error::AuthError(format!(
+                    "MD5 authentication failed for auth_query user: {username}"
+                )));
+            }
+        }
+    } else if pool_password.starts_with(SCRAM_SHA_256) {
+        // SCRAM support — Step 5
+        error_response_terminal(
+            write,
+            "SCRAM authentication via auth_query is not yet supported.",
+            "28P01",
+        )
+        .await?;
+        return Err(Error::AuthError(format!(
+            "SCRAM auth via auth_query not yet supported for user: {username}"
+        )));
+    } else {
+        error_response_terminal(
+            write,
+            "Unsupported authentication method for auth_query user.",
+            "28P01",
+        )
+        .await?;
+        return Err(Error::AuthError(format!(
+            "Unsupported password type for auth_query user: {username}"
+        )));
+    }
+
+    // 6. Get shared pool (server_user mode)
+    let shared_pool_id = match aq_state.shared_pool_id {
+        Some(ref id) => id,
+        None => {
+            error_response(
+                write,
+                "Auth query passthrough mode is not yet implemented.",
+                "58000",
+            )
+            .await?;
+            return Err(Error::AuthError(
+                "auth_query passthrough mode not implemented".into(),
+            ));
+        }
+    };
+
+    // Mutate client_identifier.username to server_user (same pattern as talos).
+    // This ensures Client.username = server_user for pool lookup via get_pool().
+    client_identifier.username = shared_pool_id.user.clone();
+
+    let mut pool = match get_pool(&shared_pool_id.db, &shared_pool_id.user) {
+        Some(pool) => pool,
+        None => {
+            error!(
+                "[pool: {pool_name}] auth_query: shared pool {}@{} not found",
+                shared_pool_id.user, shared_pool_id.db
+            );
+            error_response(write, "Internal pool configuration error.", "58000").await?;
+            return Err(Error::AuthError(format!(
+                "auth_query shared pool not found: {}",
+                shared_pool_id
+            )));
+        }
+    };
+
+    let transaction_mode = pool.settings.pool_mode == PoolMode::Transaction;
+    *prepared_statements_enabled = transaction_mode && pool.prepared_statement_cache.is_some();
+
+    let server_parameters = match pool.get_server_parameters().await {
+        Ok(params) => params,
+        Err(err) => {
+            error!("[pool: {pool_name}] auth_query: failed to get server parameters: {err:?}");
+            error_response(
+                write,
+                "Unable to retrieve server parameters. Please try again later.",
+                "58000",
+            )
+            .await?;
+            return Err(err);
+        }
+    };
+
+    info!(
+        "[pool: {pool_name}] auth_query: user '{username}' authenticated, using shared pool '{}'",
+        shared_pool_id
+    );
+
+    Ok((transaction_mode, server_parameters))
 }
 
 #[cfg(test)]

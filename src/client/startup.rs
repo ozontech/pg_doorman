@@ -318,7 +318,7 @@ where
             &mut read,
             &mut write,
             admin,
-            &client_identifier,
+            &mut client_identifier,
             &pool_name,
             username_from_parameters,
         )
