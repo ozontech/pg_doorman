@@ -45,10 +45,8 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Human-readable durations & sizes | Yes | No | No |
 | Native `pg_hba.conf` format | Yes | Yes | Since 1.4 |
 | PAM auth | Yes | Yes | Yes |
-| JWT auth | Yes | No | No |
 | LDAP auth | No | Since 1.25 | Yes |
 | Prometheus metrics | Built-in | External | Built-in |
-| Config test mode (`-t`) | Yes | No | No |
 
 ## Quick Start
 
@@ -122,15 +120,6 @@ JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,backgro
 
 # Binary will be at target/release/pg_doorman
 ```
-
-## Features
-
-- **Transaction pooling** with transparent prepared statement caching (LRU, xxhash3)
-- **Deferred `BEGIN`** — standalone `BEGIN` doesn't acquire a server connection until the next query
-- **Zero-downtime binary upgrades** via `SIGINT` + `SO_REUSE_PORT` (foreground and daemon modes)
-- **pg_hba.conf** access control, TLS, PAM and JWT authentication
-- **Prometheus metrics** built-in (port 9127)
-- **Admin console** — `psql -p 6432 -U admin pgdoorman` then `SHOW POOLS`, `RELOAD`, etc.
 
 ## patroni_proxy
 
