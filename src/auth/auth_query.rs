@@ -1,14 +1,57 @@
-//! Auth query executor for fetching credentials from PostgreSQL.
+//! Auth query executor and cache for fetching credentials from PostgreSQL.
 //!
-//! Manages a small pool of persistent connections via an mpsc channel.
-//! Connections are created eagerly at startup and recycled after each query.
+//! Two main components:
+//! - `AuthQueryExecutor`: manages a small pool of persistent connections via
+//!   an mpsc channel and executes parameterized SELECT queries.
+//! - `AuthQueryCache`: per-pool credential cache with double-checked locking,
+//!   TTL-based expiration, negative caching, and rate-limited re-fetch.
 
+use std::future::Future;
+use std::sync::Arc;
+use std::time::Instant;
+
+use dashmap::DashMap;
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_postgres::{Client, NoTls};
 
-use crate::config::AuthQueryConfig;
+use crate::config::{AuthQueryConfig, Duration};
 use crate::errors::Error;
+
+/// Maximum username length accepted by the cache.
+/// PostgreSQL limits role names to NAMEDATALEN - 1 = 63 bytes.
+/// Usernames exceeding this are rejected without caching to prevent
+/// memory exhaustion from very long usernames.
+#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
+const MAX_USERNAME_LEN: usize = 63;
+
+// ---------------------------------------------------------------------------
+// PasswordFetcher trait (allows mocking AuthQueryExecutor in unit tests)
+// ---------------------------------------------------------------------------
+
+/// Trait for fetching password hashes from PostgreSQL.
+/// `AuthQueryExecutor` implements this; tests can substitute a mock.
+#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
+pub(crate) trait PasswordFetcher: Send + Sync {
+    fn fetch<'a>(
+        &'a self,
+        username: &'a str,
+    ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a;
+}
+
+impl PasswordFetcher for AuthQueryExecutor {
+    fn fetch<'a>(
+        &'a self,
+        username: &'a str,
+    ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a {
+        self.fetch_password(username)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AuthQueryExecutor
+// ---------------------------------------------------------------------------
 
 /// Executor for running auth_query SELECT statements against PostgreSQL.
 ///
@@ -278,5 +321,532 @@ impl AuthQueryExecutor {
                 Ok(None)
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CacheEntry
+// ---------------------------------------------------------------------------
+
+/// Single cache entry for a username's credentials.
+#[derive(Clone, Debug)]
+pub struct CacheEntry {
+    /// Password hash from pg_shadow ("md5..." or "SCRAM-SHA-256$...")
+    pub password_hash: String,
+    /// When this entry was fetched from PG
+    pub fetched_at: Instant,
+    /// True if user was NOT found in pg_shadow
+    pub is_negative: bool,
+    /// When was the last re-fetch attempted for this user (rate limiting)
+    pub last_refetch_at: Option<Instant>,
+    /// SCRAM ClientKey extracted from client's proof (Step 5).
+    /// Stored here so pool connections created later can use it
+    /// for SCRAM passthrough to backend PG (Step 6).
+    /// None for MD5 users or before first SCRAM auth.
+    pub client_key: Option<Vec<u8>>,
+}
+
+#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
+impl CacheEntry {
+    fn positive(password_hash: String) -> Self {
+        Self {
+            password_hash,
+            fetched_at: Instant::now(),
+            is_negative: false,
+            last_refetch_at: None,
+            client_key: None,
+        }
+    }
+
+    fn negative() -> Self {
+        Self {
+            password_hash: String::new(),
+            fetched_at: Instant::now(),
+            is_negative: true,
+            last_refetch_at: None,
+            client_key: None,
+        }
+    }
+
+    fn is_expired(&self, cache_ttl: &Duration, cache_failure_ttl: &Duration) -> bool {
+        let ttl_ms = if self.is_negative {
+            cache_failure_ttl.as_millis()
+        } else {
+            cache_ttl.as_millis()
+        };
+        self.fetched_at.elapsed().as_millis() as u64 >= ttl_ms
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AuthQueryCache
+// ---------------------------------------------------------------------------
+
+/// Per-pool auth query cache with double-checked locking.
+///
+/// Caches credentials fetched by `AuthQueryExecutor` to avoid hitting PG
+/// on every client authentication. Supports:
+/// - Positive caching (user found) with `cache_ttl`
+/// - Negative caching (user not found) with `cache_failure_ttl`
+/// - Per-username locks for request coalescing (double-checked locking)
+/// - Rate-limited re-fetch after auth failure (`min_interval`)
+///
+/// Generic over the fetcher: defaults to `AuthQueryExecutor` in production,
+/// tests substitute a mock.
+#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
+pub(crate) struct AuthQueryCache<F = AuthQueryExecutor> {
+    /// Cached credentials keyed by username.
+    entries: DashMap<String, CacheEntry>,
+    /// Per-username locks for request coalescing.
+    /// First request acquires lock + fetches; others wait + get cache hit.
+    locks: DashMap<String, Arc<TokioMutex<()>>>,
+    /// Fetcher for cache miss → PG fetch.
+    executor: Arc<F>,
+    /// TTL for positive cache entries (user found).
+    cache_ttl: Duration,
+    /// TTL for negative cache entries (user not found).
+    cache_failure_ttl: Duration,
+    /// Minimum interval between re-fetches (rate limiting).
+    min_interval: Duration,
+}
+
+#[allow(dead_code)] // Used starting from Step 4 (integration into auth flow)
+impl<F: PasswordFetcher> AuthQueryCache<F> {
+    pub(crate) fn new(executor: Arc<F>, config: &AuthQueryConfig) -> Self {
+        Self {
+            entries: DashMap::new(),
+            locks: DashMap::new(),
+            executor,
+            cache_ttl: config.cache_ttl,
+            cache_failure_ttl: config.cache_failure_ttl,
+            min_interval: config.min_interval,
+        }
+    }
+
+    /// Get password hash for username. Uses cache with double-checked locking.
+    ///
+    /// Returns:
+    /// - `Ok(Some(entry))` — user found (positive cache or fresh fetch)
+    /// - `Ok(None)` — user not found (negative cache or fresh fetch returned 0 rows)
+    /// - `Err` — executor error (PG down, SQL error, etc.)
+    pub(crate) async fn get_or_fetch(&self, username: &str) -> Result<Option<CacheEntry>, Error> {
+        if username.len() > MAX_USERNAME_LEN {
+            warn!(
+                "auth_query cache: rejecting username of length {} (max {MAX_USERNAME_LEN})",
+                username.len()
+            );
+            return Ok(None);
+        }
+
+        // Fast path: check cache without lock
+        if let Some(entry) = self.entries.get(username) {
+            if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
+                return if entry.is_negative {
+                    Ok(None)
+                } else {
+                    Ok(Some(entry.clone()))
+                };
+            }
+        }
+
+        // Slow path: acquire per-username lock
+        let lock = self
+            .locks
+            .entry(username.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+
+        let _guard = lock.lock().await;
+
+        // Double-check after acquiring lock
+        if let Some(entry) = self.entries.get(username) {
+            if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
+                return if entry.is_negative {
+                    Ok(None)
+                } else {
+                    Ok(Some(entry.clone()))
+                };
+            }
+        }
+
+        // Cache miss — fetch from PG
+        match self.executor.fetch(username).await? {
+            Some((_user, password_hash)) => {
+                let entry = CacheEntry::positive(password_hash);
+                self.entries.insert(username.to_string(), entry.clone());
+                Ok(Some(entry))
+            }
+            None => {
+                let entry = CacheEntry::negative();
+                self.entries.insert(username.to_string(), entry);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Invalidate cache entry for a username.
+    /// Called on auth failure to trigger re-fetch on next attempt.
+    pub(crate) fn invalidate(&self, username: &str) {
+        self.entries.remove(username);
+    }
+
+    /// Attempt re-fetch after auth failure (password may have changed).
+    /// Returns `Ok(Some(entry))` if re-fetched, `Ok(None)` if rate-limited or user gone.
+    ///
+    /// Rate limiting: won't re-fetch if last re-fetch was < `min_interval` ago.
+    ///
+    /// Uses the same per-username lock as `get_or_fetch()` to prevent concurrent
+    /// refetches for the same user.
+    pub(crate) async fn refetch_on_failure(
+        &self,
+        username: &str,
+    ) -> Result<Option<CacheEntry>, Error> {
+        // Acquire per-username lock (same lock as get_or_fetch)
+        let lock = self
+            .locks
+            .entry(username.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+
+        let _guard = lock.lock().await;
+
+        // Check rate limit (under lock to avoid TOCTOU)
+        if let Some(entry) = self.entries.get(username) {
+            if let Some(last) = entry.last_refetch_at {
+                if last.elapsed() < self.min_interval.as_std() {
+                    return Ok(None); // Rate limited
+                }
+            }
+        }
+
+        // Fetch fresh from PG
+        match self.executor.fetch(username).await? {
+            Some((_user, password_hash)) => {
+                let mut entry = CacheEntry::positive(password_hash);
+                entry.last_refetch_at = Some(Instant::now());
+                self.entries.insert(username.to_string(), entry.clone());
+                Ok(Some(entry))
+            }
+            None => {
+                let mut entry = CacheEntry::negative();
+                entry.last_refetch_at = Some(Instant::now());
+                self.entries.insert(username.to_string(), entry);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Clear all entries (called on RELOAD when auth_query config changes).
+    pub(crate) fn clear(&self) {
+        self.entries.clear();
+        self.locks.clear();
+    }
+
+    /// Store ClientKey for a cached user (called after successful SCRAM auth).
+    pub(crate) fn set_client_key(&self, username: &str, client_key: Vec<u8>) {
+        if let Some(mut entry) = self.entries.get_mut(username) {
+            entry.client_key = Some(client_key);
+        }
+    }
+
+    /// Number of cached entries (for metrics/admin).
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if the cache is empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mock fetcher for unit tests.
+    /// Pre-configure responses; fetch calls are counted.
+    struct MockFetcher {
+        responses: DashMap<String, Option<(String, String)>>,
+        fetch_count: AtomicUsize,
+        /// Optional delay to simulate slow PG queries (for concurrency tests).
+        delay: std::time::Duration,
+    }
+
+    impl MockFetcher {
+        fn new() -> Self {
+            Self {
+                responses: DashMap::new(),
+                fetch_count: AtomicUsize::new(0),
+                delay: std::time::Duration::ZERO,
+            }
+        }
+
+        fn with_delay(delay: std::time::Duration) -> Self {
+            Self {
+                responses: DashMap::new(),
+                fetch_count: AtomicUsize::new(0),
+                delay,
+            }
+        }
+
+        fn add_user(&self, username: &str, password_hash: &str) {
+            self.responses.insert(
+                username.to_string(),
+                Some((username.to_string(), password_hash.to_string())),
+            );
+        }
+
+        fn fetch_count(&self) -> usize {
+            self.fetch_count.load(Ordering::SeqCst)
+        }
+    }
+
+    impl PasswordFetcher for MockFetcher {
+        fn fetch<'a>(
+            &'a self,
+            username: &'a str,
+        ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a {
+            self.fetch_count.fetch_add(1, Ordering::SeqCst);
+            let result = self
+                .responses
+                .get(username)
+                .map(|r| r.clone())
+                .unwrap_or(None);
+            let delay = self.delay;
+            async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    fn test_config() -> AuthQueryConfig {
+        AuthQueryConfig {
+            query: String::new(),
+            user: String::new(),
+            password: String::new(),
+            database: None,
+            pool_size: 1,
+            server_user: None,
+            server_password: None,
+            default_pool_size: 40,
+            cache_ttl: Duration::from_hours(1),
+            cache_failure_ttl: Duration::from_secs(30),
+            min_interval: Duration::from_secs(1),
+        }
+    }
+
+    fn make_cache(
+        fetcher: Arc<MockFetcher>,
+        config: &AuthQueryConfig,
+    ) -> AuthQueryCache<MockFetcher> {
+        AuthQueryCache::new(fetcher, config)
+    }
+
+    // -- test_cache_hit: second get_or_fetch returns cached, no extra fetch --
+
+    #[tokio::test]
+    async fn test_cache_hit() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("alice", "md5abc123");
+        let cache = make_cache(fetcher.clone(), &test_config());
+
+        // First call: cache miss → fetches from PG
+        let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
+        assert_eq!(entry.password_hash, "md5abc123");
+        assert!(!entry.is_negative);
+        assert_eq!(fetcher.fetch_count(), 1);
+
+        // Second call: cache hit → no extra fetch
+        let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
+        assert_eq!(entry.password_hash, "md5abc123");
+        assert_eq!(fetcher.fetch_count(), 1);
+    }
+
+    // -- test_cache_miss_fetches: empty cache triggers a fetch --
+
+    #[tokio::test]
+    async fn test_cache_miss_fetches() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("bob", "SCRAM-SHA-256$iter:salt$stored:server");
+        let cache = make_cache(fetcher.clone(), &test_config());
+
+        assert_eq!(fetcher.fetch_count(), 0);
+        let entry = cache.get_or_fetch("bob").await.unwrap().unwrap();
+        assert_eq!(entry.password_hash, "SCRAM-SHA-256$iter:salt$stored:server");
+        assert_eq!(fetcher.fetch_count(), 1);
+    }
+
+    // -- test_cache_ttl_expiration: expired entry triggers re-fetch --
+
+    #[tokio::test]
+    async fn test_cache_ttl_expiration() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("alice", "md5abc123");
+        let mut config = test_config();
+        config.cache_ttl = Duration::from_millis(50);
+
+        let cache = make_cache(fetcher.clone(), &config);
+
+        cache.get_or_fetch("alice").await.unwrap();
+        assert_eq!(fetcher.fetch_count(), 1);
+
+        // Wait for TTL to expire
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        cache.get_or_fetch("alice").await.unwrap();
+        assert_eq!(fetcher.fetch_count(), 2);
+    }
+
+    // -- test_negative_cache: user-not-found is cached with cache_failure_ttl --
+
+    #[tokio::test]
+    async fn test_negative_cache() {
+        let fetcher = Arc::new(MockFetcher::new());
+        // "unknown" not added → fetch returns None
+        let mut config = test_config();
+        config.cache_failure_ttl = Duration::from_millis(50);
+
+        let cache = make_cache(fetcher.clone(), &config);
+
+        // First call: fetch returns None, cached as negative
+        assert!(cache.get_or_fetch("unknown").await.unwrap().is_none());
+        assert_eq!(fetcher.fetch_count(), 1);
+
+        // Second call: negative cache hit
+        assert!(cache.get_or_fetch("unknown").await.unwrap().is_none());
+        assert_eq!(fetcher.fetch_count(), 1);
+
+        // Wait for failure TTL to expire
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Should re-fetch
+        assert!(cache.get_or_fetch("unknown").await.unwrap().is_none());
+        assert_eq!(fetcher.fetch_count(), 2);
+    }
+
+    // -- test_invalidate: removes entry, next fetch goes to PG --
+
+    #[tokio::test]
+    async fn test_invalidate() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("alice", "md5abc123");
+        let cache = make_cache(fetcher.clone(), &test_config());
+
+        cache.get_or_fetch("alice").await.unwrap();
+        assert_eq!(fetcher.fetch_count(), 1);
+
+        cache.invalidate("alice");
+
+        cache.get_or_fetch("alice").await.unwrap();
+        assert_eq!(fetcher.fetch_count(), 2);
+    }
+
+    // -- test_rate_limiting: refetch_on_failure respects min_interval --
+
+    #[tokio::test]
+    async fn test_rate_limiting() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("alice", "md5abc123");
+        let mut config = test_config();
+        config.min_interval = Duration::from_secs(10);
+
+        let cache = make_cache(fetcher.clone(), &config);
+
+        // First refetch: no previous refetch → succeeds
+        let result = cache.refetch_on_failure("alice").await.unwrap();
+        assert!(result.is_some());
+        assert_eq!(fetcher.fetch_count(), 1);
+
+        // Second refetch immediately: rate-limited
+        let result = cache.refetch_on_failure("alice").await.unwrap();
+        assert!(result.is_none());
+        assert_eq!(fetcher.fetch_count(), 1); // No additional fetch
+    }
+
+    // -- test_double_checked_locking: concurrent requests → single fetch --
+
+    #[tokio::test]
+    async fn test_double_checked_locking() {
+        let fetcher = Arc::new(MockFetcher::with_delay(std::time::Duration::from_millis(
+            100,
+        )));
+        fetcher.add_user("alice", "md5abc123");
+        let cache = Arc::new(make_cache(fetcher.clone(), &test_config()));
+
+        // Spawn concurrent requests for the same user
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let cache = cache.clone();
+            handles.push(tokio::spawn(
+                async move { cache.get_or_fetch("alice").await },
+            ));
+        }
+
+        for handle in handles {
+            let result = handle.await.unwrap().unwrap().unwrap();
+            assert_eq!(result.password_hash, "md5abc123");
+        }
+
+        // Double-checked locking: only one fetch despite 10 concurrent requests
+        assert_eq!(fetcher.fetch_count(), 1);
+    }
+
+    // -- test_long_username_rejected: >63 chars → None without fetch or caching --
+
+    #[tokio::test]
+    async fn test_long_username_rejected() {
+        let fetcher = Arc::new(MockFetcher::new());
+        let cache = make_cache(fetcher.clone(), &test_config());
+
+        let long_name = "a".repeat(MAX_USERNAME_LEN + 1);
+        let result = cache.get_or_fetch(&long_name).await.unwrap();
+        assert!(result.is_none());
+        assert_eq!(fetcher.fetch_count(), 0); // No fetch attempted
+        assert_eq!(cache.len(), 0); // Not cached
+    }
+
+    // -- test_clear: removes all entries and locks --
+
+    #[tokio::test]
+    async fn test_clear() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("alice", "md5abc123");
+        fetcher.add_user("bob", "md5def456");
+        let cache = make_cache(fetcher.clone(), &test_config());
+
+        cache.get_or_fetch("alice").await.unwrap();
+        cache.get_or_fetch("bob").await.unwrap();
+        assert_eq!(cache.len(), 2);
+
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+    }
+
+    // -- test_set_client_key: stores SCRAM ClientKey on existing entry --
+
+    #[tokio::test]
+    async fn test_set_client_key() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("alice", "SCRAM-SHA-256$iter:salt$stored:server");
+        let cache = make_cache(fetcher.clone(), &test_config());
+
+        let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
+        assert!(entry.client_key.is_none());
+
+        let key = vec![1, 2, 3, 4];
+        cache.set_client_key("alice", key.clone());
+
+        let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
+        assert_eq!(entry.client_key, Some(key));
     }
 }
