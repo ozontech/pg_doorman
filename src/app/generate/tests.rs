@@ -71,6 +71,7 @@ pub fn generate_config_with_client<
                         server_port: config.port,
                         server_database: Some(db_name.to_string()),
                         prepared_statements_cache_size: None,
+                        auth_query: None,
                         users: users_vec.clone(),
                     },
                 );

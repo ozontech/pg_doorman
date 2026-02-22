@@ -59,12 +59,7 @@ fn field_doc(f: &FieldsData, section: &str, name: &str) -> String {
     let text = desc
         .doc
         .as_deref()
-        .unwrap_or_else(|| {
-            desc.config
-                .as_ref()
-                .map(|c| c.en.as_str())
-                .unwrap_or("")
-        });
+        .unwrap_or_else(|| desc.config.as_ref().map(|c| c.en.as_str()).unwrap_or(""));
     text.trim_end().to_string()
 }
 
@@ -87,7 +82,10 @@ fn write_param(out: &mut String, f: &FieldsData, section: &str, name: &str) {
 fn write_config_format_section(out: &mut String) {
     let _ = writeln!(out, "## Configuration File Format\n");
     let _ = writeln!(out, "pg_doorman supports two configuration file formats:\n");
-    let _ = writeln!(out, "* **YAML** (`.yaml`, `.yml`) - The primary and recommended format for new configurations.");
+    let _ = writeln!(
+        out,
+        "* **YAML** (`.yaml`, `.yml`) - The primary and recommended format for new configurations."
+    );
     let _ = writeln!(out, "* **TOML** (`.toml`) - Supported for backward compatibility with existing configurations.\n");
     let _ = writeln!(out, "The format is automatically detected based on the file extension. Both formats support the same configuration options and can be used interchangeably.\n");
 

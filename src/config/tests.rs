@@ -814,3 +814,333 @@ pools:
         panic!("Expected BadConfig error about duplicate username");
     }
 }
+
+// ============================================================
+// auth_query config tests
+// ============================================================
+
+/// Parse YAML config with auth_query in dedicated mode (server_user set)
+#[tokio::test]
+#[serial]
+async fn test_auth_query_yaml_dedicated_mode() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    auth_query:
+      query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+      user: "pg_doorman_auth"
+      password: "secret"
+      database: "postgres"
+      pool_size: 3
+      server_user: "backend_user"
+      server_password: "backend_pass"
+      default_pool_size: 50
+      cache_ttl: "2h"
+      cache_failure_ttl: "1m"
+      min_interval: "2s"
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    let pool = &config.pools["mydb"];
+    let aq = pool.auth_query.as_ref().unwrap();
+
+    assert_eq!(
+        aq.query,
+        "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+    );
+    assert_eq!(aq.user, "pg_doorman_auth");
+    assert_eq!(aq.password, "secret");
+    assert_eq!(aq.database, Some("postgres".to_string()));
+    assert_eq!(aq.pool_size, 3);
+    assert_eq!(aq.server_user, Some("backend_user".to_string()));
+    assert_eq!(aq.server_password, Some("backend_pass".to_string()));
+    assert_eq!(aq.default_pool_size, 50);
+    assert_eq!(aq.cache_ttl, Duration::from_hours(2));
+    assert_eq!(aq.cache_failure_ttl, Duration::from_mins(1));
+    assert_eq!(aq.min_interval, Duration::from_secs(2));
+    assert!(aq.is_dedicated_mode());
+}
+
+/// Parse YAML config with auth_query in passthrough mode (no server_user)
+#[tokio::test]
+#[serial]
+async fn test_auth_query_yaml_passthrough_mode() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    auth_query:
+      query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+      user: "pg_doorman_auth"
+      password: "secret"
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    let pool = &config.pools["mydb"];
+    let aq = pool.auth_query.as_ref().unwrap();
+
+    assert_eq!(aq.user, "pg_doorman_auth");
+    assert_eq!(aq.server_user, None);
+    assert_eq!(aq.server_password, None);
+    assert!(!aq.is_dedicated_mode());
+    // Verify defaults
+    assert_eq!(aq.pool_size, 2);
+    assert_eq!(aq.default_pool_size, 40);
+    assert_eq!(aq.cache_ttl, Duration::from_hours(1));
+    assert_eq!(aq.cache_failure_ttl, Duration::from_secs(30));
+    assert_eq!(aq.min_interval, Duration::from_secs(1));
+}
+
+/// Parse YAML config without auth_query (backward compatibility)
+#[tokio::test]
+#[serial]
+async fn test_auth_query_yaml_absent() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    users:
+      - username: "user1"
+        password: "pass1"
+        pool_size: 10
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert!(config.pools["mydb"].auth_query.is_none());
+}
+
+/// Parse TOML config with auth_query section
+#[tokio::test]
+#[serial]
+async fn test_auth_query_toml() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[pools.mydb]
+server_host = "localhost"
+server_port = 5432
+
+[pools.mydb.auth_query]
+query = "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+user = "pg_doorman_auth"
+password = "secret"
+pool_size = 2
+default_pool_size = 40
+cache_ttl = 3600000
+cache_failure_ttl = 30000
+min_interval = 1000
+
+[[pools.mydb.users]]
+username = "static_user"
+password = "static_pass"
+pool_size = 10
+"#;
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    let pool = &config.pools["mydb"];
+    let aq = pool.auth_query.as_ref().unwrap();
+
+    assert_eq!(
+        aq.query,
+        "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+    );
+    assert_eq!(aq.user, "pg_doorman_auth");
+    assert_eq!(aq.cache_ttl, Duration::from_millis(3600000));
+    // Static users still work alongside auth_query
+    assert_eq!(pool.users.len(), 1);
+    assert_eq!(pool.users[0].username, "static_user");
+}
+
+/// Validation: empty query produces error
+#[tokio::test]
+async fn test_auth_query_validate_empty_query() {
+    let mut pool = Pool::default();
+    pool.auth_query = Some(pool::AuthQueryConfig {
+        query: "".to_string(),
+        user: "pg_doorman_auth".to_string(),
+        password: "secret".to_string(),
+        database: None,
+        pool_size: 2,
+        server_user: None,
+        server_password: None,
+        default_pool_size: 40,
+        cache_ttl: Duration::from_hours(1),
+        cache_failure_ttl: Duration::from_secs(30),
+        min_interval: Duration::from_secs(1),
+    });
+
+    let result = pool.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("auth_query.query cannot be empty"));
+    }
+}
+
+/// Validation: empty user produces error
+#[tokio::test]
+async fn test_auth_query_validate_empty_user() {
+    let mut pool = Pool::default();
+    pool.auth_query = Some(pool::AuthQueryConfig {
+        query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1".to_string(),
+        user: "".to_string(),
+        password: "secret".to_string(),
+        database: None,
+        pool_size: 2,
+        server_user: None,
+        server_password: None,
+        default_pool_size: 40,
+        cache_ttl: Duration::from_hours(1),
+        cache_failure_ttl: Duration::from_secs(30),
+        min_interval: Duration::from_secs(1),
+    });
+
+    let result = pool.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("auth_query.user cannot be empty"));
+    }
+}
+
+/// Validation: server_password without server_user produces error
+#[tokio::test]
+async fn test_auth_query_validate_server_password_without_server_user() {
+    let mut pool = Pool::default();
+    pool.auth_query = Some(pool::AuthQueryConfig {
+        query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1".to_string(),
+        user: "pg_doorman_auth".to_string(),
+        password: "secret".to_string(),
+        database: None,
+        pool_size: 2,
+        server_user: None,
+        server_password: Some("orphan_password".to_string()),
+        default_pool_size: 40,
+        cache_ttl: Duration::from_hours(1),
+        cache_failure_ttl: Duration::from_secs(30),
+        min_interval: Duration::from_secs(1),
+    });
+
+    let result = pool.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("server_password requires server_user"));
+    }
+}
+
+/// Validation: server_user without server_password is valid (trust auth)
+#[tokio::test]
+async fn test_auth_query_validate_server_user_without_password_ok() {
+    let mut pool = Pool::default();
+    pool.auth_query = Some(pool::AuthQueryConfig {
+        query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1".to_string(),
+        user: "pg_doorman_auth".to_string(),
+        password: String::new(),
+        database: None,
+        pool_size: 2,
+        server_user: Some("backend_user".to_string()),
+        server_password: None,
+        default_pool_size: 40,
+        cache_ttl: Duration::from_hours(1),
+        cache_failure_ttl: Duration::from_secs(30),
+        min_interval: Duration::from_secs(1),
+    });
+
+    let result = pool.validate().await;
+    assert!(result.is_ok());
+}
+
+/// Validation: pool_size 0 produces error
+#[tokio::test]
+async fn test_auth_query_validate_pool_size_zero() {
+    let mut pool = Pool::default();
+    pool.auth_query = Some(pool::AuthQueryConfig {
+        query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1".to_string(),
+        user: "pg_doorman_auth".to_string(),
+        password: "secret".to_string(),
+        database: None,
+        pool_size: 0,
+        server_user: None,
+        server_password: None,
+        default_pool_size: 40,
+        cache_ttl: Duration::from_hours(1),
+        cache_failure_ttl: Duration::from_secs(30),
+        min_interval: Duration::from_secs(1),
+    });
+
+    let result = pool.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("auth_query.pool_size must be > 0"));
+    }
+}
+
+/// Validation: empty password is valid (PostgreSQL trust auth for executor)
+#[tokio::test]
+async fn test_auth_query_validate_empty_password_ok() {
+    let mut pool = Pool::default();
+    pool.auth_query = Some(pool::AuthQueryConfig {
+        query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1".to_string(),
+        user: "pg_doorman_auth".to_string(),
+        password: String::new(),
+        database: None,
+        pool_size: 2,
+        server_user: None,
+        server_password: None,
+        default_pool_size: 40,
+        cache_ttl: Duration::from_hours(1),
+        cache_failure_ttl: Duration::from_secs(30),
+        min_interval: Duration::from_secs(1),
+    });
+
+    let result = pool.validate().await;
+    assert!(result.is_ok());
+}

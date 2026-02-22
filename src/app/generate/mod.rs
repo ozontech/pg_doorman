@@ -139,6 +139,7 @@ pub fn generate_config_with_client(
                     server_port: config.port,
                     server_database: Some(datname.to_string()),
                     prepared_statements_cache_size: None,
+                    auth_query: None,
                     users: users.clone(),
                 },
             );
