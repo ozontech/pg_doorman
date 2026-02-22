@@ -125,20 +125,12 @@ JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,backgro
 
 This repository also includes `patroni_proxy` — a TCP proxy for Patroni-managed PostgreSQL clusters. Zero-downtime failover: existing connections are preserved during cluster topology changes.
 
-```mermaid
-graph TD
-    App1[Application] --> PP(patroni_proxy<br/>TCP load balancing)
-    App2[Application] --> PP
-    PP --> D1(pg_doorman<br/>pooling)
-    PP --> D2(pg_doorman<br/>pooling)
-    PP --> D3(pg_doorman<br/>pooling)
-    D1 --> PG1[(PostgreSQL<br/>leader)]
-    D2 --> PG2[(PostgreSQL<br/>sync)]
-    D3 --> PG3[(PostgreSQL<br/>async)]
-```
+<p align="center">
+  <img src="static/patroni_proxy_architecture.png" alt="patroni_proxy architecture" width="700" />
+</p>
 
-- **pg_doorman** deploys close to PostgreSQL — connection pooling and prepared statement caching benefit from low latency to the database
-- **patroni_proxy** deploys close to clients — TCP routing and role-based failover (leader/sync/async) with least-connections balancing
+- **pg_doorman** deploys on the same host as PostgreSQL — connection pooling and prepared statement caching benefit from low latency to the database
+- **patroni_proxy** deploys as a sidecar in the application pod — TCP routing and role-based failover (leader/sync/async) with least-connections balancing
 
 See [patroni_proxy documentation](https://ozontech.github.io/pg_doorman/tutorials/patroni-proxy.html) for details.
 
