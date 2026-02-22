@@ -64,12 +64,18 @@ corruption. Classic C memory safety bug that Rust eliminates by design.
 
 ## Proposed Architecture for pg_doorman
 
-### Design Principle: "Cache forever, re-query on failure"
+### Design Principle: "Cache, re-query on auth failure"
+
+When a client's password doesn't match the cached hash, we assume the password
+may have changed in PostgreSQL and re-fetch the hash via auth_query. This re-fetch
+is rate-limited to at most once per `min_interval` (default 1s) per username to
+prevent abuse. After re-fetch, we verify the client's password again — if it still
+doesn't match, we reject.
 
 This approach (proposed in PgBouncer #1302 discussion) provides:
 - Near-zero load on PG (unlike PgBouncer's query-per-connection)
-- Fast password change detection (1 failed attempt → cache refresh)
-- Thundering herd protection (one query per N concurrent failures)
+- Fast password change detection (1 failed attempt → immediate re-fetch → retry)
+- Brute-force / thundering herd protection (re-fetch limited to once per `min_interval` per username)
 
 ### Configuration (per-pool level)
 
@@ -83,10 +89,12 @@ pools:
     auth_query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
     auth_query_user: "pg_doorman_auth"       # user to execute the query
     auth_query_password: "secret"            # plaintext password for auth_query_user
-    auth_query_database: "postgres"          # database to connect to (default: pool name)
-    auth_query_cache_ttl: "1h"               # max cache lifetime (default: 1h, 0 = forever)
-    auth_query_cache_failure_ttl: "30s"      # TTL for "user not found" entries (default: 30s)
-    auth_query_min_interval: "1s"            # min interval between queries per username
+    auth_query_database: "postgres"          # database for auth queries (default: pool name)
+    auth_query_pool_size: 2                  # connections for executing auth queries (default: 2)
+    auth_query_default_pool_size: 40         # shared data pool size for dynamic users (default: 40)
+    auth_query_cache_ttl: "1h"              # max cache lifetime (default: 1h, 0 = forever)
+    auth_query_cache_failure_ttl: "30s"     # TTL for "user not found" entries (default: 30s)
+    auth_query_min_interval: "1s"           # after auth failure, don't re-query PG for this user more often than once per interval
 
     users:
       # Static user — auth_query NOT used (explicit password takes priority)
@@ -96,7 +104,8 @@ pools:
         server_username: "app"
         server_password: "secret"
 
-      # Dynamic users via auth_query don't need entries here
+      # Dynamic users via auth_query don't need entries here —
+      # they all share one data pool (auth_query_default_pool_size connections)
 ```
 
 ### Authentication Source Resolution
@@ -134,8 +143,9 @@ AuthQueryCache (per-pool, DashMap<String, CacheEntry>)
    Invalidated immediately on authentication failure.
 2. **Negative entry** (user not found): lives for `cache_failure_ttl` (default 30s).
    Protects against DoS via non-existent username enumeration.
-3. **Rate limiting**: no more than one query per `min_interval` (1s) per username.
-   Protects against thundering herd on mass password rotation.
+3. **Rate limiting on re-fetch**: when auth fails and we want to re-query PG
+   (maybe password changed), we won't do it more than once per `min_interval` (1s)
+   per username. Protects against brute-force and thundering herd.
 
 ### Authentication Flow (detailed)
 
@@ -143,75 +153,107 @@ AuthQueryCache (per-pool, DashMap<String, CacheEntry>)
 1. Client connects as "alice"@"mydb"
 2. Look up static User with username="alice" → not found
 3. Check auth_query configured for pool "mydb" → yes
-4. Check cache:
+4. Get password hash (cache or fetch):
 
-   4a. Cache HIT (TTL not expired):
-       → Use cached password_hash for MD5/SCRAM authentication
-       → Success? Done.
-       → Failure? Go to step 5
+   4a. Cache HIT (not expired by cache_ttl):
+       → Use cached password_hash
+   4b. Cache MISS or expired:
+       → Fetch from PG (step 5) → cache result
 
-   4b. Cache MISS or TTL expired:
-       → Go to step 5
-
-5. Execute auth_query (with rate limiting):
-
-   5a. Check min_interval: last query for "alice" was < 1s ago?
-       → Yes: use cached result (even if auth failed)
-       → No: execute query
-
-   5b. Connect to auth_query_database as auth_query_user
-       → Connection error? FAIL FAST, clear error message
-         (never retry-loop — PgBouncer #649 lesson)
-
-   5c. Execute: SELECT usename, passwd FROM pg_shadow WHERE usename = $1
-       ($1 = "alice", parameterized — Odyssey #149 lesson)
-
-   5d. Parse response:
-       → 0 rows: cache negative entry, REJECT ("user not found")
-         (NEVER fall through to auth_user — PgBouncer #69 lesson)
-       → 1 row: cache password, use for authentication
-       → >1 rows: log warning, take first row
-       → SQL error: log error, REJECT (fail fast)
-
-6. Authenticate with fetched hash:
+5. Authenticate client against the hash:
    → MD5 prefix "md5": MD5 challenge-response
    → SCRAM prefix "SCRAM-SHA-256$": SCRAM-SHA-256 handshake
    → NULL password: REJECT
+   → Success? Done.
+   → Failure? Go to step 6
 
-7. If auth failed AND cache was stale → refresh from PG (step 5)
-   If auth failed AND cache was fresh → REJECT
+6. Auth failed — maybe password changed in PG? Re-fetch:
+
+   6a. Was the cached entry used (not a fresh fetch)?
+       → No (just fetched in step 4b): REJECT — password is wrong
+       → Yes: continue to 6b
+
+   6b. Rate limit: last re-fetch for "alice" was < min_interval (1s) ago?
+       → Yes: REJECT — won't hammer PG for the same user
+       → No: re-fetch from PG (step 7)
+
+7. Execute auth_query:
+
+   7a. Connect to auth_query_database as auth_query_user
+       → Connection error? FAIL FAST, clear error message
+         (never retry-loop — PgBouncer #649 lesson)
+
+   7b. Execute: SELECT usename, passwd FROM pg_shadow WHERE usename = $1
+       ($1 = "alice", parameterized — Odyssey #149 lesson)
+
+   7c. Parse response:
+       → 0 rows: cache negative entry, REJECT ("user not found")
+         (NEVER fall through to auth_user — PgBouncer #69 lesson)
+       → 1 row: cache password hash
+       → >1 rows: log warning, take first row
+       → SQL error: log error, REJECT (fail fast)
+
+8. Re-authenticate with fresh hash:
+   → Success? Done (password was rotated, new hash works)
+   → Failure? REJECT — password is wrong
 ```
 
-### auth_query_user Connection
+### Two Separate Pools
 
-Dedicated persistent connection per pool (not from the main pool):
+**1. Auth query executor pool** (`auth_query_pool_size`, default: 2)
+- Connects to `auth_query_database` (typically "postgres") as `auth_query_user`
+- Used ONLY for executing `SELECT FROM pg_shadow` queries
+- Small pool — auth queries are rare thanks to caching
 - Lazy initialization on first auth_query request
-- Automatic reconnection on failure
-- Does not consume pool_size slots
 - Plaintext password in config (like `server_password`)
 
 This solves PgBouncer's bootstrap problem (#967) — no separate auth_file needed.
 Simpler than Odyssey's approach (which requires trust in pg_hba.conf).
 
-### Dynamic User Pool Management
+**2. Shared data pool** (`auth_query_default_pool_size`, default: 40)
+- Connects to the target database (e.g. "mydb") as `auth_query_user`
+- Used for actual client queries from all dynamic users
+- All auth_query-authenticated users share this single pool
+- Works in transaction mode
 
-When auth_query authenticates a new user, a pool is created with defaults:
-- `pool_size`: from pool-level `default_pool_size` (default: 20)
-- `pool_mode`: inherited from pool
-- `server_username`: `auth_query_user` (reused for backend)
-- `server_password`: `auth_query_password`
+### Dynamic User Pool Model: Shared Pool
 
-**Pool explosion protection** (PgBouncer #1085):
+All auth_query users share a **single connection pool** per database. Client-side
+authentication is per-user (via cached hashes), but server-side connections all use
+the same backend credentials.
 
-```yaml
-general:
-  auth_query_max_users: 1000            # max dynamic users (default: 1000)
-  auth_query_user_idle_timeout: "30m"   # remove idle dynamic user pools
+```
+Pool "mydb":
+  ├─ app_static  → own pool (pool_size=40, server_username="app")   ← static user
+  ├─ admin       → own pool (pool_size=5, server_username="admin")  ← static user
+  ├─ [auth_query executor pool] (pool_size=2, database="postgres")
+  │    └─ used for: SELECT FROM pg_shadow
+  └─ [auth_query data pool] (pool_size=40, server_username="pg_doorman_auth")
+       ├─ alice  (client auth via cached hash)
+       ├─ bob    (client auth via cached hash)
+       └─ ...all dynamic users share these 40 connections
 ```
 
-- Dynamic pools have idle timeout — removed after N minutes of inactivity
-- Hard limit on dynamic user count — new users rejected at limit
-- Metric: `pg_doorman_auth_query_dynamic_users_total` gauge
+This completely eliminates pool explosion (PgBouncer #1085). The number of server
+connections is fixed and predictable — it equals the configured `pool_size` of the
+shared pool, regardless of how many dynamic users connect.
+
+Configuration:
+
+```yaml
+pools:
+  mydb:
+    auth_query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+    auth_query_user: "pg_doorman_auth"
+    auth_query_password: "secret"
+    auth_query_database: "postgres"
+    auth_query_pool_size: 2              # executor pool for auth queries (default: 2)
+    auth_query_default_pool_size: 40     # shared data pool for dynamic users (default: 40)
+```
+
+Two pools: the executor pool (small, for SELECT FROM pg_shadow) and the data pool
+(for actual queries). Both use `auth_query_user`/`auth_query_password` credentials.
+All dynamic users share the data pool in transaction mode.
 
 ### Security Mitigations
 
@@ -249,8 +291,7 @@ SET search_path = pg_catalog, pg_temp;
 
 | File | Changes |
 |------|---------|
-| `src/config/pool.rs` | New fields: `auth_query`, `auth_query_user`, `auth_query_password`, `auth_query_database`, `auth_query_cache_ttl`, `auth_query_cache_failure_ttl`, `auth_query_min_interval` |
-| `src/config/general.rs` | `auth_query_max_users`, `auth_query_user_idle_timeout` |
+| `src/config/pool.rs` | New fields: `auth_query`, `auth_query_user`, `auth_query_password`, `auth_query_database`, `auth_query_pool_size`, `auth_query_default_pool_size`, `auth_query_cache_ttl`, `auth_query_cache_failure_ttl`, `auth_query_min_interval` |
 | `src/auth/mod.rs` | New branch in `authenticate_normal_user()` for auth_query lookup |
 | `src/auth/auth_query.rs` (new) | `AuthQueryCache`, `AuthQueryConnection`, query + cache logic |
 | `src/pool/mod.rs` | Dynamic pool creation/removal for auth_query users |
@@ -264,7 +305,7 @@ SET search_path = pg_catalog, pg_temp;
 | Rate limiting | Configurable per-username | None | Implicit via TTL |
 | Auth user credentials | In config (plaintext) | In auth_file | trust in pg_hba.conf |
 | Auth database | Configurable `auth_query_database` | `auth_dbname` | `auth_query_db` |
-| Dynamic pool GC | Idle timeout + max limit | None (pool explosion) | None |
+| Dynamic user pools | Shared pool (no explosion) | Per-user (pool explosion) | Per-user (no GC) |
 | SQL injection protection | Parameterized `$1` | Parameterized `$1` | Parameterized `$1` |
 | Memory safety | Rust (no segfaults) | C (segfaults reported) | C (segfaults reported) |
 | SCRAM support | Full | Buggy under concurrency | Full (after fixes) |
