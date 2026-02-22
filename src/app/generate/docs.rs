@@ -428,11 +428,14 @@ fn write_prometheus_fields(out: &mut String, f: &FieldsData, russian: bool) {
         let _ = writeln!(out, "## Enabling Prometheus Metrics\n");
     }
     if russian {
-        let _ = writeln!(out, "Для включения экспортёра метрик Prometheus добавьте следующую конфигурацию в ваш файл `pg_doorman.toml`:\n");
+        let _ = writeln!(
+            out,
+            "Для включения экспортёра метрик Prometheus добавьте следующую конфигурацию:\n"
+        );
     } else {
-        let _ = writeln!(out, "To enable the Prometheus metrics exporter, add the following configuration to your `pg_doorman.toml` file:\n");
+        let _ = writeln!(out, "To enable the Prometheus metrics exporter, add the following to your configuration file:\n");
     }
-    let _ = writeln!(out, "```toml\n[prometheus]\nenabled = true\nhost = \"0.0.0.0\"  # The host on which the metrics server will listen\nport = 9127       # The port on which the metrics server will listen\n```\n");
+    let _ = writeln!(out, "```yaml\nprometheus:\n  enabled: true\n  host: \"0.0.0.0\"  # The host on which the metrics server will listen\n  port: 9127       # The port on which the metrics server will listen\n```\n");
 
     if russian {
         let _ = writeln!(out, "### Параметры конфигурации\n");
