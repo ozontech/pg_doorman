@@ -28,6 +28,3 @@
 - [Changelog](changelog.md)
 - [Contributing](tutorials/contributing.md)
 
----
-
-[Russian / Русский](../ru/index.html)

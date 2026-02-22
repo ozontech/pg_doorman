@@ -5,7 +5,7 @@ language = "en"
 src = "src"
 
 [build]
-build-dir = "../book/en"
+build-dir = "../book"
 
 [output.html]
 git-repository-url = "https://github.com/ozontech/pg_doorman"
