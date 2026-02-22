@@ -46,10 +46,13 @@ Options:
 
 PgDoorman supports both [YAML](https://yaml.org/) and [TOML](https://toml.io/) configuration formats. YAML is recommended for new setups. The configuration is organized into several sections:
 
-- `general` — Global settings for the PgDoorman service
-- `pools` — Database pool definitions
-- `pools.<name>` — Settings for a specific database pool
-- `pools.<name>.users[]` — User settings for a specific database pool
+```yaml
+general:        # Global settings for the PgDoorman service
+pools:
+  <name>:       # Settings for a specific database pool
+    users:
+      - ...     # User settings for this pool
+```
 
 ```admonish important
 Some parameters **must** be specified in the configuration file for PgDoorman to start, even if they have default values. For example, you must specify an admin username and password to access the administrative console.
