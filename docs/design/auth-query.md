@@ -602,3 +602,156 @@ Scenario: Executor connection loss — fallback to cache
 | SQL injection protection | Parameterized `$1` | Parameterized `$1` | Parameterized `$1` |
 | Memory safety | Rust (no segfaults) | C (segfaults reported) | C (segfaults reported) |
 | SCRAM support | Full | Buggy under concurrency | Full (after fixes) |
+
+## Open Questions / Known Issues
+
+The following problems have been identified during design review and require
+resolution before implementation.
+
+### Problem 1: SCRAM re-auth after password rotation within the same connection
+
+The current flow says: on auth failure with a cached hash, re-fetch from PG and
+retry authentication. For MD5 this works — the salt was sent at the start, and
+a new `md5(hash + salt)` can be computed.
+
+For SCRAM, the salt is embedded in the SCRAM verifier from pg_shadow and is sent
+to the client as part of `ServerFirst`. If the password changes, the verifier
+(and salt) change too. But `ServerFirst` was already sent with the OLD salt.
+The client computed its proof using the old salt. Re-fetching the new verifier
+doesn't help — the client's proof is bound to the old salt.
+
+**Impact:** SCRAM password rotation detection within a single auth attempt is
+impossible. The client must reconnect to get a new salt.
+
+**Options to resolve:**
+- A) Accept the limitation: on SCRAM auth failure with stale cache, invalidate
+  cache entry and reject. The client reconnects, gets the new salt, succeeds.
+  Document this as expected behavior (1 extra round-trip on password rotation).
+- B) Restart SCRAM handshake from scratch with new verifier. Requires sending
+  a new `ServerFirst` — violates SCRAM protocol state machine. Not feasible.
+
+### Problem 2: No request coalescing for concurrent cache misses
+
+When 100 clients connect simultaneously as "alice" and the cache is empty (or
+expired), all 100 trigger auth_query in parallel. With `pool_size: 2`, 98
+requests queue up. This wastes executor pool bandwidth — only the first query
+is useful, the rest get identical results.
+
+**Impact:** Thundering herd on cache miss. The `min_interval` rate limit only
+applies to re-fetch after auth failure, not to initial cache population.
+
+**Options to resolve:**
+- A) `tokio::sync::Notify` / `broadcast` per username: first request executes
+  the query, others await the result. Classic request coalescing pattern.
+- B) `DashMap::entry()` with a `tokio::sync::OnceCell<CacheEntry>` as value:
+  the first inserter populates, others `.await` on the same cell.
+- C) Accept the duplication — executor pool serializes anyway (2 connections),
+  so at most 2 concurrent queries. Document as acceptable overhead.
+
+### Problem 3: `get_pool()` returns None for new dynamic users
+
+In `src/auth/mod.rs:192`, `get_pool(pool_name, username)` returns `None` for
+users not in static config. The current code rejects these immediately. With
+auth_query, we need a path to:
+1. Recognize that the pool has `auth_query` configured (requires pool-level
+   config access, not user-level)
+2. Run auth_query flow
+3. Create a dynamic pool on success
+
+**Impact:** The auth entry point needs restructuring. Currently it's
+`get_pool(db, user) → pool → pool.settings.user.password`. For auth_query,
+we need `get_pool_config(db) → config → config.auth_query → ...`.
+
+**Options to resolve:**
+- A) Add `get_pool_config(db: &str) -> Option<&PoolConfig>` that returns the
+  pool-level config regardless of user. Auth flow: try `get_pool(db, user)`
+  first; if None, try `get_pool_config(db)` for auth_query.
+- B) Create a sentinel "auth_query" pool entry per database that holds the
+  config. `get_pool(db, "__auth_query__")` → config lookup.
+- C) Store `AuthQueryConfig` separately from pool map, indexed by database.
+
+### Problem 4: Config reload behavior for dynamic pools undefined
+
+When admin runs `RELOAD`, static pools are recreated from the new config.
+What happens to dynamic pools?
+
+**Scenarios:**
+- auth_query section removed → all dynamic pools must be destroyed
+- auth_query section changed (e.g., `default_pool_size` 40→20) → existing
+  dynamic pools: keep old size or resize?
+- `server_user` added/removed → mode change (shared↔passthrough), all dynamic
+  pools become invalid
+- Static user added matching a dynamic user → static takes priority, dynamic
+  pool should be destroyed
+
+**Impact:** Without defined behavior, reload could leave stale pools, leak
+connections, or cause auth inconsistencies.
+
+**Options to resolve:**
+- A) On any auth_query config change: destroy ALL dynamic pools. Simple,
+  predictable. Existing connections get gracefully closed.
+- B) Smart diff: only destroy affected pools. Complex, error-prone.
+- C) Destroy all dynamic pools on every RELOAD (regardless of changes).
+  Simplest, minor disruption acceptable.
+
+### Problem 5: Passthrough mode pool scaling
+
+In passthrough mode, each dynamic user gets `default_pool_size` (40) connections.
+With 100 users: 100 × 40 = 4000 backend connections. Most PG servers have
+`max_connections` = 100-500.
+
+**Impact:** Pool explosion similar to PgBouncer #1085. The idle GC via
+`idle_timeout` helps, but active users can still exhaust `max_connections`.
+
+**Options to resolve:**
+- A) Add `max_dynamic_pool_connections` — global limit across all dynamic pools
+  for this database. When reached, new pools get size=0 and must wait for
+  connections to be freed.
+- B) Use small `default_pool_size` (e.g., 5) for passthrough mode and document
+  the scaling concern. Let DBAs tune it.
+- C) Dynamic pool size = `min(default_pool_size, max_connections / active_users)`.
+  Auto-rebalancing. Complex.
+- D) Just document it clearly: passthrough mode is for environments where
+  per-user identity matters and the user count is bounded.
+
+### Problem 6: Admin commands and Prometheus metrics undefined
+
+The design doesn't specify how dynamic pools appear in:
+- `SHOW POOLS` — should dynamic pools be listed? With what markers?
+- `SHOW USERS` — dynamic users vs static users distinction?
+- `SHOW DATABASES` — auth_query metadata?
+- Prometheus metrics — new labels? New metrics for cache hit/miss ratio,
+  executor pool usage, dynamic pool count?
+
+**Impact:** Without observability, operators can't debug auth_query issues
+in production.
+
+**Required additions:**
+- `SHOW POOLS`: include dynamic pools with `source=auth_query` marker
+- `SHOW CLIENTS`: show whether auth was static or auth_query
+- New admin command: `SHOW AUTH_QUERY_CACHE` — cache entries with TTL
+- Prometheus: `pg_doorman_auth_query_cache_hits_total`,
+  `pg_doorman_auth_query_cache_misses_total`,
+  `pg_doorman_auth_query_executor_pool_active`,
+  `pg_doorman_auth_query_dynamic_pools_count`
+
+### Problem 7: Executor pool architecture
+
+The executor pool connects to a DIFFERENT database (`auth_query.database`,
+typically "postgres") than the data pools (the actual database). It also uses
+different credentials (`auth_query.user`/`auth_query.password`).
+
+The current `ConnectionPool` is tightly coupled to `PoolIdentifier { db, user }`
+and assumes all connections serve client queries. The executor pool is
+fundamentally different — it's internal-only, never serves client traffic.
+
+**Impact:** Reusing `ConnectionPool` for the executor would require special-casing
+throughout the codebase (don't show in SHOW POOLS, don't count in metrics, etc.).
+
+**Options to resolve:**
+- A) Create a lightweight `ExecutorPool` type that wraps a small
+  `Vec<tokio_postgres::Client>` with connection management. Simpler, purpose-built.
+- B) Reuse `ConnectionPool` with an `internal: bool` flag. Less code duplication
+  but more special cases.
+- C) Use a raw `deadpool-postgres` pool directly (the crate is already a
+  dependency). Minimal wrapper needed.
