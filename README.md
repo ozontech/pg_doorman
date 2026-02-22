@@ -10,13 +10,13 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 ## Why PgDoorman?
 
-**Drop-in replacement. No app changes.** PgDoorman caches and remaps prepared statements transparently across server connections in transaction mode — just point your connection string at it and go. No `DISCARD ALL`, no `DEALLOCATE`, no driver hacks. PgBouncer added similar support in 1.21, but remains single-threaded; Odyssey does not support prepared statements in transaction mode at all.
+**Drop-in replacement. No app changes.** PgDoorman caches and remaps prepared statements transparently across server connections in transaction mode — just point your connection string at it and go. No `DISCARD ALL`, no `DEALLOCATE`, no driver hacks. PgBouncer added similar support in 1.21, but remains single-threaded; Odyssey added it in 1.3, but has known reliability issues in edge cases.
 
 **Battle-tested with real drivers.** Two years of production use with Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), Node.js. Protocol edge cases — pipelined batches, async Flush, Describe flow, cancel requests over TLS — are covered by comprehensive multi-language BDD tests.
 
 **Natively multithreaded.** PgBouncer is single-threaded. Running multiple instances via `SO_REUSE_PORT` leads to unbalanced pools: clients connect evenly but disconnect unpredictably, leaving some instances overloaded while others sit idle. PgDoorman uses a single shared pool across all worker threads, ensuring correct connection distribution at any scale.
 
-**Full extended query protocol support.** Odyssey does not fully support the PostgreSQL extended query protocol in transaction pooling mode, resulting in significantly degraded performance for modern drivers that rely on it. PgDoorman handles simple, extended, and prepared protocols equally well.
+**Full extended query protocol support.** Benchmarks show Odyssey is up to 61% slower with the extended query protocol in transaction mode. PgDoorman handles simple, extended, and prepared protocols equally well — including pipelined batches and async Flush flow that cause issues in other poolers.
 
 ## Benchmarks
 
@@ -29,21 +29,26 @@ Automated benchmarks on AWS Fargate (16 vCPU, pool size 40, pgbench 30s per test
 | Simple protocol, 10,000 clients | x2.8 | +20% |
 | Extended + SSL + Reconnect, 500 clients | +96% | ~0% |
 
-PgBouncer is single-threaded — these ratios reflect a single PgBouncer instance vs a single PgDoorman instance. Odyssey shows poor extended protocol performance in transaction mode. [Full benchmark results](https://ozontech.github.io/pg_doorman/benchmarks.html).
+PgBouncer is single-threaded — these ratios reflect a single PgBouncer instance vs a single PgDoorman instance. [Full benchmark results](https://ozontech.github.io/pg_doorman/benchmarks.html).
 
 ## Comparison
 
 | | PgDoorman | PgBouncer | Odyssey |
 |---|:-:|:-:|:-:|
 | Multithreaded | Yes | No | Yes |
-| Prepared statements in transaction mode | Yes | Since 1.21 | No |
+| Prepared statements in transaction mode | Yes | Since 1.21 | Since 1.3 |
 | Full extended query protocol | Yes | Yes | Partial |
-| Zero-downtime binary upgrade | Yes | Yes | No |
+| Zero-downtime binary upgrade | Yes | Yes | Yes |
 | Deferred `BEGIN` (lazy server acquire) | Yes | No | No |
 | Auto-config from PostgreSQL | Yes | No | No |
-| Native `pg_hba.conf` format | Yes | Yes | No (own format) |
-| PAM / JWT auth | Both | No | PAM only |
+| YAML / TOML config | Yes | No (INI) | No (own format) |
+| Human-readable durations & sizes | Yes | No | No |
+| Native `pg_hba.conf` format | Yes | Yes | Since 1.4 |
+| PAM auth | Yes | Yes | Yes |
+| JWT auth | Yes | No | No |
+| LDAP auth | No | Since 1.25 | Yes |
 | Prometheus metrics | Built-in | External | Built-in |
+| Config test mode (`-t`) | Yes | No | No |
 
 ## Quick Start
 
