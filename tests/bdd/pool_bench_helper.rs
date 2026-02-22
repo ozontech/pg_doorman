@@ -231,15 +231,15 @@ async fn benchmark_pool_get_impl(
     let p99 = latencies[(latencies.len() as f64 * 0.99) as usize];
 
     // Output to stdout
-    println!("\n=== Pool.get Benchmark Results [{}] ===", name);
-    println!("Concurrent clients: {}", clients);
-    println!("Iterations per client: {}", iterations_per_client);
-    println!("Total iterations: {}", total_iterations);
-    println!("Total time: {:?}", total_elapsed);
-    println!("Throughput: {:.0} ops/sec", ops_per_sec);
-    println!("Latency p50: {:?}", p50);
-    println!("Latency p95: {:?}", p95);
-    println!("Latency p99: {:?}", p99);
+    println!("\n=== Pool.get Benchmark Results [{name}] ===");
+    println!("Concurrent clients: {clients}");
+    println!("Iterations per client: {iterations_per_client}");
+    println!("Total iterations: {total_iterations}");
+    println!("Total time: {total_elapsed:?}");
+    println!("Throughput: {ops_per_sec:.0} ops/sec");
+    println!("Latency p50: {p50:?}");
+    println!("Latency p95: {p95:?}");
+    println!("Latency p99: {p99:?}");
 
     // Print pprof CPU timing breakdown only if profiling was enabled
     let total_samples = if let Some(guard) = guard {
@@ -278,7 +278,7 @@ async fn benchmark_pool_get_impl(
         let mut frame_times: Vec<(String, usize)> = func_samples.into_iter().collect();
         frame_times.sort_by(|a, b| b.1.cmp(&a.1));
 
-        println!("Total CPU samples: {}", total_samples);
+        println!("Total CPU samples: {total_samples}");
         println!("| Function | Samples | % |");
         println!("|----------|---------|---|");
         for (func, count) in frame_times.iter().take(20) {
@@ -293,7 +293,7 @@ async fn benchmark_pool_get_impl(
             } else {
                 func.clone()
             };
-            println!("| {} | {} | {:.1}% |", display_name, count, pct);
+            println!("| {display_name} | {count} | {pct:.1}% |");
         }
         println!("==========================================\n");
 
@@ -306,16 +306,16 @@ async fn benchmark_pool_get_impl(
     world.bench_results.insert(name.clone(), ops_per_sec);
     world
         .bench_results
-        .insert(format!("{}_p50_ns", name), p50.as_nanos() as f64);
+        .insert(format!("{name}_p50_ns"), p50.as_nanos() as f64);
     world
         .bench_results
-        .insert(format!("{}_p95_ns", name), p95.as_nanos() as f64);
+        .insert(format!("{name}_p95_ns"), p95.as_nanos() as f64);
     world
         .bench_results
-        .insert(format!("{}_p99_ns", name), p99.as_nanos() as f64);
+        .insert(format!("{name}_p99_ns"), p99.as_nanos() as f64);
     world
         .bench_results
-        .insert(format!("{}_cpu_samples", name), total_samples as f64);
+        .insert(format!("{name}_cpu_samples"), total_samples as f64);
 }
 
 #[then(regex = r#"^benchmark result "([^"]+)" should exist$"#)]
@@ -347,20 +347,17 @@ async fn print_benchmark_results_to_stdout(world: &mut DoormanWorld) {
         let ops = world.bench_results.get(test_name.as_str()).unwrap_or(&0.0);
         let p50 = world
             .bench_results
-            .get(&format!("{}_p50_ns", test_name))
+            .get(&format!("{test_name}_p50_ns"))
             .unwrap_or(&0.0);
         let p95 = world
             .bench_results
-            .get(&format!("{}_p95_ns", test_name))
+            .get(&format!("{test_name}_p95_ns"))
             .unwrap_or(&0.0);
         let p99 = world
             .bench_results
-            .get(&format!("{}_p99_ns", test_name))
+            .get(&format!("{test_name}_p99_ns"))
             .unwrap_or(&0.0);
-        println!(
-            "| {} | {:.0} ops/sec | {:.0} ns | {:.0} ns | {:.0} ns |",
-            test_name, ops, p50, p95, p99
-        );
+        println!("| {test_name} | {ops:.0} ops/sec | {p50:.0} ns | {p95:.0} ns | {p99:.0} ns |");
     }
     println!("=============================\n");
 }

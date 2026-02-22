@@ -30,7 +30,7 @@ pub async fn start_named_mock_patroni_server(
 
     let port = allocate_port();
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+    let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
         .expect("Failed to bind mock Patroni server");
 
@@ -44,7 +44,7 @@ pub async fn start_named_mock_patroni_server(
 
     // Spawn HTTP server task
     tokio::spawn(async move {
-        eprintln!("[MockPatroni:{}:{}] Started", server_name_clone, port);
+        eprintln!("[MockPatroni:{server_name_clone}:{port}] Started");
 
         loop {
             if shutdown_clone.load(Ordering::Relaxed) {
@@ -64,13 +64,13 @@ pub async fn start_named_mock_patroni_server(
                                     Ok(n) if n > 0 => {
                                         let request = String::from_utf8_lossy(&buffer[..n]);
                                         let first_line = request.lines().next().unwrap_or("");
-                                        eprintln!("[MockPatroni:{}] Request: {}", server_name, first_line);
+                                        eprintln!("[MockPatroni:{server_name}] Request: {first_line}");
 
                                         let path = first_line.split_whitespace().nth(1).unwrap_or("/");
 
                                         let response = if path == "/cluster" {
                                             let response_json = response_holder.read().unwrap().clone();
-                                            eprintln!("[MockPatroni:{}] Response: {}", server_name, response_json);
+                                            eprintln!("[MockPatroni:{server_name}] Response: {response_json}");
                                             format!(
                                                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
                                                 response_json.len(),
@@ -81,10 +81,10 @@ pub async fn start_named_mock_patroni_server(
                                         };
 
                                         if let Err(e) = stream.write_all(response.as_bytes()).await {
-                                            eprintln!("[MockPatroni:{}] Write error: {}", server_name, e);
+                                            eprintln!("[MockPatroni:{server_name}] Write error: {e}");
                                         }
                                         if let Err(e) = stream.flush().await {
-                                            eprintln!("[MockPatroni:{}] Flush error: {}", server_name, e);
+                                            eprintln!("[MockPatroni:{server_name}] Flush error: {e}");
                                         }
                                     }
                                     _ => {}
@@ -102,10 +102,10 @@ pub async fn start_named_mock_patroni_server(
             }
         }
 
-        eprintln!("[MockPatroni:{}] Stopped", server_name_clone);
+        eprintln!("[MockPatroni:{server_name_clone}] Stopped");
     });
 
-    let host_url = format!("http://127.0.0.1:{}", port);
+    let host_url = format!("http://127.0.0.1:{port}");
     world
         .mock_patroni_shutdowns
         .insert(host_url.clone(), shutdown);
@@ -142,32 +142,29 @@ pub async fn update_mock_patroni_response(
     let response_holder = world
         .mock_patroni_responses
         .get(&server_name)
-        .unwrap_or_else(|| panic!("Mock Patroni server '{}' not found", server_name));
+        .unwrap_or_else(|| panic!("Mock Patroni server '{server_name}' not found"));
 
     let mut response = response_holder.write().unwrap();
     *response = new_response;
-    eprintln!("[MockPatroni:{}] Response updated", server_name);
+    eprintln!("[MockPatroni:{server_name}] Response updated");
 }
 
 /// Helper function to wait for HTTP server to be ready (max 5 seconds)
 async fn wait_for_http_server_ready(port: u16) {
     for _ in 0..20 {
-        if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
             return;
         }
         sleep(Duration::from_millis(250)).await;
     }
-    panic!(
-        "Mock Patroni server failed to start on port {} (timeout 5s)",
-        port
-    );
+    panic!("Mock Patroni server failed to start on port {port} (timeout 5s)");
 }
 
 /// Stop all mock Patroni servers
 pub fn stop_mock_patroni_servers(world: &mut PatroniProxyWorld) {
     for (host_url, shutdown) in world.mock_patroni_shutdowns.drain() {
         shutdown.store(true, Ordering::Relaxed);
-        eprintln!("Stopped mock Patroni server: {}", host_url);
+        eprintln!("Stopped mock Patroni server: {host_url}");
     }
     world.mock_patroni_ports.clear();
     world.mock_patroni_names.clear();

@@ -1,7 +1,3 @@
----
-title: Contributing to PgDoorman
----
-
 # Contributing to PgDoorman
 
 Thank you for your interest in contributing to PgDoorman! This guide will help you set up your development environment and understand the contribution process.

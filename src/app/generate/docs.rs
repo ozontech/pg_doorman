@@ -76,10 +76,8 @@ fn write_param(out: &mut String, f: &FieldsData, section: &str, name: &str, russ
 
 fn write_general_frontmatter(out: &mut String, russian: bool) {
     if russian {
-        let _ = writeln!(out, "---\ntitle: Основные настройки\n---\n");
         let _ = writeln!(out, "# Настройки\n");
     } else {
-        let _ = writeln!(out, "---\ntitle: General Settings\n---\n");
         let _ = writeln!(out, "# Settings\n");
     }
 }
@@ -336,11 +334,9 @@ fn write_general_fields(out: &mut String, f: &FieldsData, russian: bool) {
 
 fn write_pool_frontmatter(out: &mut String, russian: bool) {
     if russian {
-        let _ = writeln!(out, "---\ntitle: Настройки пула\n---\n");
         let _ = writeln!(out, "## Настройки пула\n");
         let _ = writeln!(out, "Каждая запись в пуле — это имя виртуальной базы данных, к которой клиент pg-doorman может подключиться.\n");
     } else {
-        let _ = writeln!(out, "---\ntitle: Pool Settings\n---\n");
         let _ = writeln!(out, "## Pool Settings\n");
         let _ = writeln!(out, "Each record in the pool is the name of the virtual database that the pg-doorman client can connect to.\n");
     }
@@ -395,17 +391,20 @@ fn write_user_fields(out: &mut String, f: &FieldsData, russian: bool) {
         write_param(out, f, "user", name, russian);
     }
 
-    // Add the server_credentials warning admonition
+    // Add the server_credentials warning admonition (mdbook-admonish format)
     if russian {
-        let _ = writeln!(out, "!!! warning \"Типичная проблема настройки\"");
-        let _ = writeln!(out, "    Если вы видите ошибки аутентификации при подключении PgDoorman к PostgreSQL, наиболее вероятная причина — `server_username` и `server_password` не установлены. Без них PgDoorman пытается аутентифицироваться в PostgreSQL, используя хеш MD5/SCRAM из поля `password`, который PostgreSQL отклоняет.\n");
-        let _ = writeln!(out, "    **Решение:** Установите оба поля `server_username` и `server_password` с реальными учётными данными PostgreSQL:\n");
+        let _ = writeln!(
+            out,
+            "`````admonish warning title=\"Типичная проблема настройки\""
+        );
+        let _ = writeln!(out, "Если вы видите ошибки аутентификации при подключении PgDoorman к PostgreSQL, наиболее вероятная причина — `server_username` и `server_password` не установлены. Без них PgDoorman пытается аутентифицироваться в PostgreSQL, используя хеш MD5/SCRAM из поля `password`, который PostgreSQL отклоняет.\n");
+        let _ = writeln!(out, "**Решение:** Установите оба поля `server_username` и `server_password` с реальными учётными данными PostgreSQL:\n");
     } else {
-        let _ = writeln!(out, "!!! warning \"Common Setup Issue\"");
-        let _ = writeln!(out, "    If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that `server_username` and `server_password` are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the `password` field, which PostgreSQL rejects.\n");
-        let _ = writeln!(out, "    **Solution:** Set both `server_username` and `server_password` to the actual PostgreSQL credentials:\n");
+        let _ = writeln!(out, "`````admonish warning title=\"Common Setup Issue\"");
+        let _ = writeln!(out, "If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that `server_username` and `server_password` are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the `password` field, which PostgreSQL rejects.\n");
+        let _ = writeln!(out, "**Solution:** Set both `server_username` and `server_password` to the actual PostgreSQL credentials:\n");
     }
-    let _ = writeln!(out, "    ```yaml\n    users:\n      - username: \"app_user\"\n        password: \"md5...\"                # hash for client authentication\n        server_username: \"app_user\"       # real PostgreSQL username\n        server_password: \"plaintext_pwd\"  # real PostgreSQL password\n    ```\n");
+    let _ = writeln!(out, "```yaml\nusers:\n  - username: \"app_user\"\n    password: \"md5...\"                # hash for client authentication\n    server_username: \"app_user\"       # real PostgreSQL username\n    server_password: \"plaintext_pwd\"  # real PostgreSQL password\n```\n`````\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -414,11 +413,9 @@ fn write_user_fields(out: &mut String, f: &FieldsData, russian: bool) {
 
 fn write_prometheus_frontmatter(out: &mut String, russian: bool) {
     if russian {
-        let _ = writeln!(out, "---\ntitle: Настройки Prometheus\n---\n");
         let _ = writeln!(out, "# Настройки Prometheus\n");
         let _ = writeln!(out, "pg_doorman включает экспортёр метрик Prometheus, предоставляющий подробную информацию о производительности и поведении пулов подключений. В этом документе описано, как включить и использовать экспортёр метрик Prometheus, а также доступные метрики.\n");
     } else {
-        let _ = writeln!(out, "---\ntitle: Prometheus Settings\n---\n");
         let _ = writeln!(out, "# Prometheus Settings\n");
         let _ = writeln!(out, "pg_doorman includes a Prometheus metrics exporter that provides detailed insights into the performance and behavior of your connection pools. This document describes how to enable and use the Prometheus metrics exporter, as well as the available metrics.\n");
     }
@@ -620,58 +617,85 @@ fn write_prometheus_metrics_section(out: &mut String, russian: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    /// Read a reference doc file at runtime. Returns None if file doesn't exist
+    /// (generated files may not be in the repo).
+    fn read_reference_doc(rel_path: &str) -> Option<String> {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let path = Path::new(manifest_dir).join(rel_path);
+        std::fs::read_to_string(&path).ok()
+    }
 
     #[test]
     fn test_general_doc_en_matches_file() {
         let generated = generate_general_doc(false);
-        let file_content = include_str!("../../../documentation/docs/reference/general.md");
-        if generated != file_content {
-            panic!("EN general.md is outdated. Run: cargo run -- generate-docs --all-languages");
+        if let Some(file_content) = read_reference_doc("documentation/en/src/reference/general.md")
+        {
+            assert_eq!(
+                generated, file_content,
+                "EN general.md is outdated. Run: cargo run -- generate-docs --all-languages"
+            );
         }
     }
 
     #[test]
     fn test_pool_doc_en_matches_file() {
         let generated = generate_pool_doc(false);
-        let file_content = include_str!("../../../documentation/docs/reference/pool.md");
-        if generated != file_content {
-            panic!("EN pool.md is outdated. Run: cargo run -- generate-docs --all-languages");
+        if let Some(file_content) = read_reference_doc("documentation/en/src/reference/pool.md") {
+            assert_eq!(
+                generated, file_content,
+                "EN pool.md is outdated. Run: cargo run -- generate-docs --all-languages"
+            );
         }
     }
 
     #[test]
     fn test_prometheus_doc_en_matches_file() {
         let generated = generate_prometheus_doc(false);
-        let file_content = include_str!("../../../documentation/docs/reference/prometheus.md");
-        if generated != file_content {
-            panic!("EN prometheus.md is outdated. Run: cargo run -- generate-docs --all-languages");
+        if let Some(file_content) =
+            read_reference_doc("documentation/en/src/reference/prometheus.md")
+        {
+            assert_eq!(
+                generated, file_content,
+                "EN prometheus.md is outdated. Run: cargo run -- generate-docs --all-languages"
+            );
         }
     }
 
     #[test]
     fn test_general_doc_ru_matches_file() {
         let generated = generate_general_doc(true);
-        let file_content = include_str!("../../../documentation/docs/reference/ru/general.md");
-        if generated != file_content {
-            panic!("RU general.md is outdated. Run: cargo run -- generate-docs --all-languages");
+        if let Some(file_content) = read_reference_doc("documentation/ru/src/reference/general.md")
+        {
+            assert_eq!(
+                generated, file_content,
+                "RU general.md is outdated. Run: cargo run -- generate-docs --all-languages"
+            );
         }
     }
 
     #[test]
     fn test_pool_doc_ru_matches_file() {
         let generated = generate_pool_doc(true);
-        let file_content = include_str!("../../../documentation/docs/reference/ru/pool.md");
-        if generated != file_content {
-            panic!("RU pool.md is outdated. Run: cargo run -- generate-docs --all-languages");
+        if let Some(file_content) = read_reference_doc("documentation/ru/src/reference/pool.md") {
+            assert_eq!(
+                generated, file_content,
+                "RU pool.md is outdated. Run: cargo run -- generate-docs --all-languages"
+            );
         }
     }
 
     #[test]
     fn test_prometheus_doc_ru_matches_file() {
         let generated = generate_prometheus_doc(true);
-        let file_content = include_str!("../../../documentation/docs/reference/ru/prometheus.md");
-        if generated != file_content {
-            panic!("RU prometheus.md is outdated. Run: cargo run -- generate-docs --all-languages");
+        if let Some(file_content) =
+            read_reference_doc("documentation/ru/src/reference/prometheus.md")
+        {
+            assert_eq!(
+                generated, file_content,
+                "RU prometheus.md is outdated. Run: cargo run -- generate-docs --all-languages"
+            );
         }
     }
 

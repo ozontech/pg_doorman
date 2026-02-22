@@ -90,7 +90,7 @@ pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
 
                 if let Some(ref base_dir) = output_dir {
                     let dir = if *russian {
-                        format!("{base_dir}/ru")
+                        format!("{base_dir}/../../../ru/src/reference")
                     } else {
                         base_dir.clone()
                     };

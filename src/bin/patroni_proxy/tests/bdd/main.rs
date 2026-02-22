@@ -55,10 +55,7 @@ fn main() {
                     let scenario_name = scenario.name.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                        eprintln!(
-                            "⚠️  Scenario '{}' exceeded 300 second timeout",
-                            scenario_name
-                        );
+                        eprintln!("⚠️  Scenario '{scenario_name}' exceeded 300 second timeout");
                         std::process::exit(124); // Timeout exit code
                     });
                 })

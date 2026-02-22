@@ -1,7 +1,3 @@
----
-title: Binary Upgrade Process
----
-
 # Binary Upgrade Process
 
 ## Overview
@@ -28,8 +24,10 @@ During the upgrade process, PgDoorman handles existing connections as follows:
 
 ## Important Considerations
 
-!!! warning "Query Repetition"
-    Repeating a query without receiving error code `58006` may cause problems as described in [this issue](https://github.com/lib/pq/issues/939). Make sure your client application properly handles reconnection scenarios.
+```admonish warning title="Query Repetition"
+Repeating a query without receiving error code `58006` may cause problems as described in [this issue](https://github.com/lib/pq/issues/939). Make sure your client application properly handles reconnection scenarios.
+```
 
-!!! tip "Client Library Compatibility"
-    Be careful when using client libraries like `github.com/lib/pq` or Go's standard `database/sql` package. Ensure they properly handle the reconnection process during binary upgrades.
+```admonish tip title="Client Library Compatibility"
+Be careful when using client libraries like `github.com/lib/pq` or Go's standard `database/sql` package. Ensure they properly handle the reconnection process during binary upgrades.
+```

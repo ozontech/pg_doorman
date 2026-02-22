@@ -84,7 +84,7 @@ fn run_command_with_timeout(
                     let mut collected = String::new();
                     for line in reader.lines().map_while(Result::ok) {
                         if streaming_started_stdout.load(std::sync::atomic::Ordering::Relaxed) {
-                            eprintln!("[STDOUT] {}", line);
+                            eprintln!("[STDOUT] {line}");
                         }
                         collected.push_str(&line);
                         collected.push('\n');
@@ -100,7 +100,7 @@ fn run_command_with_timeout(
                     let mut collected = String::new();
                     for line in reader.lines().map_while(Result::ok) {
                         if streaming_started_stderr.load(std::sync::atomic::Ordering::Relaxed) {
-                            eprintln!("[STDERR] {}", line);
+                            eprintln!("[STDERR] {line}");
                         }
                         collected.push_str(&line);
                         collected.push('\n');
@@ -140,8 +140,7 @@ fn run_command_with_timeout(
                             && !streaming_started.load(std::sync::atomic::Ordering::Relaxed)
                         {
                             streaming_started.store(true, std::sync::atomic::Ordering::Relaxed);
-                            eprintln!("\n=== Command running for more than {} seconds, streaming output ===", 
-                                     STREAMING_THRESHOLD_SECS);
+                            eprintln!("\n=== Command running for more than {STREAMING_THRESHOLD_SECS} seconds, streaming output ===");
                         }
 
                         // Check timeout
@@ -179,7 +178,7 @@ fn run_command_with_timeout(
                         return TestCommandResult {
                             exit_code: None,
                             stdout: String::new(),
-                            stderr: format!("Error waiting for command: {}", e),
+                            stderr: format!("Error waiting for command: {e}"),
                             success: false,
                         };
                     }
@@ -189,7 +188,7 @@ fn run_command_with_timeout(
         Err(e) => TestCommandResult {
             exit_code: None,
             stdout: String::new(),
-            stderr: format!("Failed to execute command: {}", e),
+            stderr: format!("Failed to execute command: {e}"),
             success: false,
         },
     }
@@ -230,7 +229,7 @@ fn capture_doorman_logs(world: &mut DoormanWorld) -> String {
             let mut stdout_logs = String::new();
             let _ = stdout.read_to_string(&mut stdout_logs);
             if !stdout_logs.is_empty() {
-                result.push_str(&format!("\n=== pg_doorman stdout ===\n{}\n", stdout_logs));
+                result.push_str(&format!("\n=== pg_doorman stdout ===\n{stdout_logs}\n"));
             }
         }
 
@@ -239,7 +238,7 @@ fn capture_doorman_logs(world: &mut DoormanWorld) -> String {
             let mut stderr_logs = String::new();
             let _ = stderr.read_to_string(&mut stderr_logs);
             if !stderr_logs.is_empty() {
-                result.push_str(&format!("\n=== pg_doorman stderr ===\n{}\n", stderr_logs));
+                result.push_str(&format!("\n=== pg_doorman stderr ===\n{stderr_logs}\n"));
             }
         }
 

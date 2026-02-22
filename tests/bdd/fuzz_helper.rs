@@ -11,7 +11,7 @@ fn get_doorman_addr(world: &DoormanWorld) -> String {
     let port = world
         .doorman_port
         .expect("pg_doorman port not set - start pg_doorman first");
-    format!("127.0.0.1:{}", port)
+    format!("127.0.0.1:{port}")
 }
 
 // ============================================================================
@@ -116,13 +116,13 @@ pub async fn verify_doorman_running(world: &mut DoormanWorld) {
     if let Some(ref mut child) = world.doorman_process {
         match child.try_wait() {
             Ok(Some(status)) => {
-                panic!("pg_doorman crashed with status: {:?}", status);
+                panic!("pg_doorman crashed with status: {status:?}");
             }
             Ok(None) => {
                 // Process is still running - good!
             }
             Err(e) => {
-                panic!("Error checking pg_doorman process: {:?}", e);
+                panic!("Error checking pg_doorman process: {e:?}");
             }
         }
     } else {

@@ -1,0 +1,16 @@
+[book]
+title = "PgDoorman Documentation"
+authors = ["PgDoorman Contributors"]
+language = "ru"
+src = "src"
+
+[build]
+build-dir = "../book/ru"
+
+[output.html]
+git-repository-url = "https://github.com/ozontech/pg_doorman"
+additional-css = ["css/custom.css", "mdbook-admonish.css"]
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.1.0"

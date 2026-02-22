@@ -77,7 +77,7 @@ fn stream_log_file(log_path: PathBuf) -> Arc<AtomicBool> {
                     }
                 }
                 Ok(_) => {
-                    eprint!("[PG_LOG] {}", line);
+                    eprint!("[PG_LOG] {line}");
                 }
                 Err(_) => {
                     std::thread::sleep(Duration::from_millis(100));
@@ -136,7 +136,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-D",
             db_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {port} -F -k {socket_dir}"),
             "start",
         ],
     )
@@ -161,7 +161,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
             "-l",
             log_path.to_str().unwrap(),
             "-o",
-            &format!("-p {} -F -k {}", port, socket_dir),
+            &format!("-p {port} -F -k {socket_dir}"),
             "start",
         ],
     )
@@ -198,7 +198,7 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
 
     if !success {
         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-            eprintln!("Postgres log:\n{}", log_content);
+            eprintln!("Postgres log:\n{log_content}");
         }
         // Try one more time with psql just to be sure
         let check_psql = pg_command_builder(
@@ -252,7 +252,7 @@ pub async fn apply_fixtures(world: &mut DoormanWorld, file_path: String) {
     if !output.status.success() {
         eprintln!("psql stdout:\n{}", String::from_utf8_lossy(&output.stdout));
         eprintln!("psql stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-        panic!("Failed to apply fixtures from {}", file_path);
+        panic!("Failed to apply fixtures from {file_path}");
     }
 }
 
@@ -327,9 +327,9 @@ async fn start_postgres_internal(world: &mut DoormanWorld, hba_content: &str, ex
 
     // Build pg_ctl options with extra options if provided
     let pg_options = if extra_options.is_empty() {
-        format!("-p {} -F -k {}", port, socket_dir)
+        format!("-p {port} -F -k {socket_dir}")
     } else {
-        format!("-p {} -F -k {} {}", port, socket_dir, extra_options)
+        format!("-p {port} -F -k {socket_dir} {extra_options}")
     };
 
     // pg_ctl start (suppress output, logs go to pg.log)
@@ -387,7 +387,7 @@ async fn start_postgres_internal(world: &mut DoormanWorld, hba_content: &str, ex
 
     if !success {
         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
-            eprintln!("Postgres log:\n{}", log_content);
+            eprintln!("Postgres log:\n{log_content}");
         }
         // Try one more time with psql just to be sure
         let check_psql = pg_command_builder(

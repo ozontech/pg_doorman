@@ -1,7 +1,3 @@
----
-title: Patroni Proxy
----
-
 # Patroni Proxy
 
 `patroni_proxy` is a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", it focuses exclusively on TCP load balancing and failover for Patroni clusters.

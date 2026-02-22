@@ -1,7 +1,3 @@
----
-title: Basic Usage
----
-
 # PgDoorman Basic Usage Guide
 
 PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. This comprehensive guide will help you get started with configuring, running, and managing PgDoorman for your PostgreSQL environment.
@@ -55,8 +51,9 @@ PgDoorman uses a [TOML format](https://toml.io/) configuration file to define it
 - `[pools.<name>]` - Settings for a specific database pool
 - `[pools.<name>.users.<n>]` - User settings for a specific database pool
 
-!!! important
-    Some parameters **must** be specified in the configuration file for PgDoorman to start, even if they have default values. For example, you must specify an admin username and password to access the administrative console.
+```admonish important
+Some parameters **must** be specified in the configuration file for PgDoorman to start, even if they have default values. For example, you must specify an admin username and password to access the administrative console.
+```
 
 ### Minimal Configuration Example
 
@@ -135,26 +132,29 @@ The `generate` command supports several options:
 
 The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file. This is especially useful for quickly setting up PgDoorman in new environments.
 
-!!! note "PostgreSQL Environment Variables"
-    The `generate` command also respects standard PostgreSQL environment variables like `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE`.
+```admonish note title="PostgreSQL Environment Variables"
+The `generate` command also respects standard PostgreSQL environment variables like `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE`.
+```
 
-!!! warning "Server Authentication (Common Issue)"
-    By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), **PostgreSQL will reject the connection** because it expects a plaintext password, not a hash.
+`````admonish warning title="Server Authentication (Common Issue)"
+By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), **PostgreSQL will reject the connection** because it expects a plaintext password, not a hash.
 
-    **To fix this**, set `server_username` and `server_password` in the user configuration:
+**To fix this**, set `server_username` and `server_password` in the user configuration:
 
-    ```yaml
-    users:
-      - username: "app_user"
-        password: "md5..."              # for client authentication
-        server_username: "app_user"     # for PostgreSQL server
-        server_password: "real_password" # plaintext password for PostgreSQL
-    ```
+```yaml
+users:
+  - username: "app_user"
+    password: "md5..."              # for client authentication
+    server_username: "app_user"     # for PostgreSQL server
+    server_password: "real_password" # plaintext password for PostgreSQL
+```
 
-    The generated config includes detailed comments about this. See also [Pool User Settings](../reference/pool.md#server_username).
+The generated config includes detailed comments about this. See also [Pool User Settings](../reference/pool.md#server_username).
+`````
 
-!!! warning "Superuser Privileges"
-    Reading user information from PostgreSQL requires superuser privileges to access the `pg_shadow` table.
+```admonish warning title="Superuser Privileges"
+Reading user information from PostgreSQL requires superuser privileges to access the `pg_shadow` table.
+```
 
 ### Client access control (pg_hba)
 
@@ -215,20 +215,22 @@ DETAIL:
 	SHOW
 ```
 
-!!! note "Protocol Compatibility"
-    The admin console currently supports only the simple query protocol.
-    Some database drivers use the extended query protocol for all commands, making them unsuitable for admin console access. In such cases, use the `psql` command-line client for administration.
+```admonish note title="Protocol Compatibility"
+The admin console currently supports only the simple query protocol.
+Some database drivers use the extended query protocol for all commands, making them unsuitable for admin console access. In such cases, use the `psql` command-line client for administration.
+```
 
-!!! warning "Security"
-    Only the user specified by `admin_username` in the configuration file is allowed to log in to the admin console.
-    If your `general.pg_hba` rules allow it, the admin console can also be accessed using the `trust` method (no password prompt), for example:
+`````admonish warning title="Security"
+Only the user specified by `admin_username` in the configuration file is allowed to log in to the admin console.
+If your `general.pg_hba` rules allow it, the admin console can also be accessed using the `trust` method (no password prompt), for example:
 
-    ```
-    # Allow only local admin to access the admin DB without a password
-    host  pgdoorman  admin  127.0.0.1/32  trust
-    ```
+```
+# Allow only local admin to access the admin DB without a password
+host  pgdoorman  admin  127.0.0.1/32  trust
+```
 
-    Use `trust` with extreme caution. Always restrict it by address and, where possible, require TLS via `hostssl`. In production, prefer password-based methods unless you fully understand the implications.
+Use `trust` with extreme caution. Always restrict it by address and, where possible, require TLS via `hostssl`. In production, prefer password-based methods unless you fully understand the implications.
+`````
 
 ### Monitoring PgDoorman
 
@@ -297,8 +299,9 @@ Statistics are presented per database with the following metrics:
 | `avg_query_time` | Average query duration in microseconds |
 | `avg_wait_time` | Average time clients spent waiting for a server in microseconds |
 
-!!! tip "Performance Monitoring"
-    Pay special attention to the `avg_wait_time` metric. If this value is consistently high, it may indicate that your pool size is too small for your workload.
+```admonish tip title="Performance Monitoring"
+Pay special attention to the `avg_wait_time` metric. If this value is consistently high, it may indicate that your pool size is too small for your workload.
+```
 
 #### SHOW SERVERS
 
@@ -326,10 +329,11 @@ pgdoorman=> SHOW SERVERS;
 | `prepare_cache_miss` | Number of prepared statement cache misses |
 | `prepare_cache_size` | Number of unique prepared statements in the cache |
 
-!!! info "Connection States"
-    - **active**: The connection is currently executing a query
-    - **idle**: The connection is available for use
-    - **used**: The connection is allocated to a client but not currently executing a query
+```admonish info title="Connection States"
+- **active**: The connection is currently executing a query
+- **idle**: The connection is available for use
+- **used**: The connection is allocated to a client but not currently executing a query
+```
 
 #### SHOW CLIENTS
 
@@ -352,8 +356,9 @@ pgdoorman=> SHOW CLIENTS;
 | `query_count` | Total number of queries processed for this client |
 | `age_seconds` | Lifetime of the client connection in seconds |
 
-!!! tip "Monitoring Long-Running Connections"
-    The `age_seconds` column can help identify long-running connections that might be holding resources unnecessarily. Consider implementing connection timeouts in your application for idle connections.
+```admonish tip title="Monitoring Long-Running Connections"
+The `age_seconds` column can help identify long-running connections that might be holding resources unnecessarily. Consider implementing connection timeouts in your application for idle connections.
+```
 
 #### SHOW POOLS
 
@@ -376,8 +381,9 @@ pgdoorman=> SHOW POOLS;
 | `maxwait` | Maximum wait time in seconds for the oldest client in the queue |
 | `maxwait_us` | Microsecond part of the maximum waiting time |
 
-!!! warning "Performance Alert"
-    If the `maxwait` value starts increasing, your server pool may not be handling requests quickly enough. This could be due to an overloaded PostgreSQL server or insufficient `pool_size` setting.
+```admonish warning title="Performance Alert"
+If the `maxwait` value starts increasing, your server pool may not be handling requests quickly enough. This could be due to an overloaded PostgreSQL server or insufficient `pool_size` setting.
+```
 
 #### SHOW USERS
 
@@ -412,8 +418,9 @@ pgdoorman=> SHOW DATABASES;
 | `max_connections` | Maximum allowed server connections (from `max_db_connections`) |
 | `current_connections` | Current number of server connections for this database |
 
-!!! tip "Connection Management"
-    Monitor the ratio between `current_connections` and `pool_size` to ensure your pool is properly sized. If `current_connections` frequently reaches `pool_size`, consider increasing the pool size.
+```admonish tip title="Connection Management"
+Monitor the ratio between `current_connections` and `pool_size` to ensure your pool is properly sized. If `current_connections` frequently reaches `pool_size`, consider increasing the pool size.
+```
 
 #### SHOW SOCKETS
 
@@ -454,8 +461,9 @@ When executed:
 3. All connections are closed
 4. The process exits
 
-!!! warning "Service Interruption"
-    Using the `SHUTDOWN` command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.
+```admonish warning title="Service Interruption"
+Using the `SHUTDOWN` command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.
+```
 
 #### RELOAD
 
@@ -472,8 +480,9 @@ This command:
 3. Applies changes to connection parameters for new connections
 4. Maintains existing connections until they're released back to the pool
 
-!!! tip "Zero-Downtime Configuration Changes"
-    The `RELOAD` command allows you to modify most configuration parameters without disrupting existing connections. This is ideal for production environments where downtime must be minimized.
+```admonish tip title="Zero-Downtime Configuration Changes"
+The `RELOAD` command allows you to modify most configuration parameters without disrupting existing connections. This is ideal for production environments where downtime must be minimized.
+```
 
 ## Signal Handling
 
@@ -485,5 +494,6 @@ PgDoorman responds to standard Unix signals for control and management. These si
 | **SIGTERM** | Immediate shutdown | Forces PgDoorman to exit immediately. Active connections may be terminated abruptly. |
 | **SIGINT** | Graceful shutdown | Initiates a binary upgrade process. The current process starts a new instance and gracefully transfers connections. See [Binary Upgrade Process](binary-upgrade.md) for details. |
 
-!!! note "Process Management"
-    In systemd-based environments, you can use `systemctl reload pg_doorman` to send SIGHUP and `systemctl restart pg_doorman` for a complete restart.
+```admonish note title="Process Management"
+In systemd-based environments, you can use `systemctl reload pg_doorman` to send SIGHUP and `systemctl restart pg_doorman` for a complete restart.
+```

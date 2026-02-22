@@ -10,7 +10,7 @@ pub async fn tcp_connection_succeeds(world: &mut PatroniProxyWorld, port_name: S
     let listen_addr = world
         .proxy_listen_addresses
         .get(&port_name)
-        .unwrap_or_else(|| panic!("Port '{}' not found in proxy_listen_addresses", port_name));
+        .unwrap_or_else(|| panic!("Port '{port_name}' not found in proxy_listen_addresses"));
 
     match TcpStream::connect_timeout(
         &listen_addr.parse().expect("Invalid listen address"),
@@ -20,10 +20,7 @@ pub async fn tcp_connection_succeeds(world: &mut PatroniProxyWorld, port_name: S
             // Connection succeeded
         }
         Err(e) => {
-            panic!(
-                "Failed to connect to proxy port '{}' at {}: {}",
-                port_name, listen_addr, e
-            );
+            panic!("Failed to connect to proxy port '{port_name}' at {listen_addr}: {e}");
         }
     }
 }
@@ -34,7 +31,7 @@ pub async fn tcp_connection_fails(world: &mut PatroniProxyWorld, port_name: Stri
     let listen_addr = world
         .proxy_listen_addresses
         .get(&port_name)
-        .unwrap_or_else(|| panic!("Port '{}' not found in proxy_listen_addresses", port_name));
+        .unwrap_or_else(|| panic!("Port '{port_name}' not found in proxy_listen_addresses"));
 
     match TcpStream::connect_timeout(
         &listen_addr.parse().expect("Invalid listen address"),
@@ -42,8 +39,7 @@ pub async fn tcp_connection_fails(world: &mut PatroniProxyWorld, port_name: Stri
     ) {
         Ok(_stream) => {
             panic!(
-                "Connection to proxy port '{}' at {} succeeded, but was expected to fail",
-                port_name, listen_addr
+                "Connection to proxy port '{port_name}' at {listen_addr} succeeded, but was expected to fail"
             );
         }
         Err(_) => {
@@ -64,10 +60,7 @@ pub async fn all_proxy_ports_accepting(world: &mut PatroniProxyWorld) {
                 // Connection succeeded
             }
             Err(e) => {
-                panic!(
-                    "Failed to connect to proxy port '{}' at {}: {}",
-                    port_name, listen_addr, e
-                );
+                panic!("Failed to connect to proxy port '{port_name}' at {listen_addr}: {e}");
             }
         }
     }
@@ -79,7 +72,7 @@ pub async fn open_session(world: &mut PatroniProxyWorld, port_name: String, sess
     let listen_addr = world
         .proxy_listen_addresses
         .get(&port_name)
-        .unwrap_or_else(|| panic!("Port '{}' not found in proxy_listen_addresses", port_name));
+        .unwrap_or_else(|| panic!("Port '{port_name}' not found in proxy_listen_addresses"));
 
     let stream = TcpStream::connect_timeout(
         &listen_addr.parse().expect("Invalid listen address"),
@@ -87,8 +80,7 @@ pub async fn open_session(world: &mut PatroniProxyWorld, port_name: String, sess
     )
     .unwrap_or_else(|e| {
         panic!(
-            "Failed to open session '{}' to proxy port '{}' at {}: {}",
-            session_name, port_name, listen_addr, e
+            "Failed to open session '{session_name}' to proxy port '{port_name}' at {listen_addr}: {e}"
         )
     });
 
@@ -117,14 +109,11 @@ pub async fn ping_pong_session(world: &mut PatroniProxyWorld, session_name: Stri
     let stream = world
         .active_connections
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("No session found with name '{}'", session_name));
+        .unwrap_or_else(|| panic!("No session found with name '{session_name}'"));
 
     // Send PING
     if let Err(e) = stream.write_all(b"PING\n") {
-        panic!(
-            "Failed to send PING to session '{}': {}. Connection was closed.",
-            session_name, e
-        );
+        panic!("Failed to send PING to session '{session_name}': {e}. Connection was closed.");
     }
 
     // Read PONG response
@@ -142,15 +131,11 @@ pub async fn ping_pong_session(world: &mut PatroniProxyWorld, session_name: Stri
             // Ping-pong successful
         }
         Ok(_) => {
-            panic!(
-                "Session '{}' was closed (read returned 0 bytes)",
-                session_name
-            );
+            panic!("Session '{session_name}' was closed (read returned 0 bytes)");
         }
         Err(e) => {
             panic!(
-                "Failed to read PONG from session '{}': {}. Connection was closed.",
-                session_name, e
+                "Failed to read PONG from session '{session_name}': {e}. Connection was closed."
             );
         }
     }
@@ -175,10 +160,8 @@ pub async fn call_update_clusters_api(world: &mut PatroniProxyWorld) {
         .expect("Failed to set read timeout");
 
     // Send HTTP GET request
-    let request = format!(
-        "GET /update_clusters HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        api_addr
-    );
+    let request =
+        format!("GET /update_clusters HTTP/1.1\r\nHost: {api_addr}\r\nConnection: close\r\n\r\n");
     stream
         .write_all(request.as_bytes())
         .expect("Failed to send request");
@@ -190,7 +173,7 @@ pub async fn call_update_clusters_api(world: &mut PatroniProxyWorld) {
         .expect("Failed to read response");
 
     if !response.contains("200 OK") {
-        panic!("API /update_clusters failed: {}", response);
+        panic!("API /update_clusters failed: {response}");
     }
 }
 
@@ -200,7 +183,7 @@ pub async fn session_is_closed(world: &mut PatroniProxyWorld, session_name: Stri
     let stream = world
         .active_connections
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("No session found with name '{}'", session_name));
+        .unwrap_or_else(|| panic!("No session found with name '{session_name}'"));
 
     // Try to send PING - should fail
     match stream.write_all(b"PING\n") {
@@ -247,14 +230,11 @@ pub async fn session_connected_to_backend(
     let stream = world
         .active_connections
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("No session found with name '{}'", session_name));
+        .unwrap_or_else(|| panic!("No session found with name '{session_name}'"));
 
     // Send NAME command
     if let Err(e) = stream.write_all(b"NAME\n") {
-        panic!(
-            "Failed to send NAME to session '{}': {}. Connection was closed.",
-            session_name, e
-        );
+        panic!("Failed to send NAME to session '{session_name}': {e}. Connection was closed.");
     }
 
     // Read NAME response
@@ -268,28 +248,20 @@ pub async fn session_connected_to_backend(
             if let Some(backend_name) = response.strip_prefix("NAME:") {
                 if backend_name != expected_backend {
                     panic!(
-                        "Session '{}' is connected to backend '{}', expected '{}'",
-                        session_name, backend_name, expected_backend
+                        "Session '{session_name}' is connected to backend '{backend_name}', expected '{expected_backend}'"
                     );
                 }
                 // Backend matches
             } else {
-                panic!(
-                    "Invalid NAME response from session '{}': {}",
-                    session_name, response
-                );
+                panic!("Invalid NAME response from session '{session_name}': {response}");
             }
         }
         Ok(_) => {
-            panic!(
-                "Session '{}' was closed (read returned 0 bytes)",
-                session_name
-            );
+            panic!("Session '{session_name}' was closed (read returned 0 bytes)");
         }
         Err(e) => {
             panic!(
-                "Failed to read NAME from session '{}': {}. Connection was closed.",
-                session_name, e
+                "Failed to read NAME from session '{session_name}': {e}. Connection was closed."
             );
         }
     }

@@ -216,7 +216,7 @@ pub async fn handle_config_changes(
                         };
 
                         if should_add {
-                            let full_name = format!("{}:{}", name, port_name);
+                            let full_name = format!("{name}:{port_name}");
                             match Port::new(full_name.clone(), new_config) {
                                 Ok(port) => {
                                     let port = Arc::new(port);

@@ -456,9 +456,9 @@ pub enum PortError {
 impl std::fmt::Display for PortError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PortError::InvalidListenAddress(e) => write!(f, "Invalid listen address: {}", e),
-            PortError::InvalidRole(r) => write!(f, "Invalid role: {}", r),
-            PortError::BindFailed(e) => write!(f, "Failed to bind: {}", e),
+            PortError::InvalidListenAddress(e) => write!(f, "Invalid listen address: {e}"),
+            PortError::InvalidRole(r) => write!(f, "Invalid role: {r}"),
+            PortError::BindFailed(e) => write!(f, "Failed to bind: {e}"),
         }
     }
 }
@@ -485,7 +485,7 @@ mod tests {
             name: name.to_string(),
             role: role.to_string(),
             state: state.to_string(),
-            api_url: format!("http://{}:8008/patroni", host),
+            api_url: format!("http://{host}:8008/patroni"),
             host: host.to_string(),
             port: 5432,
             timeline: json!(1),
@@ -703,7 +703,7 @@ mod tests {
         drop(temp_listener); // Release the port
 
         let config = PortConfig {
-            listen: format!("127.0.0.1:{}", listen_port),
+            listen: format!("127.0.0.1:{listen_port}"),
             roles: vec!["any".to_string()],
             host_port: backend_addr.port(),
             max_lag_in_bytes: None,
@@ -812,7 +812,7 @@ mod tests {
         drop(temp_listener);
 
         let config = PortConfig {
-            listen: format!("127.0.0.1:{}", listen_port),
+            listen: format!("127.0.0.1:{listen_port}"),
             roles: vec!["any".to_string()],
             host_port: backend1_addr.port(), // Will be overridden by member host
             max_lag_in_bytes: None,

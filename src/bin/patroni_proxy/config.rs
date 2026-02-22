@@ -106,24 +106,22 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::IoError(e) => write!(f, "IO error: {}", e),
-            ConfigError::ParseError(e) => write!(f, "Parse error: {}", e),
+            ConfigError::IoError(e) => write!(f, "IO error: {e}"),
+            ConfigError::ParseError(e) => write!(f, "Parse error: {e}"),
             ConfigError::InvalidRole(r) => write!(
                 f,
-                "Invalid role '{}'. Allowed roles: leader, sync, async, any",
-                r
+                "Invalid role '{r}'. Allowed roles: leader, sync, async, any"
             ),
             ConfigError::InvalidHost(h) => write!(
                 f,
-                "Invalid host '{}'. Only http:// and https:// schemes are allowed",
-                h
+                "Invalid host '{h}'. Only http:// and https:// schemes are allowed"
             ),
-            ConfigError::DuplicateHost(h) => write!(f, "Duplicate host: {}", h),
-            ConfigError::DuplicateListen(l) => write!(f, "Duplicate listen address: {}", l),
-            ConfigError::EmptyHosts(c) => write!(f, "Cluster '{}' has no hosts defined", c),
-            ConfigError::EmptyRoles(p) => write!(f, "Port '{}' has no roles defined", p),
-            ConfigError::EmptyPorts(c) => write!(f, "Cluster '{}' has no ports defined", c),
-            ConfigError::InvalidListenAddress(a) => write!(f, "Invalid listen address: {}", a),
+            ConfigError::DuplicateHost(h) => write!(f, "Duplicate host: {h}"),
+            ConfigError::DuplicateListen(l) => write!(f, "Duplicate listen address: {l}"),
+            ConfigError::EmptyHosts(c) => write!(f, "Cluster '{c}' has no hosts defined"),
+            ConfigError::EmptyRoles(p) => write!(f, "Port '{p}' has no roles defined"),
+            ConfigError::EmptyPorts(c) => write!(f, "Cluster '{c}' has no ports defined"),
+            ConfigError::InvalidListenAddress(a) => write!(f, "Invalid listen address: {a}"),
         }
     }
 }

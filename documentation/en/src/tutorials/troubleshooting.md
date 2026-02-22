@@ -10,36 +10,37 @@ This guide helps you resolve common issues when using PgDoorman.
 
 **Solution:** Set `server_username` and `server_password` in your user configuration to the actual PostgreSQL credentials:
 
-=== "YAML"
+### YAML
 
-    ```yaml
-    pools:
-      mydb:
-        server_host: "127.0.0.1"
-        server_port: 5432
-        users:
-          - username: "app_user"
-            password: "md5..."                # MD5/SCRAM hash for client auth
-            server_username: "app_user"       # real PostgreSQL username
-            server_password: "plaintext_pwd"  # real PostgreSQL password
-            pool_size: 40
-    ```
+```yaml
+pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    users:
+      - username: "app_user"
+        password: "md5..."                # MD5/SCRAM hash for client auth
+        server_username: "app_user"       # real PostgreSQL username
+        server_password: "plaintext_pwd"  # real PostgreSQL password
+        pool_size: 40
+```
 
-=== "TOML"
+### TOML
 
-    ```toml
-    [pools.mydb.users.0]
-    username = "app_user"
-    password = "md5..."                # MD5/SCRAM hash for client auth
-    server_username = "app_user"       # real PostgreSQL username
-    server_password = "plaintext_pwd"  # real PostgreSQL password
-    pool_size = 40
-    ```
+```toml
+[pools.mydb.users.0]
+username = "app_user"
+password = "md5..."                # MD5/SCRAM hash for client auth
+server_username = "app_user"       # real PostgreSQL username
+server_password = "plaintext_pwd"  # real PostgreSQL password
+pool_size = 40
+```
 
-!!! tip "How to get the password hash"
-    You can get user password hashes from PostgreSQL using: `SELECT usename, passwd FROM pg_shadow;`
+```admonish tip title="How to get the password hash"
+You can get user password hashes from PostgreSQL using: `SELECT usename, passwd FROM pg_shadow;`
 
-    Or use the `pg_doorman generate` command which automatically retrieves them.
+Or use the `pg_doorman generate` command which automatically retrieves them.
+```
 
 ## Configuration File Not Found
 
@@ -61,5 +62,6 @@ By default, PgDoorman looks for `pg_doorman.toml` in the current directory.
 
 ---
 
-!!! tip "Still having issues?"
-    If you encounter a problem not listed here, please [open an issue on GitHub](https://github.com/ozontech/pg_doorman/issues).
+```admonish tip title="Still having issues?"
+If you encounter a problem not listed here, please [open an issue on GitHub](https://github.com/ozontech/pg_doorman/issues).
+```

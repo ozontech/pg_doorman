@@ -492,18 +492,12 @@ impl ServerPool {
             if let Some(recycled) = metrics.recycled {
                 let idle_time_ms = recycled.elapsed().as_millis() as u64;
                 if idle_time_ms > self.idle_check_timeout_ms {
-                    debug!(
-                        "Connection {} idle for {}ms, checking alive...",
-                        conn, idle_time_ms
-                    );
+                    debug!("Connection {conn} idle for {idle_time_ms}ms, checking alive...");
                     if conn.check_alive(self.connect_timeout).await.is_err() {
-                        warn!(
-                            "Connection {} failed alive check after {}ms idle",
-                            conn, idle_time_ms
-                        );
+                        warn!("Connection {conn} failed alive check after {idle_time_ms}ms idle");
                         return Err(RecycleError::StaticMessage("Connection failed alive check"));
                     }
-                    debug!("Connection {} passed alive check", conn);
+                    debug!("Connection {conn} passed alive check");
                 }
             }
         }

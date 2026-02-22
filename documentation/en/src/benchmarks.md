@@ -1,7 +1,3 @@
----
-title: Benchmarks
----
-
 # Performance Benchmarks
 
 ## Automated Benchmark Results

@@ -227,7 +227,7 @@ Key features of the `generate` command:
 
 PgDoorman supports PostgreSQL-style `pg_hba.conf` rules via the `general.pg_hba` parameter in `pg_doorman.toml`.
 You can provide rules inline, or via `{ path = "..." }` to a file. See the full reference with examples in
-`documentation/docs/reference/general.md` (section "pg_hba").
+`documentation/en/src/reference/general.md` (section "pg_hba").
 
 Trust behavior: when a matching rule uses `trust`, PgDoorman accepts the connection without asking the client
 for a password, even if the user has an MD5 or SCRAM password configured. TLS constraints from the rule are honored

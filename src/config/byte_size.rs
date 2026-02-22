@@ -197,15 +197,14 @@ fn parse_byte_size(s: &str) -> Result<ByteSize, String> {
         (&s[..s.len() - 1], 1u64)
     } else {
         return Err(format!(
-            "invalid byte size format: '{}'. Expected a number or a string with suffix (B, K, KB, M, MB, G, GB)",
-            s
+            "invalid byte size format: '{s}'. Expected a number or a string with suffix (B, K, KB, M, MB, G, GB)"
         ));
     };
 
     let num: u64 = num_str
         .trim()
         .parse()
-        .map_err(|_| format!("invalid number in byte size: '{}'", num_str))?;
+        .map_err(|_| format!("invalid number in byte size: '{num_str}'"))?;
 
     Ok(ByteSize(num * multiplier))
 }

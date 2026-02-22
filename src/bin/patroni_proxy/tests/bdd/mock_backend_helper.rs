@@ -24,7 +24,7 @@ impl MockBackend {
     pub fn start(name: String) -> Self {
         let port = allocate_port();
         let listener =
-            TcpListener::bind(format!("127.0.0.1:{}", port)).expect("Failed to bind mock backend");
+            TcpListener::bind(format!("127.0.0.1:{port}")).expect("Failed to bind mock backend");
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = Arc::clone(&shutdown);
@@ -42,8 +42,7 @@ impl MockBackend {
                 match listener.accept() {
                     Ok((stream, addr)) => {
                         eprintln!(
-                            "[MockBackend:{}:{}] Accepted connection from {}",
-                            name_clone, port, addr
+                            "[MockBackend:{name_clone}:{port}] Accepted connection from {addr}"
                         );
                         stream
                             .set_nonblocking(true)
@@ -57,7 +56,7 @@ impl MockBackend {
                         // No new connections
                     }
                     Err(e) => {
-                        eprintln!("[MockBackend:{}] Accept error: {}", name_clone, e);
+                        eprintln!("[MockBackend:{name_clone}] Accept error: {e}");
                     }
                 }
 
@@ -69,8 +68,7 @@ impl MockBackend {
                         Ok(0) => {
                             // Connection closed by client
                             eprintln!(
-                                "[MockBackend:{}:{}] Client disconnected (read 0 bytes)",
-                                name_clone, port
+                                "[MockBackend:{name_clone}:{port}] Client disconnected (read 0 bytes)"
                             );
                             false
                         }
@@ -86,19 +84,17 @@ impl MockBackend {
 
                             // Handle PING command
                             if request.contains("PING") {
-                                eprintln!("[MockBackend:{}:{}] Sending PONG", name_clone, port);
+                                eprintln!("[MockBackend:{name_clone}:{port}] Sending PONG");
                                 match stream.write_all(b"PONG\n") {
                                     Ok(_) => {
                                         let _ = stream.flush();
                                         eprintln!(
-                                            "[MockBackend:{}:{}] PONG sent successfully",
-                                            name_clone, port
+                                            "[MockBackend:{name_clone}:{port}] PONG sent successfully"
                                         );
                                     }
                                     Err(e) => {
                                         eprintln!(
-                                            "[MockBackend:{}:{}] Failed to send PONG: {}",
-                                            name_clone, port, e
+                                            "[MockBackend:{name_clone}:{port}] Failed to send PONG: {e}"
                                         );
                                         return false;
                                     }
@@ -107,7 +103,7 @@ impl MockBackend {
 
                             // Handle NAME command - returns server name for identification
                             if request.contains("NAME") {
-                                let response = format!("NAME:{}\n", name_clone);
+                                let response = format!("NAME:{name_clone}\n");
                                 eprintln!(
                                     "[MockBackend:{}:{}] Sending NAME response: {}",
                                     name_clone,
@@ -118,14 +114,12 @@ impl MockBackend {
                                     Ok(_) => {
                                         let _ = stream.flush();
                                         eprintln!(
-                                            "[MockBackend:{}:{}] NAME sent successfully",
-                                            name_clone, port
+                                            "[MockBackend:{name_clone}:{port}] NAME sent successfully"
                                         );
                                     }
                                     Err(e) => {
                                         eprintln!(
-                                            "[MockBackend:{}:{}] Failed to send NAME: {}",
-                                            name_clone, port, e
+                                            "[MockBackend:{name_clone}:{port}] Failed to send NAME: {e}"
                                         );
                                         return false;
                                     }
@@ -142,8 +136,7 @@ impl MockBackend {
                         Err(e) => {
                             // Connection error
                             eprintln!(
-                                "[MockBackend:{}:{}] Client connection error: {}",
-                                name_clone, port, e
+                                "[MockBackend:{name_clone}:{port}] Client connection error: {e}"
                             );
                             false
                         }
@@ -152,8 +145,7 @@ impl MockBackend {
                 let final_count = clients.len();
                 if initial_count != final_count {
                     eprintln!(
-                        "[MockBackend:{}:{}] Active connections: {} -> {}",
-                        name_clone, port, initial_count, final_count
+                        "[MockBackend:{name_clone}:{port}] Active connections: {initial_count} -> {final_count}"
                     );
                 }
 

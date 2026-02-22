@@ -42,13 +42,13 @@ impl PgConnection {
     pub async fn read_message(&mut self) -> tokio::io::Result<(char, Vec<u8>)> {
         let mut header = [0u8; 5];
         if let Err(e) = self.stream.read_exact(&mut header).await {
-            eprintln!("Failed to read message header: {}", e);
+            eprintln!("Failed to read message header: {e}");
             return Err(e);
         }
         let msg_type = header[0] as char;
         let len = i32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
         if len < 4 {
-            panic!("Invalid message length: {}", len);
+            panic!("Invalid message length: {len}");
         }
         let mut data = vec![0u8; len - 4];
         self.stream.read_exact(&mut data).await?;
@@ -76,7 +76,7 @@ impl PgConnection {
                             let hash = self.compute_md5_hash(user, password, salt);
                             self.send_password(&hash).await?;
                         }
-                        _ => panic!("Unsupported auth type: {}", auth_type),
+                        _ => panic!("Unsupported auth type: {auth_type}"),
                     }
                 }
                 'S' => continue, // ParameterStatus
@@ -100,7 +100,7 @@ impl PgConnection {
                     panic!("Error during auth: {:?}", String::from_utf8_lossy(&data));
                 }
                 _ => {
-                    println!("Received message during auth: {} {:?}", msg_type, data);
+                    println!("Received message during auth: {msg_type} {data:?}");
                 }
             }
         }
@@ -127,13 +127,13 @@ impl PgConnection {
         hasher.update(password.as_bytes());
         hasher.update(user.as_bytes());
         let res1 = hasher.finalize();
-        let hex1 = format!("{:x}", res1);
+        let hex1 = format!("{res1:x}");
 
         let mut hasher = md5::Md5::new();
         hasher.update(hex1.as_bytes());
         hasher.update(salt);
         let res2 = hasher.finalize();
-        format!("md5{:x}", res2)
+        format!("md5{res2:x}")
     }
 
     pub async fn send_simple_query(&mut self, query: &str) -> tokio::io::Result<()> {

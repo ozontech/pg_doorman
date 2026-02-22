@@ -42,7 +42,7 @@ pub async fn wait_for_tcp_ready(
     for _ in 0..max_attempts {
         match child.try_wait() {
             Ok(Some(status)) => {
-                return Err(format!("{} exited with status: {:?}", service_name, status));
+                return Err(format!("{service_name} exited with status: {status:?}"));
             }
             Ok(None) => {
                 // Process still running, try to connect
@@ -51,15 +51,14 @@ pub async fn wait_for_tcp_ready(
                 }
             }
             Err(e) => {
-                return Err(format!("Error checking {} process: {}", service_name, e));
+                return Err(format!("Error checking {service_name} process: {e}"));
             }
         }
         sleep(Duration::from_millis(interval_ms)).await;
     }
 
     Err(format!(
-        "{} failed to start on port {} (timeout after {} attempts)",
-        service_name, port, max_attempts
+        "{service_name} failed to start on port {port} (timeout after {max_attempts} attempts)"
     ))
 }
 

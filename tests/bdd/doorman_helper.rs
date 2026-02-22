@@ -146,18 +146,17 @@ pub(crate) async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
                 }
 
                 panic!(
-                    "pg_doorman exited with status: {:?}\n\n=== stdout ===\n{}\n=== stderr ===\n{}",
-                    status, stdout_output, stderr_output
+                    "pg_doorman exited with status: {status:?}\n\n=== stdout ===\n{stdout_output}\n=== stderr ===\n{stderr_output}"
                 );
             }
             Ok(None) => {
-                if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+                if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
                     success = true;
                     break;
                 }
             }
             Err(e) => {
-                panic!("Error checking pg_doorman process: {:?}", e);
+                panic!("Error checking pg_doorman process: {e:?}");
             }
         }
         sleep(Duration::from_millis(250)).await;
@@ -179,8 +178,7 @@ pub(crate) async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
         let _ = child.wait();
 
         panic!(
-            "pg_doorman failed to start on port {} (timeout 5s)\n\n=== stdout ===\n{}\n=== stderr ===\n{}",
-            port, stdout_output, stderr_output
+            "pg_doorman failed to start on port {port} (timeout 5s)\n\n=== stdout ===\n{stdout_output}\n=== stderr ===\n{stderr_output}"
         );
     }
 }
@@ -193,7 +191,6 @@ pub fn stop_doorman(child: &mut Child) {
             // Process already exited, just clean up pipes
             drop(child.stdout.take());
             drop(child.stderr.take());
-            return;
         }
         Ok(None) => {
             // Process still running, stop it
@@ -300,16 +297,13 @@ fn extract_daemon_pid_file(config: &str) -> Option<String> {
 /// Helper function to wait for daemon port to be ready
 async fn wait_for_daemon_port_ready(port: u16) {
     for _ in 0..20 {
-        if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
             return;
         }
         sleep(Duration::from_millis(250)).await;
     }
 
-    panic!(
-        "pg_doorman daemon failed to listen on port {} (timeout 5s)",
-        port
-    );
+    panic!("pg_doorman daemon failed to listen on port {port} (timeout 5s)");
 }
 
 /// Check if PID file contains correct daemon PID
@@ -323,8 +317,7 @@ pub async fn verify_pid_file(_world: &mut DoormanWorld, pid_path: String) {
 
     assert!(
         is_process_running(pid),
-        "PID {} in file should be a running process",
-        pid
+        "PID {pid} in file should be a running process"
     );
 }
 
@@ -373,14 +366,12 @@ pub async fn verify_pid_changed(_world: &mut DoormanWorld, pid_path: String, nam
 
     assert_ne!(
         current_pid, *old_pid,
-        "PID should have changed after graceful reload (old: {}, current: {})",
-        old_pid, current_pid
+        "PID should have changed after graceful reload (old: {old_pid}, current: {current_pid})"
     );
 
     assert!(
         is_process_running(current_pid as u32),
-        "New PID {} should be a running process",
-        current_pid
+        "New PID {current_pid} should be a running process"
     );
 }
 
@@ -389,8 +380,7 @@ pub async fn verify_pid_changed(_world: &mut DoormanWorld, pid_path: String, nam
 pub async fn verify_session_connected(world: &mut DoormanWorld, session_name: String) {
     assert!(
         world.named_sessions.contains_key(&session_name),
-        "Session '{}' should exist and be connected",
-        session_name
+        "Session '{session_name}' should exist and be connected"
     );
 }
 
@@ -408,19 +398,18 @@ pub async fn verify_stored_pids_different(
         .iter()
         .find(|((_, name), _)| name == &pid1_name)
         .map(|(_, pid)| *pid)
-        .unwrap_or_else(|| panic!("Stored PID '{}' not found in named_backend_pids", pid1_name));
+        .unwrap_or_else(|| panic!("Stored PID '{pid1_name}' not found in named_backend_pids"));
 
     let pid2 = world
         .named_backend_pids
         .iter()
         .find(|((_, name), _)| name == &pid2_name)
         .map(|(_, pid)| *pid)
-        .unwrap_or_else(|| panic!("Stored PID '{}' not found in named_backend_pids", pid2_name));
+        .unwrap_or_else(|| panic!("Stored PID '{pid2_name}' not found in named_backend_pids"));
 
     assert_ne!(
         pid1, pid2,
-        "PIDs should be different: '{}' = {}, '{}' = {}",
-        pid1_name, pid1, pid2_name, pid2
+        "PIDs should be different: '{pid1_name}' = {pid1}, '{pid2_name}' = {pid2}"
     );
 }
 
@@ -462,16 +451,13 @@ pub async fn wait_for_foreground_binary_upgrade(world: &mut DoormanWorld) {
 
     // Verify the port is still accessible (new process is listening)
     for _ in 0..20 {
-        if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
             return;
         }
         sleep(Duration::from_millis(250)).await;
     }
 
-    panic!(
-        "pg_doorman failed to complete binary upgrade on port {} (timeout 5s)",
-        port
-    );
+    panic!("pg_doorman failed to complete binary upgrade on port {port} (timeout 5s)");
 }
 
 /// Verify that foreground pg_doorman PID has changed after binary upgrade
@@ -493,9 +479,8 @@ pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: Strin
 
     // Check if port is still accessible
     assert!(
-        std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok(),
-        "New pg_doorman should be listening on port {}",
-        port
+        std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok(),
+        "New pg_doorman should be listening on port {port}"
     );
 
     // The old process should eventually exit after graceful shutdown
@@ -507,8 +492,7 @@ pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: Strin
     // The key verification is that the service remains available after SIGINT
 
     println!(
-        "Binary upgrade completed: old PID was {}, service still available on port {}",
-        old_pid, port
+        "Binary upgrade completed: old PID was {old_pid}, service still available on port {port}"
     );
 }
 
@@ -522,8 +506,7 @@ pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: St
 
     assert!(
         !is_process_running(*pid as u32),
-        "Process with PID {} should not exist, but it is still running",
-        pid
+        "Process with PID {pid} should not exist, but it is still running"
     );
 }
 
@@ -556,8 +539,7 @@ pub async fn verify_foreground_pid_same(world: &mut DoormanWorld, name: String) 
         let current_pid = child.id() as i32;
         assert_eq!(
             *stored_pid, current_pid,
-            "PID should be same: stored '{}' = {}, current = {}",
-            name, stored_pid, current_pid
+            "PID should be same: stored '{name}' = {stored_pid}, current = {current_pid}"
         );
     } else {
         panic!("pg_doorman process not running");
