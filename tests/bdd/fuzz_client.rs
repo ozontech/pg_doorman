@@ -138,7 +138,7 @@ impl FuzzClient {
         let stmt_name = b"test_stmt\0";
         let query = b"SELECT 1\0";
         let parse_len = 4 + stmt_name.len() + query.len() + 2; // +2 for param count (i16)
-        stream.write_all(b"P").await?;
+        stream.write_all(&[b'P']).await?;
         stream.write_all(&(parse_len as i32).to_be_bytes()).await?;
         stream.write_all(stmt_name).await?;
         stream.write_all(query).await?;
@@ -147,7 +147,7 @@ impl FuzzClient {
         // Skip Bind, go directly to Execute - protocol violation!
         let portal = b"\0"; // unnamed portal
         let execute_len = 4 + portal.len() + 4; // +4 for max_rows
-        stream.write_all(b"E").await?;
+        stream.write_all(&[b'E']).await?;
         stream
             .write_all(&(execute_len as i32).to_be_bytes())
             .await?;
@@ -169,7 +169,7 @@ impl FuzzClient {
         let portal = b"\0"; // unnamed portal
         let stmt_name = b"nonexistent_statement\0";
         let bind_len = 4 + portal.len() + stmt_name.len() + 2 + 2 + 2; // format codes + params + result formats
-        stream.write_all(b"B").await?;
+        stream.write_all(&[b'B']).await?;
         stream.write_all(&(bind_len as i32).to_be_bytes()).await?;
         stream.write_all(portal).await?;
         stream.write_all(stmt_name).await?;

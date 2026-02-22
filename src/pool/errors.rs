@@ -26,15 +26,18 @@ impl fmt::Display for RecycleError {
         match self {
             Self::Message(msg) => write!(
                 f,
-                "Error occurred while cleanup postgresql connection (postgresql_cleanup_error): {msg}"
+                "Error occurred while cleanup postgresql connection (postgresql_cleanup_error): {}",
+                msg
             ),
             Self::StaticMessage(msg) => write!(
                 f,
-                "Error occurred while cleanup postgresql connection (postgresql_cleanup_error): {msg}"
+                "Error occurred while cleanup postgresql connection (postgresql_cleanup_error): {}",
+                msg
             ),
             Self::Backend(e) => write!(
                 f,
-                "Error occurred while cleanup postgresql connection (postgresql_cleanup_error): {e}"
+                "Error occurred while cleanup postgresql connection (postgresql_cleanup_error): {}",
+                e
             ),
         }
     }
@@ -96,7 +99,8 @@ impl fmt::Display for PoolError {
             },
             Self::Backend(e) => write!(
                 f,
-                "Error occurred while creating a new connection to postgresql (postgresql_login_error): {e}"
+                "Error occurred while creating a new connection to postgresql (postgresql_login_error): {}",
+                e
             ),
             Self::Closed => write!(f, "Pool has been closed"),
         }

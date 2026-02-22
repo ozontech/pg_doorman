@@ -91,7 +91,7 @@ where
 {
     let mut res = BytesMut::new();
     res.put(row_description(&vec![("version", DataType::Text)]));
-    res.put(data_row(&[format!("PgDoorman {VERSION}")]));
+    res.put(data_row(&[format!("PgDoorman {}", VERSION)]));
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
     res.put_i32(5);

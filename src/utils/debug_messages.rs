@@ -393,7 +393,8 @@ pub fn log_client_to_server(client_addr: &str, server_pid: i32, buffer: &[u8]) {
         if state.has_pending() {
             let pending = state.pending_summary();
             warn!(
-                "PROTOCOL WARNING {client_addr} -> Server [{server_pid}]: Server has pending operations from previous client: {pending} (new request: {message_types})"
+                "PROTOCOL WARNING {} -> Server [{}]: Server has pending operations from previous client: {} (new request: {})",
+                client_addr, server_pid, pending, message_types
             );
         }
 
@@ -446,7 +447,8 @@ pub fn log_server_to_client(client_addr: &str, server_pid: i32, buffer: &[u8]) {
     // Log violations as warnings
     for violation in &violations {
         warn!(
-            "PROTOCOL VIOLATION {client_addr} <-> Server [{server_pid}]: {violation} (pending: {pending_before})"
+            "PROTOCOL VIOLATION {} <-> Server [{}]: {} (pending: {})",
+            client_addr, server_pid, violation, pending_before
         );
     }
 
@@ -634,7 +636,7 @@ fn format_grouped_messages(messages: &[(char, Option<String>)]) -> String {
         first = false;
 
         if count > 1 {
-            result.push_str(&format!("{count}x"));
+            result.push_str(&format!("{}x", count));
         }
 
         result.push(*msg_type);
@@ -718,7 +720,7 @@ mod tests {
 
         // Execute: E + len + portal + max_rows
         buf.push(b'E');
-        let e_len: i32 = 4 + 1 + 4; // len + empty portal + max_rows
+        let e_len = (4 + 1 + 4) as i32; // len + empty portal + max_rows
         buf.extend_from_slice(&e_len.to_be_bytes());
         buf.push(0); // empty portal
         buf.extend_from_slice(&0i32.to_be_bytes()); // max_rows = 0

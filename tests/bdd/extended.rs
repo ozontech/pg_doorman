@@ -11,7 +11,7 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
             // Authentication request
             if data.len() >= 4 {
                 let auth_type = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                details.push_str(&format!(" [AuthenticationRequest type={auth_type}]"));
+                details.push_str(&format!(" [AuthenticationRequest type={}]", auth_type));
             }
         }
         'S' => {
@@ -24,7 +24,7 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
                         .next()
                         .unwrap_or(&[]),
                 );
-                details.push_str(&format!(" [ParameterStatus {name}={value}]"));
+                details.push_str(&format!(" [ParameterStatus {}={}]", name, value));
             }
         }
         'K' => {
@@ -32,7 +32,7 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
             if data.len() >= 8 {
                 let pid = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
                 let key = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                details.push_str(&format!(" [BackendKeyData pid={pid} key={key}]"));
+                details.push_str(&format!(" [BackendKeyData pid={} key={}]", pid, key));
             }
         }
         'Z' => {
@@ -44,28 +44,28 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
                     b'E' => "FailedTransaction",
                     _ => "Unknown",
                 };
-                details.push_str(&format!(" [ReadyForQuery status={status}]"));
+                details.push_str(&format!(" [ReadyForQuery status={}]", status));
             }
         }
         'T' => {
             // RowDescription
             if data.len() >= 2 {
                 let field_count = i16::from_be_bytes([data[0], data[1]]);
-                details.push_str(&format!(" [RowDescription fields={field_count}]"));
+                details.push_str(&format!(" [RowDescription fields={}]", field_count));
             }
         }
         'D' => {
             // DataRow
             if data.len() >= 2 {
                 let field_count = i16::from_be_bytes([data[0], data[1]]);
-                details.push_str(&format!(" [DataRow fields={field_count}]"));
+                details.push_str(&format!(" [DataRow fields={}]", field_count));
             }
         }
         'C' => {
             // CommandComplete: tag\0
             if let Some(null_pos) = data.iter().position(|&b| b == 0) {
                 let tag = String::from_utf8_lossy(&data[..null_pos]);
-                details.push_str(&format!(" [CommandComplete tag='{tag}']"));
+                details.push_str(&format!(" [CommandComplete tag='{}']", tag));
             }
         }
         'E' => {
@@ -81,9 +81,9 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
                 if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
                     let value = String::from_utf8_lossy(&data[pos..pos + null_pos]);
                     match field_type {
-                        'S' => details.push_str(&format!(" severity={value}")),
-                        'C' => details.push_str(&format!(" code={value}")),
-                        'M' => details.push_str(&format!(" message={value}")),
+                        'S' => details.push_str(&format!(" severity={}", value)),
+                        'C' => details.push_str(&format!(" code={}", value)),
+                        'M' => details.push_str(&format!(" message={}", value)),
                         _ => {}
                     }
                     pos += null_pos + 1;
@@ -106,9 +106,9 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
                 if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
                     let value = String::from_utf8_lossy(&data[pos..pos + null_pos]);
                     match field_type {
-                        'S' => details.push_str(&format!(" severity={value}")),
-                        'C' => details.push_str(&format!(" code={value}")),
-                        'M' => details.push_str(&format!(" message={value}")),
+                        'S' => details.push_str(&format!(" severity={}", value)),
+                        'C' => details.push_str(&format!(" code={}", value)),
+                        'M' => details.push_str(&format!(" message={}", value)),
                         _ => {}
                     }
                     pos += null_pos + 1;
@@ -130,7 +130,7 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
             // ParameterDescription
             if data.len() >= 2 {
                 let param_count = i16::from_be_bytes([data[0], data[1]]);
-                details.push_str(&format!(" [ParameterDescription params={param_count}]"));
+                details.push_str(&format!(" [ParameterDescription params={}]", param_count));
             }
         }
         'n' => {
@@ -146,7 +146,7 @@ fn format_message_details(msg_type: char, data: &[u8]) -> String {
             let preview_len = data.len().min(32);
             let hex_preview: String = data[..preview_len]
                 .iter()
-                .map(|b| format!("{b:02x}"))
+                .map(|b| format!("{:02x}", b))
                 .collect::<Vec<_>>()
                 .join(" ");
             details.push_str(&format!(
@@ -220,8 +220,8 @@ pub async fn login_to_both(
     let pg_port = world.pg_port.expect("PostgreSQL not started");
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
 
-    let pg_addr = format!("127.0.0.1:{pg_port}");
-    let doorman_addr = format!("127.0.0.1:{doorman_port}");
+    let pg_addr = format!("127.0.0.1:{}", pg_port);
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
     // Connect to PostgreSQL
     let mut pg_conn = PgConnection::connect(&pg_addr)
@@ -288,8 +288,8 @@ pub async fn reconnect_to_both(world: &mut DoormanWorld) {
     let pg_port = world.pg_port.expect("PostgreSQL not started");
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
 
-    let pg_addr = format!("127.0.0.1:{pg_port}");
-    let doorman_addr = format!("127.0.0.1:{doorman_port}");
+    let pg_addr = format!("127.0.0.1:{}", pg_port);
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
     // Connect to PostgreSQL
     let mut pg_conn = PgConnection::connect(&pg_addr)
@@ -941,18 +941,21 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
 
         // Check message type
         if pg_type != doorman_type {
-            eprintln!("\n=== MESSAGE TYPE MISMATCH at position {i} ===");
+            eprintln!("\n=== MESSAGE TYPE MISMATCH at position {} ===", i);
             eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
             eprintln!(
                 "pg_doorman: {}",
                 format_message_details(*doorman_type, doorman_data)
             );
-            panic!("Message {i} type differs: PostgreSQL='{pg_type}', pg_doorman='{doorman_type}'");
+            panic!(
+                "Message {} type differs: PostgreSQL='{}', pg_doorman='{}'",
+                i, pg_type, doorman_type
+            );
         }
 
         // Check message length
         if pg_data.len() != doorman_data.len() {
-            eprintln!("\n=== MESSAGE LENGTH MISMATCH at position {i} ===");
+            eprintln!("\n=== MESSAGE LENGTH MISMATCH at position {} ===", i);
             eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
             eprintln!(
                 "pg_doorman: {}",
@@ -961,13 +964,13 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
 
             // Show hex diff for first 64 bytes
             let max_len = pg_data.len().max(doorman_data.len()).min(64);
-            eprintln!("\n--- Hex comparison (first {max_len} bytes) ---");
+            eprintln!("\n--- Hex comparison (first {} bytes) ---", max_len);
             eprintln!(
                 "PostgreSQL: {}",
                 pg_data
                     .iter()
                     .take(max_len)
-                    .map(|b| format!("{b:02x}"))
+                    .map(|b| format!("{:02x}", b))
                     .collect::<Vec<_>>()
                     .join(" ")
             );
@@ -976,7 +979,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
                 doorman_data
                     .iter()
                     .take(max_len)
-                    .map(|b| format!("{b:02x}"))
+                    .map(|b| format!("{:02x}", b))
                     .collect::<Vec<_>>()
                     .join(" ")
             );
@@ -1002,7 +1005,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         };
 
         if pg_data_normalized != doorman_data_normalized {
-            eprintln!("\n=== MESSAGE DATA MISMATCH at position {i} ===");
+            eprintln!("\n=== MESSAGE DATA MISMATCH at position {} ===", i);
             eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
             eprintln!(
                 "pg_doorman: {}",
@@ -1017,18 +1020,19 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
             {
                 if pg_byte != doorman_byte {
                     eprintln!(
-                        "\nFirst difference at byte {pos}: PostgreSQL=0x{pg_byte:02x} pg_doorman=0x{doorman_byte:02x}"
+                        "\nFirst difference at byte {}: PostgreSQL=0x{:02x} pg_doorman=0x{:02x}",
+                        pos, pg_byte, doorman_byte
                     );
 
                     // Show context around the difference
                     let start = pos.saturating_sub(8);
                     let end = (pos + 8).min(pg_data.len());
-                    eprintln!("Context (bytes {start}-{end}):");
+                    eprintln!("Context (bytes {}-{}):", start, end);
                     eprintln!(
                         "  PostgreSQL: {}",
                         pg_data[start..end]
                             .iter()
-                            .map(|b| format!("{b:02x}"))
+                            .map(|b| format!("{:02x}", b))
                             .collect::<Vec<_>>()
                             .join(" ")
                     );
@@ -1036,7 +1040,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
                         "  pg_doorman: {}",
                         doorman_data[start..end]
                             .iter()
-                            .map(|b| format!("{b:02x}"))
+                            .map(|b| format!("{:02x}", b))
                             .collect::<Vec<_>>()
                             .join(" ")
                     );
@@ -1044,7 +1048,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
                 }
             }
 
-            panic!("Message {i} data differs");
+            panic!("Message {} data differs", i);
         }
 
         println!(
@@ -1072,7 +1076,7 @@ pub async fn create_named_session(
     database: String,
 ) {
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
-    let doorman_addr = format!("127.0.0.1:{doorman_port}");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
     // Connect to pg_doorman
     let mut conn = PgConnection::connect(&doorman_addr)
@@ -1097,7 +1101,7 @@ pub async fn send_simple_query_to_session(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -1119,7 +1123,7 @@ pub async fn send_simple_query_and_store_backend_pid(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -1195,7 +1199,7 @@ pub async fn send_simple_query_and_store_named_backend_pid(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -1262,18 +1266,19 @@ pub async fn compare_backend_pids(world: &mut DoormanWorld, session1: String, se
     let pid1 = world
         .session_backend_pids
         .get(&session1)
-        .unwrap_or_else(|| panic!("Backend PID for session '{session1}' not found"));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session1));
     let pid2 = world
         .session_backend_pids
         .get(&session2)
-        .unwrap_or_else(|| panic!("Backend PID for session '{session2}' not found"));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session2));
 
-    println!("Session '{session1}' backend_pid: {pid1}");
-    println!("Session '{session2}' backend_pid: {pid2}");
+    println!("Session '{}' backend_pid: {}", session1, pid1);
+    println!("Session '{}' backend_pid: {}", session2, pid2);
 
     assert_eq!(
         pid1, pid2,
-        "Backend PIDs should be equal: session '{session1}'={pid1}, session '{session2}'={pid2}"
+        "Backend PIDs should be equal: session '{}'={}, session '{}'={}",
+        session1, pid1, session2, pid2
     );
 }
 
@@ -1288,18 +1293,19 @@ pub async fn compare_backend_pids_not_equal(
     let pid1 = world
         .session_backend_pids
         .get(&session1)
-        .unwrap_or_else(|| panic!("Backend PID for session '{session1}' not found"));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session1));
     let pid2 = world
         .session_backend_pids
         .get(&session2)
-        .unwrap_or_else(|| panic!("Backend PID for session '{session2}' not found"));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", session2));
 
-    println!("Session '{session1}' backend_pid: {pid1}");
-    println!("Session '{session2}' backend_pid: {pid2}");
+    println!("Session '{}' backend_pid: {}", session1, pid1);
+    println!("Session '{}' backend_pid: {}", session2, pid2);
 
     assert_ne!(
         pid1, pid2,
-        "Backend PIDs should NOT be equal: session '{session1}'={pid1}, session '{session2}'={pid2}"
+        "Backend PIDs should NOT be equal: session '{}'={}, session '{}'={}",
+        session1, pid1, session2, pid2
     );
 }
 
@@ -1316,21 +1322,34 @@ pub async fn compare_named_backend_pid_with_initial(
         .named_backend_pids
         .get(&(session_name.clone(), pid_name.clone()))
         .unwrap_or_else(|| {
-            panic!("Named backend PID '{pid_name}' for session '{session_name}' not found")
+            panic!(
+                "Named backend PID '{}' for session '{}' not found",
+                pid_name, session_name
+            )
         });
     let initial_pid = world
         .session_backend_pids
         .get(&initial_session_name)
         .unwrap_or_else(|| {
-            panic!("Initial backend PID for session '{initial_session_name}' not found")
+            panic!(
+                "Initial backend PID for session '{}' not found",
+                initial_session_name
+            )
         });
 
-    println!("Session '{session_name}' named backend_pid '{pid_name}': {named_pid}");
-    println!("Session '{initial_session_name}' initial backend_pid: {initial_pid}");
+    println!(
+        "Session '{}' named backend_pid '{}': {}",
+        session_name, pid_name, named_pid
+    );
+    println!(
+        "Session '{}' initial backend_pid: {}",
+        initial_session_name, initial_pid
+    );
 
     assert_eq!(
         named_pid, initial_pid,
-        "Named backend PID '{pid_name}' from session '{session_name}' ({named_pid}) should equal initial backend PID from session '{initial_session_name}' ({initial_pid})"
+        "Named backend PID '{}' from session '{}' ({}) should equal initial backend PID from session '{}' ({})",
+        pid_name, session_name, named_pid, initial_session_name, initial_pid
     );
 }
 
@@ -1347,21 +1366,34 @@ pub async fn compare_named_backend_pids_different(
         .named_backend_pids
         .get(&(session_name.clone(), pid_name1.clone()))
         .unwrap_or_else(|| {
-            panic!("Named backend PID '{pid_name1}' for session '{session_name}' not found")
+            panic!(
+                "Named backend PID '{}' for session '{}' not found",
+                pid_name1, session_name
+            )
         });
     let pid2 = world
         .named_backend_pids
         .get(&(session_name.clone(), pid_name2.clone()))
         .unwrap_or_else(|| {
-            panic!("Named backend PID '{pid_name2}' for session '{session_name}' not found")
+            panic!(
+                "Named backend PID '{}' for session '{}' not found",
+                pid_name2, session_name
+            )
         });
 
-    println!("Session '{session_name}' backend_pid '{pid_name1}': {pid1}");
-    println!("Session '{session_name}' backend_pid '{pid_name2}': {pid2}");
+    println!(
+        "Session '{}' backend_pid '{}': {}",
+        session_name, pid_name1, pid1
+    );
+    println!(
+        "Session '{}' backend_pid '{}': {}",
+        session_name, pid_name2, pid2
+    );
 
     assert_ne!(
         pid1, pid2,
-        "Backend PIDs should be different: '{pid_name1}' ({pid1}) vs '{pid_name2}' ({pid2})"
+        "Backend PIDs should be different: '{}' ({}) vs '{}' ({})",
+        pid_name1, pid1, pid_name2, pid2
     );
 }
 
@@ -1375,18 +1407,19 @@ pub async fn terminate_backend_of_session(
     let backend_pid = world
         .session_backend_pids
         .get(&target_session)
-        .unwrap_or_else(|| panic!("Backend PID for session '{target_session}' not found"));
+        .unwrap_or_else(|| panic!("Backend PID for session '{}' not found", target_session));
 
-    let terminate_query = format!("SELECT pg_terminate_backend({backend_pid})");
+    let terminate_query = format!("SELECT pg_terminate_backend({})", backend_pid);
     eprintln!(
-        "Terminating backend of session '{target_session}' (pid={backend_pid}) via session '{killer_session}'"
+        "Terminating backend of session '{}' (pid={}) via session '{}'",
+        target_session, backend_pid, killer_session
     );
 
     // Get killer session connection
     let conn = world
         .named_sessions
         .get_mut(&killer_session)
-        .unwrap_or_else(|| panic!("Session '{killer_session}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", killer_session));
 
     // Send terminate query
     conn.send_simple_query(&terminate_query)
@@ -1429,19 +1462,23 @@ pub async fn terminate_named_backend_via_session(
         .named_backend_pids
         .get(&(source_session.clone(), pid_name.clone()))
         .unwrap_or_else(|| {
-            panic!("Named backend PID '{pid_name}' from session '{source_session}' not found")
+            panic!(
+                "Named backend PID '{}' from session '{}' not found",
+                pid_name, source_session
+            )
         });
 
-    let terminate_query = format!("SELECT pg_terminate_backend({backend_pid})");
+    let terminate_query = format!("SELECT pg_terminate_backend({})", backend_pid);
     eprintln!(
-        "Terminating named backend '{pid_name}' from session '{source_session}' (pid={backend_pid}) via session '{killer_session}'"
+        "Terminating named backend '{}' from session '{}' (pid={}) via session '{}'",
+        pid_name, source_session, backend_pid, killer_session
     );
 
     // Get killer session connection
     let conn = world
         .named_sessions
         .get_mut(&killer_session)
-        .unwrap_or_else(|| panic!("Session '{killer_session}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", killer_session));
 
     // Send terminate query
     conn.send_simple_query(&terminate_query)
@@ -1485,7 +1522,7 @@ pub async fn send_parse_to_session(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_parse(&name, &query)
         .await
@@ -1508,7 +1545,7 @@ pub async fn send_bind_to_session(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Parse params - simple implementation for comma-separated values
     let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
@@ -1535,7 +1572,7 @@ pub async fn send_execute_to_session(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_execute(&portal, 0)
         .await
@@ -1548,7 +1585,7 @@ pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_sync().await.expect("Failed to send Sync");
 
@@ -1568,7 +1605,7 @@ pub async fn close_session(world: &mut DoormanWorld, session_name: String) {
     world
         .named_sessions
         .remove(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 }
 
 #[then(regex = r#"^session "([^"]+)" should receive DataRow with "([^"]+)"$"#)]
@@ -1581,7 +1618,7 @@ pub async fn session_should_receive_datarow(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No messages stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
     // Find DataRow in the messages
     let mut found_value: Option<String> = None;
@@ -1619,12 +1656,16 @@ pub async fn session_should_receive_datarow(
     }
 
     let actual_value = found_value.unwrap_or_else(|| {
-        panic!("No DataRow received from session '{session_name}', expected '{expected_value}'")
+        panic!(
+            "No DataRow received from session '{}', expected '{}'",
+            session_name, expected_value
+        )
     });
 
     assert_eq!(
         actual_value, expected_value,
-        "Session '{session_name}': expected '{expected_value}', got '{actual_value}'"
+        "Session '{}': expected '{}', got '{}'",
+        session_name, expected_value, actual_value
     );
 }
 
@@ -1638,7 +1679,7 @@ pub async fn remember_backend_pid_from_session(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No messages stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
     // Find DataRow and extract backend_pid
     let mut backend_pid: Option<i32> = None;
@@ -1680,7 +1721,7 @@ pub async fn remember_backend_pid_from_session(
     }
 
     let pid = backend_pid
-        .unwrap_or_else(|| panic!("No backend_pid received from session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
 
     world
         .named_backend_pids
@@ -1697,7 +1738,7 @@ pub async fn verify_backend_pid_different(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No messages stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
     // Find DataRow and extract current backend_pid
     let mut current_pid: Option<i32> = None;
@@ -1739,16 +1780,17 @@ pub async fn verify_backend_pid_different(
     }
 
     let current = current_pid
-        .unwrap_or_else(|| panic!("No backend_pid received from session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
 
     let stored = world
         .named_backend_pids
         .get(&(session_name.clone(), pid_name.clone()))
-        .unwrap_or_else(|| panic!("No stored backend_pid with name '{pid_name}'"));
+        .unwrap_or_else(|| panic!("No stored backend_pid with name '{}'", pid_name));
 
     assert_ne!(
         current, *stored,
-        "Backend PID should have changed but is still {current} (stored as '{pid_name}')"
+        "Backend PID should have changed but is still {} (stored as '{}')",
+        current, pid_name
     );
 }
 
@@ -1767,7 +1809,7 @@ pub async fn send_simple_query_to_session_without_waiting(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -1784,7 +1826,7 @@ pub async fn send_simple_query_to_session_expecting_error(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -1812,7 +1854,7 @@ pub async fn send_simple_query_to_session_expecting_error_after_ready(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -1840,7 +1882,7 @@ pub async fn send_simple_query_to_session_expecting_connection_close(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Try to send query - may fail if connection already closed
     if conn.send_simple_query(&query).await.is_err() {
@@ -1861,7 +1903,8 @@ pub async fn send_simple_query_to_session_expecting_connection_close(
                 return;
             }
             panic!(
-                "Expected connection close or error for session '{session_name}', but got successful response"
+                "Expected connection close or error for session '{}', but got successful response",
+                session_name
             );
         }
         Err(_) => {
@@ -1880,7 +1923,7 @@ pub async fn session_should_receive_error_containing(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No messages stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
     // Find ErrorResponse in the messages
     let mut found_error: Option<String> = None;
@@ -1895,7 +1938,8 @@ pub async fn session_should_receive_error_containing(
 
     let error_msg = found_error.unwrap_or_else(|| {
         panic!(
-            "No ErrorResponse received from session '{session_name}', expected error containing '{expected_text}'"
+            "No ErrorResponse received from session '{}', expected error containing '{}'",
+            session_name, expected_text
         )
     });
 
@@ -1903,7 +1947,10 @@ pub async fn session_should_receive_error_containing(
         error_msg
             .to_lowercase()
             .contains(&expected_text.to_lowercase()),
-        "Session '{session_name}': expected error containing '{expected_text}', got '{error_msg}'"
+        "Session '{}': expected error containing '{}', got '{}'",
+        session_name,
+        expected_text,
+        error_msg
     );
 }
 
@@ -1920,7 +1967,7 @@ pub async fn session_should_receive_error_containing_with_code(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No messages stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
     // Find ErrorResponse in the messages
     let mut found_error: Option<(String, String)> = None;
@@ -1956,7 +2003,8 @@ pub async fn session_should_receive_error_containing_with_code(
 
     let (error_msg, error_code) = found_error.unwrap_or_else(|| {
         panic!(
-            "No ErrorResponse received from session '{session_name}', expected error containing '{expected_text}' with code '{expected_code}'"
+            "No ErrorResponse received from session '{}', expected error containing '{}' with code '{}'",
+            session_name, expected_text, expected_code
         )
     });
 
@@ -1964,12 +2012,16 @@ pub async fn session_should_receive_error_containing_with_code(
         error_msg
             .to_lowercase()
             .contains(&expected_text.to_lowercase()),
-        "Session '{session_name}': expected error containing '{expected_text}', got '{error_msg}'"
+        "Session '{}': expected error containing '{}', got '{}'",
+        session_name,
+        expected_text,
+        error_msg
     );
 
     assert_eq!(
         error_code, expected_code,
-        "Session '{session_name}': expected error code '{expected_code}', got '{error_code}'"
+        "Session '{}': expected error code '{}', got '{}'",
+        session_name, expected_code, error_code
     );
 }
 
@@ -1984,7 +2036,7 @@ pub async fn create_named_session_to_postgres(
     database: String,
 ) {
     let pg_port = world.pg_port.expect("PostgreSQL not started");
-    let pg_addr = format!("127.0.0.1:{pg_port}");
+    let pg_addr = format!("127.0.0.1:{}", pg_port);
 
     // Connect to PostgreSQL directly
     let mut conn = PgConnection::connect(&pg_addr)
@@ -2012,7 +2064,7 @@ pub async fn send_copy_from_stdin_to_session_expecting_error(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Unescape the data string (handle \t and \n)
     let unescaped_data = data.replace("\\t", "\t").replace("\\n", "\n");
@@ -2068,7 +2120,7 @@ pub async fn create_admin_session(
     password: String,
 ) {
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
-    let doorman_addr = format!("127.0.0.1:{doorman_port}");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
     // Connect to pg_doorman admin console (database = pgbouncer)
     let mut conn = PgConnection::connect(&doorman_addr)
@@ -2093,7 +2145,7 @@ pub async fn execute_admin_query_and_store_row_count(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -2120,7 +2172,10 @@ pub async fn execute_admin_query_and_store_row_count(
                 break;
             }
             'E' => {
-                panic!("Error received from admin session '{session_name}': {_data:?}");
+                panic!(
+                    "Error received from admin session '{}': {:?}",
+                    session_name, _data
+                );
             }
             _ => {
                 // Other messages - skip
@@ -2131,7 +2186,7 @@ pub async fn execute_admin_query_and_store_row_count(
     // Store row count in session_backend_pids (reusing existing field for simplicity)
     world
         .session_backend_pids
-        .insert(format!("{session_name}_row_count"), row_count);
+        .insert(format!("{}_row_count", session_name), row_count);
 }
 
 #[then(regex = r#"^admin session "([^"]+)" row count should be (\d+)$"#)]
@@ -2140,15 +2195,16 @@ pub async fn verify_admin_row_count(
     session_name: String,
     expected_count: i32,
 ) {
-    let key = format!("{session_name}_row_count");
+    let key = format!("{}_row_count", session_name);
     let actual_count = world
         .session_backend_pids
         .get(&key)
-        .unwrap_or_else(|| panic!("No row count stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No row count stored for session '{}'", session_name));
 
     assert_eq!(
         *actual_count, expected_count,
-        "Admin session '{session_name}': expected {expected_count} rows, got {actual_count}"
+        "Admin session '{}': expected {} rows, got {}",
+        session_name, expected_count, actual_count
     );
 }
 
@@ -2157,7 +2213,7 @@ pub async fn abort_session_tcp_connection(world: &mut DoormanWorld, session_name
     let conn = world
         .named_sessions
         .remove(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Abruptly close the TCP connection
     conn.abort_connection().await;
@@ -2169,15 +2225,18 @@ pub async fn verify_admin_row_count_greater_than(
     session_name: String,
     min_count: i32,
 ) {
-    let key = format!("{session_name}_row_count");
+    let key = format!("{}_row_count", session_name);
     let actual_count = world
         .session_backend_pids
         .get(&key)
-        .unwrap_or_else(|| panic!("No row count stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No row count stored for session '{}'", session_name));
 
     assert!(
         *actual_count > min_count,
-        "Admin session '{session_name}': expected more than {min_count} rows, got {actual_count}"
+        "Admin session '{}': expected more than {} rows, got {}",
+        session_name,
+        min_count,
+        actual_count
     );
 }
 
@@ -2187,15 +2246,18 @@ pub async fn verify_admin_row_count_greater_or_equal(
     session_name: String,
     min_count: i32,
 ) {
-    let key = format!("{session_name}_row_count");
+    let key = format!("{}_row_count", session_name);
     let actual_count = world
         .session_backend_pids
         .get(&key)
-        .unwrap_or_else(|| panic!("No row count stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No row count stored for session '{}'", session_name));
 
     assert!(
         *actual_count >= min_count,
-        "Admin session '{session_name}': expected at least {min_count} rows, got {actual_count}"
+        "Admin session '{}': expected at least {} rows, got {}",
+        session_name,
+        min_count,
+        actual_count
     );
 }
 
@@ -2208,7 +2270,7 @@ pub async fn execute_admin_query_expecting_possible_error(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -2253,11 +2315,11 @@ pub async fn execute_admin_query_expecting_possible_error(
     // Store row count (will be 0 if error)
     world
         .session_backend_pids
-        .insert(format!("{session_name}_row_count"), row_count);
+        .insert(format!("{}_row_count", session_name), row_count);
 
     // Store error flag
     world.session_backend_pids.insert(
-        format!("{session_name}_got_error"),
+        format!("{}_got_error", session_name),
         if got_error { 1 } else { 0 },
     );
 }
@@ -2271,7 +2333,7 @@ pub async fn execute_admin_query_and_store_response(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -2400,7 +2462,7 @@ pub async fn verify_admin_response_contains(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No response stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
 
     let response_content = if let Some((_, data)) = messages.first() {
         String::from_utf8_lossy(data).to_string()
@@ -2412,7 +2474,10 @@ pub async fn verify_admin_response_contains(
         response_content
             .to_uppercase()
             .contains(&expected_text.to_uppercase()),
-        "Admin session '{session_name}': expected response to contain '{expected_text}', got '{response_content}'"
+        "Admin session '{}': expected response to contain '{}', got '{}'",
+        session_name,
+        expected_text,
+        response_content
     );
 }
 
@@ -2427,12 +2492,12 @@ pub async fn verify_admin_column_in_range(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No response stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
 
     let response_content = if let Some((_, data)) = messages.first() {
         String::from_utf8_lossy(data).to_string()
     } else {
-        panic!("No response content for session '{session_name}'");
+        panic!("No response content for session '{}'", session_name);
     };
 
     // Parse the response as a table (header row + data rows)
@@ -2440,7 +2505,8 @@ pub async fn verify_admin_column_in_range(
     let lines: Vec<&str> = response_content.lines().collect();
     if lines.is_empty() {
         panic!(
-            "Admin session '{session_name}': empty response, cannot find column '{column_name}'"
+            "Admin session '{}': empty response, cannot find column '{}'",
+            session_name, column_name
         );
     }
 
@@ -2459,13 +2525,14 @@ pub async fn verify_admin_column_in_range(
         .position(|h| h.eq_ignore_ascii_case(&column_name))
         .unwrap_or_else(|| {
             panic!(
-                "Admin session '{session_name}': column '{column_name}' not found in headers: {headers:?}"
+                "Admin session '{}': column '{}' not found in headers: {:?}",
+                session_name, column_name, headers
             )
         });
 
     // Get value from first data row
     if lines.len() < 2 {
-        panic!("Admin session '{session_name}': no data rows in response");
+        panic!("Admin session '{}': no data rows in response", session_name);
     }
 
     let values: Vec<&str> = if use_pipe {
@@ -2476,24 +2543,32 @@ pub async fn verify_admin_column_in_range(
 
     if col_idx >= values.len() {
         panic!(
-            "Admin session '{session_name}': column index {col_idx} out of bounds for row: {values:?}"
+            "Admin session '{}': column index {} out of bounds for row: {:?}",
+            session_name, col_idx, values
         );
     }
 
     let value_str = values[col_idx];
     let value: u64 = value_str.parse().unwrap_or_else(|_| {
         panic!(
-            "Admin session '{session_name}': cannot parse '{value_str}' as u64 for column '{column_name}'"
+            "Admin session '{}': cannot parse '{}' as u64 for column '{}'",
+            session_name, value_str, column_name
         )
     });
 
     assert!(
         value >= min_value && value <= max_value,
-        "Admin session '{session_name}': column '{column_name}' value {value} is not between {min_value} and {max_value}"
+        "Admin session '{}': column '{}' value {} is not between {} and {}",
+        session_name,
+        column_name,
+        value,
+        min_value,
+        max_value
     );
 
     eprintln!(
-        "Admin session '{session_name}': column '{column_name}' = {value} (expected between {min_value} and {max_value})"
+        "Admin session '{}': column '{}' = {} (expected between {} and {})",
+        session_name, column_name, value, min_value, max_value
     );
 }
 
@@ -2510,7 +2585,7 @@ pub async fn create_named_session_with_backend_key(
     database: String,
 ) {
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
-    let doorman_addr = format!("127.0.0.1:{doorman_port}");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
     // Connect to pg_doorman
     let mut conn = PgConnection::connect(&doorman_addr)
@@ -2532,10 +2607,14 @@ pub async fn create_named_session_with_backend_key(
             .session_secret_keys
             .insert(session_name.clone(), secret_key);
         eprintln!(
-            "Session '{session_name}': stored backend_pid={process_id}, secret_key={secret_key}"
+            "Session '{}': stored backend_pid={}, secret_key={}",
+            session_name, process_id, secret_key
         );
     } else {
-        panic!("Session '{session_name}': BackendKeyData not received during authentication");
+        panic!(
+            "Session '{}': BackendKeyData not received during authentication",
+            session_name
+        );
     }
 
     world.named_sessions.insert(session_name, conn);
@@ -2552,33 +2631,37 @@ pub async fn send_simple_query_to_session_no_wait(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
         .expect("Failed to send query");
 
     // Don't wait for response - the query is running
-    eprintln!("Session '{session_name}': sent query '{query}' without waiting");
+    eprintln!(
+        "Session '{}': sent query '{}' without waiting",
+        session_name, query
+    );
 }
 
 #[when(regex = r#"^we send cancel request for session "([^"]+)"$"#)]
 pub async fn send_cancel_request_for_session(world: &mut DoormanWorld, session_name: String) {
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
-    let doorman_addr = format!("127.0.0.1:{doorman_port}");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
 
     let process_id = world
         .session_backend_pids
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No backend_pid stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No backend_pid stored for session '{}'", session_name));
 
     let secret_key = world
         .session_secret_keys
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No secret_key stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No secret_key stored for session '{}'", session_name));
 
     eprintln!(
-        "Sending cancel request for session '{session_name}': process_id={process_id}, secret_key={secret_key}"
+        "Sending cancel request for session '{}': process_id={}, secret_key={}",
+        session_name, process_id, secret_key
     );
 
     PgConnection::send_cancel_request(&doorman_addr, *process_id, *secret_key)
@@ -2598,7 +2681,7 @@ pub async fn session_should_receive_cancel_error(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Read messages until we get an error or ReadyForQuery
     let mut error_found = false;
@@ -2612,7 +2695,10 @@ pub async fn session_should_receive_cancel_error(
                 // Error message - parse it
                 error_message = String::from_utf8_lossy(&data).to_string();
                 error_found = true;
-                eprintln!("Session '{session_name}': received error: {error_message}");
+                eprintln!(
+                    "Session '{}': received error: {}",
+                    session_name, error_message
+                );
             }
             'Z' => {
                 // ReadyForQuery - done
@@ -2626,14 +2712,18 @@ pub async fn session_should_receive_cancel_error(
 
     assert!(
         error_found,
-        "Session '{session_name}': expected to receive an error, but none was received"
+        "Session '{}': expected to receive an error, but none was received",
+        session_name
     );
 
     assert!(
         error_message
             .to_lowercase()
             .contains(&expected_text.to_lowercase()),
-        "Session '{session_name}': expected error to contain '{expected_text}', got '{error_message}'"
+        "Session '{}': expected error to contain '{}', got '{}'",
+        session_name,
+        expected_text,
+        error_message
     );
 }
 
@@ -2642,7 +2732,7 @@ pub async fn session_should_complete_without_error(world: &mut DoormanWorld, ses
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Read messages until ReadyForQuery, checking for errors
     let mut error_found = false;
@@ -2656,11 +2746,14 @@ pub async fn session_should_complete_without_error(world: &mut DoormanWorld, ses
                 // Error message - this is unexpected
                 error_message = String::from_utf8_lossy(&data).to_string();
                 error_found = true;
-                eprintln!("Session '{session_name}': received unexpected error: {error_message}");
+                eprintln!(
+                    "Session '{}': received unexpected error: {}",
+                    session_name, error_message
+                );
             }
             'Z' => {
                 // ReadyForQuery - done
-                eprintln!("Session '{session_name}': query completed successfully");
+                eprintln!("Session '{}': query completed successfully", session_name);
                 break;
             }
             _ => {
@@ -2671,7 +2764,8 @@ pub async fn session_should_complete_without_error(world: &mut DoormanWorld, ses
 
     assert!(
         !error_found,
-        "Session '{session_name}': expected query to complete without error, but got: {error_message}"
+        "Session '{}': expected query to complete without error, but got: {}",
+        session_name, error_message
     );
 }
 
@@ -2682,14 +2776,17 @@ pub async fn read_bytes_from_session(world: &mut DoormanWorld, bytes: usize, ses
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     let bytes_read = conn
         .read_limited_bytes(bytes)
         .await
         .expect("Failed to read bytes from session");
 
-    eprintln!("Session '{session_name}': read {bytes_read} bytes (requested {bytes})");
+    eprintln!(
+        "Session '{}': read {} bytes (requested {})",
+        session_name, bytes_read, bytes
+    );
 }
 
 #[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and verify no stale data$"#)]
@@ -2701,7 +2798,7 @@ pub async fn send_query_and_verify_no_stale_data(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_simple_query(&query)
         .await
@@ -2756,7 +2853,10 @@ pub async fn send_query_and_verify_no_stale_data(
             'E' => {
                 // Error - unexpected
                 let error_str = String::from_utf8_lossy(&data);
-                panic!("Session '{session_name}': received unexpected error: {error_str}");
+                panic!(
+                    "Session '{}': received unexpected error: {}",
+                    session_name, error_str
+                );
             }
             _ => {
                 // Other messages - store them
@@ -2786,7 +2886,7 @@ pub async fn verify_clean_response_with_marker(
     let messages = world
         .session_messages
         .get(&session_name)
-        .unwrap_or_else(|| panic!("No messages stored for session '{session_name}'"));
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
     let data_content = if let Some((_, data)) = messages.first() {
         String::from_utf8_lossy(data).to_string()
@@ -2798,7 +2898,10 @@ pub async fn verify_clean_response_with_marker(
     // and no stale data (like 'X', 'A', 'B', 'C', 'T' repeated patterns from previous queries)
     assert!(
         data_content.contains(&expected_marker),
-        "Session '{session_name}': expected response to contain marker '{expected_marker}', got '{data_content}'"
+        "Session '{}': expected response to contain marker '{}', got '{}'",
+        session_name,
+        expected_marker,
+        data_content
     );
 
     // Check for stale data patterns (large repeated characters from previous queries)
@@ -2813,7 +2916,10 @@ pub async fn verify_clean_response_with_marker(
         );
     }
 
-    eprintln!("Session '{session_name}': verified clean response with marker '{expected_marker}'");
+    eprintln!(
+        "Session '{}': verified clean response with marker '{}'",
+        session_name, expected_marker
+    );
 }
 
 // =============================================================================
@@ -2827,10 +2933,13 @@ pub async fn send_sync_to_session_no_wait(world: &mut DoormanWorld, session_name
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     conn.send_sync().await.expect("Failed to send Sync");
-    eprintln!("Session '{session_name}': Sync sent (not waiting for response)");
+    eprintln!(
+        "Session '{}': Sync sent (not waiting for response)",
+        session_name
+    );
 }
 
 /// Freeze PostgreSQL with SIGSTOP to block all I/O.
@@ -2844,7 +2953,7 @@ pub async fn freeze_postgres(world: &mut DoormanWorld) {
         .expect("PostgreSQL not started (no db_path)");
     let pid_file = db_path.join("postmaster.pid");
     let pid_content = std::fs::read_to_string(&pid_file)
-        .unwrap_or_else(|e| panic!("Failed to read postmaster.pid at {pid_file:?}: {e}"));
+        .unwrap_or_else(|e| panic!("Failed to read postmaster.pid at {:?}: {}", pid_file, e));
     let pid: i32 = pid_content
         .lines()
         .next()
@@ -2856,7 +2965,10 @@ pub async fn freeze_postgres(world: &mut DoormanWorld) {
     // Send SIGSTOP to ALL PostgreSQL processes: the postmaster and all backend
     // children. We use pgrep to find child processes because process group
     // signaling may not cover backends on all platforms.
-    eprintln!("Freezing PostgreSQL: finding all child processes of postmaster PID {pid}");
+    eprintln!(
+        "Freezing PostgreSQL: finding all child processes of postmaster PID {}",
+        pid
+    );
 
     // Find all child processes using pgrep (works on both Linux and macOS)
     let children = std::process::Command::new("pgrep")
@@ -2875,7 +2987,7 @@ pub async fn freeze_postgres(world: &mut DoormanWorld) {
 
     // SIGSTOP all processes (children first, then postmaster)
     for &p in stopped_pids.iter().rev() {
-        eprintln!("Sending SIGSTOP to PG process {p}");
+        eprintln!("Sending SIGSTOP to PG process {}", p);
         unsafe {
             libc::kill(p, libc::SIGSTOP);
         }
@@ -2900,7 +3012,7 @@ pub async fn unfreeze_postgres(world: &mut DoormanWorld) {
         .expect("PostgreSQL not started (no db_path)");
     let pid_file = db_path.join("postmaster.pid");
     let pid_content = std::fs::read_to_string(&pid_file)
-        .unwrap_or_else(|e| panic!("Failed to read postmaster.pid at {pid_file:?}: {e}"));
+        .unwrap_or_else(|e| panic!("Failed to read postmaster.pid at {:?}: {}", pid_file, e));
     let pid: i32 = pid_content
         .lines()
         .next()
@@ -2926,7 +3038,7 @@ pub async fn unfreeze_postgres(world: &mut DoormanWorld) {
 
     // SIGCONT all processes (postmaster first, then children)
     for &p in &pids {
-        eprintln!("Sending SIGCONT to PG process {p}");
+        eprintln!("Sending SIGCONT to PG process {}", p);
         unsafe {
             libc::kill(p, libc::SIGCONT);
         }
@@ -2952,13 +3064,13 @@ pub async fn send_large_parse_batch(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Build a large SQL query padded with comments
     let base_query = "SELECT 1";
     let padding_size = query_kb * 1024 - base_query.len() - 6; // 6 for "/* */"
     let padding: String = "x".repeat(padding_size);
-    let large_query = format!("{base_query}/* {padding} */");
+    let large_query = format!("{}/* {} */", base_query, padding);
 
     eprintln!(
         "Sending {} Parse messages (~{}KB each, ~{}MB total) to session '{}'",
@@ -2969,14 +3081,17 @@ pub async fn send_large_parse_batch(
     );
 
     for i in 0..count {
-        let stmt_name = format!("flush_test_{i}");
+        let stmt_name = format!("flush_test_{}", i);
         if let Err(e) = conn.send_parse(&stmt_name, &large_query).await {
-            eprintln!("Write failed at message {i} (expected after buffer fills): {e}");
+            eprintln!(
+                "Write failed at message {} (expected after buffer fills): {}",
+                i, e
+            );
             break;
         }
     }
 
-    eprintln!("Finished sending batch to session '{session_name}'");
+    eprintln!("Finished sending batch to session '{}'", session_name);
 }
 
 /// Send a large SimpleQuery to a session to fill TCP send buffers.
@@ -2994,17 +3109,23 @@ pub async fn send_large_simple_query_no_wait(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     let base_query = "SELECT 1";
     let padding_size = size_kb * 1024 - base_query.len() - 6; // 6 for "/* */"
     let padding: String = "x".repeat(padding_size);
-    let large_query = format!("{base_query}/* {padding} */");
+    let large_query = format!("{}/* {} */", base_query, padding);
 
-    eprintln!("Sending large SimpleQuery (~{size_kb}KB) to session '{session_name}'");
+    eprintln!(
+        "Sending large SimpleQuery (~{}KB) to session '{}'",
+        size_kb, session_name
+    );
 
     if let Err(e) = conn.send_simple_query(&large_query).await {
-        eprintln!("Write failed for large SimpleQuery (expected after buffer fills): {e}");
+        eprintln!(
+            "Write failed for large SimpleQuery (expected after buffer fills): {}",
+            e
+        );
     }
 }
 
@@ -3023,7 +3144,7 @@ pub async fn verify_error_response_on_flush_timeout(
     let conn = world
         .named_sessions
         .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{session_name}' not found"));
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
 
     // Try to read any message with a timeout.
     // We expect either:
@@ -3037,7 +3158,7 @@ pub async fn verify_error_response_on_flush_timeout(
         match tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_message()).await {
             Ok(Ok((msg_type, data))) => {
                 let desc = format!("type='{}' len={}", msg_type, data.len());
-                eprintln!("Session '{session_name}': received message {desc}");
+                eprintln!("Session '{}': received message {}", session_name, desc);
                 messages_received.push((msg_type, data));
 
                 if msg_type == 'E' {
@@ -3051,14 +3172,18 @@ pub async fn verify_error_response_on_flush_timeout(
             Ok(Err(e)) => {
                 // Connection error (EOF, reset, etc.)
                 eprintln!(
-                    "Session '{session_name}': connection error (this is the bug - no ErrorResponse sent): {e}"
+                    "Session '{}': connection error (this is the bug - no ErrorResponse sent): {}",
+                    session_name, e
                 );
                 got_eof = true;
                 break;
             }
             Err(_) => {
                 // Timeout - no more messages
-                eprintln!("Session '{session_name}': read timeout (no more messages)");
+                eprintln!(
+                    "Session '{}': read timeout (no more messages)",
+                    session_name
+                );
                 break;
             }
         }
@@ -3084,5 +3209,8 @@ pub async fn verify_error_response_on_flush_timeout(
         }
     );
 
-    eprintln!("Session '{session_name}': correctly received ErrorResponse on flush timeout");
+    eprintln!(
+        "Session '{}': correctly received ErrorResponse on flush timeout",
+        session_name
+    );
 }

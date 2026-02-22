@@ -48,7 +48,7 @@ pub async fn start_proxy_with_config(world: &mut PatroniProxyWorld, step: &Step)
     if let Some(ref api_addr) = world.api_listen_address {
         let port = api_addr
             .split(':')
-            .next_back()
+            .last()
             .and_then(|p| p.parse::<u16>().ok())
             .expect("Invalid API listen address");
         wait_for_proxy_ready(port, world.proxy_process.as_mut().unwrap()).await;
@@ -78,17 +78,18 @@ async fn wait_for_proxy_ready(port: u16, child: &mut Child) {
                 }
 
                 panic!(
-                    "patroni_proxy exited with status: {status:?}\n\n=== stdout ===\n{stdout_output}\n=== stderr ===\n{stderr_output}"
+                    "patroni_proxy exited with status: {:?}\n\n=== stdout ===\n{}\n=== stderr ===\n{}",
+                    status, stdout_output, stderr_output
                 );
             }
             Ok(None) => {
-                if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+                if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
                     success = true;
                     break;
                 }
             }
             Err(e) => {
-                panic!("Error checking patroni_proxy process: {e:?}");
+                panic!("Error checking patroni_proxy process: {:?}", e);
             }
         }
         sleep(Duration::from_millis(250)).await;
@@ -110,7 +111,8 @@ async fn wait_for_proxy_ready(port: u16, child: &mut Child) {
         let _ = child.wait();
 
         panic!(
-            "patroni_proxy failed to start on port {port} (timeout 10s)\n\n=== stdout ===\n{stdout_output}\n=== stderr ===\n{stderr_output}"
+            "patroni_proxy failed to start on port {} (timeout 10s)\n\n=== stdout ===\n{}\n=== stderr ===\n{}",
+            port, stdout_output, stderr_output
         );
     }
 }
@@ -125,7 +127,7 @@ pub fn stop_proxy(child: &mut Child) {
 #[given("API listen address is allocated")]
 pub async fn define_api_listen_address(world: &mut PatroniProxyWorld) {
     let port = allocate_port();
-    let listen_addr = format!("127.0.0.1:{port}");
+    let listen_addr = format!("127.0.0.1:{}", port);
     world.api_listen_address = Some(listen_addr);
 }
 
@@ -133,7 +135,7 @@ pub async fn define_api_listen_address(world: &mut PatroniProxyWorld) {
 #[given(regex = r"^proxy port '(.+)' is allocated$")]
 pub async fn allocate_proxy_port(world: &mut PatroniProxyWorld, port_name: String) {
     let port = allocate_port();
-    let listen_addr = format!("127.0.0.1:{port}");
+    let listen_addr = format!("127.0.0.1:{}", port);
     world.proxy_listen_addresses.insert(port_name, listen_addr);
 }
 

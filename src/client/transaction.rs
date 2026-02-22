@@ -245,14 +245,16 @@ where
                     let count = self.prepared.cache.len();
                     self.prepared.cache.clear();
                     debug!(
-                        "DEALLOCATE ALL: cleared {count} entries from client prepared statements cache"
+                        "DEALLOCATE ALL: cleared {} entries from client prepared statements cache",
+                        count
                     );
                 } else if !statement_part.is_empty() {
                     // DEALLOCATE <name> - remove specific statement from cache
                     let key = PreparedStatementKey::Named(statement_part.to_string());
                     if self.prepared.cache.pop(&key).is_some() {
                         debug!(
-                            "DEALLOCATE {statement_part}: removed from client prepared statements cache"
+                            "DEALLOCATE {}: removed from client prepared statements cache",
+                            statement_part
                         );
                     }
                 }
@@ -329,7 +331,7 @@ where
                 }
             }
             server.set_expected_responses(expected);
-            debug!("Flush: expecting {expected} responses from server");
+            debug!("Flush: expecting {} responses from server", expected);
 
             // If there are skipped Parse operations, send synthetic ParseComplete to client
             // BEFORE waiting for server response. This is necessary because:
@@ -340,7 +342,8 @@ where
             if !self.prepared.skipped_parses.is_empty() {
                 let count = self.prepared.skipped_parses.len();
                 debug!(
-                    "Flush: sending {count} synthetic ParseComplete for skipped Parse operations"
+                    "Flush: sending {} synthetic ParseComplete for skipped Parse operations",
+                    count
                 );
                 let mut synthetic_response = BytesMut::with_capacity(count * 5);
                 for _ in 0..count {
@@ -635,7 +638,7 @@ where
                                 }
                             }
                             Err(err) => {
-                                server.mark_bad(&format!("deferred BEGIN failed: {err:?}"));
+                                server.mark_bad(&format!("deferred BEGIN failed: {:?}", err));
                                 return Err(err);
                             }
                         }

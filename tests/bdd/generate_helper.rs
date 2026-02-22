@@ -14,7 +14,7 @@ pub async fn generate_config(world: &mut DoormanWorld, args: String, format: Str
     let extension = match format.as_str() {
         "toml" => ".toml",
         "yaml" | "yml" => ".yaml",
-        other => panic!("Unsupported format: {other}"),
+        other => panic!("Unsupported format: {}", other),
     };
 
     // Create temp file with the right extension
@@ -28,7 +28,7 @@ pub async fn generate_config(world: &mut DoormanWorld, args: String, format: Str
     let doorman_binary = env!("CARGO_BIN_EXE_pg_doorman");
 
     // Build the full command: pg_doorman generate {args} -o {output_path}
-    let full_command = format!("{doorman_binary} generate {args} -o {output_path}");
+    let full_command = format!("{} generate {} -o {}", doorman_binary, args, output_path);
 
     let output = Command::new("sh")
         .arg("-c")
@@ -133,14 +133,13 @@ fn patch_toml_config(content: &str, port: u16) -> String {
     // Add pg_hba trust rule at the end of the [general] section
     // Find where to insert: after [general] block, before [pools]
     if let Some(pools_pos) = output.find("\n[pools]") {
-        let insert =
-            "\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n".to_string();
+        let insert = format!("\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n");
         output.insert_str(pools_pos, &insert);
     } else {
         // Fallback: append at the end
-        output.push_str(
-            &"\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n".to_string(),
-        );
+        output.push_str(&format!(
+            "\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n"
+        ));
     }
 
     output

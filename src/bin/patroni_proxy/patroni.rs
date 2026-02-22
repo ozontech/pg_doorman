@@ -111,8 +111,8 @@ pub enum PatroniError {
 impl std::fmt::Display for PatroniError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PatroniError::HttpError(e) => write!(f, "HTTP error: {e}"),
-            PatroniError::ParseError(e) => write!(f, "Parse error: {e}"),
+            PatroniError::HttpError(e) => write!(f, "HTTP error: {}", e),
+            PatroniError::ParseError(e) => write!(f, "Parse error: {}", e),
             PatroniError::AllHostsUnavailable => write!(f, "All hosts unavailable"),
             PatroniError::Timeout => write!(f, "Request timeout"),
         }

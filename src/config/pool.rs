@@ -47,7 +47,8 @@ where
                 // Validate that key is a valid index (for legacy format)
                 if key.parse::<usize>().is_err() {
                     return Err(de::Error::custom(format!(
-                        "invalid user key '{key}': expected numeric index or use array format"
+                        "invalid user key '{}': expected numeric index or use array format",
+                        key
                     )));
                 }
                 users.push(user);

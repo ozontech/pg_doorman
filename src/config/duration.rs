@@ -184,14 +184,15 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
         (&s[..s.len() - 1], 24 * 60 * 60 * 1000u64)
     } else {
         return Err(format!(
-            "invalid duration format: '{s}'. Expected a number or a string with suffix (ms, s, m, h, d)"
+            "invalid duration format: '{}'. Expected a number or a string with suffix (ms, s, m, h, d)",
+            s
         ));
     };
 
     let num: u64 = num_str
         .trim()
         .parse()
-        .map_err(|_| format!("invalid number in duration: '{num_str}'"))?;
+        .map_err(|_| format!("invalid number in duration: '{}'", num_str))?;
 
     Ok(Duration(num * multiplier))
 }

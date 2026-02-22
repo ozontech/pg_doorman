@@ -169,7 +169,7 @@ impl PreparedStatementCache {
         }
 
         if let Some(name) = evicted_name {
-            warn!("Evicted prepared statement {name} from cache");
+            warn!("Evicted prepared statement {} from cache", name);
         }
     }
 }

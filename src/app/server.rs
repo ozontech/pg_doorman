@@ -119,7 +119,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         #[cfg(not(windows))]
         let listener = if let Some(fd) = inherit_fd {
             // Inherit listener from parent process (binary upgrade in foreground mode)
-            info!("Inheriting listener from parent process (fd={fd})");
+            info!("Inheriting listener from parent process (fd={})", fd);
             let std_listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
             std_listener.set_nonblocking(true).expect("can't set nonblocking");
             tokio::net::TcpListener::from_std(std_listener).expect("can't create TcpListener from inherited fd")
@@ -246,7 +246,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         #[cfg(not(windows))]
         if let Ok(ready_fd_str) = std::env::var("PG_DOORMAN_READY_FD") {
             if let Ok(ready_fd) = ready_fd_str.parse::<i32>() {
-                info!("Signaling readiness to parent process (fd={ready_fd})");
+                info!("Signaling readiness to parent process (fd={})", ready_fd);
                 let ready_signal: [u8; 1] = [1];
                 unsafe {
                     libc::write(ready_fd, ready_signal.as_ptr() as *const libc::c_void, 1);
@@ -321,7 +321,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             .cloned()
                             .unwrap_or_else(|| "pg_doorman.toml".to_string());
 
-                        info!("Validating configuration with: {exe_path} -t {config_file}");
+                        info!("Validating configuration with: {} -t {}", exe_path, config_file);
 
                         let config_test_result = process::Command::new(exe_path)
                             .arg("-t")
@@ -341,7 +341,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                     error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                                     error!("");
                                     error!("The new binary failed configuration validation!");
-                                    error!("Configuration file: {config_file}");
+                                    error!("Configuration file: {}", config_file);
                                     error!("Exit code: {:?}", output.status.code());
                                     if !output.stderr.is_empty() {
                                         error!("Error output: {}", String::from_utf8_lossy(&output.stderr));
@@ -366,8 +366,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                 error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
                                 error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                                 error!("");
-                                error!("Could not execute configuration test: {e}");
-                                error!("Binary path: {exe_path}");
+                                error!("Could not execute configuration test: {}", e);
+                                error!("Binary path: {}", exe_path);
                                 error!("");
                                 error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                                 error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
@@ -426,7 +426,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             }
                         } else {
                             // Foreground mode: start new process with inherited listener fd
-                            info!("Starting new process with inherited listener fd={listener_fd}");
+                            info!("Starting new process with inherited listener fd={}", listener_fd);
 
                             // Get current process group to pass to child
                             let current_pgid = unsafe { libc::getpgrp() };
@@ -507,7 +507,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                         info!("Foreground binary upgrade complete, listener released");
                                     }
                                     Err(e) => {
-                                        error!("Failed to spawn new process: {e}");
+                                        error!("Failed to spawn new process: {}", e);
                                         unsafe {
                                             libc::close(pipe_read_fd);
                                             libc::close(pipe_write_fd);
@@ -550,7 +550,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             }
 
                             if start.elapsed() >= shutdown_timeout {
-                                error!("Graceful shutdown timed out. {clients_in_tx} active clients in transactions being closed");
+                                error!("Graceful shutdown timed out. {} active clients in transactions being closed", clients_in_tx);
                                 let _ = exit_tx.send(()).await;
                                 return;
                             }
@@ -560,7 +560,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
                 _ = term_signal.recv() => {
                     let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
-                    info!("Got SIGTERM, closing with {clients_in_tx} clients in transactions");
+                    info!("Got SIGTERM, closing with {} clients in transactions", clients_in_tx);
                     break;
                 },
 

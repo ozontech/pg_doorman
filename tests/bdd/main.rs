@@ -88,8 +88,9 @@ fn main() {
                             elapsed_minutes += 1;
                             eprintln!(
                                 "\n🐢🐢🐢 SLOW TEST 🐢🐢🐢\n\
-                                 >>> Test '{scenario_name}' (feature '{feature_name}') is RUNNING for {elapsed_minutes} minute(s) <<<\n\
-                                 🐢🐢🐢 SLOW TEST 🐢🐢🐢\n"
+                                 >>> Test '{}' (feature '{}') is RUNNING for {} minute(s) <<<\n\
+                                 🐢🐢🐢 SLOW TEST 🐢🐢🐢\n",
+                                scenario_name, feature_name, elapsed_minutes
                             );
                         }
                     });

@@ -83,10 +83,10 @@ async fn handle_update_clusters(
         updated_count += 1;
     }
 
-    let message = format!("Updated {updated_count} cluster(s)");
+    let message = format!("Updated {} cluster(s)", updated_count);
     info!("{}", message);
 
-    let response_body = format!("{message}\n");
+    let response_body = format!("{}\n", message);
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
         response_body.len(),
