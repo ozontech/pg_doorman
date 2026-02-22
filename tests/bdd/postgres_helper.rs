@@ -468,6 +468,7 @@ pub async fn psql_connection_succeeds(
         .arg("-c")
         .arg("SELECT 1")
         .env("PGPASSWORD", &password)
+        .env("PGSSLMODE", "disable")
         .status()
         .expect("Failed to run psql");
 
@@ -498,6 +499,7 @@ pub async fn psql_connection_fails(
         .arg("-c")
         .arg("SELECT 1")
         .env("PGPASSWORD", &password)
+        .env("PGSSLMODE", "disable")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

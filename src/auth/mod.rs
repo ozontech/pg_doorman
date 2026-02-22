@@ -423,14 +423,14 @@ where
             )));
         }
     };
-    let server_final_message = match prepare_server_final_message(
+    let (server_final_message, _client_key) = match prepare_server_final_message(
         client_first_message,
         client_final_message,
         server_first_response,
         server_secret.server_key,
         server_secret.stored_key,
     ) {
-        Ok(server_final_message) => server_final_message,
+        Ok(result) => result,
         Err(err) => {
             warn!(
                 "Failed to prepare SCRAM server final message for user {username_from_parameters}: {err}"
@@ -686,16 +686,93 @@ where
             }
         }
     } else if pool_password.starts_with(SCRAM_SHA_256) {
-        // SCRAM support — Step 5
-        error_response_terminal(
-            write,
-            "SCRAM authentication via auth_query is not yet supported.",
-            "28P01",
-        )
-        .await?;
-        return Err(Error::AuthError(format!(
-            "SCRAM auth via auth_query not yet supported for user: {username}"
-        )));
+        // SCRAM-SHA-256 challenge-response
+        let server_secret = match parse_server_secret(pool_password) {
+            Ok(s) => s,
+            Err(err) => {
+                error!("[pool: {pool_name}] auth_query: failed to parse SCRAM verifier for '{username}': {err}");
+                error_response_terminal(
+                    write,
+                    "Server authentication configuration error. Please contact your database administrator.",
+                    "28P01",
+                )
+                .await?;
+                return Err(Error::ScramServerError(format!(
+                    "Failed to parse SCRAM server secret for auth_query user: {username}"
+                )));
+            }
+        };
+
+        scram_start_challenge(write).await?;
+        let first_msg = read_password(read).await?;
+        let client_first = match parse_client_first_message(String::from_utf8_lossy(&first_msg)) {
+            Ok(msg) => msg,
+            Err(err) => {
+                warn!("[pool: {pool_name}] auth_query: SCRAM client first message parse error for '{username}': {err}");
+                error_response_terminal(
+                    write,
+                    "Authentication protocol error. Your client may not support SCRAM authentication properly.",
+                    "28P01",
+                )
+                .await?;
+                return Err(Error::ScramClientError(format!(
+                    "Failed to parse SCRAM client first message for auth_query user: {username}"
+                )));
+            }
+        };
+
+        let server_first = prepare_server_first_response(
+            &client_first.nonce,
+            &client_first.client_first_bare,
+            &server_secret.salt_base64,
+            server_secret.iteration,
+        );
+        scram_server_response(write, SASL_CONTINUE, &server_first.server_first_bare).await?;
+
+        let final_msg = read_password(read).await?;
+        let client_final = match parse_client_final_message(String::from_utf8_lossy(&final_msg)) {
+            Ok(msg) => msg,
+            Err(err) => {
+                warn!("[pool: {pool_name}] auth_query: SCRAM client final message parse error for '{username}': {err}");
+                error_response_terminal(
+                    write,
+                    "Authentication protocol error. Your client sent an invalid SCRAM final message.",
+                    "28P01",
+                )
+                .await?;
+                return Err(Error::ScramClientError(format!(
+                    "Failed to parse SCRAM client final message for auth_query user: {username}"
+                )));
+            }
+        };
+
+        match prepare_server_final_message(
+            client_first,
+            client_final,
+            server_first,
+            server_secret.server_key,
+            server_secret.stored_key,
+        ) {
+            Ok((server_final, client_key)) => {
+                scram_server_response(write, SASL_FINAL, &server_final).await?;
+                // Store ClientKey in cache for future SCRAM passthrough (Step 6)
+                cache.set_client_key(username, client_key);
+            }
+            Err(_) => {
+                // SCRAM auth failed — password may have rotated (new salt).
+                // Unlike MD5, SCRAM proof is bound to the salt from the verifier,
+                // so we can't retry with a re-fetched verifier using the same proof.
+                // Invalidate cache so next reconnect gets fresh verifier.
+                cache.invalidate(username);
+                error!(
+                    "[pool: {pool_name}] auth_query: SCRAM authentication failed for user '{username}', cache invalidated"
+                );
+                wrong_password(write, username).await?;
+                return Err(Error::AuthError(format!(
+                    "SCRAM authentication failed for auth_query user: {username}. Cache invalidated — please reconnect."
+                )));
+            }
+        }
     } else {
         error_response_terminal(
             write,
