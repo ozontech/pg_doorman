@@ -1,0 +1,60 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use log::info;
+
+use super::{PoolIdentifier, DYNAMIC_POOLS, POOLS};
+
+/// Spawn a background task that periodically removes idle dynamic pools.
+/// Dynamic pools are created by auth_query passthrough mode — one per user.
+/// When all connections in a dynamic pool are closed (size == 0), the pool
+/// is garbage-collected to prevent unbounded memory growth.
+///
+/// This is a no-op when DYNAMIC_POOLS is empty (no passthrough auth_query).
+pub fn spawn_dynamic_pool_gc(interval: Duration) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            gc_idle_dynamic_pools();
+        }
+    });
+}
+
+fn gc_idle_dynamic_pools() {
+    let dynamic_ids: Vec<PoolIdentifier> = DYNAMIC_POOLS.load().iter().cloned().collect();
+    if dynamic_ids.is_empty() {
+        return;
+    }
+
+    let pools = POOLS.load();
+    let mut to_remove = Vec::new();
+
+    for id in &dynamic_ids {
+        match pools.get(id) {
+            Some(pool) if pool.pool_state().size == 0 => to_remove.push(id.clone()),
+            None => to_remove.push(id.clone()), // stale tracking entry
+            _ => {}
+        }
+    }
+
+    if to_remove.is_empty() {
+        return;
+    }
+
+    // Remove from POOLS
+    let mut new_pools = (**POOLS.load()).clone();
+    for id in &to_remove {
+        new_pools.remove(id);
+    }
+    POOLS.store(Arc::new(new_pools));
+
+    // Remove from DYNAMIC_POOLS
+    let mut new_dynamic = (**DYNAMIC_POOLS.load()).clone();
+    for id in &to_remove {
+        new_dynamic.remove(id);
+    }
+    DYNAMIC_POOLS.store(Arc::new(new_dynamic));
+
+    info!("GC: removed {} idle dynamic pool(s)", to_remove.len());
+}

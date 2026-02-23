@@ -30,6 +30,7 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 
 pub use crate::server::PreparedStatementCache;
 
+pub mod gc;
 pub mod retain;
 
 pub type ProcessId = i32;
@@ -94,6 +95,19 @@ impl AuthQueryState {
     ///
     /// If PG is unreachable, returns `Err`; the `OnceCell` does NOT store the
     /// error, so the next call will retry the connection.
+    /// Clear the auth_query cache if it was already initialized.
+    /// Called on RELOAD when auth_query config changes. Does NOT trigger
+    /// lazy initialization (safe to call even if executor was never created).
+    pub fn try_clear_cache(&self) {
+        if let Some(cache) = self.cache_cell.get() {
+            cache.clear();
+            info!(
+                "[pool: {}] auth_query cache cleared on RELOAD",
+                self.pool_name
+            );
+        }
+    }
+
     pub async fn cache(&self) -> Result<&AuthQueryCache, Error> {
         self.cache_cell
             .get_or_try_init(|| async {
@@ -118,6 +132,27 @@ impl AuthQueryState {
 /// Replaced atomically on RELOAD together with POOLS.
 pub static AUTH_QUERY_STATE: Lazy<ArcSwap<HashMap<String, Arc<AuthQueryState>>>> =
     Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+
+/// Tracks which pool identifiers were created dynamically (auth_query passthrough).
+/// Used by RELOAD logic and GC to distinguish dynamic pools from static ones.
+pub static DYNAMIC_POOLS: Lazy<ArcSwap<HashSet<PoolIdentifier>>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashSet::new()));
+
+/// Register a pool identifier as dynamic (created by auth_query passthrough).
+pub fn register_dynamic_pool(id: &PoolIdentifier) {
+    let current = DYNAMIC_POOLS.load();
+    if current.contains(id) {
+        return;
+    }
+    let mut new_set = (**current).clone();
+    new_set.insert(id.clone());
+    DYNAMIC_POOLS.store(Arc::new(new_set));
+}
+
+/// Check if a pool identifier is a dynamic (auth_query passthrough) pool.
+pub fn is_dynamic_pool(id: &PoolIdentifier) -> bool {
+    DYNAMIC_POOLS.load().contains(id)
+}
 
 /// Get auth_query state for a database pool.
 pub fn get_auth_query_state(db: &str) -> Option<Arc<AuthQueryState>> {
@@ -478,6 +513,72 @@ impl ConnectionPool {
                     }),
                 );
             }
+        }
+
+        // --- RELOAD: detect auth_query config changes, manage dynamic pools ---
+        let old_aq_states = AUTH_QUERY_STATE.load();
+        let mut pools_to_remove: Vec<PoolIdentifier> = Vec::new();
+
+        // 1. Compare old vs new auth_query configs
+        for (pool_name, old_state) in old_aq_states.iter() {
+            let new_aq = config
+                .pools
+                .get(pool_name)
+                .and_then(|p| p.auth_query.as_ref());
+            let changed = match new_aq {
+                None => true,                          // auth_query removed
+                Some(new) => *new != old_state.config, // config changed
+            };
+            if changed {
+                info!("[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal");
+                for id in DYNAMIC_POOLS.load().iter() {
+                    if id.db == *pool_name {
+                        pools_to_remove.push(id.clone());
+                    }
+                }
+                old_state.try_clear_cache();
+            }
+        }
+
+        // 2. Static user overrides dynamic pool
+        for (pool_name, pool_config) in &config.pools {
+            for user in &pool_config.users {
+                let id = PoolIdentifier::new(pool_name, &user.username);
+                if is_dynamic_pool(&id) && !pools_to_remove.contains(&id) {
+                    info!(
+                        "[pool: {pool_name}] static user '{}' overrides dynamic pool",
+                        user.username
+                    );
+                    pools_to_remove.push(id);
+                }
+            }
+        }
+
+        // 3. Carry over surviving dynamic pools
+        let old_pools = POOLS.load();
+        for id in DYNAMIC_POOLS.load().iter() {
+            if pools_to_remove.contains(id) {
+                continue;
+            }
+            if new_pools.contains_key(id) {
+                continue;
+            }
+            if let Some(pool) = old_pools.get(id) {
+                new_pools.insert(id.clone(), pool.clone());
+            }
+        }
+
+        // 4. Remove destroyed pools, update tracking
+        for id in &pools_to_remove {
+            new_pools.remove(id);
+        }
+        if !pools_to_remove.is_empty() {
+            let mut new_dynamic = (**DYNAMIC_POOLS.load()).clone();
+            for id in &pools_to_remove {
+                new_dynamic.remove(id);
+            }
+            DYNAMIC_POOLS.store(Arc::new(new_dynamic));
+            info!("RELOAD: removed {} dynamic pool(s)", pools_to_remove.len());
         }
 
         AUTH_QUERY_STATE.store(Arc::new(auth_query_states));
@@ -901,8 +1002,9 @@ pub fn create_dynamic_pool(
     }
 
     info!("[pool: {pool_name}] auth_query: created dynamic passthrough pool for '{username}'");
-    new_pools.insert(identifier, conn_pool.clone());
+    new_pools.insert(identifier.clone(), conn_pool.clone());
     POOLS.store(Arc::new(new_pools));
+    register_dynamic_pool(&identifier);
 
     Ok(conn_pool)
 }

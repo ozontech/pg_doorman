@@ -2481,6 +2481,34 @@ pub async fn verify_admin_response_contains(
     );
 }
 
+#[then(regex = r#"^admin session "([^"]+)" response should not contain "([^"]+)"$"#)]
+pub async fn verify_admin_response_not_contains(
+    world: &mut DoormanWorld,
+    session_name: String,
+    unexpected_text: String,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
+
+    let response_content = if let Some((_, data)) = messages.first() {
+        String::from_utf8_lossy(data).to_string()
+    } else {
+        String::new()
+    };
+
+    assert!(
+        !response_content
+            .to_uppercase()
+            .contains(&unexpected_text.to_uppercase()),
+        "Admin session '{}': expected response NOT to contain '{}', but got '{}'",
+        session_name,
+        unexpected_text,
+        response_content
+    );
+}
+
 #[then(regex = r#"^admin session "([^"]+)" column "([^"]+)" should be between (\d+) and (\d+)$"#)]
 pub async fn verify_admin_column_in_range(
     world: &mut DoormanWorld,
