@@ -1,5 +1,4 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::future::Future;
 use std::sync::Arc;
 
 use pg_doorman::auth::auth_query::{AuthQueryCache, PasswordFetcher};
@@ -11,16 +10,8 @@ use pg_doorman::errors::Error;
 struct NoopFetcher;
 
 impl PasswordFetcher for NoopFetcher {
-    fn fetch<'a>(
-        &'a self,
-        username: &'a str,
-    ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a {
-        async move {
-            Ok(Some((
-                username.to_string(),
-                "md5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-            )))
-        }
+    async fn fetch(&self, _username: &str) -> Result<Option<String>, Error> {
+        Ok(Some("md5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()))
     }
 }
 
@@ -54,7 +45,7 @@ fn cache_hit_benchmark(c: &mut Criterion) {
     // -- Single-user cache hit (best case: same DashMap shard every time) --
     {
         let fetcher = Arc::new(NoopFetcher);
-        let cache = AuthQueryCache::new(fetcher, &bench_config());
+        let cache = AuthQueryCache::new(fetcher, &bench_config(), None);
         rt.block_on(cache.get_or_fetch("test_user")).unwrap();
 
         group.bench_function("hit/single_user", |b| {
@@ -68,7 +59,7 @@ fn cache_hit_benchmark(c: &mut Criterion) {
     // -- Multi-user cache hit (spreads across DashMap shards) --
     for &user_count in &[10, 100, 1000] {
         let fetcher = Arc::new(NoopFetcher);
-        let cache = AuthQueryCache::new(fetcher, &bench_config());
+        let cache = AuthQueryCache::new(fetcher, &bench_config(), None);
 
         let usernames: Vec<String> = (0..user_count).map(|i| format!("user_{i}")).collect();
         for name in &usernames {
@@ -91,23 +82,19 @@ fn cache_hit_benchmark(c: &mut Criterion) {
         let fetcher = Arc::new(NoopFetcher);
         // Override fetcher to return None for negative cache test
         let config = bench_config();
-        let cache = AuthQueryCache::new(fetcher, &config);
+        let cache = AuthQueryCache::new(fetcher, &config, None);
 
         // Manually trigger a cache miss that returns Some, then invalidate doesn't help.
         // Instead, use a fetcher that returns None for the negative user.
         struct NegativeFetcher;
         impl PasswordFetcher for NegativeFetcher {
-            fn fetch<'a>(
-                &'a self,
-                _username: &'a str,
-            ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a
-            {
-                async { Ok(None) }
+            async fn fetch(&self, _username: &str) -> Result<Option<String>, Error> {
+                Ok(None)
             }
         }
 
         let neg_fetcher = Arc::new(NegativeFetcher);
-        let neg_cache = AuthQueryCache::new(neg_fetcher, &config);
+        let neg_cache = AuthQueryCache::new(neg_fetcher, &config, None);
         rt.block_on(neg_cache.get_or_fetch("nonexistent")).unwrap();
 
         group.bench_function("hit/negative", |b| {

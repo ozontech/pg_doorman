@@ -587,6 +587,49 @@ pub async fn psql_connection_without_password_fails(
     );
 }
 
+/// Run a SQL query via psql and check that it fails (authentication rejected or query error)
+#[then(
+    expr = "psql query {string} as user {string} to database {string} with password {string} fails"
+)]
+pub async fn psql_query_fails(
+    world: &mut DoormanWorld,
+    query: String,
+    user: String,
+    database: String,
+    password: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+
+    let status = Command::new("psql")
+        .args([
+            "-h",
+            "127.0.0.1",
+            "-p",
+            &doorman_port.to_string(),
+            "-U",
+            &user,
+            "-d",
+            &database,
+            "-t",
+            "-A",
+            "-c",
+            &query,
+        ])
+        .env("PGPASSWORD", &password)
+        .env("PGSSLMODE", "disable")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("Failed to run psql");
+
+    assert!(
+        !status.success(),
+        "psql query should have failed but succeeded (user: {}, database: {})",
+        user,
+        database
+    );
+}
+
 /// Run a SQL query via psql and check that the output contains the expected string
 #[then(
     expr = "psql query {string} as user {string} to database {string} with password {string} returns {string}"

@@ -52,7 +52,7 @@ Feature: Auth query RELOAD and idle pool GC
     And we execute "SHOW POOLS" on admin session "adm1" and store response
     Then admin session "adm1" response should contain "pt_md5_user"
     # Verify SHOW AUTH_QUERY shows metrics before RELOAD
-    And we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
+    When we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
     Then admin session "adm1" response should contain "postgres"
     # Overwrite config: remove auth_query
     When we overwrite pg_doorman config file with:
@@ -78,7 +78,7 @@ Feature: Auth query RELOAD and idle pool GC
     And we execute "SHOW POOLS" on admin session "adm1" and store response
     Then admin session "adm1" response should not contain "pt_md5_user"
     # Verify SHOW AUTH_QUERY is empty after auth_query removed
-    And we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
+    When we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
     Then admin session "adm1" response should not contain "postgres"
     # Confirm: connection without auth_query fails (no static user either)
     Then psql connection to pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" fails
@@ -217,7 +217,7 @@ Feature: Auth query RELOAD and idle pool GC
     And we execute "SHOW POOLS" on admin session "adm1" and store response
     Then admin session "adm1" response should contain "pt_md5_user"
     # Verify SHOW AUTH_QUERY shows metrics
-    And we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
+    When we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
     Then admin session "adm1" response should contain "postgres"
     # Wait for idle timeout + server lifetime + GC interval to clean up
     When we sleep for 5000 milliseconds
@@ -225,7 +225,7 @@ Feature: Auth query RELOAD and idle pool GC
     When we execute "SHOW POOLS" on admin session "adm1" and store response
     Then admin session "adm1" response should not contain "pt_md5_user"
     # auth_query state still exists (GC only removes pools, not auth_query config)
-    And we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
+    When we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
     Then admin session "adm1" response should contain "postgres"
     # Reconnect — new pool should be created, query succeeds
     Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
