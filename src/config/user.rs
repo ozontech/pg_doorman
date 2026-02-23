@@ -58,12 +58,9 @@ impl User {
                 .to_string();
             load_jwt_pub_key(jwt_pub_key_file).await?;
         }
-        if (self.server_password.is_some() && self.server_username.is_none())
-            || (self.server_password.is_none() && self.server_username.is_some())
-        {
+        if self.server_password.is_some() && self.server_username.is_none() {
             return Err(Error::BadConfig(
-                "both the server_password and server_username must be specified at the same time"
-                    .to_string(),
+                "server_password requires server_username to be set".to_string(),
             ));
         }
         if let Some(min_pool_size) = self.min_pool_size {

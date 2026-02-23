@@ -2,7 +2,7 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use log::{debug, info, warn};
 use once_cell::sync::{Lazy, OnceCell};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -295,6 +295,39 @@ impl ConnectionPool {
                     .clone()
                     .unwrap_or(pool_name.clone().to_string());
 
+                // Detect passthrough-eligible static users:
+                // server_password is None AND (server_username is None OR equals username)
+                let backend_auth = if user.server_password.is_none()
+                    && (user.server_username.is_none()
+                        || user.server_username.as_deref() == Some(&user.username))
+                {
+                    if user
+                        .password
+                        .starts_with(crate::messages::constants::MD5_PASSWORD_PREFIX)
+                    {
+                        info!(
+                            "[pool: {}][user: {}] static passthrough: MD5 pass-the-hash",
+                            pool_name, user.username
+                        );
+                        Some(Arc::new(RwLock::new(BackendAuthMethod::Md5PassTheHash(
+                            user.password.clone(),
+                        ))))
+                    } else if user
+                        .password
+                        .starts_with(crate::messages::constants::SCRAM_SHA_256)
+                    {
+                        info!(
+                            "[pool: {}][user: {}] static passthrough: SCRAM pending (ClientKey will be set after first client auth)",
+                            pool_name, user.username
+                        );
+                        Some(Arc::new(RwLock::new(BackendAuthMethod::ScramPending)))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 let address = Address {
                     database: pool_name.clone(),
                     host: pool_config.server_host.clone(),
@@ -303,7 +336,7 @@ impl ConnectionPool {
                     password: user.password.clone(),
                     pool_name: pool_name.clone(),
                     stats: Arc::new(AddressStats::default()),
-                    backend_auth: None,
+                    backend_auth,
                 };
 
                 let prepared_statements_cache_size = match config.general.prepared_statements {
@@ -1049,6 +1082,7 @@ pub fn create_dynamic_pool(
             match &*guard {
                 BackendAuthMethod::Md5PassTheHash(_) => "md5-pass-the-hash",
                 BackendAuthMethod::ScramPassthrough(_) => "scram-passthrough",
+                BackendAuthMethod::ScramPending => "scram-pending",
             }
         }
         None => "none",

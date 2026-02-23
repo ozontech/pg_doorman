@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::stats::AddressStats;
 
-/// Backend authentication method for auth_query passthrough pools.
-/// Wrapped in `Arc<RwLock<>>` on Address so credential rotation updates
+/// Backend authentication method for passthrough pools (auth_query and static users).
+/// Wrapped in `Arc<RwLock<>>` on Address so credential updates
 /// propagate to all pool connections via the shared Arc.
 #[derive(Clone, Debug)]
 pub enum BackendAuthMethod {
@@ -17,6 +17,9 @@ pub enum BackendAuthMethod {
     Md5PassTheHash(String),
     /// SCRAM passthrough: ClientKey extracted from client's SCRAM proof
     ScramPassthrough(Vec<u8>),
+    /// SCRAM pending: passthrough configured but ClientKey not yet available.
+    /// Transitions to ScramPassthrough after first successful client SCRAM auth.
+    ScramPending,
 }
 
 /// Pool mode:
@@ -58,10 +61,10 @@ pub struct Address {
     pub pool_name: String,
     /// Address stats
     pub stats: Arc<AddressStats>,
-    /// Backend auth for auth_query passthrough pools.
-    /// None for static users (they use User.server_username/server_password).
-    /// `Arc<RwLock<>>` allows credential rotation: all Address clones share
-    /// the same lock, so updates propagate to new connections.
+    /// Backend auth for passthrough pools (auth_query dynamic and static users).
+    /// None when server_password is set (traditional auth).
+    /// `Arc<RwLock<>>` allows credential updates: all Address clones share
+    /// the same lock, so updates (e.g. ScramPending → ScramPassthrough) propagate.
     pub backend_auth: Option<Arc<RwLock<BackendAuthMethod>>>,
 }
 

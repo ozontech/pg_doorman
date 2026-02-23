@@ -253,13 +253,27 @@ where
     } else if pool.settings.user.auth_pam_service.is_some() {
         authenticate_with_pam(read, write, &pool, username_from_parameters).await?;
     } else if pool_password.starts_with(SCRAM_SHA_256) {
-        authenticate_with_scram(
+        let client_key = authenticate_with_scram(
             read,
             write,
             pool_password.as_str(),
             username_from_parameters,
         )
         .await?;
+
+        // For static passthrough: promote ScramPending → ScramPassthrough
+        if let Some(ref client_key) = client_key {
+            if let Some(ref ba_lock) = pool.address.backend_auth {
+                let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
+                if needs_update {
+                    *ba_lock.write() = BackendAuthMethod::ScramPassthrough(client_key.clone());
+                    info!(
+                        "[pool: {}][user: {}] static passthrough: ClientKey stored after SCRAM auth",
+                        pool_name, username_from_parameters
+                    );
+                }
+            }
+        }
     } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
         authenticate_with_md5(
             read,
@@ -368,13 +382,14 @@ where
     Ok(())
 }
 
-/// Authenticate a user with SCRAM-SHA-256
+/// Authenticate a user with SCRAM-SHA-256.
+/// Returns the ClientKey extracted from the client's SCRAM proof on success.
 async fn authenticate_with_scram<S, T>(
     read: &mut S,
     write: &mut T,
     pool_password: &str,
     username_from_parameters: &str,
-) -> Result<(), Error>
+) -> Result<Option<Vec<u8>>, Error>
 where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
@@ -444,7 +459,7 @@ where
             )));
         }
     };
-    let (server_final_message, _client_key) = match prepare_server_final_message(
+    let (server_final_message, client_key) = match prepare_server_final_message(
         client_first_message,
         client_final_message,
         server_first_response,
@@ -469,7 +484,7 @@ where
     };
     scram_server_response(write, SASL_FINAL, server_final_message.as_str()).await?;
 
-    Ok(())
+    Ok(Some(client_key))
 }
 
 /// Authenticate a user with MD5

@@ -1031,23 +1031,43 @@ fields:
 
     server_username:
       config:
-        en: ""
-        ru: ""
+        en: |
+          Override the PostgreSQL username for backend connections.
+          If not set, pg_doorman connects as 'username' using passthrough auth.
+        ru: |
+          Переопределить имя пользователя PostgreSQL для серверных подключений.
+          Если не задано, pg_doorman подключается как 'username' через passthrough auth.
       doc: |
         The real PostgreSQL username used to connect to the database server.
 
-        By default, PgDoorman uses the same `username` for both client authentication and server connections. However, if the client `password` is an MD5 or SCRAM hash (which is the typical setup), PostgreSQL will **reject the connection** because it expects a plaintext password, not a hash.
+        By default, PgDoorman uses the same `username` for both client authentication and server connections, using **passthrough authentication**: the cryptographic material from the client's authentication (MD5 hash or SCRAM ClientKey) is reused to authenticate to the backend. This eliminates the need for plaintext `server_password`.
 
-        To fix this, set `server_username` and `server_password` to the actual PostgreSQL credentials. Both must be specified together.
+        **Passthrough mode** (recommended for identity-matching users):
+        - Omit both `server_username` and `server_password`
+        - pg_doorman reuses the client's auth proof to connect to PostgreSQL
+        - For MD5: the hash from `password` is used directly
+        - For SCRAM: the ClientKey is extracted from the client's first SCRAM auth and cached
+        - Requirement: the `password` verifier must match `pg_authid` on the backend (same salt/iterations for SCRAM, same hash for MD5)
+
+        **Explicit credentials mode** (when identities differ):
+        - Set `server_username` and `server_password` to the actual PostgreSQL credentials
+        - `server_password` requires `server_username` to be set
+        - `server_username` alone (without `server_password`) is allowed for trust authentication
 
     server_password:
       config:
-        en: ""
-        ru: ""
+        en: |
+          Plaintext password for backend connections.
+          If not set, pg_doorman uses passthrough auth (reuses client's auth proof).
+        ru: |
+          Пароль открытым текстом для серверных подключений.
+          Если не задан, pg_doorman использует passthrough auth (повторно использует аутентификацию клиента).
       doc: |
         The plaintext password for the PostgreSQL server user specified in `server_username`.
 
-        This is needed because PgDoorman stores client passwords as MD5/SCRAM hashes for client authentication, but PostgreSQL requires a plaintext password during server-side authentication.
+        When `server_password` is not set and the user is passthrough-eligible (no `server_username` or `server_username` equals `username`), PgDoorman uses passthrough authentication instead: the cryptographic material from the client's authentication is reused for the backend connection. This eliminates plaintext passwords from config files.
+
+        `server_password` requires `server_username` to be set.
 
     auth_pam_service:
       config:

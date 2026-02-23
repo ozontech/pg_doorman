@@ -615,6 +615,23 @@ impl Server {
             Some(BackendAuthMethod::ScramPassthrough(client_key)) => {
                 Some(ScramSha256::from_client_key(client_key.clone()))
             }
+            Some(BackendAuthMethod::ScramPending) => {
+                // SCRAM passthrough configured but ClientKey not yet available.
+                // Fall through to server_password if available; otherwise None
+                // (backend SASL auth will fail with a clear error).
+                warn!(
+                    "Backend connection to {} attempted before first client SCRAM auth (ScramPending). \
+                     Falling back to server_password.",
+                    address
+                );
+                if let (Some(_), Some(server_password)) =
+                    (&user.server_username, &user.server_password)
+                {
+                    Some(ScramSha256::new(server_password))
+                } else {
+                    None
+                }
+            }
             _ => {
                 // Existing logic: create from server_password
                 if let (Some(_), Some(server_password)) =
