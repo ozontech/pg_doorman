@@ -6,35 +6,30 @@ This guide helps you resolve common issues when using PgDoorman.
 
 **Symptom:** PgDoorman starts successfully but clients get authentication errors like `password authentication failed` when trying to execute queries.
 
-**Cause:** By default, PgDoorman uses the same `username` and `password` for both client authentication and connecting to the PostgreSQL server. If the `password` field contains an MD5 or SCRAM hash (which is the typical and recommended setup), PostgreSQL will reject it because it expects a plaintext password.
+### If the pool username matches the backend PostgreSQL user
 
-**Solution:** Set `server_username` and `server_password` in your user configuration to the actual PostgreSQL credentials:
+PgDoorman uses **passthrough authentication** by default — the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to authenticate to PostgreSQL. Make sure the `password` field in your config contains the exact hash from `pg_authid` / `pg_shadow`:
 
-### YAML
+```bash
+SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
+```
+
+Copy the hash (e.g., `md5...` or `SCRAM-SHA-256$...`) into your config's `password` field. The hash **must match** the one stored in PostgreSQL (same salt and iterations for SCRAM).
+
+### If the pool username differs from the backend user
+
+When the client-facing `username` in PgDoorman is different from the actual PostgreSQL role, passthrough cannot work — you need explicit credentials:
 
 ```yaml
-pools:
-  mydb:
-    server_host: "127.0.0.1"
-    server_port: 5432
-    users:
-      - username: "app_user"
-        password: "md5..."                # MD5/SCRAM hash for client auth
-        server_username: "app_user"       # real PostgreSQL username
-        server_password: "plaintext_pwd"  # real PostgreSQL password
-        pool_size: 40
+users:
+  - username: "app_user"              # client-facing name
+    password: "md5..."                # hash for client authentication
+    server_username: "pg_app_user"    # actual PostgreSQL role
+    server_password: "plaintext_pwd"  # plaintext password for that role
+    pool_size: 40
 ```
 
-### TOML
-
-```toml
-[pools.mydb.users.0]
-username = "app_user"
-password = "md5..."                # MD5/SCRAM hash for client auth
-server_username = "app_user"       # real PostgreSQL username
-server_password = "plaintext_pwd"  # real PostgreSQL password
-pool_size = 40
-```
+This also applies to JWT authentication where there is no password to pass through.
 
 ```admonish tip title="How to get the password hash"
 You can get user password hashes from PostgreSQL using: `SELECT usename, passwd FROM pg_shadow;`

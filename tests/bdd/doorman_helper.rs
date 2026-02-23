@@ -527,6 +527,25 @@ pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: St
     );
 }
 
+/// Overwrite the pg_doorman config file with new content (with placeholder substitution)
+#[when("we overwrite pg_doorman config file with:")]
+pub async fn overwrite_config_file(world: &mut DoormanWorld, step: &Step) {
+    let content = step
+        .docstring
+        .as_ref()
+        .expect("Config content not found in docstring")
+        .to_string();
+
+    let content = world.replace_placeholders(&content);
+
+    let config_file = world
+        .doorman_config_file
+        .as_ref()
+        .expect("pg_doorman config file not found");
+
+    std::fs::write(config_file.path(), content).expect("Failed to overwrite config file");
+}
+
 /// Overwrite the pg_doorman config file with new invalid content
 #[when("we overwrite pg_doorman config file with invalid content:")]
 pub async fn overwrite_config_with_invalid(world: &mut DoormanWorld, step: &Step) {

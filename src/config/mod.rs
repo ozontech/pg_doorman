@@ -35,12 +35,12 @@ mod user;
 mod tests;
 
 // Re-exports
-pub use address::{Address, PoolMode};
+pub use address::{Address, BackendAuthMethod, PoolMode};
 pub use byte_size::ByteSize;
 pub use duration::Duration;
 pub use general::General;
 pub use include::{GeneralWithInclude, Include, ServerConfig};
-pub use pool::Pool;
+pub use pool::{AuthQueryConfig, Pool};
 pub use prometheus::Prometheus;
 pub use talos::Talos;
 pub use user::User;

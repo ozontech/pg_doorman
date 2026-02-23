@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::errors::Error;
 
-use super::{PoolMode, User};
+use super::{Duration, PoolMode, User};
 
 /// Custom deserializer for users field that supports both formats:
 /// - Array format (recommended): `users: [{ username: "user1", ... }]`
@@ -101,6 +101,9 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_statements_cache_size: Option<usize>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_query: Option<AuthQueryConfig>,
+
     #[serde(
         default = "Pool::default_users",
         deserialize_with = "deserialize_users"
@@ -150,6 +153,26 @@ impl Pool {
             user.validate().await?;
         }
 
+        // Validate auth_query config
+        if let Some(ref aq) = self.auth_query {
+            if aq.query.is_empty() {
+                return Err(Error::BadConfig("auth_query.query cannot be empty".into()));
+            }
+            if aq.user.is_empty() {
+                return Err(Error::BadConfig("auth_query.user cannot be empty".into()));
+            }
+            // server_password without server_user makes no sense;
+            // server_user without server_password is valid (PostgreSQL trust auth)
+            if aq.server_password.is_some() && aq.server_user.is_none() {
+                return Err(Error::BadConfig(
+                    "auth_query: server_password requires server_user to be set".into(),
+                ));
+            }
+            if aq.pool_size == 0 {
+                return Err(Error::BadConfig("auth_query.pool_size must be > 0".into()));
+            }
+        }
+
         Ok(())
     }
 }
@@ -169,6 +192,78 @@ impl Default for Pool {
             log_client_parameter_status_changes: false,
             application_name: None,
             prepared_statements_cache_size: None,
+            auth_query: None,
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AuthQueryConfig {
+    /// SQL query to fetch credentials. Must return (username, password_hash).
+    /// Use $1 for the username parameter.
+    pub query: String,
+
+    /// PostgreSQL user for executor connections (runs auth queries).
+    pub user: String,
+
+    /// Password for executor user (plaintext). Can be empty for trust mode.
+    #[serde(default)]
+    pub password: String,
+
+    /// Database for executor connections (default: pool name).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+
+    /// Number of executor connections (default: 2).
+    #[serde(default = "AuthQueryConfig::default_pool_size")]
+    pub pool_size: u32,
+
+    /// Backend user for data connections. If set, all dynamic users share
+    /// one pool with this identity (dedicated mode). If not set, each dynamic
+    /// user gets their own pool (passthrough mode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_user: Option<String>,
+
+    /// Backend password for dedicated server_user (plaintext).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_password: Option<String>,
+
+    /// Pool size for dynamic user data connections (default: 40).
+    #[serde(default = "AuthQueryConfig::default_data_pool_size")]
+    pub default_pool_size: u32,
+
+    /// Max cache age for positive entries (default: "1h").
+    #[serde(default = "AuthQueryConfig::default_cache_ttl")]
+    pub cache_ttl: Duration,
+
+    /// Cache TTL for "user not found" entries (default: "30s").
+    #[serde(default = "AuthQueryConfig::default_cache_failure_ttl")]
+    pub cache_failure_ttl: Duration,
+
+    /// Min interval between re-fetches for same username on auth failure (default: "1s").
+    #[serde(default = "AuthQueryConfig::default_min_interval")]
+    pub min_interval: Duration,
+}
+
+impl AuthQueryConfig {
+    fn default_pool_size() -> u32 {
+        2
+    }
+    fn default_data_pool_size() -> u32 {
+        40
+    }
+    fn default_cache_ttl() -> Duration {
+        Duration::from_hours(1)
+    }
+    fn default_cache_failure_ttl() -> Duration {
+        Duration::from_secs(30)
+    }
+    fn default_min_interval() -> Duration {
+        Duration::from_secs(1)
+    }
+
+    /// Returns true if dedicated server_user mode is configured.
+    pub fn is_dedicated_mode(&self) -> bool {
+        self.server_user.is_some()
     }
 }

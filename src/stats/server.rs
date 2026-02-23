@@ -610,6 +610,7 @@ mod tests {
             password: "test_password".to_string(),
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
+            backend_auth: None,
         };
 
         // Create a ServerStats with a fixed server_id for testing
@@ -645,6 +646,7 @@ mod tests {
             password: "test_password".to_string(),
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
+            backend_auth: None,
         };
 
         // Create a ServerStats with a fixed server_id for testing

@@ -68,6 +68,9 @@ sections:
   pool_users_yaml:
     en: "Users Configuration"
     ru: "Настройки пользователей"
+  auth_query:
+    en: "Dynamic Authentication (auth_query)"
+    ru: "Динамическая аутентификация (auth_query)"
   pool_examples:
     en: "Additional Pool Examples"
     ru: "Дополнительные примеры пулов"
@@ -211,6 +214,36 @@ texts:
   pool_example_jwt:
     en: "Example: Pool with JWT authentication"
     ru: "Пример: Пул с JWT-аутентификацией"
+  auth_query_desc:
+    en: |
+      Dynamic user authentication via PostgreSQL queries.
+      Instead of listing users statically, pg_doorman fetches credentials from
+      a PostgreSQL database at connection time.
+    ru: |
+      Динамическая аутентификация пользователей через запросы к PostgreSQL.
+      Вместо статического перечисления пользователей pg_doorman получает учётные
+      данные из базы PostgreSQL при подключении.
+  auth_query_modes:
+    en: |
+      Two modes are available:
+      - Dedicated mode (server_user is set): all dynamic users share one pool
+      - Passthrough mode (server_user is not set): each user gets their own pool
+    ru: |
+      Доступны два режима:
+      - Dedicated mode (server_user задан): все динамические пользователи используют один пул
+      - Passthrough mode (server_user не задан): каждый пользователь получает свой пул
+  auth_query_priority:
+    en: "Static users (defined in 'users') are checked first; auth_query is only used when the username is not found among static users."
+    ru: "Статические пользователи (из секции 'users') проверяются первыми; auth_query используется только если имя пользователя не найдено среди статических."
+  auth_query_security:
+    en: "WARNING: Do not use a superuser for auth queries. Create a SECURITY DEFINER function and a dedicated role (see reference docs)."
+    ru: "ВНИМАНИЕ: Не используйте суперпользователя для auth queries. Создайте SECURITY DEFINER функцию и отдельную роль (см. справочную документацию)."
+  auth_query_example_dedicated:
+    en: "Dedicated mode example (simplest — all dynamic users share one backend connection pool):"
+    ru: "Пример dedicated mode (простейший — все динамические пользователи используют один серверный пул):"
+  auth_query_example_passthrough:
+    en: "Passthrough mode example (each dynamic user gets their own backend connection pool):"
+    ru: "Пример passthrough mode (каждый динамический пользователь получает свой серверный пул):"
   pool_example_mapped:
     en: "Example: Pool with server-side credentials mapping"
     ru: "Пример: Пул с маппингом серверных учётных данных"
@@ -998,29 +1031,142 @@ fields:
 
     server_username:
       config:
-        en: ""
-        ru: ""
+        en: |
+          Override the PostgreSQL username for backend connections.
+          If not set, pg_doorman connects as 'username' using passthrough auth.
+        ru: |
+          Переопределить имя пользователя PostgreSQL для серверных подключений.
+          Если не задано, pg_doorman подключается как 'username' через passthrough auth.
       doc: |
         The real PostgreSQL username used to connect to the database server.
 
-        By default, PgDoorman uses the same `username` for both client authentication and server connections. However, if the client `password` is an MD5 or SCRAM hash (which is the typical setup), PostgreSQL will **reject the connection** because it expects a plaintext password, not a hash.
+        By default, PgDoorman uses the same `username` for both client authentication and server connections, using **passthrough authentication**: the cryptographic material from the client's authentication (MD5 hash or SCRAM ClientKey) is reused to authenticate to the backend. This eliminates the need for plaintext `server_password`.
 
-        To fix this, set `server_username` and `server_password` to the actual PostgreSQL credentials. Both must be specified together.
+        **Passthrough mode** (recommended for identity-matching users):
+        - Omit both `server_username` and `server_password`
+        - pg_doorman reuses the client's auth proof to connect to PostgreSQL
+        - For MD5: the hash from `password` is used directly
+        - For SCRAM: the ClientKey is extracted from the client's first SCRAM auth and cached
+        - Requirement: the `password` verifier must match `pg_authid` on the backend (same salt/iterations for SCRAM, same hash for MD5)
+
+        **Explicit credentials mode** (when identities differ):
+        - Set `server_username` and `server_password` to the actual PostgreSQL credentials
+        - `server_password` requires `server_username` to be set
+        - `server_username` alone (without `server_password`) is allowed for trust authentication
 
     server_password:
       config:
-        en: ""
-        ru: ""
+        en: |
+          Plaintext password for backend connections.
+          If not set, pg_doorman uses passthrough auth (reuses client's auth proof).
+        ru: |
+          Пароль открытым текстом для серверных подключений.
+          Если не задан, pg_doorman использует passthrough auth (повторно использует аутентификацию клиента).
       doc: |
         The plaintext password for the PostgreSQL server user specified in `server_username`.
 
-        This is needed because PgDoorman stores client passwords as MD5/SCRAM hashes for client authentication, but PostgreSQL requires a plaintext password during server-side authentication.
+        When `server_password` is not set and the user is passthrough-eligible (no `server_username` or `server_username` equals `username`), PgDoorman uses passthrough authentication instead: the cryptographic material from the client's authentication is reused for the backend connection. This eliminates plaintext passwords from config files.
+
+        `server_password` requires `server_username` to be set.
 
     auth_pam_service:
       config:
         en: "PAM service name for PAM authentication (requires 'pam' feature)."
         ru: "Имя PAM-сервиса для PAM-аутентификации (требуется фича 'pam')."
       doc: "The pam-service that is responsible for client authorization. In this case, pg_doorman will ignore the `password` value."
+
+  auth_query:
+    query:
+      config:
+        en: |
+          SQL query to fetch user credentials.
+          Must return a column named 'passwd' or 'password' with the password hash.
+          If the query returns a single column, it is used regardless of name.
+          Use $1 as the placeholder for the username parameter.
+        ru: |
+          SQL-запрос для получения учётных данных пользователя.
+          Должен возвращать столбец с именем 'passwd' или 'password' с хешем пароля.
+          Если запрос возвращает ровно один столбец, он используется независимо от имени.
+          Используйте $1 как параметр для имени пользователя.
+      doc: |
+        SQL query to fetch credentials. Must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name. Any extra columns are ignored. Use `$1` as the placeholder for the username parameter.
+
+        Example: `"SELECT passwd FROM pg_shadow WHERE usename = $1"`
+
+    user:
+      config:
+        en: "PostgreSQL username for executor connections that run auth queries."
+        ru: "Имя пользователя PostgreSQL для соединений-исполнителей, выполняющих auth-запросы."
+      doc: "PostgreSQL username for the executor connection that runs auth queries."
+
+    password:
+      config:
+        en: "Password for the executor user (plaintext). Can be empty for trust authentication."
+        ru: "Пароль для пользователя-исполнителя (открытым текстом). Может быть пустым при trust-аутентификации."
+      doc: "Password for the executor user (plaintext). Can be empty if the PostgreSQL server uses `trust` authentication for this user."
+      default: '""'
+
+    database:
+      config:
+        en: "Database for executor connections. If not specified, the pool name is used."
+        ru: "База данных для соединений-исполнителей. Если не указана, используется имя пула."
+      doc: "Database for executor connections. If not specified, the pool name is used."
+      default: "None (uses pool name)"
+
+    pool_size:
+      config:
+        en: "Number of executor connections (for running auth queries, not data connections)."
+        ru: "Количество соединений-исполнителей (для auth-запросов, не для данных)."
+      doc: "Number of executor connections (connections used to run auth queries, not data connections)."
+      default: "2"
+
+    server_user:
+      config:
+        en: |
+          Backend PostgreSQL user for data connections (dedicated mode).
+          When set, all dynamic users share one connection pool as this user.
+          When not set, passthrough mode is used (per-user pools).
+        ru: |
+          Пользователь PostgreSQL для подключений данных (dedicated mode).
+          Если задан, все динамические пользователи используют один пул от имени этого пользователя.
+          Если не задан, используется passthrough mode (отдельный пул для каждого пользователя).
+      doc: "Backend PostgreSQL user for data connections in dedicated mode. When set, all dynamically authenticated users share one connection pool that connects as this user. When not set, passthrough mode is used."
+      default: "None (passthrough mode)"
+
+    server_password:
+      config:
+        en: "Plaintext password for server_user. Only used in dedicated mode."
+        ru: "Пароль для server_user открытым текстом. Используется только в dedicated mode."
+      doc: "Plaintext password for the `server_user`. Only meaningful when `server_user` is set."
+      default: "None"
+
+    default_pool_size:
+      config:
+        en: "Pool size for dynamic user data connections."
+        ru: "Размер пула для соединений данных динамических пользователей."
+      doc: "Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode)."
+      default: "40"
+
+    cache_ttl:
+      config:
+        en: "Maximum cache age for successfully fetched credentials."
+        ru: "Максимальный срок хранения успешно полученных учётных данных в кеше."
+      doc: "Maximum cache age for successfully fetched credentials. Accepts duration strings like `\"1h\"`, `\"30m\"`, `\"300s\"`."
+      default: '"1h"'
+
+    cache_failure_ttl:
+      config:
+        en: "Cache TTL for \"user not found\" entries (negative cache)."
+        ru: "Время жизни в кеше для записей \"пользователь не найден\" (негативный кеш)."
+      doc: "Cache TTL for \"user not found\" entries (negative cache). Prevents repeated queries for non-existent users."
+      default: '"30s"'
+
+    min_interval:
+      config:
+        en: "Minimum interval between re-fetches for the same user after auth failure."
+        ru: "Минимальный интервал между повторными запросами для того же пользователя после неудачной аутентификации."
+      doc: "Minimum interval between re-fetches for the same username after an authentication failure. Protects the backend from excessive queries during brute-force attempts."
+      default: '"1s"'
 
   prometheus:
     enabled:

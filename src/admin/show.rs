@@ -10,7 +10,7 @@ use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::get_all_pools;
+use crate::pool::{get_all_pools, AUTH_QUERY_STATE, DYNAMIC_POOLS};
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
@@ -205,7 +205,7 @@ where
 {
     let columns = vec![("item", DataType::Text)];
     let help_items = [
-        "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|PREPARED_STATEMENTS|CLIENTS|SERVERS|USERS|VERSION",
+        "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|PREPARED_STATEMENTS|CLIENTS|SERVERS|USERS|AUTH_QUERY|VERSION",
         "SHOW LISTS",
         "SHOW CONNECTIONS",
         "SHOW STATS",
@@ -491,6 +491,62 @@ where
             pool_config.pool_mode.to_string(),
         ]));
     }
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Show auth_query cache and authentication metrics per database pool.
+pub async fn show_auth_query<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let columns = vec![
+        ("database", DataType::Text),
+        ("cache_entries", DataType::Numeric),
+        ("cache_hits", DataType::Numeric),
+        ("cache_misses", DataType::Numeric),
+        ("cache_refetches", DataType::Numeric),
+        ("cache_rate_limited", DataType::Numeric),
+        ("auth_success", DataType::Numeric),
+        ("auth_failure", DataType::Numeric),
+        ("executor_queries", DataType::Numeric),
+        ("executor_errors", DataType::Numeric),
+        ("dynamic_pools_current", DataType::Numeric),
+        ("dynamic_pools_created", DataType::Numeric),
+        ("dynamic_pools_destroyed", DataType::Numeric),
+    ];
+
+    let states = AUTH_QUERY_STATE.load();
+    let dynamic = DYNAMIC_POOLS.load();
+
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    for (pool_name, state) in states.iter() {
+        let cache_entries = state.cache_len();
+        let dyn_current = dynamic.iter().filter(|id| id.db == *pool_name).count();
+        let s = state.stats.snapshot();
+
+        res.put(data_row(&[
+            pool_name.clone(),
+            cache_entries.to_string(),
+            s.cache_hits.to_string(),
+            s.cache_misses.to_string(),
+            s.cache_refetches.to_string(),
+            s.cache_rate_limited.to_string(),
+            s.auth_success.to_string(),
+            s.auth_failure.to_string(),
+            s.executor_queries.to_string(),
+            s.executor_errors.to_string(),
+            dyn_current.to_string(),
+            s.dynamic_pools_created.to_string(),
+            s.dynamic_pools_destroyed.to_string(),
+        ]));
+    }
+
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
     res.put_i32(5);

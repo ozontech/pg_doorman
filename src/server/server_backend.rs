@@ -15,7 +15,7 @@ use tokio::io::{AsyncReadExt, BufStream};
 
 // Internal crate imports
 use crate::auth::scram_client::ScramSha256;
-use crate::config::{get_config, Address, User};
+use crate::config::{get_config, Address, BackendAuthMethod, User};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::PgErrorMsg;
 use crate::messages::{
@@ -609,12 +609,39 @@ impl Server {
         let mut secret_key: i32 = 0;
         let server_identifier = ServerIdentifier::new(username.clone(), database);
 
-        let mut scram_client_auth = if let (Some(_), Some(server_password)) =
-            (&user.server_username, &user.server_password)
-        {
-            Some(ScramSha256::new(server_password))
-        } else {
-            None
+        let backend_auth_snapshot = address.backend_auth.as_ref().map(|ba| ba.read().clone());
+
+        let mut scram_client_auth = match &backend_auth_snapshot {
+            Some(BackendAuthMethod::ScramPassthrough(client_key)) => {
+                Some(ScramSha256::from_client_key(client_key.clone()))
+            }
+            Some(BackendAuthMethod::ScramPending) => {
+                // SCRAM passthrough configured but ClientKey not yet available.
+                // Fall through to server_password if available; otherwise None
+                // (backend SASL auth will fail with a clear error).
+                warn!(
+                    "Backend connection to {} attempted before first client SCRAM auth (ScramPending). \
+                     Falling back to server_password.",
+                    address
+                );
+                if let (Some(_), Some(server_password)) =
+                    (&user.server_username, &user.server_password)
+                {
+                    Some(ScramSha256::new(server_password))
+                } else {
+                    None
+                }
+            }
+            _ => {
+                // Existing logic: create from server_password
+                if let (Some(_), Some(server_password)) =
+                    (&user.server_username, &user.server_password)
+                {
+                    Some(ScramSha256::new(server_password))
+                } else {
+                    None
+                }
+            }
         };
         let mut server_parameters = ServerParameters::new();
 
@@ -656,6 +683,7 @@ impl Server {
                         user,
                         &mut scram_client_auth,
                         &server_identifier,
+                        backend_auth_snapshot.as_ref(),
                     )
                     .await?;
                 }

@@ -2,31 +2,29 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: doorman
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: exampledb
+      POSTGRES_PASSWORD: postgres_secret
       PGDATA: /var/lib/postgresql/data
     ports:
       - "5432:5432"
     volumes:
       - ./postgres:/var/lib/postgresql/
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     command: postgres -c config_file=/var/lib/postgresql/postgresql.conf -D /var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U doorman -d exampledb" ]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 30s
       timeout: 10s
       retries: 5
     restart: unless-stopped
-    tty: true
-    stdin_open: true
+
   pg_doorman:
     image: ghcr.io/ozontech/pg_doorman:latest
     ports:
       - "6432:6432"
-    command: /usr/bin/pg_doorman -l info /etc/pg_doorman/pg_doorman.toml
+    command: /usr/bin/pg_doorman -l info /etc/pg_doorman/pg_doorman.yaml
     volumes:
       - ./pg_doorman:/etc/pg_doorman
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
-    tty: true
-    stdin_open: true
-

@@ -36,6 +36,9 @@ pub struct ScramSha256 {
     auth_message: String,
     message: BytesMut,
     nonce: String,
+    /// ClientKey for passthrough mode. When Some, `update()` skips PBKDF2
+    /// and uses this key directly. `finish()` skips ServerSignature verification.
+    client_key: Option<Vec<u8>>,
 }
 
 impl ScramSha256 {
@@ -66,6 +69,33 @@ impl ScramSha256 {
             message,
             salted_password: [0u8; 32],
             auth_message: String::new(),
+            client_key: None,
+        }
+    }
+
+    /// Create SCRAM state from a ClientKey (passthrough mode).
+    /// Skips PBKDF2 derivation in `update()` and ServerSignature verification in `finish()`.
+    pub fn from_client_key(client_key: Vec<u8>) -> ScramSha256 {
+        let mut rng = rand::rng();
+        let nonce = (0..NONCE_LENGTH)
+            .map(|_| {
+                let mut v = rng.random_range(0x21u8..0x7e);
+                if v == 0x2c {
+                    v = 0x7e
+                }
+                v as char
+            })
+            .collect::<String>();
+
+        let message = BytesMut::from(format!("n,,n=,r={}", nonce).as_bytes());
+
+        ScramSha256 {
+            password: String::new(),
+            nonce,
+            message,
+            salted_password: [0u8; 32],
+            auth_message: String::new(),
+            client_key: Some(client_key),
         }
     }
 
@@ -87,26 +117,28 @@ impl ScramSha256 {
             Err(_) => return Err(Error::ProtocolSyncError("SCRAM".to_string())),
         };
 
-        let salted_password = Self::hi(
-            &normalize(self.password.as_bytes()),
-            &salt,
-            server_message.iterations,
-        );
+        let client_key_bytes: Vec<u8> = if let Some(ref ck) = self.client_key {
+            // Passthrough: use ClientKey directly, skip expensive PBKDF2
+            ck.clone()
+        } else {
+            // Normal: derive from password via PBKDF2
+            let salted_password = Self::hi(
+                &normalize(self.password.as_bytes()),
+                &salt,
+                server_message.iterations,
+            );
+            self.salted_password = salted_password;
 
-        // Save for verification of final server message.
-        self.salted_password = salted_password;
-
-        let mut hmac = match Hmac::<Sha256>::new_from_slice(&salted_password) {
-            Ok(hmac) => hmac,
-            Err(_) => return Err(Error::ServerError),
+            let mut hmac = match Hmac::<Sha256>::new_from_slice(&salted_password) {
+                Ok(hmac) => hmac,
+                Err(_) => return Err(Error::ServerError),
+            };
+            hmac.update(b"Client Key");
+            hmac.finalize().into_bytes().to_vec()
         };
 
-        hmac.update(b"Client Key");
-
-        let client_key = hmac.finalize().into_bytes();
-
         let mut hash = Sha256::default();
-        hash.update(client_key.as_slice());
+        hash.update(&client_key_bytes);
 
         let stored_key = hash.finalize_fixed();
         let mut cbind_input = vec![];
@@ -145,7 +177,7 @@ impl ScramSha256 {
         let client_signature = hmac.finalize().into_bytes();
 
         // Sign the client proof.
-        let mut client_proof = client_key;
+        let mut client_proof = client_key_bytes;
         for (proof, signature) in client_proof.iter_mut().zip(client_signature) {
             *proof ^= signature;
         }
@@ -153,7 +185,7 @@ impl ScramSha256 {
         match write!(
             &mut self.message,
             ",p={}",
-            general_purpose::STANDARD.encode(&*client_proof)
+            general_purpose::STANDARD.encode(&client_proof)
         ) {
             Ok(_) => (),
             Err(_) => return Err(Error::ServerError),
@@ -164,6 +196,13 @@ impl ScramSha256 {
 
     /// Verify final server message.
     pub fn finish(&mut self, message: &BytesMut) -> Result<(), Error> {
+        if self.client_key.is_some() {
+            // Passthrough: can't verify ServerSignature (no SaltedPassword → no ServerKey).
+            // Parse message to consume it, but skip verification. Backend PG is trusted.
+            let _final_message = FinalMessage::parse(message)?;
+            return Ok(());
+        }
+
         let final_message = FinalMessage::parse(message)?;
 
         let verifier = match general_purpose::STANDARD.decode(final_message.value) {

@@ -32,6 +32,7 @@ pub fn generate_pool_doc() -> String {
         "```toml\n[pools.exampledb] # Declaring the 'exampledb' database\n```\n"
     );
     write_pool_fields(&mut out, f);
+    write_auth_query_section(&mut out);
     write_user_fields(&mut out, f);
 
     out
@@ -59,12 +60,7 @@ fn field_doc(f: &FieldsData, section: &str, name: &str) -> String {
     let text = desc
         .doc
         .as_deref()
-        .unwrap_or_else(|| {
-            desc.config
-                .as_ref()
-                .map(|c| c.en.as_str())
-                .unwrap_or("")
-        });
+        .unwrap_or_else(|| desc.config.as_ref().map(|c| c.en.as_str()).unwrap_or(""));
     text.trim_end().to_string()
 }
 
@@ -87,7 +83,10 @@ fn write_param(out: &mut String, f: &FieldsData, section: &str, name: &str) {
 fn write_config_format_section(out: &mut String) {
     let _ = writeln!(out, "## Configuration File Format\n");
     let _ = writeln!(out, "pg_doorman supports two configuration file formats:\n");
-    let _ = writeln!(out, "* **YAML** (`.yaml`, `.yml`) - The primary and recommended format for new configurations.");
+    let _ = writeln!(
+        out,
+        "* **YAML** (`.yaml`, `.yml`) - The primary and recommended format for new configurations."
+    );
     let _ = writeln!(out, "* **TOML** (`.toml`) - Supported for backward compatibility with existing configurations.\n");
     let _ = writeln!(out, "The format is automatically detected based on the file extension. Both formats support the same configuration options and can be used interchangeably.\n");
 
@@ -282,6 +281,40 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
     }
 }
 
+fn write_auth_query_section(out: &mut String) {
+    let f = &*FIELDS;
+
+    let _ = writeln!(out, "## Auth Query Settings\n");
+    let _ = writeln!(out, "The `auth_query` section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.\n");
+    let _ = writeln!(out, "```yaml\npools:\n  mydb:\n    auth_query:\n      query: \"SELECT passwd FROM pg_shadow WHERE usename = $1\"\n      user: \"doorman_auth\"\n      password: \"auth_password\"\n```\n");
+    let _ = writeln!(out, "There are two modes of operation:\n");
+    let _ = writeln!(out, "- **Dedicated mode** (`server_user` is set): All dynamically authenticated users share a single connection pool that connects to PostgreSQL as `server_user`. This is the simplest setup and works well when all users need the same backend access.");
+    let _ = writeln!(out, "- **Passthrough mode** (`server_user` is not set): Each dynamically authenticated user gets their own connection pool that connects to PostgreSQL using their own credentials (MD5 pass-the-hash or SCRAM ClientKey passthrough). This preserves per-user identity on the backend.\n");
+    let _ = writeln!(out, "Static users (defined in the `users` section) are always checked first. The auth_query is only used when the username is not found among static users.\n");
+    let _ = writeln!(out, "```admonish warning title=\"Security Recommendation\"");
+    let _ = writeln!(out, "The `user` that runs auth queries needs access to password hashes (e.g. from `pg_shadow`). **Do not use a superuser** for this purpose. Instead, create a `SECURITY DEFINER` function owned by a superuser and a dedicated role with minimal privileges:\n");
+    let _ = writeln!(out, "\\`\\`\\`sql\n-- Create a dedicated role for auth queries\nCREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';\n\n-- Create a SECURITY DEFINER function (runs with owner's privileges)\nCREATE OR REPLACE FUNCTION pg_doorman_get_auth(p_usename TEXT)\nRETURNS TABLE (usename name, passwd text)\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS\n$$\n  SELECT usename, passwd FROM pg_shadow WHERE usename = p_usename;\n$$;\n\n-- Grant execute only to the dedicated role\nREVOKE ALL ON FUNCTION pg_doorman_get_auth(TEXT) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;\n\\`\\`\\`\n\nThen use this function in the `query` parameter:\n\\`\\`\\`yaml\nauth_query:\n  query: \"SELECT * FROM pg_doorman_get_auth($1)\"\n  user: \"doorman_auth\"\n  password: \"strong_password\"\n\\`\\`\\`\n```\n");
+
+    // Individual parameters from fields.yaml
+    let fields = [
+        "query",
+        "user",
+        "password",
+        "database",
+        "pool_size",
+        "server_user",
+        "server_password",
+        "default_pool_size",
+        "cache_ttl",
+        "cache_failure_ttl",
+        "min_interval",
+    ];
+
+    for name in &fields {
+        write_param(out, f, "auth_query", name);
+    }
+}
+
 fn write_user_fields(out: &mut String, f: &FieldsData) {
     let _ = writeln!(out, "## Pool Users Settings\n");
     let _ = writeln!(
@@ -304,11 +337,14 @@ fn write_user_fields(out: &mut String, f: &FieldsData) {
         write_param(out, f, "user", name);
     }
 
-    // Add the server_credentials warning admonition (mdbook-admonish format)
-    let _ = writeln!(out, "`````admonish warning title=\"Common Setup Issue\"");
-    let _ = writeln!(out, "If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that `server_username` and `server_password` are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the `password` field, which PostgreSQL rejects.\n");
-    let _ = writeln!(out, "**Solution:** Set both `server_username` and `server_password` to the actual PostgreSQL credentials:\n");
-    let _ = writeln!(out, "```yaml\nusers:\n  - username: \"app_user\"\n    password: \"md5...\"                # hash for client authentication\n    server_username: \"app_user\"       # real PostgreSQL username\n    server_password: \"plaintext_pwd\"  # real PostgreSQL password\n```\n`````\n");
+    // Add the passthrough auth info admonition (mdbook-admonish format)
+    let _ = writeln!(
+        out,
+        "`````admonish info title=\"Passthrough Authentication\""
+    );
+    let _ = writeln!(out, "By default, PgDoorman uses **passthrough authentication**: the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is automatically reused to authenticate to PostgreSQL. No plaintext passwords in config needed.\n");
+    let _ = writeln!(out, "Set `server_username` and `server_password` **only** when the backend PostgreSQL user differs from the pool username (e.g., username mapping or JWT auth):\n");
+    let _ = writeln!(out, "```yaml\nusers:\n  - username: \"app_user\"              # client-facing name\n    password: \"md5...\"                # hash for client authentication\n    server_username: \"pg_app_user\"    # different backend PostgreSQL user\n    server_password: \"plaintext_pwd\"  # plaintext password for that user\n```\n`````\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +424,19 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_pools_queries_total_time` | Total time spent executing queries in connection pools by user and database. Values are in milliseconds. Helps monitor overall query performance and identify users or databases with high query execution times. |");
     let _ = writeln!(out, "| `pg_doorman_pools_avg_wait_time` | Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks. |\n");
 
+    // Auth Query Metrics
+    let _ = writeln!(out, "### Auth Query Metrics\n");
+    let _ = writeln!(
+        out,
+        "These metrics are only available when `auth_query` is configured for one or more pools.\n"
+    );
+    let _ = writeln!(out, "| Metric | Description |");
+    let _ = writeln!(out, "|--------|-------------|");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_cache` | Auth query cache metrics by type and database. Types include: `entries` (current cached credentials), `hits` (cache lookups that found a valid entry), `misses` (cache lookups that required a PostgreSQL fetch), `refetches` (re-fetches triggered by auth failure with stale credentials), `rate_limited` (re-fetch attempts that were rate-limited by `min_interval`). |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_auth` | Auth query authentication outcomes by result and database. Results include: `success` (successful authentication) and `failure` (wrong password or credential mismatch). |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_executor` | Auth query executor metrics by type and database. Types include: `queries` (total queries executed against PostgreSQL to fetch credentials) and `errors` (queries that failed due to connection or execution errors). |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_dynamic_pools` | Auth query dynamic pool lifecycle metrics by type and database. Types include: `current` (currently active dynamic pools), `created` (total pools created since startup), `destroyed` (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode. |\n");
+
     // Server Metrics
     let _ = writeln!(out, "### Server Metrics\n");
     let _ = writeln!(out, "| Metric | Description |");
@@ -424,6 +473,15 @@ fn write_prometheus_metrics_section(out: &mut String) {
 
     let _ = writeln!(out, "### Client Wait Time\n");
     let _ = writeln!(out, "```\npg_doorman_pools_avg_wait_time\n```\n");
+
+    let _ = writeln!(out, "### Auth Query Cache Hit Rate\n");
+    let _ = writeln!(out, "```\npg_doorman_auth_query_cache{{type=\"hits\"}} / (pg_doorman_auth_query_cache{{type=\"hits\"}} + pg_doorman_auth_query_cache{{type=\"misses\"}})\n```\n");
+
+    let _ = writeln!(out, "### Auth Query Failure Rate\n");
+    let _ = writeln!(
+        out,
+        "```\nrate(pg_doorman_auth_query_auth{{result=\"failure\"}}[5m])\n```\n"
+    );
 }
 
 #[cfg(test)]
@@ -432,7 +490,7 @@ mod tests {
     use std::path::Path;
 
     /// Read a reference doc file at runtime. Returns None if file doesn't exist
-    /// (generated files may not be in the repo).
+    /// (generated files are in `.gitignore` and may not be present locally).
     fn read_reference_doc(rel_path: &str) -> Option<String> {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let path = Path::new(manifest_dir).join(rel_path);
@@ -446,7 +504,7 @@ mod tests {
         {
             assert_eq!(
                 generated, file_content,
-                "EN general.md is outdated. Run: cargo run -- generate-docs"
+                "EN general.md is outdated. Run: cargo run --bin pg_doorman -- generate-docs -o documentation/en/src/reference"
             );
         }
     }
@@ -457,7 +515,7 @@ mod tests {
         if let Some(file_content) = read_reference_doc("documentation/en/src/reference/pool.md") {
             assert_eq!(
                 generated, file_content,
-                "EN pool.md is outdated. Run: cargo run -- generate-docs"
+                "EN pool.md is outdated. Run: cargo run --bin pg_doorman -- generate-docs -o documentation/en/src/reference"
             );
         }
     }
@@ -470,7 +528,7 @@ mod tests {
         {
             assert_eq!(
                 generated, file_content,
-                "EN prometheus.md is outdated. Run: cargo run -- generate-docs"
+                "EN prometheus.md is outdated. Run: cargo run --bin pg_doorman -- generate-docs -o documentation/en/src/reference"
             );
         }
     }

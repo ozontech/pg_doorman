@@ -504,24 +504,54 @@ pools:
 
       # Server-side credentials for connecting to PostgreSQL.
       #
-      # IMPORTANT: By default pg_doorman uses the same username and password
-      # to authenticate on the PostgreSQL server. If the client password is
-      # an MD5/SCRAM hash (which is typical), PostgreSQL will REJECT it because
-      # the server expects the real plaintext password, not a hash.
+      # By default pg_doorman uses passthrough authentication: the client's
+      # cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to
+      # authenticate to the backend automatically. This is the recommended
+      # mode — no plaintext passwords in config needed.
       #
-      # To fix this, set server_username and server_password to the actual
-      # PostgreSQL credentials (plaintext password). Both must be specified together.
-      #
-      # Example: client authenticates with MD5 hash, server uses real password:
-      #   username = "app_user"
-      #   password = "md5..."                    # for client auth
-      #   server_username = "app_user"            # for PostgreSQL auth
-      #   server_password = "real_password_here"  # plaintext password
+      # Set server_username/server_password only when the backend PostgreSQL
+      # user differs from the pool username (e.g., username mapping or JWT auth).
         # server_username: "actual_pg_user"
         # server_password: "actual_pg_password"
 
       # PAM service name for PAM authentication (requires 'pam' feature).
         # auth_pam_service: "pg_doorman"
+
+    # --------------------------------------------------------------------------
+    # Dynamic Authentication (auth_query)
+    # --------------------------------------------------------------------------
+
+    # Dynamic user authentication via PostgreSQL queries.
+    # Instead of listing users statically, pg_doorman fetches credentials from
+    # a PostgreSQL database at connection time.
+
+    # Two modes are available:
+    # - Dedicated mode (server_user is set): all dynamic users share one pool
+    # - Passthrough mode (server_user is not set): each user gets their own pool
+
+    # Static users (defined in 'users') are checked first; auth_query is only used when the username is not found among static users.
+
+    # WARNING: Do not use a superuser for auth queries. Create a SECURITY DEFINER function and a dedicated role (see reference docs).
+
+    # Dedicated mode example (simplest — all dynamic users share one backend connection pool):
+    # auth_query:
+    #   query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
+    #   user: "doorman_auth"
+    #   password: "auth_password"
+    #   database: "postgres"
+    #   pool_size: 2
+    #   server_user: "app"
+    #   server_password: "secret"
+    #   default_pool_size: 40
+    #   cache_ttl: "1h"
+    #   cache_failure_ttl: "30s"
+    #   min_interval: "1s"
+
+    # Passthrough mode example (each dynamic user gets their own backend connection pool):
+    # auth_query:
+    #   query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
+    #   user: "doorman_auth"
+    #   password: "auth_password"
 
     # --------------------------------------------------------------------------
     # Additional Pool Examples

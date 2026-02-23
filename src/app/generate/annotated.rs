@@ -48,6 +48,7 @@ pub(crate) struct FieldsMap {
     pub general: HashMap<String, FieldDesc>,
     pub pool: HashMap<String, FieldDesc>,
     pub user: HashMap<String, FieldDesc>,
+    pub auth_query: HashMap<String, FieldDesc>,
     pub prometheus: HashMap<String, FieldDesc>,
 }
 
@@ -64,6 +65,7 @@ impl FieldsData {
             "general" => &self.fields.general,
             "pool" => &self.fields.pool,
             "user" => &self.fields.user,
+            "auth_query" => &self.fields.auth_query,
             "prometheus" => &self.fields.prometheus,
             _ => panic!("Unknown section: {section}"),
         };
@@ -139,6 +141,7 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         log_client_parameter_status_changes: false,
         application_name: None,
         prepared_statements_cache_size: None,
+        auth_query: None,
         users: vec![User {
             username: "app_user".to_string(),
             password: "md5dd9a0f26a4302744db881776a09bbfad".to_string(),
@@ -1160,6 +1163,7 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
     w.blank();
 
     write_pool_users(w, pool_name, &pool.users);
+    write_auth_query_commented_example(w);
 }
 
 fn write_pool_users(w: &mut ConfigWriter, pool_name: &str, users: &[User]) {
@@ -1332,8 +1336,7 @@ fn write_user_fields_yaml(w: &mut ConfigWriter, user: &User) {
     }
 }
 
-/// Write prominent documentation about server_username/server_password.
-/// This is the #1 pain point for new users — kept inline for precise formatting.
+/// Write documentation about server_username/server_password passthrough.
 fn write_server_credentials_comment(w: &mut ConfigWriter, indent: usize) {
     if w.russian {
         w.comment(
@@ -1343,47 +1346,28 @@ fn write_server_credentials_comment(w: &mut ConfigWriter, indent: usize) {
         w.comment(indent, "");
         w.comment(
             indent,
-            "ВАЖНО: По умолчанию pg_doorman использует те же username и password",
+            "По умолчанию pg_doorman использует passthrough-аутентификацию:",
         );
         w.comment(
             indent,
-            "для аутентификации на сервере PostgreSQL. Если пароль клиента — это",
+            "криптографический материал клиента (MD5-хеш или SCRAM ClientKey)",
         );
         w.comment(
             indent,
-            "хеш MD5/SCRAM (что типично при автогенерации), PostgreSQL ОТКЛОНИТ",
+            "автоматически передаётся для аутентификации на бэкенде.",
         );
         w.comment(
             indent,
-            "подключение, потому что сервер ожидает настоящий пароль, а не хеш.",
+            "Это рекомендуемый режим — не требует хранения паролей открытым текстом.",
         );
         w.comment(indent, "");
         w.comment(
             indent,
-            "Решение: укажите server_username и server_password с реальными",
+            "Указывайте server_username/server_password только если пользователь",
         );
         w.comment(
             indent,
-            "учётными данными PostgreSQL (пароль открытым текстом).",
-        );
-        w.comment(indent, "Оба параметра должны быть указаны вместе.");
-        w.comment(indent, "");
-        w.comment(
-            indent,
-            "Пример: клиент аутентифицируется MD5-хешем, сервер — реальным паролем:",
-        );
-        w.comment(indent, "  username = \"app_user\"");
-        w.comment(
-            indent,
-            "  password = \"md5...\"                    # для аутентификации клиента",
-        );
-        w.comment(
-            indent,
-            "  server_username = \"app_user\"            # для аутентификации на PostgreSQL",
-        );
-        w.comment(
-            indent,
-            "  server_password = \"настоящий_пароль\"    # пароль открытым текстом",
+            "на бэкенде отличается от пользователя пула (username mapping, JWT).",
         );
     } else {
         w.comment(
@@ -1393,47 +1377,116 @@ fn write_server_credentials_comment(w: &mut ConfigWriter, indent: usize) {
         w.comment(indent, "");
         w.comment(
             indent,
-            "IMPORTANT: By default pg_doorman uses the same username and password",
+            "By default pg_doorman uses passthrough authentication: the client's",
         );
         w.comment(
             indent,
-            "to authenticate on the PostgreSQL server. If the client password is",
+            "cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to",
         );
         w.comment(
             indent,
-            "an MD5/SCRAM hash (which is typical), PostgreSQL will REJECT it because",
+            "authenticate to the backend automatically. This is the recommended",
         );
-        w.comment(
-            indent,
-            "the server expects the real plaintext password, not a hash.",
-        );
+        w.comment(indent, "mode — no plaintext passwords in config needed.");
         w.comment(indent, "");
         w.comment(
             indent,
-            "To fix this, set server_username and server_password to the actual",
+            "Set server_username/server_password only when the backend PostgreSQL",
         );
         w.comment(
             indent,
-            "PostgreSQL credentials (plaintext password). Both must be specified together.",
+            "user differs from the pool username (e.g., username mapping or JWT auth).",
         );
-        w.comment(indent, "");
-        w.comment(
-            indent,
-            "Example: client authenticates with MD5 hash, server uses real password:",
-        );
-        w.comment(indent, "  username = \"app_user\"");
-        w.comment(
-            indent,
-            "  password = \"md5...\"                    # for client auth",
-        );
-        w.comment(
-            indent,
-            "  server_username = \"app_user\"            # for PostgreSQL auth",
-        );
-        w.comment(
-            indent,
-            "  server_password = \"real_password_here\"  # plaintext password",
-        );
+    }
+}
+
+fn write_auth_query_commented_example(w: &mut ConfigWriter) {
+    let f = &*FIELDS;
+    let fi = w.pool_field_indent();
+
+    w.blank();
+    w.separator(fi, f.section_title("auth_query").get(w.russian));
+    w.blank();
+
+    // Description
+    for line in f.text("auth_query_desc").get(w.russian).trim().split('\n') {
+        w.comment(fi, line);
+    }
+    w.blank();
+
+    // Modes
+    for line in f.text("auth_query_modes").get(w.russian).trim().split('\n') {
+        w.comment(fi, line);
+    }
+    w.blank();
+
+    // Priority
+    w.comment(fi, f.text("auth_query_priority").get(w.russian));
+    w.blank();
+
+    // Security warning
+    w.comment(fi, f.text("auth_query_security").get(w.russian));
+    w.blank();
+
+    // Dedicated mode example (all fields shown)
+    w.comment(fi, f.text("auth_query_example_dedicated").get(w.russian));
+    match w.format {
+        ConfigFormat::Toml => {
+            w.comment(
+                fi,
+                "auth_query.query = \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "auth_query.user = \"doorman_auth\"");
+            w.comment(fi, "auth_query.password = \"auth_password\"");
+            w.comment(fi, "auth_query.database = \"postgres\"");
+            w.comment(fi, "auth_query.pool_size = 2");
+            w.comment(fi, "auth_query.server_user = \"app\"");
+            w.comment(fi, "auth_query.server_password = \"secret\"");
+            w.comment(fi, "auth_query.default_pool_size = 40");
+            w.comment(fi, "auth_query.cache_ttl = 3600000");
+            w.comment(fi, "auth_query.cache_failure_ttl = 30000");
+            w.comment(fi, "auth_query.min_interval = 1000");
+        }
+        ConfigFormat::Yaml => {
+            w.comment(fi, "auth_query:");
+            w.comment(
+                fi,
+                "  query: \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "  user: \"doorman_auth\"");
+            w.comment(fi, "  password: \"auth_password\"");
+            w.comment(fi, "  database: \"postgres\"");
+            w.comment(fi, "  pool_size: 2");
+            w.comment(fi, "  server_user: \"app\"");
+            w.comment(fi, "  server_password: \"secret\"");
+            w.comment(fi, "  default_pool_size: 40");
+            w.comment(fi, "  cache_ttl: \"1h\"");
+            w.comment(fi, "  cache_failure_ttl: \"30s\"");
+            w.comment(fi, "  min_interval: \"1s\"");
+        }
+    }
+    w.blank();
+
+    // Passthrough mode example (minimal — no server_user/server_password)
+    w.comment(fi, f.text("auth_query_example_passthrough").get(w.russian));
+    match w.format {
+        ConfigFormat::Toml => {
+            w.comment(
+                fi,
+                "auth_query.query = \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "auth_query.user = \"doorman_auth\"");
+            w.comment(fi, "auth_query.password = \"auth_password\"");
+        }
+        ConfigFormat::Yaml => {
+            w.comment(fi, "auth_query:");
+            w.comment(
+                fi,
+                "  query: \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "  user: \"doorman_auth\"");
+            w.comment(fi, "  password: \"auth_password\"");
+        }
     }
 }
 
@@ -1829,12 +1882,31 @@ mod tests {
         let fields = &*FIELDS;
         let yaml_content = include_str!("fields.yaml");
 
-        // Fields that are internal/structural and not config parameters
-        let skip_fields: &[&str] = &[
-            "users",
-            "pools",
-            "path",
-            "pooler_check_query_request_bytes", // internal, derived
+        // Structural/internal fields that don't have their own fields.yaml entry
+        let structural_fields: &[&str] = &[
+            "users",                            // nested sub-section
+            "pools",                            // top-level section
+            "path",                             // internal runtime field
+            "pooler_check_query_request_bytes", // derived from pooler_check_query
+            "auth_query",                       // nested struct, checked via "auth_query" section
+        ];
+
+        // AuthQueryConfig pub fields live in pool.rs alongside Pool pub fields.
+        // When checking the "Pool" section, these are excluded (they belong to
+        // the "auth_query" section). When checking "AuthQueryConfig", only these
+        // fields are included.
+        let auth_query_fields: &[&str] = &[
+            "query",
+            "user",
+            "password",
+            "database",
+            "pool_size",
+            "server_user",
+            "server_password",
+            "default_pool_size",
+            "cache_ttl",
+            "cache_failure_ttl",
+            "min_interval",
         ];
 
         let sources: &[(&str, &str)] = &[
@@ -1842,6 +1914,7 @@ mod tests {
             ("Pool", include_str!("../../config/pool.rs")),
             ("User", include_str!("../../config/user.rs")),
             ("Prometheus", include_str!("../../config/prometheus.rs")),
+            ("AuthQueryConfig", include_str!("../../config/pool.rs")),
         ];
 
         let section_map: &[(&str, &str)] = &[
@@ -1849,6 +1922,7 @@ mod tests {
             ("Pool", "pool"),
             ("User", "user"),
             ("Prometheus", "prometheus"),
+            ("AuthQueryConfig", "auth_query"),
         ];
 
         let mut missing = Vec::new();
@@ -1861,7 +1935,16 @@ mod tests {
                 .map(|(_, sec)| *sec);
 
             for field in &pub_fields {
-                if skip_fields.contains(&field.as_str()) {
+                if structural_fields.contains(&field.as_str()) {
+                    continue;
+                }
+                // AuthQueryConfig fields are checked via the "auth_query" section
+                if *struct_name == "Pool" && auth_query_fields.contains(&field.as_str()) {
+                    continue;
+                }
+                // When checking AuthQueryConfig, only include its own fields
+                if *struct_name == "AuthQueryConfig" && !auth_query_fields.contains(&field.as_str())
+                {
                     continue;
                 }
                 // Check if field exists in YAML (either as a field key or in raw content)
@@ -1870,6 +1953,7 @@ mod tests {
                         "general" => &fields.fields.general,
                         "pool" => &fields.fields.pool,
                         "user" => &fields.fields.user,
+                        "auth_query" => &fields.fields.auth_query,
                         "prometheus" => &fields.fields.prometheus,
                         _ => unreachable!(),
                     };

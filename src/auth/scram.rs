@@ -369,7 +369,7 @@ pub fn prepare_server_final_message(
     server_first: ServerFirstMessage,
     server_secret_server_key: Vec<u8>,
     server_secret_stored_key: Vec<u8>,
-) -> Result<String, Error> {
+) -> Result<(String, Vec<u8>), Error> {
     // checks.
     let mut gs_2_header = client_first.gs2_flag.to_string() + ",,";
     if client_first.authzid.is_some() {
@@ -434,7 +434,7 @@ pub fn prepare_server_final_message(
         "v={}",
         general_purpose::STANDARD.encode(mac_result_server_key.into_bytes())
     );
-    Ok(result)
+    Ok((result, client_key_xor))
 }
 
 impl std::fmt::Display for ClientFirstMessage {

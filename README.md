@@ -44,6 +44,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | YAML / TOML config | Yes | No (INI) | No (own format) |
 | Human-readable durations & sizes | Yes | No | No |
 | Native `pg_hba.conf` format | Yes | Yes | Since 1.4 |
+| Auth query (dynamic users) | Yes | Yes | Yes |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
 | Prometheus metrics | Built-in | External | Built-in |
@@ -66,13 +67,37 @@ pools:
     pool_mode: "transaction"
     users:
       - username: "app"
-        password: "md5..."           # hash for client auth (from pg_shadow)
+        password: "md5..."           # hash from pg_shadow / pg_authid
         pool_size: 40
-        server_username: "app"       # real PostgreSQL username
-        server_password: "secret"    # real PostgreSQL password (plaintext)
 ```
 
-> **Important:** `server_username` and `server_password` are required if your client `password` is an MD5/SCRAM hash (which is typical). Without them, PgDoorman tries to authenticate to PostgreSQL using the hash itself, and PostgreSQL rejects it. This is the #1 setup issue for new users.
+> **Passthrough authentication (default):** When `server_username` and `server_password` are omitted, PgDoorman reuses the client's cryptographic proof (MD5 hash or SCRAM ClientKey) to authenticate to PostgreSQL automatically. This is the recommended setup when the pool username matches the backend PostgreSQL user — no plaintext passwords in config needed.
+>
+> Set `server_username` / `server_password` only when the backend user differs from the pool user (e.g., username mapping) or for JWT authentication where there is no password to pass through.
+
+### Auth query (dynamic users)
+
+Instead of listing every user in the config, pg_doorman can look up credentials directly from PostgreSQL. The query must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. Any extra columns are ignored.
+
+Quickstart — using `pg_shadow` directly (requires superuser):
+
+```yaml
+pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    auth_query:
+      query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
+      user: "postgres"
+      password: "postgres_password"
+```
+
+By default auth_query runs in **passthrough mode**: each dynamic user gets their own backend pool and authenticates as themselves. To force all users through a single backend role, set `server_user` / `server_password` (dedicated mode).
+
+> Static users (defined in `users`) are checked first. auth_query is only consulted when the username is not found among static users.
+
+> **Production:** don't use superuser for auth queries. Create a [`SECURITY DEFINER` function](https://ozontech.github.io/pg_doorman/reference/pool.html#auth-query-settings) with a dedicated low-privilege role instead.
 
 Or generate a config automatically:
 

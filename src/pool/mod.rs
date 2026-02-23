@@ -1,8 +1,8 @@
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use log::{debug, info, warn};
-use once_cell::sync::Lazy;
-use parking_lot::Mutex;
+use once_cell::sync::{Lazy, OnceCell};
+use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,11 +10,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
-use crate::config::{get_config, Address, General, PoolMode, User};
+use crate::auth::auth_query::{AuthQueryCache, AuthQueryExecutor};
+use crate::config::{
+    get_config, Address, AuthQueryConfig, BackendAuthMethod, General, PoolMode, User,
+};
 use crate::errors::Error;
 use crate::messages::Parse;
 
 use crate::server::{Server, ServerParameters};
+use crate::stats::auth_query::AuthQueryStats;
 use crate::stats::{AddressStats, ServerStats};
 
 mod errors;
@@ -27,6 +31,7 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 
 pub use crate::server::PreparedStatementCache;
 
+pub mod gc;
 pub mod retain;
 
 pub type ProcessId = i32;
@@ -45,8 +50,126 @@ pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(Ha
 pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
+/// Global client-server map, initialized once by `from_config()`.
+/// Needed by `create_dynamic_pool()` which doesn't have access to the map
+/// through function parameters.
+static CLIENT_SERVER_MAP: OnceCell<ClientServerMap> = OnceCell::new();
+
+fn set_client_server_map(csm: ClientServerMap) {
+    CLIENT_SERVER_MAP.set(csm).ok();
+}
+
+fn get_client_server_map() -> Option<ClientServerMap> {
+    CLIENT_SERVER_MAP.get().cloned()
+}
+
 pub type PreparedStatementCacheType = Arc<PreparedStatementCache>;
 pub type ServerParametersType = Arc<tokio::sync::Mutex<ServerParameters>>;
+
+// ---------------------------------------------------------------------------
+// Auth query state (per-pool, lazily initialized)
+// ---------------------------------------------------------------------------
+
+/// Per-pool auth_query state: cache + config + shared pool identifier.
+///
+/// The executor and cache are lazily initialized via `OnceCell` on the first
+/// auth_query authentication attempt. This ensures `from_config()` never fails
+/// due to an unreachable auth_query PostgreSQL server — static users continue
+/// working. If the first init fails, `OnceCell` retries on the next call.
+pub struct AuthQueryState {
+    cache_cell: tokio::sync::OnceCell<AuthQueryCache>,
+    config: AuthQueryConfig,
+    pool_name: String,
+    server_host: String,
+    server_port: u16,
+    /// Pool identifier for the shared server_user pool (None = passthrough mode).
+    pub shared_pool_id: Option<PoolIdentifier>,
+    /// Per-pool auth_query metrics (shared with cache and admin/prometheus).
+    pub stats: Arc<AuthQueryStats>,
+}
+
+impl AuthQueryState {
+    /// Get the auth_query config for this pool.
+    pub fn config(&self) -> &AuthQueryConfig {
+        &self.config
+    }
+
+    /// Get the cache, lazily initializing the executor + cache on first access.
+    ///
+    /// If PG is unreachable, returns `Err`; the `OnceCell` does NOT store the
+    /// error, so the next call will retry the connection.
+    /// Clear the auth_query cache if it was already initialized.
+    /// Called on RELOAD when auth_query config changes. Does NOT trigger
+    /// lazy initialization (safe to call even if executor was never created).
+    pub fn try_clear_cache(&self) {
+        if let Some(cache) = self.cache_cell.get() {
+            cache.clear();
+            info!(
+                "[pool: {}] auth_query cache cleared on RELOAD",
+                self.pool_name
+            );
+        }
+    }
+
+    pub async fn cache(&self) -> Result<&AuthQueryCache, Error> {
+        self.cache_cell
+            .get_or_try_init(|| async {
+                info!(
+                    "[pool: {}] auth_query: initializing executor (lazy, first request)",
+                    self.pool_name
+                );
+                let executor = AuthQueryExecutor::new(
+                    &self.config,
+                    &self.pool_name,
+                    &self.server_host,
+                    self.server_port,
+                )
+                .await?;
+                Ok(AuthQueryCache::new(
+                    Arc::new(executor),
+                    &self.config,
+                    Some(self.stats.clone()),
+                ))
+            })
+            .await
+    }
+
+    /// Number of cached entries (0 if cache not yet initialized).
+    pub fn cache_len(&self) -> usize {
+        self.cache_cell.get().map_or(0, |c| c.len())
+    }
+}
+
+/// Global auth_query state per database pool.
+/// Replaced atomically on RELOAD together with POOLS.
+pub static AUTH_QUERY_STATE: Lazy<ArcSwap<HashMap<String, Arc<AuthQueryState>>>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+
+/// Tracks which pool identifiers were created dynamically (auth_query passthrough).
+/// Used by RELOAD logic and GC to distinguish dynamic pools from static ones.
+pub static DYNAMIC_POOLS: Lazy<ArcSwap<HashSet<PoolIdentifier>>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashSet::new()));
+
+/// Register a pool identifier as dynamic (created by auth_query passthrough).
+pub fn register_dynamic_pool(id: &PoolIdentifier) {
+    let current = DYNAMIC_POOLS.load();
+    if current.contains(id) {
+        return;
+    }
+    let mut new_set = (**current).clone();
+    new_set.insert(id.clone());
+    DYNAMIC_POOLS.store(Arc::new(new_set));
+}
+
+/// Check if a pool identifier is a dynamic (auth_query passthrough) pool.
+pub fn is_dynamic_pool(id: &PoolIdentifier) -> bool {
+    DYNAMIC_POOLS.load().contains(id)
+}
+
+/// Get auth_query state for a database pool.
+pub fn get_auth_query_state(db: &str) -> Option<Arc<AuthQueryState>> {
+    AUTH_QUERY_STATE.load().get(db).cloned()
+}
 
 /// An identifier for a PgDoorman pool.
 #[derive(Hash, Debug, Clone, PartialEq, Eq, Default)]
@@ -138,6 +261,7 @@ pub struct ConnectionPool {
 impl ConnectionPool {
     /// Construct the connection pool from the configuration.
     pub async fn from_config(client_server_map: ClientServerMap) -> Result<(), Error> {
+        set_client_server_map(client_server_map.clone());
         let config = get_config();
 
         let mut new_pools = HashMap::new();
@@ -171,6 +295,39 @@ impl ConnectionPool {
                     .clone()
                     .unwrap_or(pool_name.clone().to_string());
 
+                // Detect passthrough-eligible static users:
+                // server_password is None AND (server_username is None OR equals username)
+                let backend_auth = if user.server_password.is_none()
+                    && (user.server_username.is_none()
+                        || user.server_username.as_deref() == Some(&user.username))
+                {
+                    if user
+                        .password
+                        .starts_with(crate::messages::constants::MD5_PASSWORD_PREFIX)
+                    {
+                        info!(
+                            "[pool: {}][user: {}] static passthrough: MD5 pass-the-hash",
+                            pool_name, user.username
+                        );
+                        Some(Arc::new(RwLock::new(BackendAuthMethod::Md5PassTheHash(
+                            user.password.clone(),
+                        ))))
+                    } else if user
+                        .password
+                        .starts_with(crate::messages::constants::SCRAM_SHA_256)
+                    {
+                        info!(
+                            "[pool: {}][user: {}] static passthrough: SCRAM pending (ClientKey will be set after first client auth)",
+                            pool_name, user.username
+                        );
+                        Some(Arc::new(RwLock::new(BackendAuthMethod::ScramPending)))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 let address = Address {
                     database: pool_name.clone(),
                     host: pool_config.server_host.clone(),
@@ -179,6 +336,7 @@ impl ConnectionPool {
                     password: user.password.clone(),
                     pool_name: pool_name.clone(),
                     stats: Arc::new(AddressStats::default()),
+                    backend_auth,
                 };
 
                 let prepared_statements_cache_size = match config.general.prepared_statements {
@@ -258,6 +416,244 @@ impl ConnectionPool {
             }
         }
 
+        // -----------------------------------------------------------------
+        // Auth query: create AuthQueryState per pool (lazy executor init)
+        // and shared connection pool for server_user mode.
+        // -----------------------------------------------------------------
+        let mut auth_query_states: HashMap<String, Arc<AuthQueryState>> = HashMap::new();
+
+        let old_aq_states_for_reuse = AUTH_QUERY_STATE.load();
+
+        for (pool_name, pool_config) in &config.pools {
+            if let Some(ref aq_config) = pool_config.auth_query {
+                // RELOAD: reuse state when config unchanged (preserves cache, executor, stats)
+                if let Some(old_state) = old_aq_states_for_reuse.get(pool_name) {
+                    if old_state.config == *aq_config {
+                        info!("[pool: {pool_name}] auth_query config unchanged — reusing state");
+                        auth_query_states.insert(pool_name.clone(), old_state.clone());
+                        // Still need to ensure shared pool exists in new_pools
+                        if let Some(ref spid) = old_state.shared_pool_id {
+                            if !new_pools.contains_key(spid) {
+                                if let Some(pool) = POOLS.load().get(spid) {
+                                    new_pools.insert(spid.clone(), pool.clone());
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+
+                let shared_pool_id = if aq_config.is_dedicated_mode() {
+                    let su = aq_config.server_user.as_ref().unwrap();
+                    let identifier = PoolIdentifier::new(pool_name, su);
+
+                    // Create the shared data pool if it doesn't already exist
+                    // (a static user with the same name takes priority).
+                    if !new_pools.contains_key(&identifier) {
+                        let sp = aq_config
+                            .server_password
+                            .as_ref()
+                            .cloned()
+                            .unwrap_or_default();
+
+                        let shared_user = User {
+                            username: su.clone(),
+                            password: String::new(),
+                            pool_size: aq_config.default_pool_size,
+                            server_username: Some(su.clone()),
+                            server_password: Some(sp),
+                            ..Default::default()
+                        };
+
+                        let server_database = pool_config
+                            .server_database
+                            .clone()
+                            .unwrap_or_else(|| pool_name.to_string());
+
+                        let address = Address {
+                            database: pool_name.clone(),
+                            host: pool_config.server_host.clone(),
+                            port: pool_config.server_port,
+                            username: shared_user.username.clone(),
+                            password: shared_user.password.clone(),
+                            pool_name: pool_name.clone(),
+                            stats: Arc::new(AddressStats::default()),
+                            backend_auth: None,
+                        };
+
+                        let prepared_statements_cache_size =
+                            match config.general.prepared_statements {
+                                true => pool_config
+                                    .prepared_statements_cache_size
+                                    .unwrap_or(config.general.prepared_statements_cache_size),
+                                false => 0,
+                            };
+
+                        let application_name = pool_config
+                            .application_name
+                            .clone()
+                            .unwrap_or_else(|| "pg_doorman".to_string());
+
+                        let manager = ServerPool::new(
+                            address.clone(),
+                            shared_user.clone(),
+                            server_database.as_str(),
+                            client_server_map.clone(),
+                            pool_config.cleanup_server_connections,
+                            pool_config.log_client_parameter_status_changes,
+                            prepared_statements_cache_size,
+                            application_name,
+                            config.general.max_concurrent_creates,
+                            config.general.server_lifetime.as_millis(),
+                            config.general.server_idle_check_timeout.as_millis(),
+                            config.general.connect_timeout.as_std(),
+                        );
+
+                        let queue_strategy = match config.general.server_round_robin {
+                            true => QueueMode::Fifo,
+                            false => QueueMode::Lifo,
+                        };
+
+                        info!(
+                            "[pool: {}][auth_query shared user: {}]",
+                            pool_name, shared_user.username
+                        );
+
+                        let pool = Pool::builder(manager)
+                            .config(PoolConfig {
+                                max_size: shared_user.pool_size as usize,
+                                timeouts: Timeouts {
+                                    wait: Some(config.general.query_wait_timeout.as_std()),
+                                    create: Some(config.general.connect_timeout.as_std()),
+                                    recycle: None,
+                                },
+                                queue_mode: queue_strategy,
+                                scaling: ScalingConfig::default(),
+                            })
+                            .build();
+
+                        let new_pool_hash_value = pool_config.hash_value();
+                        let conn_pool = ConnectionPool {
+                            database: pool,
+                            address,
+                            config_hash: new_pool_hash_value,
+                            original_server_parameters: Arc::new(tokio::sync::Mutex::new(
+                                ServerParameters::new(),
+                            )),
+                            settings: PoolSettings {
+                                pool_mode: shared_user.pool_mode.unwrap_or(pool_config.pool_mode),
+                                user: shared_user,
+                                db: pool_name.clone(),
+                                idle_timeout_ms: config.general.idle_timeout.as_millis(),
+                                life_time_ms: config.general.server_lifetime.as_millis(),
+                                sync_server_parameters: config.general.sync_server_parameters,
+                            },
+                            prepared_statement_cache: match config.general.prepared_statements {
+                                false => None,
+                                true => Some(Arc::new(PreparedStatementCache::new(
+                                    prepared_statements_cache_size,
+                                    config.general.worker_threads,
+                                ))),
+                            },
+                        };
+
+                        new_pools.insert(identifier.clone(), conn_pool);
+                    }
+
+                    Some(identifier)
+                } else {
+                    None // passthrough mode — not implemented yet
+                };
+
+                auth_query_states.insert(
+                    pool_name.clone(),
+                    Arc::new(AuthQueryState {
+                        cache_cell: tokio::sync::OnceCell::new(),
+                        config: aq_config.clone(),
+                        pool_name: pool_name.clone(),
+                        server_host: pool_config.server_host.clone(),
+                        server_port: pool_config.server_port,
+                        shared_pool_id,
+                        stats: Arc::new(AuthQueryStats::default()),
+                    }),
+                );
+            }
+        }
+
+        // --- RELOAD: detect auth_query config changes, manage dynamic pools ---
+        let old_aq_states = old_aq_states_for_reuse;
+        let mut pools_to_remove: Vec<PoolIdentifier> = Vec::new();
+
+        // 1. Compare old vs new auth_query configs
+        for (pool_name, old_state) in old_aq_states.iter() {
+            let new_aq = config
+                .pools
+                .get(pool_name)
+                .and_then(|p| p.auth_query.as_ref());
+            let changed = match new_aq {
+                None => true,                          // auth_query removed
+                Some(new) => *new != old_state.config, // config changed
+            };
+            if changed {
+                info!("[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal");
+                for id in DYNAMIC_POOLS.load().iter() {
+                    if id.db == *pool_name {
+                        pools_to_remove.push(id.clone());
+                    }
+                }
+                old_state.try_clear_cache();
+            }
+        }
+
+        // 2. Static user overrides dynamic pool
+        for (pool_name, pool_config) in &config.pools {
+            for user in &pool_config.users {
+                let id = PoolIdentifier::new(pool_name, &user.username);
+                if is_dynamic_pool(&id) && !pools_to_remove.contains(&id) {
+                    info!(
+                        "[pool: {pool_name}] static user '{}' overrides dynamic pool",
+                        user.username
+                    );
+                    pools_to_remove.push(id);
+                }
+            }
+        }
+
+        // 3. Carry over surviving dynamic pools
+        let old_pools = POOLS.load();
+        for id in DYNAMIC_POOLS.load().iter() {
+            if pools_to_remove.contains(id) {
+                continue;
+            }
+            if new_pools.contains_key(id) {
+                continue;
+            }
+            if let Some(pool) = old_pools.get(id) {
+                new_pools.insert(id.clone(), pool.clone());
+            }
+        }
+
+        // 4. Remove destroyed pools, update tracking + stats
+        for id in &pools_to_remove {
+            new_pools.remove(id);
+            // Increment dynamic_pools_destroyed on the OLD state (before we replace it)
+            if let Some(old_state) = old_aq_states.get(&id.db) {
+                old_state
+                    .stats
+                    .dynamic_pools_destroyed
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        if !pools_to_remove.is_empty() {
+            let mut new_dynamic = (**DYNAMIC_POOLS.load()).clone();
+            for id in &pools_to_remove {
+                new_dynamic.remove(id);
+            }
+            DYNAMIC_POOLS.store(Arc::new(new_dynamic));
+            info!("RELOAD: removed {} dynamic pool(s)", pools_to_remove.len());
+        }
+
+        AUTH_QUERY_STATE.store(Arc::new(auth_query_states));
         POOLS.store(Arc::new(new_pools.clone()));
         Ok(())
     }
@@ -519,8 +915,192 @@ pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
         .cloned()
 }
 
+/// Get pool-level configuration by database name.
+/// Returns the Pool config if the database exists in configuration.
+/// Used by auth_query to find auth_query config when user is not in static config.
+pub fn get_pool_config(db: &str) -> Option<crate::config::Pool> {
+    let config = get_config();
+    config.pools.get(db).cloned()
+}
+
 /// Get a pointer to all configured pools.
 /// Returns an Arc to avoid cloning the entire HashMap on each call.
 pub fn get_all_pools() -> Arc<PoolMap> {
     POOLS.load_full()
+}
+
+/// Create a dynamic data pool for auth_query passthrough mode.
+/// Returns the new (or existing) pool. Race-safe: if another thread
+/// created the pool concurrently, returns the existing one.
+///
+/// On RELOAD, dynamic pools are dropped (not in config) and recreated
+/// on the next client connection with fresh settings.
+pub fn create_dynamic_pool(
+    pool_name: &str,
+    username: &str,
+    backend_auth: Option<BackendAuthMethod>,
+) -> Result<ConnectionPool, Error> {
+    // Fast path: pool already exists
+    if let Some(existing) = get_pool(pool_name, username) {
+        // Update backend_auth (credentials may have changed)
+        if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
+            debug!(
+                "[pool: {pool_name}] auth_query: dynamic pool for '{username}' already exists, updating backend_auth"
+            );
+            *ba_lock.write() = new_ba.clone();
+        }
+        return Ok(existing);
+    }
+
+    let config = get_config();
+    let pool_config = config.pools.get(pool_name).ok_or_else(|| {
+        Error::AuthError(format!(
+            "auth_query: pool config '{pool_name}' not found for dynamic pool"
+        ))
+    })?;
+    let aq_config = pool_config.auth_query.as_ref().ok_or_else(|| {
+        Error::AuthError(format!(
+            "auth_query: config not found in pool '{pool_name}' for dynamic pool"
+        ))
+    })?;
+    let client_server_map = get_client_server_map()
+        .ok_or_else(|| Error::AuthError("auth_query: client_server_map not initialized".into()))?;
+
+    let server_database = pool_config
+        .server_database
+        .clone()
+        .unwrap_or_else(|| pool_name.to_string());
+
+    let ba_arc = backend_auth.map(|ba| Arc::new(parking_lot::RwLock::new(ba)));
+
+    let address = Address {
+        database: pool_name.to_string(),
+        host: pool_config.server_host.clone(),
+        port: pool_config.server_port,
+        username: username.to_string(),
+        password: String::new(),
+        pool_name: pool_name.to_string(),
+        stats: Arc::new(AddressStats::default()),
+        backend_auth: ba_arc,
+    };
+
+    let user = User {
+        username: username.to_string(),
+        password: String::new(),
+        pool_size: aq_config.default_pool_size,
+        server_username: Some(username.to_string()),
+        server_password: None,
+        ..Default::default()
+    };
+
+    let prepared_statements_cache_size = match config.general.prepared_statements {
+        true => pool_config
+            .prepared_statements_cache_size
+            .unwrap_or(config.general.prepared_statements_cache_size),
+        false => 0,
+    };
+
+    let application_name = pool_config
+        .application_name
+        .clone()
+        .unwrap_or_else(|| "pg_doorman".to_string());
+
+    let manager = ServerPool::new(
+        address.clone(),
+        user.clone(),
+        server_database.as_str(),
+        client_server_map,
+        pool_config.cleanup_server_connections,
+        pool_config.log_client_parameter_status_changes,
+        prepared_statements_cache_size,
+        application_name,
+        config.general.max_concurrent_creates,
+        config.general.server_lifetime.as_millis(),
+        config.general.server_idle_check_timeout.as_millis(),
+        config.general.connect_timeout.as_std(),
+    );
+
+    let queue_strategy = match config.general.server_round_robin {
+        true => QueueMode::Fifo,
+        false => QueueMode::Lifo,
+    };
+
+    let pool = Pool::builder(manager)
+        .config(PoolConfig {
+            max_size: user.pool_size as usize,
+            timeouts: Timeouts {
+                wait: Some(config.general.query_wait_timeout.as_std()),
+                create: Some(config.general.connect_timeout.as_std()),
+                recycle: None,
+            },
+            queue_mode: queue_strategy,
+            scaling: ScalingConfig::default(),
+        })
+        .build();
+
+    let conn_pool = ConnectionPool {
+        database: pool,
+        address,
+        config_hash: 0, // dynamic pools don't participate in hash-based reload
+        original_server_parameters: Arc::new(tokio::sync::Mutex::new(ServerParameters::new())),
+        settings: PoolSettings {
+            pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
+            user,
+            db: pool_name.to_string(),
+            idle_timeout_ms: config.general.idle_timeout.as_millis(),
+            life_time_ms: config.general.server_lifetime.as_millis(),
+            sync_server_parameters: config.general.sync_server_parameters,
+        },
+        prepared_statement_cache: match config.general.prepared_statements {
+            false => None,
+            true => Some(Arc::new(PreparedStatementCache::new(
+                prepared_statements_cache_size,
+                config.general.worker_threads,
+            ))),
+        },
+    };
+
+    // Atomic insert into POOLS
+    let identifier = PoolIdentifier::new(pool_name, username);
+    let current = POOLS.load();
+    let mut new_pools = (**current).clone();
+
+    // Re-check after clone (another thread may have created it)
+    if let Some(existing) = new_pools.get(&identifier) {
+        if let (Some(ref ba_lock), Some(ref new_ba)) = (
+            &existing.address.backend_auth,
+            &conn_pool.address.backend_auth,
+        ) {
+            *ba_lock.write() = new_ba.read().clone();
+        }
+        return Ok(existing.clone());
+    }
+
+    let auth_method = match &conn_pool.address.backend_auth {
+        Some(ba) => {
+            let guard = ba.read();
+            match &*guard {
+                BackendAuthMethod::Md5PassTheHash(_) => "md5-pass-the-hash",
+                BackendAuthMethod::ScramPassthrough(_) => "scram-passthrough",
+                BackendAuthMethod::ScramPending => "scram-pending",
+            }
+        }
+        None => "none",
+    };
+    info!(
+        "[pool: {pool_name}] auth_query: created dynamic passthrough pool for '{username}' (backend_auth={auth_method})"
+    );
+    new_pools.insert(identifier.clone(), conn_pool.clone());
+    POOLS.store(Arc::new(new_pools));
+    register_dynamic_pool(&identifier);
+
+    // Increment dynamic_pools_created stat
+    if let Some(state) = get_auth_query_state(pool_name) {
+        state
+            .stats
+            .dynamic_pools_created
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    Ok(conn_pool)
 }

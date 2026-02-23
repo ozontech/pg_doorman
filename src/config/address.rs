@@ -1,11 +1,26 @@
 //! Address and PoolMode definitions for PostgreSQL connection pooling.
 
+use parking_lot::RwLock;
 use serde_derive::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::stats::AddressStats;
+
+/// Backend authentication method for passthrough pools (auth_query and static users).
+/// Wrapped in `Arc<RwLock<>>` on Address so credential updates
+/// propagate to all pool connections via the shared Arc.
+#[derive(Clone, Debug)]
+pub enum BackendAuthMethod {
+    /// MD5 pass-the-hash: stored hash "md5..." from pg_shadow
+    Md5PassTheHash(String),
+    /// SCRAM passthrough: ClientKey extracted from client's SCRAM proof
+    ScramPassthrough(Vec<u8>),
+    /// SCRAM pending: passthrough configured but ClientKey not yet available.
+    /// Transitions to ScramPassthrough after first successful client SCRAM auth.
+    ScramPending,
+}
 
 /// Pool mode:
 /// - transaction: server serves one transaction,
@@ -46,6 +61,11 @@ pub struct Address {
     pub pool_name: String,
     /// Address stats
     pub stats: Arc<AddressStats>,
+    /// Backend auth for passthrough pools (auth_query dynamic and static users).
+    /// None when server_password is set (traditional auth).
+    /// `Arc<RwLock<>>` allows credential updates: all Address clones share
+    /// the same lock, so updates (e.g. ScramPending → ScramPassthrough) propagate.
+    pub backend_auth: Option<Arc<RwLock<BackendAuthMethod>>>,
 }
 
 impl Default for Address {
@@ -58,6 +78,7 @@ impl Default for Address {
             password: String::from("password"),
             pool_name: String::from("pool_name"),
             stats: Arc::new(AddressStats::default()),
+            backend_auth: None,
         }
     }
 }

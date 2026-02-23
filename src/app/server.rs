@@ -232,6 +232,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             retain::retain_connections().await;
         });
 
+        // Dynamic pool GC — cheap no-op when DYNAMIC_POOLS is empty
+        {
+            let gc_interval = config.general.retain_connections_time.as_std();
+            crate::pool::gc::spawn_dynamic_pool_gc(gc_interval);
+        }
+
         // Prometheus metrics exporter
         if config.prometheus.enabled {
             tokio::task::spawn(async move {
