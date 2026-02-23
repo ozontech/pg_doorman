@@ -10,6 +10,7 @@ pub mod talos;
 
 // Standard library imports
 use std::marker::Unpin;
+use std::sync::atomic::Ordering;
 
 // External crate imports
 use crate::auth::hba::CheckResult;
@@ -569,6 +570,13 @@ where
     S: AsyncReadExt + Unpin,
     T: AsyncWriteExt + Unpin,
 {
+    // Helper: record auth failure stat
+    macro_rules! auth_fail {
+        ($state:expr) => {
+            $state.stats.auth_failure.fetch_add(1, Ordering::Relaxed);
+        };
+    }
+
     // 1. Check if auth_query is configured for this pool
     let aq_state = match get_auth_query_state(pool_name) {
         Some(state) => state,
@@ -610,6 +618,7 @@ where
         Ok(Some(entry)) => entry,
         Ok(None) => {
             // User not found
+            auth_fail!(aq_state);
             warn!("[pool: {pool_name}] auth_query: user '{username}' not found");
             wrong_password(write, username).await?;
             return Err(Error::AuthError(format!(
@@ -681,6 +690,7 @@ where
                 }
             }
             if !auth_ok {
+                auth_fail!(aq_state);
                 error!(
                     "[pool: {pool_name}] auth_query: MD5 authentication failed for user '{username}'"
                 );
@@ -769,6 +779,7 @@ where
                 // Unlike MD5, SCRAM proof is bound to the salt from the verifier,
                 // so we can't retry with a re-fetched verifier using the same proof.
                 // Invalidate cache so next reconnect gets fresh verifier.
+                auth_fail!(aq_state);
                 cache.invalidate(username);
                 error!(
                     "[pool: {pool_name}] auth_query: SCRAM authentication failed for user '{username}', cache invalidated"
@@ -832,6 +843,7 @@ where
                 }
             };
 
+            aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
             info!(
                 "[pool: {pool_name}] auth_query: user '{username}' authenticated, using shared pool '{}'",
                 shared_pool_id
@@ -879,6 +891,7 @@ where
                 }
             };
 
+            aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
             info!(
                 "[pool: {pool_name}] auth_query: user '{username}' authenticated (passthrough mode)"
             );

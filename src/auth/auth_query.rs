@@ -7,6 +7,7 @@
 //!   TTL-based expiration, negative caching, and rate-limited re-fetch.
 
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -18,6 +19,7 @@ use tokio_postgres::{Client, NoTls};
 
 use crate::config::{AuthQueryConfig, Duration};
 use crate::errors::Error;
+use crate::stats::auth_query::AuthQueryStats;
 
 /// Maximum username length accepted by the cache.
 /// PostgreSQL limits role names to NAMEDATALEN - 1 = 63 bytes.
@@ -404,10 +406,16 @@ pub struct AuthQueryCache<F = AuthQueryExecutor> {
     cache_failure_ttl: Duration,
     /// Minimum interval between re-fetches (rate limiting).
     min_interval: Duration,
+    /// Optional stats for observability (None in unit tests).
+    stats: Option<Arc<AuthQueryStats>>,
 }
 
 impl<F: PasswordFetcher> AuthQueryCache<F> {
-    pub fn new(executor: Arc<F>, config: &AuthQueryConfig) -> Self {
+    pub fn new(
+        executor: Arc<F>,
+        config: &AuthQueryConfig,
+        stats: Option<Arc<AuthQueryStats>>,
+    ) -> Self {
         Self {
             entries: DashMap::new(),
             locks: DashMap::new(),
@@ -415,6 +423,14 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             cache_ttl: config.cache_ttl,
             cache_failure_ttl: config.cache_failure_ttl,
             min_interval: config.min_interval,
+            stats,
+        }
+    }
+
+    /// Increment a stats counter if stats are enabled.
+    fn inc(&self, counter: fn(&AuthQueryStats) -> &AtomicU64) {
+        if let Some(ref stats) = self.stats {
+            counter(stats).fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -436,6 +452,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         // Fast path: check cache without lock
         if let Some(entry) = self.entries.get(username) {
             if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
+                self.inc(|s| &s.cache_hits);
                 return if entry.is_negative {
                     Ok(None)
                 } else {
@@ -456,6 +473,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         // Double-check after acquiring lock
         if let Some(entry) = self.entries.get(username) {
             if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
+                self.inc(|s| &s.cache_hits);
                 return if entry.is_negative {
                     Ok(None)
                 } else {
@@ -465,16 +483,23 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         }
 
         // Cache miss — fetch from PG
-        match self.executor.fetch(username).await? {
-            Some((_user, password_hash)) => {
+        self.inc(|s| &s.executor_queries);
+        match self.executor.fetch(username).await {
+            Ok(Some((_user, password_hash))) => {
+                self.inc(|s| &s.cache_misses);
                 let entry = CacheEntry::positive(password_hash);
                 self.entries.insert(username.to_string(), entry.clone());
                 Ok(Some(entry))
             }
-            None => {
+            Ok(None) => {
+                self.inc(|s| &s.cache_misses);
                 let entry = CacheEntry::negative();
                 self.entries.insert(username.to_string(), entry);
                 Ok(None)
+            }
+            Err(err) => {
+                self.inc(|s| &s.executor_errors);
+                Err(err)
             }
         }
     }
@@ -506,24 +531,31 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         if let Some(entry) = self.entries.get(username) {
             if let Some(last) = entry.last_refetch_at {
                 if last.elapsed() < self.min_interval.as_std() {
+                    self.inc(|s| &s.cache_rate_limited);
                     return Ok(None); // Rate limited
                 }
             }
         }
 
         // Fetch fresh from PG
-        match self.executor.fetch(username).await? {
-            Some((_user, password_hash)) => {
+        self.inc(|s| &s.executor_queries);
+        self.inc(|s| &s.cache_refetches);
+        match self.executor.fetch(username).await {
+            Ok(Some((_user, password_hash))) => {
                 let mut entry = CacheEntry::positive(password_hash);
                 entry.last_refetch_at = Some(Instant::now());
                 self.entries.insert(username.to_string(), entry.clone());
                 Ok(Some(entry))
             }
-            None => {
+            Ok(None) => {
                 let mut entry = CacheEntry::negative();
                 entry.last_refetch_at = Some(Instant::now());
                 self.entries.insert(username.to_string(), entry);
                 Ok(None)
+            }
+            Err(err) => {
+                self.inc(|s| &s.executor_errors);
+                Err(err)
             }
         }
     }
@@ -647,7 +679,7 @@ mod tests {
         fetcher: Arc<MockFetcher>,
         config: &AuthQueryConfig,
     ) -> AuthQueryCache<MockFetcher> {
-        AuthQueryCache::new(fetcher, config)
+        AuthQueryCache::new(fetcher, config, None)
     }
 
     // -- test_cache_hit: second get_or_fetch returns cached, no extra fetch --
@@ -847,5 +879,36 @@ mod tests {
 
         let entry = cache.get_or_fetch("alice").await.unwrap().unwrap();
         assert_eq!(entry.client_key, Some(key));
+    }
+
+    // -- test_stats_counters: verifies stats are incremented correctly --
+
+    #[tokio::test]
+    async fn test_stats_counters() {
+        let fetcher = Arc::new(MockFetcher::new());
+        fetcher.add_user("alice", "md5abc123");
+        let stats = Arc::new(AuthQueryStats::default());
+        let cache = AuthQueryCache::new(fetcher.clone(), &test_config(), Some(stats.clone()));
+
+        // Cache miss → executor_queries + cache_misses
+        cache.get_or_fetch("alice").await.unwrap();
+        assert_eq!(stats.cache_misses.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.executor_queries.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.cache_hits.load(Ordering::Relaxed), 0);
+
+        // Cache hit
+        cache.get_or_fetch("alice").await.unwrap();
+        assert_eq!(stats.cache_hits.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.executor_queries.load(Ordering::Relaxed), 1); // no new query
+
+        // Refetch
+        cache.refetch_on_failure("alice").await.unwrap();
+        assert_eq!(stats.cache_refetches.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.executor_queries.load(Ordering::Relaxed), 2);
+
+        // Rate-limited refetch (min_interval = 1s, immediately after first refetch)
+        cache.refetch_on_failure("alice").await.unwrap();
+        assert_eq!(stats.cache_rate_limited.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.executor_queries.load(Ordering::Relaxed), 2); // no new query
     }
 }

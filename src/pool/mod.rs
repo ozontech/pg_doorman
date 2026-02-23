@@ -18,6 +18,7 @@ use crate::errors::Error;
 use crate::messages::Parse;
 
 use crate::server::{Server, ServerParameters};
+use crate::stats::auth_query::AuthQueryStats;
 use crate::stats::{AddressStats, ServerStats};
 
 mod errors;
@@ -83,6 +84,8 @@ pub struct AuthQueryState {
     server_port: u16,
     /// Pool identifier for the shared server_user pool (None = passthrough mode).
     pub shared_pool_id: Option<PoolIdentifier>,
+    /// Per-pool auth_query metrics (shared with cache and admin/prometheus).
+    pub stats: Arc<AuthQueryStats>,
 }
 
 impl AuthQueryState {
@@ -122,9 +125,18 @@ impl AuthQueryState {
                     self.server_port,
                 )
                 .await?;
-                Ok(AuthQueryCache::new(Arc::new(executor), &self.config))
+                Ok(AuthQueryCache::new(
+                    Arc::new(executor),
+                    &self.config,
+                    Some(self.stats.clone()),
+                ))
             })
             .await
+    }
+
+    /// Number of cached entries (0 if cache not yet initialized).
+    pub fn cache_len(&self) -> usize {
+        self.cache_cell.get().map_or(0, |c| c.len())
     }
 }
 
@@ -377,8 +389,27 @@ impl ConnectionPool {
         // -----------------------------------------------------------------
         let mut auth_query_states: HashMap<String, Arc<AuthQueryState>> = HashMap::new();
 
+        let old_aq_states_for_reuse = AUTH_QUERY_STATE.load();
+
         for (pool_name, pool_config) in &config.pools {
             if let Some(ref aq_config) = pool_config.auth_query {
+                // RELOAD: reuse state when config unchanged (preserves cache, executor, stats)
+                if let Some(old_state) = old_aq_states_for_reuse.get(pool_name) {
+                    if old_state.config == *aq_config {
+                        info!("[pool: {pool_name}] auth_query config unchanged — reusing state");
+                        auth_query_states.insert(pool_name.clone(), old_state.clone());
+                        // Still need to ensure shared pool exists in new_pools
+                        if let Some(ref spid) = old_state.shared_pool_id {
+                            if !new_pools.contains_key(spid) {
+                                if let Some(pool) = POOLS.load().get(spid) {
+                                    new_pools.insert(spid.clone(), pool.clone());
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+
                 let shared_pool_id = if aq_config.is_dedicated_mode() {
                     let su = aq_config.server_user.as_ref().unwrap();
                     let identifier = PoolIdentifier::new(pool_name, su);
@@ -510,13 +541,14 @@ impl ConnectionPool {
                         server_host: pool_config.server_host.clone(),
                         server_port: pool_config.server_port,
                         shared_pool_id,
+                        stats: Arc::new(AuthQueryStats::default()),
                     }),
                 );
             }
         }
 
         // --- RELOAD: detect auth_query config changes, manage dynamic pools ---
-        let old_aq_states = AUTH_QUERY_STATE.load();
+        let old_aq_states = old_aq_states_for_reuse;
         let mut pools_to_remove: Vec<PoolIdentifier> = Vec::new();
 
         // 1. Compare old vs new auth_query configs
@@ -568,9 +600,16 @@ impl ConnectionPool {
             }
         }
 
-        // 4. Remove destroyed pools, update tracking
+        // 4. Remove destroyed pools, update tracking + stats
         for id in &pools_to_remove {
             new_pools.remove(id);
+            // Increment dynamic_pools_destroyed on the OLD state (before we replace it)
+            if let Some(old_state) = old_aq_states.get(&id.db) {
+                old_state
+                    .stats
+                    .dynamic_pools_destroyed
+                    .fetch_add(1, Ordering::Relaxed);
+            }
         }
         if !pools_to_remove.is_empty() {
             let mut new_dynamic = (**DYNAMIC_POOLS.load()).clone();
@@ -1005,6 +1044,14 @@ pub fn create_dynamic_pool(
     new_pools.insert(identifier.clone(), conn_pool.clone());
     POOLS.store(Arc::new(new_pools));
     register_dynamic_pool(&identifier);
+
+    // Increment dynamic_pools_created stat
+    if let Some(state) = get_auth_query_state(pool_name) {
+        state
+            .stats
+            .dynamic_pools_created
+            .fetch_add(1, Ordering::Relaxed);
+    }
 
     Ok(conn_pool)
 }

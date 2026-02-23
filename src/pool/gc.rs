@@ -1,9 +1,10 @@
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
 use log::info;
 
-use super::{PoolIdentifier, DYNAMIC_POOLS, POOLS};
+use super::{PoolIdentifier, AUTH_QUERY_STATE, DYNAMIC_POOLS, POOLS};
 
 /// Spawn a background task that periodically removes idle dynamic pools.
 /// Dynamic pools are created by auth_query passthrough mode — one per user.
@@ -40,6 +41,17 @@ fn gc_idle_dynamic_pools() {
 
     if to_remove.is_empty() {
         return;
+    }
+
+    // Increment dynamic_pools_destroyed stats before removal
+    let aq_states = AUTH_QUERY_STATE.load();
+    for id in &to_remove {
+        if let Some(state) = aq_states.get(&id.db) {
+            state
+                .stats
+                .dynamic_pools_destroyed
+                .fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     // Remove from POOLS

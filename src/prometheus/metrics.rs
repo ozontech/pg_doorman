@@ -4,7 +4,7 @@
 use log::error;
 use std::sync::atomic::Ordering;
 
-use crate::pool::PoolIdentifier;
+use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, DYNAMIC_POOLS};
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
 use crate::stats::pool::PoolStats;
@@ -17,6 +17,7 @@ use super::system::get_process_memory_usage;
 #[cfg(target_os = "linux")]
 use super::SHOW_SOCKETS;
 use super::{
+    AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR,
     SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS,
     SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE,
     SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER,
@@ -35,6 +36,7 @@ pub fn update_metrics() {
 
     update_pool_metrics();
     update_server_metrics();
+    update_auth_query_metrics();
 }
 
 fn update_memory_metrics() {
@@ -246,5 +248,69 @@ fn update_percentile_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
         SHOW_POOLS_TRANSACTIONS_PERCENTILE
             .with_label_values(&labels_x)
             .set(xact_value as f64 / 1_000f64);
+    }
+}
+
+fn update_auth_query_metrics() {
+    AUTH_QUERY_CACHE.reset();
+    AUTH_QUERY_AUTH.reset();
+    AUTH_QUERY_EXECUTOR.reset();
+    AUTH_QUERY_DYNAMIC_POOLS.reset();
+
+    let states = AUTH_QUERY_STATE.load();
+    if states.is_empty() {
+        return;
+    }
+
+    let dynamic = DYNAMIC_POOLS.load();
+
+    for (pool_name, state) in states.iter() {
+        let db = pool_name.as_str();
+        let s = state.stats.snapshot();
+
+        // Cache metrics
+        AUTH_QUERY_CACHE
+            .with_label_values(&["entries", db])
+            .set(state.cache_len() as f64);
+        AUTH_QUERY_CACHE
+            .with_label_values(&["hits", db])
+            .set(s.cache_hits as f64);
+        AUTH_QUERY_CACHE
+            .with_label_values(&["misses", db])
+            .set(s.cache_misses as f64);
+        AUTH_QUERY_CACHE
+            .with_label_values(&["refetches", db])
+            .set(s.cache_refetches as f64);
+        AUTH_QUERY_CACHE
+            .with_label_values(&["rate_limited", db])
+            .set(s.cache_rate_limited as f64);
+
+        // Auth outcomes
+        AUTH_QUERY_AUTH
+            .with_label_values(&["success", db])
+            .set(s.auth_success as f64);
+        AUTH_QUERY_AUTH
+            .with_label_values(&["failure", db])
+            .set(s.auth_failure as f64);
+
+        // Executor metrics
+        AUTH_QUERY_EXECUTOR
+            .with_label_values(&["queries", db])
+            .set(s.executor_queries as f64);
+        AUTH_QUERY_EXECUTOR
+            .with_label_values(&["errors", db])
+            .set(s.executor_errors as f64);
+
+        // Dynamic pool metrics
+        let dyn_current = dynamic.iter().filter(|id| id.db == *pool_name).count();
+        AUTH_QUERY_DYNAMIC_POOLS
+            .with_label_values(&["current", db])
+            .set(dyn_current as f64);
+        AUTH_QUERY_DYNAMIC_POOLS
+            .with_label_values(&["created", db])
+            .set(s.dynamic_pools_created as f64);
+        AUTH_QUERY_DYNAMIC_POOLS
+            .with_label_values(&["destroyed", db])
+            .set(s.dynamic_pools_destroyed as f64);
     }
 }

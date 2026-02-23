@@ -276,3 +276,55 @@ pub(crate) static SHOW_SERVERS_PREPARED_MISSES: Lazy<GaugeVec> = Lazy::new(|| {
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
 });
+
+pub(crate) static AUTH_QUERY_CACHE: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_cache",
+            "Auth query cache metrics by type and database.",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static AUTH_QUERY_AUTH: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_auth",
+            "Auth query authentication outcomes by result and database.",
+        ),
+        &["result", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static AUTH_QUERY_EXECUTOR: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_executor",
+            "Auth query executor metrics by type and database.",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static AUTH_QUERY_DYNAMIC_POOLS: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_auth_query_dynamic_pools",
+            "Auth query dynamic pool metrics by type and database.",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});

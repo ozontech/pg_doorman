@@ -17,9 +17,9 @@ use commands::{reload, shutdown};
 #[cfg(target_os = "linux")]
 use show::show_sockets;
 use show::{
-    show_clients, show_config, show_connections, show_databases, show_help, show_lists, show_pools,
-    show_pools_extended, show_pools_memory, show_prepared_statements, show_servers, show_stats,
-    show_users, show_version,
+    show_auth_query, show_clients, show_config, show_connections, show_databases, show_help,
+    show_lists, show_pools, show_pools_extended, show_pools_memory, show_prepared_statements,
+    show_servers, show_stats, show_users, show_version,
 };
 
 /// Handle admin client.
@@ -74,6 +74,7 @@ where
                     "STATS" => show_stats(stream).await,
                     "VERSION" => show_version(stream).await,
                     "USERS" => show_users(stream).await,
+                    "AUTH_QUERY" => show_auth_query(stream).await,
                     #[cfg(target_os = "linux")]
                     "SOCKETS" => show_sockets(stream).await,
                     _ => {

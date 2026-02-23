@@ -23,6 +23,8 @@ use std::sync::Arc;
 // -----------------------------------------------------------------------------
 /// Statistics for connections grouped by address
 pub mod address;
+/// Statistics for auth_query cache and authentication
+pub mod auth_query;
 /// Statistics for client connections
 pub mod client;
 /// Connection counters (internal)
