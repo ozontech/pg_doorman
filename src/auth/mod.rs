@@ -35,7 +35,8 @@ use crate::messages::{
     scram_start_challenge, vec_to_string, wrong_password,
 };
 use crate::pool::{
-    create_dynamic_pool, get_auth_query_state, get_pool, get_pool_config, ConnectionPool,
+    create_dynamic_pool, get_auth_query_state, get_pool, get_pool_config, is_dynamic_pool,
+    ConnectionPool, PoolIdentifier,
 };
 use crate::server::ServerParameters;
 
@@ -195,7 +196,23 @@ where
     T: AsyncWriteExt + Unpin,
 {
     let mut pool = match get_pool(pool_name, client_identifier.username.as_str()) {
-        Some(pool) => pool,
+        Some(pool) => {
+            // Dynamic pools (created by auth_query passthrough) have empty passwords.
+            // Re-authenticate via auth_query to verify credentials on every connection.
+            let pool_id = PoolIdentifier::new(pool_name, client_identifier.username.as_str());
+            if is_dynamic_pool(&pool_id) {
+                return try_auth_query(
+                    read,
+                    write,
+                    client_identifier,
+                    pool_name,
+                    username_from_parameters,
+                    prepared_statements_enabled,
+                )
+                .await;
+            }
+            pool
+        }
         None => {
             // Static user not found — try auth_query
             return try_auth_query(
