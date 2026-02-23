@@ -44,6 +44,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | YAML / TOML config | Yes | No (INI) | No (own format) |
 | Human-readable durations & sizes | Yes | No | No |
 | Native `pg_hba.conf` format | Yes | Yes | Since 1.4 |
+| Auth query (dynamic users) | Yes | Yes | Yes |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
 | Prometheus metrics | Built-in | External | Built-in |
@@ -73,6 +74,28 @@ pools:
 ```
 
 > **Important:** `server_username` and `server_password` are required if your client `password` is an MD5/SCRAM hash (which is typical). Without them, PgDoorman tries to authenticate to PostgreSQL using the hash itself, and PostgreSQL rejects it. This is the #1 setup issue for new users.
+
+### Auth query (dynamic users)
+
+Instead of listing users statically, pg_doorman can fetch credentials from PostgreSQL at runtime via `auth_query`:
+
+```yaml
+pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    auth_query:
+      query: "SELECT * FROM pg_doorman_get_auth($1)"
+      user: "doorman_auth"
+      password: "auth_password"
+      server_user: "app"
+      server_password: "secret"
+```
+
+> Static users (defined in `users`) are checked first. auth_query is only consulted when the username is not found among static users.
+
+> For secure setup without superuser access, see [auth_query reference](https://ozontech.github.io/pg_doorman/reference/pool.html#auth-query-settings).
 
 Or generate a config automatically:
 

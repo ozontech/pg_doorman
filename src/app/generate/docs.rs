@@ -282,6 +282,8 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
 }
 
 fn write_auth_query_section(out: &mut String) {
+    let f = &*FIELDS;
+
     let _ = writeln!(out, "## Auth Query Settings\n");
     let _ = writeln!(out, "The `auth_query` section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.\n");
     let _ = writeln!(out, "```yaml\npools:\n  mydb:\n    auth_query:\n      query: \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"\n      user: \"doorman_auth\"\n      password: \"auth_password\"\n```\n");
@@ -290,64 +292,27 @@ fn write_auth_query_section(out: &mut String) {
     let _ = writeln!(out, "- **Passthrough mode** (`server_user` is not set): Each dynamically authenticated user gets their own connection pool that connects to PostgreSQL using their own credentials (MD5 pass-the-hash or SCRAM ClientKey passthrough). This preserves per-user identity on the backend.\n");
     let _ = writeln!(out, "Static users (defined in the `users` section) are always checked first. The auth_query is only used when the username is not found among static users.\n");
     let _ = writeln!(out, "```admonish warning title=\"Security Recommendation\"");
-    let _ = writeln!(out, "The `user` that runs auth queries needs access to `pg_shadow` (or a similar view). **Do not use a superuser** for this purpose. Instead, create a dedicated role with minimal privileges:\n");
-    let _ = writeln!(out, "\\`\\`\\`sql\nCREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';\nGRANT SELECT ON pg_shadow TO doorman_auth;\n\\`\\`\\`\n```\n");
+    let _ = writeln!(out, "The `user` that runs auth queries needs access to password hashes (e.g. from `pg_shadow`). **Do not use a superuser** for this purpose. Instead, create a `SECURITY DEFINER` function owned by a superuser and a dedicated role with minimal privileges:\n");
+    let _ = writeln!(out, "\\`\\`\\`sql\n-- Create a dedicated role for auth queries\nCREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';\n\n-- Create a SECURITY DEFINER function (runs with owner's privileges)\nCREATE OR REPLACE FUNCTION pg_doorman_get_auth(p_usename TEXT)\nRETURNS TABLE (usename name, passwd text)\nLANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS\n$$\n  SELECT usename, passwd FROM pg_shadow WHERE usename = p_usename;\n$$;\n\n-- Grant execute only to the dedicated role\nREVOKE ALL ON FUNCTION pg_doorman_get_auth(TEXT) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;\n\\`\\`\\`\n\nThen use this function in the `query` parameter:\n\\`\\`\\`yaml\nauth_query:\n  query: \"SELECT * FROM pg_doorman_get_auth($1)\"\n  user: \"doorman_auth\"\n  password: \"strong_password\"\n\\`\\`\\`\n```\n");
 
-    // Individual parameters
-    let _ = writeln!(out, "### query\n");
-    let _ = writeln!(out, "SQL query to fetch credentials. Must return two columns: `(username, password_hash)`. Use `$1` as the placeholder for the username parameter.\n");
-    let _ = writeln!(
-        out,
-        "Example: `\"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"`\n"
-    );
+    // Individual parameters from fields.yaml
+    let fields = [
+        "query",
+        "user",
+        "password",
+        "database",
+        "pool_size",
+        "server_user",
+        "server_password",
+        "default_pool_size",
+        "cache_ttl",
+        "cache_failure_ttl",
+        "min_interval",
+    ];
 
-    let _ = writeln!(out, "### user\n");
-    let _ = writeln!(
-        out,
-        "PostgreSQL username for the executor connection that runs auth queries.\n"
-    );
-
-    let _ = writeln!(out, "### password\n");
-    let _ = writeln!(out, "Password for the executor user (plaintext). Can be empty if the PostgreSQL server uses `trust` authentication for this user.\n");
-    let _ = writeln!(out, "Default: `\"\"`.\n");
-
-    let _ = writeln!(out, "### database\n");
-    let _ = writeln!(
-        out,
-        "Database for executor connections. If not specified, the pool name is used.\n"
-    );
-    let _ = writeln!(out, "Default: `None (uses pool name)`.\n");
-
-    let _ = writeln!(out, "### pool_size\n");
-    let _ = writeln!(out, "Number of executor connections (connections used to run auth queries, not data connections).\n");
-    let _ = writeln!(out, "Default: `2`.\n");
-
-    let _ = writeln!(out, "### server_user\n");
-    let _ = writeln!(out, "Backend PostgreSQL user for data connections in dedicated mode. When set, all dynamically authenticated users share one connection pool that connects as this user. When not set, passthrough mode is used.\n");
-    let _ = writeln!(out, "Default: `None (passthrough mode)`.\n");
-
-    let _ = writeln!(out, "### server_password\n");
-    let _ = writeln!(
-        out,
-        "Plaintext password for the `server_user`. Only meaningful when `server_user` is set.\n"
-    );
-    let _ = writeln!(out, "Default: `None`.\n");
-
-    let _ = writeln!(out, "### default_pool_size\n");
-    let _ = writeln!(out, "Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode).\n");
-    let _ = writeln!(out, "Default: `40`.\n");
-
-    let _ = writeln!(out, "### cache_ttl\n");
-    let _ = writeln!(out, "Maximum cache age for successfully fetched credentials. Accepts duration strings like `\"1h\"`, `\"30m\"`, `\"300s\"`.\n");
-    let _ = writeln!(out, "Default: `\"1h\"`.\n");
-
-    let _ = writeln!(out, "### cache_failure_ttl\n");
-    let _ = writeln!(out, "Cache TTL for \"user not found\" entries (negative cache). Prevents repeated queries for non-existent users.\n");
-    let _ = writeln!(out, "Default: `\"30s\"`.\n");
-
-    let _ = writeln!(out, "### min_interval\n");
-    let _ = writeln!(out, "Minimum interval between re-fetches for the same username after an authentication failure. Protects the backend from excessive queries during brute-force attempts.\n");
-    let _ = writeln!(out, "Default: `\"1s\"`.\n");
+    for name in &fields {
+        write_param(out, f, "auth_query", name);
+    }
 }
 
 fn write_user_fields(out: &mut String, f: &FieldsData) {
@@ -522,7 +487,7 @@ mod tests {
     use std::path::Path;
 
     /// Read a reference doc file at runtime. Returns None if file doesn't exist
-    /// (generated files may not be in the repo).
+    /// (generated files are in `.gitignore` and may not be present locally).
     fn read_reference_doc(rel_path: &str) -> Option<String> {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let path = Path::new(manifest_dir).join(rel_path);
@@ -536,7 +501,7 @@ mod tests {
         {
             assert_eq!(
                 generated, file_content,
-                "EN general.md is outdated. Run: cargo run -- generate-docs"
+                "EN general.md is outdated. Run: cargo run --bin pg_doorman -- generate-docs -o documentation/en/src/reference"
             );
         }
     }
@@ -547,7 +512,7 @@ mod tests {
         if let Some(file_content) = read_reference_doc("documentation/en/src/reference/pool.md") {
             assert_eq!(
                 generated, file_content,
-                "EN pool.md is outdated. Run: cargo run -- generate-docs"
+                "EN pool.md is outdated. Run: cargo run --bin pg_doorman -- generate-docs -o documentation/en/src/reference"
             );
         }
     }
@@ -560,7 +525,7 @@ mod tests {
         {
             assert_eq!(
                 generated, file_content,
-                "EN prometheus.md is outdated. Run: cargo run -- generate-docs"
+                "EN prometheus.md is outdated. Run: cargo run --bin pg_doorman -- generate-docs -o documentation/en/src/reference"
             );
         }
     }

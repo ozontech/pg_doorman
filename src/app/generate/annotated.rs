@@ -48,6 +48,7 @@ pub(crate) struct FieldsMap {
     pub general: HashMap<String, FieldDesc>,
     pub pool: HashMap<String, FieldDesc>,
     pub user: HashMap<String, FieldDesc>,
+    pub auth_query: HashMap<String, FieldDesc>,
     pub prometheus: HashMap<String, FieldDesc>,
 }
 
@@ -64,6 +65,7 @@ impl FieldsData {
             "general" => &self.fields.general,
             "pool" => &self.fields.pool,
             "user" => &self.fields.user,
+            "auth_query" => &self.fields.auth_query,
             "prometheus" => &self.fields.prometheus,
             _ => panic!("Unknown section: {section}"),
         };
@@ -1161,6 +1163,7 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
     w.blank();
 
     write_pool_users(w, pool_name, &pool.users);
+    write_auth_query_commented_example(w);
 }
 
 fn write_pool_users(w: &mut ConfigWriter, pool_name: &str, users: &[User]) {
@@ -1435,6 +1438,96 @@ fn write_server_credentials_comment(w: &mut ConfigWriter, indent: usize) {
             indent,
             "  server_password = \"real_password_here\"  # plaintext password",
         );
+    }
+}
+
+fn write_auth_query_commented_example(w: &mut ConfigWriter) {
+    let f = &*FIELDS;
+    let fi = w.pool_field_indent();
+
+    w.blank();
+    w.separator(fi, f.section_title("auth_query").get(w.russian));
+    w.blank();
+
+    // Description
+    for line in f.text("auth_query_desc").get(w.russian).trim().split('\n') {
+        w.comment(fi, line);
+    }
+    w.blank();
+
+    // Modes
+    for line in f.text("auth_query_modes").get(w.russian).trim().split('\n') {
+        w.comment(fi, line);
+    }
+    w.blank();
+
+    // Priority
+    w.comment(fi, f.text("auth_query_priority").get(w.russian));
+    w.blank();
+
+    // Security warning
+    w.comment(fi, f.text("auth_query_security").get(w.russian));
+    w.blank();
+
+    // Dedicated mode example (all fields shown)
+    w.comment(fi, f.text("auth_query_example_dedicated").get(w.russian));
+    match w.format {
+        ConfigFormat::Toml => {
+            w.comment(
+                fi,
+                "auth_query.query = \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "auth_query.user = \"doorman_auth\"");
+            w.comment(fi, "auth_query.password = \"auth_password\"");
+            w.comment(fi, "auth_query.database = \"postgres\"");
+            w.comment(fi, "auth_query.pool_size = 2");
+            w.comment(fi, "auth_query.server_user = \"app\"");
+            w.comment(fi, "auth_query.server_password = \"secret\"");
+            w.comment(fi, "auth_query.default_pool_size = 40");
+            w.comment(fi, "auth_query.cache_ttl = 3600000");
+            w.comment(fi, "auth_query.cache_failure_ttl = 30000");
+            w.comment(fi, "auth_query.min_interval = 1000");
+        }
+        ConfigFormat::Yaml => {
+            w.comment(fi, "auth_query:");
+            w.comment(
+                fi,
+                "  query: \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "  user: \"doorman_auth\"");
+            w.comment(fi, "  password: \"auth_password\"");
+            w.comment(fi, "  database: \"postgres\"");
+            w.comment(fi, "  pool_size: 2");
+            w.comment(fi, "  server_user: \"app\"");
+            w.comment(fi, "  server_password: \"secret\"");
+            w.comment(fi, "  default_pool_size: 40");
+            w.comment(fi, "  cache_ttl: \"1h\"");
+            w.comment(fi, "  cache_failure_ttl: \"30s\"");
+            w.comment(fi, "  min_interval: \"1s\"");
+        }
+    }
+    w.blank();
+
+    // Passthrough mode example (minimal — no server_user/server_password)
+    w.comment(fi, f.text("auth_query_example_passthrough").get(w.russian));
+    match w.format {
+        ConfigFormat::Toml => {
+            w.comment(
+                fi,
+                "auth_query.query = \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "auth_query.user = \"doorman_auth\"");
+            w.comment(fi, "auth_query.password = \"auth_password\"");
+        }
+        ConfigFormat::Yaml => {
+            w.comment(fi, "auth_query:");
+            w.comment(
+                fi,
+                "  query: \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+            );
+            w.comment(fi, "  user: \"doorman_auth\"");
+            w.comment(fi, "  password: \"auth_password\"");
+        }
     }
 }
 
@@ -1772,14 +1865,6 @@ mod tests {
             "users", // structural: rendered as a sub-section, not a scalar field
             "pools", // structural: rendered as a section
             "path",  // internal: not a config parameter
-            // AuthQueryConfig fields (in pool.rs but not Pool fields).
-            // auth_query is WIP — will be documented when the feature is complete.
-            "auth_query",
-            "query",
-            "default_pool_size",
-            "cache_ttl",
-            "cache_failure_ttl",
-            "min_interval",
         ];
 
         let sources: &[(&str, &str)] = &[
@@ -1838,31 +1923,31 @@ mod tests {
         let fields = &*FIELDS;
         let yaml_content = include_str!("fields.yaml");
 
-        // Fields that are internal/structural and not config parameters
-        let skip_fields: &[&str] = &[
-            "users",
-            "pools",
-            "path",
-            "pooler_check_query_request_bytes", // internal, derived
-            // AuthQueryConfig fields live in pool.rs alongside Pool, but are a separate
-            // nested struct. auth_query is WIP — will be added to fields.yaml when complete.
-            "auth_query",
-            "query",
-            "default_pool_size",
-            "cache_ttl",
-            "cache_failure_ttl",
-            "min_interval",
+        // Structural/internal fields that don't have their own fields.yaml entry
+        let structural_fields: &[&str] = &[
+            "users",                            // nested sub-section
+            "pools",                            // top-level section
+            "path",                             // internal runtime field
+            "pooler_check_query_request_bytes", // derived from pooler_check_query
+            "auth_query",                       // nested struct, checked via "auth_query" section
         ];
 
-        // Fields from AuthQueryConfig that share names with User/Pool fields.
-        // The test checks per-section, so these would be flagged as missing from "pool".
-        let skip_pool_fields: &[&str] = &[
+        // AuthQueryConfig pub fields live in pool.rs alongside Pool pub fields.
+        // When checking the "Pool" section, these are excluded (they belong to
+        // the "auth_query" section). When checking "AuthQueryConfig", only these
+        // fields are included.
+        let auth_query_fields: &[&str] = &[
+            "query",
             "user",
             "password",
             "database",
             "pool_size",
             "server_user",
             "server_password",
+            "default_pool_size",
+            "cache_ttl",
+            "cache_failure_ttl",
+            "min_interval",
         ];
 
         let sources: &[(&str, &str)] = &[
@@ -1870,6 +1955,7 @@ mod tests {
             ("Pool", include_str!("../../config/pool.rs")),
             ("User", include_str!("../../config/user.rs")),
             ("Prometheus", include_str!("../../config/prometheus.rs")),
+            ("AuthQueryConfig", include_str!("../../config/pool.rs")),
         ];
 
         let section_map: &[(&str, &str)] = &[
@@ -1877,6 +1963,7 @@ mod tests {
             ("Pool", "pool"),
             ("User", "user"),
             ("Prometheus", "prometheus"),
+            ("AuthQueryConfig", "auth_query"),
         ];
 
         let mut missing = Vec::new();
@@ -1889,11 +1976,16 @@ mod tests {
                 .map(|(_, sec)| *sec);
 
             for field in &pub_fields {
-                if skip_fields.contains(&field.as_str()) {
+                if structural_fields.contains(&field.as_str()) {
                     continue;
                 }
-                // Skip AuthQueryConfig fields that share names with other sections
-                if *struct_name == "Pool" && skip_pool_fields.contains(&field.as_str()) {
+                // AuthQueryConfig fields are checked via the "auth_query" section
+                if *struct_name == "Pool" && auth_query_fields.contains(&field.as_str()) {
+                    continue;
+                }
+                // When checking AuthQueryConfig, only include its own fields
+                if *struct_name == "AuthQueryConfig" && !auth_query_fields.contains(&field.as_str())
+                {
                     continue;
                 }
                 // Check if field exists in YAML (either as a field key or in raw content)
@@ -1902,6 +1994,7 @@ mod tests {
                         "general" => &fields.fields.general,
                         "pool" => &fields.fields.pool,
                         "user" => &fields.fields.user,
+                        "auth_query" => &fields.fields.auth_query,
                         "prometheus" => &fields.fields.prometheus,
                         _ => unreachable!(),
                     };

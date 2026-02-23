@@ -524,6 +524,42 @@ pools:
         # auth_pam_service: "pg_doorman"
 
     # --------------------------------------------------------------------------
+    # Dynamic Authentication (auth_query)
+    # --------------------------------------------------------------------------
+
+    # Dynamic user authentication via PostgreSQL queries.
+    # Instead of listing users statically, pg_doorman fetches credentials from
+    # a PostgreSQL database at connection time.
+
+    # Two modes are available:
+    # - Dedicated mode (server_user is set): all dynamic users share one pool
+    # - Passthrough mode (server_user is not set): each user gets their own pool
+
+    # Static users (defined in 'users') are checked first; auth_query is only used when the username is not found among static users.
+
+    # WARNING: Do not use a superuser for auth queries. Create a SECURITY DEFINER function and a dedicated role (see reference docs).
+
+    # Dedicated mode example (simplest — all dynamic users share one backend connection pool):
+    # auth_query:
+    #   query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+    #   user: "doorman_auth"
+    #   password: "auth_password"
+    #   database: "postgres"
+    #   pool_size: 2
+    #   server_user: "app"
+    #   server_password: "secret"
+    #   default_pool_size: 40
+    #   cache_ttl: "1h"
+    #   cache_failure_ttl: "30s"
+    #   min_interval: "1s"
+
+    # Passthrough mode example (each dynamic user gets their own backend connection pool):
+    # auth_query:
+    #   query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+    #   user: "doorman_auth"
+    #   password: "auth_password"
+
+    # --------------------------------------------------------------------------
     # Additional Pool Examples
     # --------------------------------------------------------------------------
 
