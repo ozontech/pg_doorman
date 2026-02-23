@@ -100,6 +100,8 @@ pub struct DoormanWorld {
     pub auth_query_executor: Option<pg_doorman::auth::auth_query::AuthQueryExecutor>,
     /// Last result from AuthQueryExecutor.fetch_password()
     pub auth_query_last_result: Option<Result<Option<String>, pg_doorman::errors::Error>>,
+    /// Dynamic variables for placeholder substitution (e.g., extracted password hashes)
+    pub vars: HashMap<String, String>,
 }
 
 impl DoormanWorld {
@@ -213,6 +215,11 @@ impl DoormanWorld {
             })
             .unwrap_or_else(|| "4".to_string());
         result = result.replace("${PGBENCH_JOBS_C10000}", &pgbench_jobs_c10000);
+
+        // Replace dynamic variables from self.vars (e.g., extracted password hashes)
+        for (key, value) in &self.vars {
+            result = result.replace(&format!("${{{}}}", key), value);
+        }
 
         result
     }

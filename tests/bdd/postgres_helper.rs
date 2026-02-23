@@ -681,6 +681,51 @@ pub async fn psql_query_returns(
     );
 }
 
+/// Extract password hash from pg_authid and store it as a dynamic variable
+#[given(expr = "password hash for PG user {string} is stored as {string}")]
+pub async fn store_password_hash(world: &mut DoormanWorld, pg_user: String, var_name: String) {
+    let port = world.pg_port.expect("PG not started");
+    let query = format!(
+        "SELECT rolpassword FROM pg_authid WHERE rolname = '{}'",
+        pg_user
+    );
+    let output = pg_command_builder(
+        "psql",
+        &[
+            "-h",
+            "127.0.0.1",
+            "-p",
+            &port.to_string(),
+            "-U",
+            "postgres",
+            "-d",
+            "postgres",
+            "-t",
+            "-A",
+            "-c",
+            &query,
+        ],
+    )
+    .output()
+    .expect("Failed to run psql");
+
+    assert!(
+        output.status.success(),
+        "Failed to extract password hash for user '{}': {}",
+        pg_user,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(
+        !hash.is_empty(),
+        "Password hash for user '{}' is empty — user may not exist",
+        pg_user
+    );
+
+    world.vars.insert(var_name, hash);
+}
+
 /// Stop PostgreSQL and pg_doorman when the world is dropped
 impl Drop for DoormanWorld {
     fn drop(&mut self) {
