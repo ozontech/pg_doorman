@@ -286,7 +286,7 @@ fn write_auth_query_section(out: &mut String) {
 
     let _ = writeln!(out, "## Auth Query Settings\n");
     let _ = writeln!(out, "The `auth_query` section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.\n");
-    let _ = writeln!(out, "```yaml\npools:\n  mydb:\n    auth_query:\n      query: \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"\n      user: \"doorman_auth\"\n      password: \"auth_password\"\n```\n");
+    let _ = writeln!(out, "```yaml\npools:\n  mydb:\n    auth_query:\n      query: \"SELECT passwd FROM pg_shadow WHERE usename = $1\"\n      user: \"doorman_auth\"\n      password: \"auth_password\"\n```\n");
     let _ = writeln!(out, "There are two modes of operation:\n");
     let _ = writeln!(out, "- **Dedicated mode** (`server_user` is set): All dynamically authenticated users share a single connection pool that connects to PostgreSQL as `server_user`. This is the simplest setup and works well when all users need the same backend access.");
     let _ = writeln!(out, "- **Passthrough mode** (`server_user` is not set): Each dynamically authenticated user gets their own connection pool that connects to PostgreSQL using their own credentials (MD5 pass-the-hash or SCRAM ClientKey passthrough). This preserves per-user identity on the backend.\n");

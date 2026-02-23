@@ -497,7 +497,7 @@ pool_size = 40
 # WARNING: Do not use a superuser for auth queries. Create a SECURITY DEFINER function and a dedicated role (see reference docs).
 
 # Dedicated mode example (simplest — all dynamic users share one backend connection pool):
-# auth_query.query = "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+# auth_query.query = "SELECT passwd FROM pg_shadow WHERE usename = $1"
 # auth_query.user = "doorman_auth"
 # auth_query.password = "auth_password"
 # auth_query.database = "postgres"
@@ -510,7 +510,7 @@ pool_size = 40
 # auth_query.min_interval = 1000
 
 # Passthrough mode example (each dynamic user gets their own backend connection pool):
-# auth_query.query = "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+# auth_query.query = "SELECT passwd FROM pg_shadow WHERE usename = $1"
 # auth_query.user = "doorman_auth"
 # auth_query.password = "auth_password"
 

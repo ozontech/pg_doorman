@@ -99,7 +99,7 @@ pub struct DoormanWorld {
     /// AuthQueryExecutor instance for auth_query BDD tests
     pub auth_query_executor: Option<pg_doorman::auth::auth_query::AuthQueryExecutor>,
     /// Last result from AuthQueryExecutor.fetch_password()
-    pub auth_query_last_result: Option<Result<Option<(String, String)>, pg_doorman::errors::Error>>,
+    pub auth_query_last_result: Option<Result<Option<String>, pg_doorman::errors::Error>>,
 }
 
 impl DoormanWorld {

@@ -37,14 +37,14 @@ pub trait PasswordFetcher: Send + Sync {
     fn fetch<'a>(
         &'a self,
         username: &'a str,
-    ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a;
+    ) -> impl Future<Output = Result<Option<String>, Error>> + Send + 'a;
 }
 
 impl PasswordFetcher for AuthQueryExecutor {
     fn fetch<'a>(
         &'a self,
         username: &'a str,
-    ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a {
+    ) -> impl Future<Output = Result<Option<String>, Error>> + Send + 'a {
         self.fetch_password(username)
     }
 }
@@ -182,8 +182,8 @@ impl AuthQueryExecutor {
     }
 
     /// Fetch password hash for a username from PostgreSQL.
-    /// Returns `Some((username, password_hash))` or `None` if user not found.
-    pub async fn fetch_password(&self, username: &str) -> Result<Option<(String, String)>, Error> {
+    /// Returns `Some(password_hash)` or `None` if user not found.
+    pub async fn fetch_password(&self, username: &str) -> Result<Option<String>, Error> {
         debug!(
             "[pool: {}] auth_query: fetching password for user '{username}'",
             self.pool_name
@@ -206,9 +206,9 @@ impl AuthQueryExecutor {
         let elapsed = start.elapsed();
 
         match &result {
-            Ok(Some((user, _))) => {
+            Ok(Some(_)) => {
                 debug!(
-                    "[pool: {}] auth_query: user '{user}' found ({elapsed:.1?})",
+                    "[pool: {}] auth_query: user '{username}' found ({elapsed:.1?})",
                     self.pool_name
                 );
             }
@@ -282,7 +282,7 @@ impl AuthQueryExecutor {
         &self,
         client: &Client,
         username: &str,
-    ) -> Result<Option<(String, String)>, Error> {
+    ) -> Result<Option<String>, Error> {
         let rows = client
             .query(
                 &self.config.query,
@@ -297,27 +297,46 @@ impl AuthQueryExecutor {
 
         match rows.len() {
             0 => Ok(None),
-            1 => Self::extract_credentials(&rows[0], username),
+            1 => Self::extract_password(&rows[0], username),
             n => Err(Error::AuthQueryConfigError(format!(
                 "query returned {n} rows for user '{username}', expected 0 or 1"
             ))),
         }
     }
 
-    fn extract_credentials(
+    /// Extract password hash from query result row.
+    ///
+    /// Column lookup priority:
+    /// 1. Column named `passwd` (matches `pg_shadow.passwd`)
+    /// 2. Column named `password`
+    /// 3. If the query returns exactly one column, use it regardless of name
+    fn extract_password(
         row: &tokio_postgres::Row,
         username: &str,
-    ) -> Result<Option<(String, String)>, Error> {
-        let user: String = row.try_get(0).map_err(|e| {
-            Error::AuthQueryConfigError(format!("failed to read username column: {e}"))
-        })?;
-        let password: Option<String> = row.try_get(1).map_err(|e| {
-            Error::AuthQueryConfigError(format!("failed to read password column: {e}"))
-        })?;
+    ) -> Result<Option<String>, Error> {
+        let columns = row.columns();
+        let password: Option<String> = if let Ok(p) = row.try_get::<_, Option<String>>("passwd") {
+            p
+        } else if let Ok(p) = row.try_get::<_, Option<String>>("password") {
+            p
+        } else if columns.len() == 1 {
+            row.try_get::<_, Option<String>>(0).map_err(|e| {
+                Error::AuthQueryConfigError(format!(
+                    "failed to read password from single-column result: {e}"
+                ))
+            })?
+        } else {
+            let col_names: Vec<&str> = columns.iter().map(|c| c.name()).collect();
+            return Err(Error::AuthQueryConfigError(format!(
+                "cannot find password column for user '{username}': \
+                 expected column named 'passwd' or 'password', or a single-column result; \
+                 got columns: {col_names:?}"
+            )));
+        };
         match password {
-            Some(p) if !p.is_empty() => Ok(Some((user, p))),
+            Some(p) if !p.is_empty() => Ok(Some(p)),
             _ => {
-                warn!("auth_query: user '{username}' has NULL or empty password in pg_shadow");
+                warn!("auth_query: user '{username}' has NULL or empty password");
                 Ok(None)
             }
         }
@@ -485,7 +504,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         // Cache miss — fetch from PG
         self.inc(|s| &s.executor_queries);
         match self.executor.fetch(username).await {
-            Ok(Some((_user, password_hash))) => {
+            Ok(Some(password_hash)) => {
                 self.inc(|s| &s.cache_misses);
                 let entry = CacheEntry::positive(password_hash);
                 self.entries.insert(username.to_string(), entry.clone());
@@ -547,7 +566,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         self.inc(|s| &s.executor_queries);
         self.inc(|s| &s.cache_refetches);
         match self.executor.fetch(username).await {
-            Ok(Some((_user, password_hash))) => {
+            Ok(Some(password_hash)) => {
                 let mut entry = CacheEntry::positive(password_hash);
                 entry.last_refetch_at = Some(Instant::now());
                 self.entries.insert(username.to_string(), entry.clone());
@@ -609,7 +628,7 @@ mod tests {
     /// Mock fetcher for unit tests.
     /// Pre-configure responses; fetch calls are counted.
     struct MockFetcher {
-        responses: DashMap<String, Option<(String, String)>>,
+        responses: DashMap<String, Option<String>>,
         fetch_count: AtomicUsize,
         /// Optional delay to simulate slow PG queries (for concurrency tests).
         delay: std::time::Duration,
@@ -633,10 +652,8 @@ mod tests {
         }
 
         fn add_user(&self, username: &str, password_hash: &str) {
-            self.responses.insert(
-                username.to_string(),
-                Some((username.to_string(), password_hash.to_string())),
-            );
+            self.responses
+                .insert(username.to_string(), Some(password_hash.to_string()));
         }
 
         fn fetch_count(&self) -> usize {
@@ -648,7 +665,7 @@ mod tests {
         fn fetch<'a>(
             &'a self,
             username: &'a str,
-        ) -> impl Future<Output = Result<Option<(String, String)>, Error>> + Send + 'a {
+        ) -> impl Future<Output = Result<Option<String>, Error>> + Send + 'a {
             self.fetch_count.fetch_add(1, Ordering::SeqCst);
             let result = self
                 .responses

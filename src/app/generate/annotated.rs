@@ -1475,7 +1475,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
         ConfigFormat::Toml => {
             w.comment(
                 fi,
-                "auth_query.query = \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+                "auth_query.query = \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
             );
             w.comment(fi, "auth_query.user = \"doorman_auth\"");
             w.comment(fi, "auth_query.password = \"auth_password\"");
@@ -1492,7 +1492,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "auth_query:");
             w.comment(
                 fi,
-                "  query: \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+                "  query: \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
             );
             w.comment(fi, "  user: \"doorman_auth\"");
             w.comment(fi, "  password: \"auth_password\"");
@@ -1514,7 +1514,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
         ConfigFormat::Toml => {
             w.comment(
                 fi,
-                "auth_query.query = \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+                "auth_query.query = \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
             );
             w.comment(fi, "auth_query.user = \"doorman_auth\"");
             w.comment(fi, "auth_query.password = \"auth_password\"");
@@ -1523,7 +1523,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "auth_query:");
             w.comment(
                 fi,
-                "  query: \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"",
+                "  query: \"SELECT passwd FROM pg_shadow WHERE usename = $1\"",
             );
             w.comment(fi, "  user: \"doorman_auth\"");
             w.comment(fi, "  password: \"auth_password\"");

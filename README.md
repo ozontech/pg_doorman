@@ -77,7 +77,7 @@ pools:
 
 ### Auth query (dynamic users)
 
-Instead of listing every user in the config, pg_doorman can look up credentials directly from PostgreSQL. The query must return two columns: `username` and `password` (MD5 or SCRAM hash).
+Instead of listing every user in the config, pg_doorman can look up credentials directly from PostgreSQL. The query must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. Any extra columns are ignored.
 
 Quickstart — using `pg_shadow` directly (requires superuser):
 
@@ -88,7 +88,7 @@ pools:
     server_port: 5432
     pool_mode: "transaction"
     auth_query:
-      query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+      query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
       user: "postgres"
       password: "postgres_password"
       server_user: "app"

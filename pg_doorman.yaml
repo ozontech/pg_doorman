@@ -541,7 +541,7 @@ pools:
 
     # Dedicated mode example (simplest — all dynamic users share one backend connection pool):
     # auth_query:
-    #   query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+    #   query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
     #   user: "doorman_auth"
     #   password: "auth_password"
     #   database: "postgres"
@@ -555,7 +555,7 @@ pools:
 
     # Passthrough mode example (each dynamic user gets their own backend connection pool):
     # auth_query:
-    #   query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+    #   query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
     #   user: "doorman_auth"
     #   password: "auth_password"
 

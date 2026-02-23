@@ -1060,16 +1060,18 @@ fields:
       config:
         en: |
           SQL query to fetch user credentials.
-          Must return two columns: (username, password_hash).
+          Must return a column named 'passwd' or 'password' with the password hash.
+          If the query returns a single column, it is used regardless of name.
           Use $1 as the placeholder for the username parameter.
         ru: |
           SQL-запрос для получения учётных данных пользователя.
-          Должен возвращать два столбца: (имя_пользователя, хеш_пароля).
+          Должен возвращать столбец с именем 'passwd' или 'password' с хешем пароля.
+          Если запрос возвращает ровно один столбец, он используется независимо от имени.
           Используйте $1 как параметр для имени пользователя.
       doc: |
-        SQL query to fetch credentials. Must return two columns: `(username, password_hash)`. Use `$1` as the placeholder for the username parameter.
+        SQL query to fetch credentials. Must return a column named `passwd` or `password` containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name. Any extra columns are ignored. Use `$1` as the placeholder for the username parameter.
 
-        Example: `"SELECT usename, passwd FROM pg_shadow WHERE usename = $1"`
+        Example: `"SELECT passwd FROM pg_shadow WHERE usename = $1"`
 
     user:
       config:

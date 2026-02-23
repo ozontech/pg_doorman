@@ -95,7 +95,7 @@ async fn fetch_password(world: &mut DoormanWorld, username: String) {
 #[then(regex = r#"^auth_query result should contain user "([^"]+)" with password "([^"]+)"$"#)]
 async fn result_should_contain_exact(
     world: &mut DoormanWorld,
-    expected_user: String,
+    _expected_user: String,
     expected_password: String,
 ) {
     let result = world
@@ -104,14 +104,10 @@ async fn result_should_contain_exact(
         .expect("No auth_query result — missing When step");
 
     match result {
-        Ok(Some((user, password))) => {
-            assert_eq!(user, &expected_user, "Username mismatch");
+        Ok(Some(password)) => {
             assert_eq!(password, &expected_password, "Password mismatch");
         }
-        Ok(None) => panic!(
-            "Expected user '{}' found, got None (not found)",
-            expected_user
-        ),
+        Ok(None) => panic!("Expected password found, got None (not found)"),
         Err(e) => panic!("Expected success, got error: {}", e),
     }
 }
@@ -121,7 +117,7 @@ async fn result_should_contain_exact(
 )]
 async fn result_should_contain_password_prefix(
     world: &mut DoormanWorld,
-    expected_user: String,
+    _expected_user: String,
     password_prefix: String,
 ) {
     let result = world
@@ -130,8 +126,7 @@ async fn result_should_contain_password_prefix(
         .expect("No auth_query result — missing When step");
 
     match result {
-        Ok(Some((user, password))) => {
-            assert_eq!(user, &expected_user, "Username mismatch");
+        Ok(Some(password)) => {
             assert!(
                 password.starts_with(&password_prefix),
                 "Password '{}' does not start with '{}'",
@@ -139,29 +134,23 @@ async fn result_should_contain_password_prefix(
                 password_prefix
             );
         }
-        Ok(None) => panic!(
-            "Expected user '{}' found, got None (not found)",
-            expected_user
-        ),
+        Ok(None) => panic!("Expected password found, got None (not found)"),
         Err(e) => panic!("Expected success, got error: {}", e),
     }
 }
 
 #[then(regex = r#"^auth_query result should contain user "([^"]+)"$"#)]
-async fn result_should_contain_user(world: &mut DoormanWorld, expected_user: String) {
+async fn result_should_contain_user(world: &mut DoormanWorld, _expected_user: String) {
     let result = world
         .auth_query_last_result
         .as_ref()
         .expect("No auth_query result — missing When step");
 
     match result {
-        Ok(Some((user, _))) => {
-            assert_eq!(user, &expected_user, "Username mismatch");
+        Ok(Some(_)) => {
+            // User found — password returned
         }
-        Ok(None) => panic!(
-            "Expected user '{}' found, got None (not found)",
-            expected_user
-        ),
+        Ok(None) => panic!("Expected user found, got None (not found)"),
         Err(e) => panic!("Expected success, got error: {}", e),
     }
 }
@@ -177,8 +166,8 @@ async fn result_should_be_not_found(world: &mut DoormanWorld) {
         Ok(None) => {
             // Expected: user not found
         }
-        Ok(Some((user, _))) => {
-            panic!("Expected not found, but user '{}' was found", user);
+        Ok(Some(_)) => {
+            panic!("Expected not found, but password was returned");
         }
         Err(e) => panic!("Expected not found (Ok(None)), got error: {}", e),
     }
@@ -206,9 +195,6 @@ async fn result_should_be_config_error(world: &mut DoormanWorld, message_part: S
                 message_part, e
             );
         }
-        Ok(val) => panic!(
-            "Expected AuthQueryConfigError, got Ok({:?})",
-            val.as_ref().map(|(u, _)| u)
-        ),
+        Ok(val) => panic!("Expected AuthQueryConfigError, got Ok({:?})", val.is_some()),
     }
 }
