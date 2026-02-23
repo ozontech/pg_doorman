@@ -1,5 +1,37 @@
 # Changelog
 
+### 3.3.0 <small>Feb 23, 2026</small>
+
+**New Features:**
+
+- **Dynamic user authentication (`auth_query`)**: PgDoorman can now authenticate users dynamically by querying PostgreSQL at connection time — no need to list every user in the config. Supports `pg_shadow`, custom tables, and `SECURITY DEFINER` functions. The query must return a column named `passwd` or `password` (or any single column) containing an MD5 or SCRAM-SHA-256 hash.
+
+- **Passthrough authentication**: Default mode for both static and dynamic users — PgDoorman reuses the client's cryptographic proof (MD5 hash or SCRAM ClientKey) to authenticate to the backend automatically. No plaintext `server_password` in config needed when the pool user matches the backend PostgreSQL user.
+
+- **Two auth_query modes**:
+  - *Passthrough mode* (default) — each dynamic user gets their own backend connection pool and authenticates as themselves, preserving per-user identity on the backend.
+  - *Dedicated mode* (`server_user` set) — all dynamic users share a single backend pool under one PostgreSQL role.
+
+- **Auth query caching**: DashMap-based cache with configurable TTL, double-checked locking, rate-limited refetch, and request coalescing. Supports separate TTLs for successful and failed lookups.
+
+- **`SHOW AUTH_QUERY` admin command**: Displays per-pool metrics — cache entries/hits/misses, auth success/failure counters, executor stats, and dynamic pool count.
+
+- **Prometheus metrics for auth_query**: New metric families `pg_doorman_auth_query_cache`, `pg_doorman_auth_query_auth`, `pg_doorman_auth_query_executor`, `pg_doorman_auth_query_dynamic_pools`.
+
+- **Idle dynamic pool garbage collection**: Background task cleans up expired dynamic pools when all connections have been idle beyond `server_lifetime`. Zero overhead for static-only configs.
+
+- **Smart password column lookup**: Password column resolved by name (`passwd` → `password` → single-column fallback), works with `pg_shadow`, custom tables, and arbitrary single-column queries.
+
+**Improvements:**
+
+- **`server_username`/`server_password` now optional**: Previously documented as required for MD5/SCRAM hash configs. Now only needed when the backend user differs from the pool user (username mapping, JWT auth).
+
+- **Data-driven config & docs generation**: `fields.yaml` is the single source of truth for all config field descriptions (EN/RU). Reference docs, annotated configs, and inline comments are all generated from it.
+
+**Testing:**
+
+- **39 new BDD scenarios** (260+ steps) covering auth_query executor, end-to-end auth, HBA integration, passthrough mode, SCRAM-only auth, RELOAD/GC lifecycle, observability, and static user passthrough.
+
 ### 3.2.4 <small>Feb 20, 2026</small>
 **New Features:**
 
