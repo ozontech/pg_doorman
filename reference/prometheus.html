@@ -219,6 +219,15 @@
 <tr><td><code>pg_doorman_pools_avg_wait_time</code></td><td>Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks.</td></tr>
 </tbody></table>
 </div>
+<h3 id="auth-query-metrics"><a class="header" href="#auth-query-metrics">Auth Query Metrics</a></h3>
+<p>These metrics are only available when <code>auth_query</code> is configured for one or more pools.</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_auth_query_cache</code></td><td>Auth query cache metrics by type and database. Types include: <code>entries</code> (current cached credentials), <code>hits</code> (cache lookups that found a valid entry), <code>misses</code> (cache lookups that required a PostgreSQL fetch), <code>refetches</code> (re-fetches triggered by auth failure with stale credentials), <code>rate_limited</code> (re-fetch attempts that were rate-limited by <code>min_interval</code>).</td></tr>
+<tr><td><code>pg_doorman_auth_query_auth</code></td><td>Auth query authentication outcomes by result and database. Results include: <code>success</code> (successful authentication) and <code>failure</code> (wrong password or credential mismatch).</td></tr>
+<tr><td><code>pg_doorman_auth_query_executor</code></td><td>Auth query executor metrics by type and database. Types include: <code>queries</code> (total queries executed against PostgreSQL to fetch credentials) and <code>errors</code> (queries that failed due to connection or execution errors).</td></tr>
+<tr><td><code>pg_doorman_auth_query_dynamic_pools</code></td><td>Auth query dynamic pool lifecycle metrics by type and database. Types include: <code>current</code> (currently active dynamic pools), <code>created</code> (total pools created since startup), <code>destroyed</code> (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode.</td></tr>
+</tbody></table>
+</div>
 <h3 id="server-metrics"><a class="header" href="#server-metrics">Server Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead.</td></tr>
@@ -247,6 +256,12 @@
 </code></pre>
 <h3 id="client-wait-time"><a class="header" href="#client-wait-time">Client Wait Time</a></h3>
 <pre><code>pg_doorman_pools_avg_wait_time
+</code></pre>
+<h3 id="auth-query-cache-hit-rate"><a class="header" href="#auth-query-cache-hit-rate">Auth Query Cache Hit Rate</a></h3>
+<pre><code>pg_doorman_auth_query_cache{type="hits"} / (pg_doorman_auth_query_cache{type="hits"} + pg_doorman_auth_query_cache{type="misses"})
+</code></pre>
+<h3 id="auth-query-failure-rate"><a class="header" href="#auth-query-failure-rate">Auth Query Failure Rate</a></h3>
+<pre><code>rate(pg_doorman_auth_query_auth{result="failure"}[5m])
 </code></pre>
 
                     </main>

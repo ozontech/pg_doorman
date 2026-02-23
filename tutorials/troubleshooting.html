@@ -164,28 +164,21 @@
 <p>This guide helps you resolve common issues when using PgDoorman.</p>
 <h2 id="authentication-errors-when-connecting-to-postgresql"><a class="header" href="#authentication-errors-when-connecting-to-postgresql">Authentication Errors When Connecting to PostgreSQL</a></h2>
 <p><strong>Symptom:</strong> PgDoorman starts successfully but clients get authentication errors like <code>password authentication failed</code> when trying to execute queries.</p>
-<p><strong>Cause:</strong> By default, PgDoorman uses the same <code>username</code> and <code>password</code> for both client authentication and connecting to the PostgreSQL server. If the <code>password</code> field contains an MD5 or SCRAM hash (which is the typical and recommended setup), PostgreSQL will reject it because it expects a plaintext password.</p>
-<p><strong>Solution:</strong> Set <code>server_username</code> and <code>server_password</code> in your user configuration to the actual PostgreSQL credentials:</p>
-<h3 id="yaml"><a class="header" href="#yaml">YAML</a></h3>
-<pre><code class="language-yaml">pools:
-  mydb:
-    server_host: "127.0.0.1"
-    server_port: 5432
-    users:
-      - username: "app_user"
-        password: "md5..."                # MD5/SCRAM hash for client auth
-        server_username: "app_user"       # real PostgreSQL username
-        server_password: "plaintext_pwd"  # real PostgreSQL password
-        pool_size: 40
+<h3 id="if-the-pool-username-matches-the-backend-postgresql-user"><a class="header" href="#if-the-pool-username-matches-the-backend-postgresql-user">If the pool username matches the backend PostgreSQL user</a></h3>
+<p>PgDoorman uses <strong>passthrough authentication</strong> by default — the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to authenticate to PostgreSQL. Make sure the <code>password</code> field in your config contains the exact hash from <code>pg_authid</code> / <code>pg_shadow</code>:</p>
+<pre><code class="language-bash">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 </code></pre>
-<h3 id="toml"><a class="header" href="#toml">TOML</a></h3>
-<pre><code class="language-toml">[pools.mydb.users.0]
-username = "app_user"
-password = "md5..."                # MD5/SCRAM hash for client auth
-server_username = "app_user"       # real PostgreSQL username
-server_password = "plaintext_pwd"  # real PostgreSQL password
-pool_size = 40
+<p>Copy the hash (e.g., <code>md5...</code> or <code>SCRAM-SHA-256$...</code>) into your config's <code>password</code> field. The hash <strong>must match</strong> the one stored in PostgreSQL (same salt and iterations for SCRAM).</p>
+<h3 id="if-the-pool-username-differs-from-the-backend-user"><a class="header" href="#if-the-pool-username-differs-from-the-backend-user">If the pool username differs from the backend user</a></h3>
+<p>When the client-facing <code>username</code> in PgDoorman is different from the actual PostgreSQL role, passthrough cannot work — you need explicit credentials:</p>
+<pre><code class="language-yaml">users:
+  - username: "app_user"              # client-facing name
+    password: "md5..."                # hash for client authentication
+    server_username: "pg_app_user"    # actual PostgreSQL role
+    server_password: "plaintext_pwd"  # plaintext password for that role
+    pool_size: 40
 </code></pre>
+<p>This also applies to JWT authentication where there is no password to pass through.</p>
 <div id="admonition-how-to-get-the-password-hash" class="admonition admonish-tip" role="note" aria-labelledby="admonition-how-to-get-the-password-hash-title">
 <div class="admonition-title">
 <div id="admonition-how-to-get-the-password-hash-title">

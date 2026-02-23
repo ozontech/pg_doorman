@@ -302,23 +302,23 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
 <p>The <code>generate</code> command also respects standard PostgreSQL environment variables like <code>PGHOST</code>, <code>PGPORT</code>, <code>PGUSER</code>, <code>PGPASSWORD</code>, and <code>PGDATABASE</code>.</p>
 </div>
 </div>
-<div id="admonition-server-authentication-common-issue" class="admonition admonish-warning" role="note" aria-labelledby="admonition-server-authentication-common-issue-title">
+<div id="admonition-passthrough-authentication-default" class="admonition admonish-info" role="note" aria-labelledby="admonition-passthrough-authentication-default-title">
 <div class="admonition-title">
-<div id="admonition-server-authentication-common-issue-title">
-<p>Server Authentication (Common Issue)</p>
+<div id="admonition-passthrough-authentication-default-title">
+<p>Passthrough Authentication (Default)</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-server-authentication-common-issue"></a>
+<a class="admonition-anchor-link" href="#admonition-passthrough-authentication-default"></a>
 </div>
 <div>
-<p>By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), <strong>PostgreSQL will reject the connection</strong> because it expects a plaintext password, not a hash.</p>
-<p><strong>To fix this</strong>, set <code>server_username</code> and <code>server_password</code> in the user configuration:</p>
+<p>PgDoorman uses <strong>passthrough authentication</strong> by default: the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is automatically reused to authenticate to the backend PostgreSQL server. No plaintext passwords in config needed — just set <code>password</code> to the hash from <code>pg_shadow</code> / <code>pg_authid</code>.</p>
+<p>Set <code>server_username</code> and <code>server_password</code> <strong>only</strong> when the backend user differs from the pool username (e.g., username mapping or JWT auth):</p>
 <pre><code class="language-yaml">users:
-  - username: "app_user"
-    password: "md5..."              # for client authentication
-    server_username: "app_user"     # for PostgreSQL server
-    server_password: "real_password" # plaintext password for PostgreSQL
+  - username: "app_user"              # client-facing name
+    password: "md5..."                # hash for client authentication
+    server_username: "pg_app_user"    # different backend PostgreSQL user
+    server_password: "real_password"  # plaintext password for that user
 </code></pre>
-<p>The generated config includes detailed comments about this. See also <a href="../reference/pool.html#server_username">Pool User Settings</a>.</p>
+<p>See also <a href="../reference/pool.html#server_username">Pool User Settings</a>.</p>
 </div>
 </div>
 <div id="admonition-superuser-privileges" class="admonition admonish-warning" role="note" aria-labelledby="admonition-superuser-privileges-title">

@@ -469,23 +469,23 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
 <p>The <code>generate</code> command also respects standard PostgreSQL environment variables like <code>PGHOST</code>, <code>PGPORT</code>, <code>PGUSER</code>, <code>PGPASSWORD</code>, and <code>PGDATABASE</code>.</p>
 </div>
 </div>
-<div id="admonition-server-authentication-common-issue" class="admonition admonish-warning" role="note" aria-labelledby="admonition-server-authentication-common-issue-title">
+<div id="admonition-passthrough-authentication-default" class="admonition admonish-info" role="note" aria-labelledby="admonition-passthrough-authentication-default-title">
 <div class="admonition-title">
-<div id="admonition-server-authentication-common-issue-title">
-<p>Server Authentication (Common Issue)</p>
+<div id="admonition-passthrough-authentication-default-title">
+<p>Passthrough Authentication (Default)</p>
 </div>
-<a class="admonition-anchor-link" href="tutorials/basic-usage.html#admonition-server-authentication-common-issue"></a>
+<a class="admonition-anchor-link" href="tutorials/basic-usage.html#admonition-passthrough-authentication-default"></a>
 </div>
 <div>
-<p>By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), <strong>PostgreSQL will reject the connection</strong> because it expects a plaintext password, not a hash.</p>
-<p><strong>To fix this</strong>, set <code>server_username</code> and <code>server_password</code> in the user configuration:</p>
+<p>PgDoorman uses <strong>passthrough authentication</strong> by default: the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is automatically reused to authenticate to the backend PostgreSQL server. No plaintext passwords in config needed — just set <code>password</code> to the hash from <code>pg_shadow</code> / <code>pg_authid</code>.</p>
+<p>Set <code>server_username</code> and <code>server_password</code> <strong>only</strong> when the backend user differs from the pool username (e.g., username mapping or JWT auth):</p>
 <pre><code class="language-yaml">users:
-  - username: "app_user"
-    password: "md5..."              # for client authentication
-    server_username: "app_user"     # for PostgreSQL server
-    server_password: "real_password" # plaintext password for PostgreSQL
+  - username: "app_user"              # client-facing name
+    password: "md5..."                # hash for client authentication
+    server_username: "pg_app_user"    # different backend PostgreSQL user
+    server_password: "real_password"  # plaintext password for that user
 </code></pre>
-<p>The generated config includes detailed comments about this. See also <a href="tutorials/../reference/pool.html#server_username">Pool User Settings</a>.</p>
+<p>See also <a href="tutorials/../reference/pool.html#server_username">Pool User Settings</a>.</p>
 </div>
 </div>
 <div id="admonition-superuser-privileges" class="admonition admonish-warning" role="note" aria-labelledby="admonition-superuser-privileges-title">
@@ -1033,28 +1033,21 @@ cargo test --test patroni_proxy_bdd
 <p>This guide helps you resolve common issues when using PgDoorman.</p>
 <h2 id="authentication-errors-when-connecting-to-postgresql"><a class="header" href="#authentication-errors-when-connecting-to-postgresql">Authentication Errors When Connecting to PostgreSQL</a></h2>
 <p><strong>Symptom:</strong> PgDoorman starts successfully but clients get authentication errors like <code>password authentication failed</code> when trying to execute queries.</p>
-<p><strong>Cause:</strong> By default, PgDoorman uses the same <code>username</code> and <code>password</code> for both client authentication and connecting to the PostgreSQL server. If the <code>password</code> field contains an MD5 or SCRAM hash (which is the typical and recommended setup), PostgreSQL will reject it because it expects a plaintext password.</p>
-<p><strong>Solution:</strong> Set <code>server_username</code> and <code>server_password</code> in your user configuration to the actual PostgreSQL credentials:</p>
-<h3 id="yaml"><a class="header" href="#yaml">YAML</a></h3>
-<pre><code class="language-yaml">pools:
-  mydb:
-    server_host: "127.0.0.1"
-    server_port: 5432
-    users:
-      - username: "app_user"
-        password: "md5..."                # MD5/SCRAM hash for client auth
-        server_username: "app_user"       # real PostgreSQL username
-        server_password: "plaintext_pwd"  # real PostgreSQL password
-        pool_size: 40
+<h3 id="if-the-pool-username-matches-the-backend-postgresql-user"><a class="header" href="#if-the-pool-username-matches-the-backend-postgresql-user">If the pool username matches the backend PostgreSQL user</a></h3>
+<p>PgDoorman uses <strong>passthrough authentication</strong> by default — the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to authenticate to PostgreSQL. Make sure the <code>password</code> field in your config contains the exact hash from <code>pg_authid</code> / <code>pg_shadow</code>:</p>
+<pre><code class="language-bash">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 </code></pre>
-<h3 id="toml-1"><a class="header" href="#toml-1">TOML</a></h3>
-<pre><code class="language-toml">[pools.mydb.users.0]
-username = "app_user"
-password = "md5..."                # MD5/SCRAM hash for client auth
-server_username = "app_user"       # real PostgreSQL username
-server_password = "plaintext_pwd"  # real PostgreSQL password
-pool_size = 40
+<p>Copy the hash (e.g., <code>md5...</code> or <code>SCRAM-SHA-256$...</code>) into your config's <code>password</code> field. The hash <strong>must match</strong> the one stored in PostgreSQL (same salt and iterations for SCRAM).</p>
+<h3 id="if-the-pool-username-differs-from-the-backend-user"><a class="header" href="#if-the-pool-username-differs-from-the-backend-user">If the pool username differs from the backend user</a></h3>
+<p>When the client-facing <code>username</code> in PgDoorman is different from the actual PostgreSQL role, passthrough cannot work — you need explicit credentials:</p>
+<pre><code class="language-yaml">users:
+  - username: "app_user"              # client-facing name
+    password: "md5..."                # hash for client authentication
+    server_username: "pg_app_user"    # actual PostgreSQL role
+    server_password: "plaintext_pwd"  # plaintext password for that role
+    pool_size: 40
 </code></pre>
+<p>This also applies to JWT authentication where there is no password to pass through.</p>
 <div id="admonition-how-to-get-the-password-hash" class="admonition admonish-tip" role="note" aria-labelledby="admonition-how-to-get-the-password-hash-title">
 <div class="admonition-title">
 <div id="admonition-how-to-get-the-password-hash-title">
@@ -1513,13 +1506,92 @@ It can be used to check the connection at the application level.</p>
 <h3 id="cleanup_server_connections"><a class="header" href="#cleanup_server_connections">cleanup_server_connections</a></h3>
 <p>When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections.</p>
 <p>Default: <code>true</code>.</p>
+<h2 id="auth-query-settings"><a class="header" href="#auth-query-settings">Auth Query Settings</a></h2>
+<p>The <code>auth_query</code> section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    auth_query:
+      query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
+      user: "doorman_auth"
+      password: "auth_password"
+</code></pre>
+<p>There are two modes of operation:</p>
+<ul>
+<li><strong>Dedicated mode</strong> (<code>server_user</code> is set): All dynamically authenticated users share a single connection pool that connects to PostgreSQL as <code>server_user</code>. This is the simplest setup and works well when all users need the same backend access.</li>
+<li><strong>Passthrough mode</strong> (<code>server_user</code> is not set): Each dynamically authenticated user gets their own connection pool that connects to PostgreSQL using their own credentials (MD5 pass-the-hash or SCRAM ClientKey passthrough). This preserves per-user identity on the backend.</li>
+</ul>
+<p>Static users (defined in the <code>users</code> section) are always checked first. The auth_query is only used when the username is not found among static users.</p>
+<div id="admonition-security-recommendation" class="admonition admonish-warning" role="note" aria-labelledby="admonition-security-recommendation-title">
+<div class="admonition-title">
+<div id="admonition-security-recommendation-title">
+<p>Security Recommendation</p>
+</div>
+<a class="admonition-anchor-link" href="reference/pool.html#admonition-security-recommendation"></a>
+</div>
+<div>
+<p>The <code>user</code> that runs auth queries needs access to password hashes (e.g. from <code>pg_shadow</code>). <strong>Do not use a superuser</strong> for this purpose. Instead, create a <code>SECURITY DEFINER</code> function owned by a superuser and a dedicated role with minimal privileges:</p>
+<p>```sql
+-- Create a dedicated role for auth queries
+CREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';</p>
+<p>-- Create a SECURITY DEFINER function (runs with owner's privileges)
+CREATE OR REPLACE FUNCTION pg_doorman_get_auth(p_usename TEXT)
+RETURNS TABLE (usename name, passwd text)
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS
+$$
+SELECT usename, passwd FROM pg_shadow WHERE usename = p_usename;
+$$;</p>
+<p>-- Grant execute only to the dedicated role
+REVOKE ALL ON FUNCTION pg_doorman_get_auth(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;
+```</p>
+<p>Then use this function in the <code>query</code> parameter:
+```yaml
+auth_query:
+query: "SELECT * FROM pg_doorman_get_auth($1)"
+user: "doorman_auth"
+password: "strong_password"
+```</p>
+</div>
+</div>
+<h3 id="query"><a class="header" href="#query">query</a></h3>
+<p>SQL query to fetch credentials. Must return a column named <code>passwd</code> or <code>password</code> containing the MD5 or SCRAM hash. If the query returns exactly one column, it is used regardless of name. Any extra columns are ignored. Use <code>$1</code> as the placeholder for the username parameter.</p>
+<p>Example: <code>"SELECT passwd FROM pg_shadow WHERE usename = $1"</code></p>
+<h3 id="user"><a class="header" href="#user">user</a></h3>
+<p>PostgreSQL username for the executor connection that runs auth queries.</p>
+<h3 id="password"><a class="header" href="#password">password</a></h3>
+<p>Password for the executor user (plaintext). Can be empty if the PostgreSQL server uses <code>trust</code> authentication for this user.</p>
+<p>Default: <code>""</code>.</p>
+<h3 id="database"><a class="header" href="#database">database</a></h3>
+<p>Database for executor connections. If not specified, the pool name is used.</p>
+<p>Default: <code>None (uses pool name)</code>.</p>
+<h3 id="pool_size"><a class="header" href="#pool_size">pool_size</a></h3>
+<p>Number of executor connections (connections used to run auth queries, not data connections).</p>
+<p>Default: <code>2</code>.</p>
+<h3 id="server_user"><a class="header" href="#server_user">server_user</a></h3>
+<p>Backend PostgreSQL user for data connections in dedicated mode. When set, all dynamically authenticated users share one connection pool that connects as this user. When not set, passthrough mode is used.</p>
+<p>Default: <code>None (passthrough mode)</code>.</p>
+<h3 id="server_password"><a class="header" href="#server_password">server_password</a></h3>
+<p>Plaintext password for the <code>server_user</code>. Only meaningful when <code>server_user</code> is set.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="default_pool_size"><a class="header" href="#default_pool_size">default_pool_size</a></h3>
+<p>Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode).</p>
+<p>Default: <code>40</code>.</p>
+<h3 id="cache_ttl"><a class="header" href="#cache_ttl">cache_ttl</a></h3>
+<p>Maximum cache age for successfully fetched credentials. Accepts duration strings like <code>"1h"</code>, <code>"30m"</code>, <code>"300s"</code>.</p>
+<p>Default: <code>"1h"</code>.</p>
+<h3 id="cache_failure_ttl"><a class="header" href="#cache_failure_ttl">cache_failure_ttl</a></h3>
+<p>Cache TTL for "user not found" entries (negative cache). Prevents repeated queries for non-existent users.</p>
+<p>Default: <code>"30s"</code>.</p>
+<h3 id="min_interval"><a class="header" href="#min_interval">min_interval</a></h3>
+<p>Minimum interval between re-fetches for the same username after an authentication failure. Protects the backend from excessive queries during brute-force attempts.</p>
+<p>Default: <code>"1s"</code>.</p>
 <h2 id="pool-users-settings"><a class="header" href="#pool-users-settings">Pool Users Settings</a></h2>
 <pre><code class="language-toml">[pools.exampledb.users.0]
 username = "exampledb-user-0" # A virtual user who can connect to this virtual database.
 </code></pre>
 <h3 id="username"><a class="header" href="#username">username</a></h3>
 <p>A virtual username who can connect to this virtual database (pool).</p>
-<h3 id="password"><a class="header" href="#password">password</a></h3>
+<h3 id="password-1"><a class="header" href="#password-1">password</a></h3>
 <p>The password for the virtual pool user.
 Password can be specified in <code>MD5</code>, <code>SCRAM-SHA-256</code>, or <code>JWT</code> format.
 Also, you can create a mirror list of users using secrets from the PostgreSQL instance: <code>select usename, passwd from pg_shadow</code>.</p>
@@ -1527,12 +1599,26 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <p>The pam-service that is responsible for client authorization. In this case, pg_doorman will ignore the <code>password</code> value.</p>
 <h3 id="server_username"><a class="header" href="#server_username">server_username</a></h3>
 <p>The real PostgreSQL username used to connect to the database server.</p>
-<p>By default, PgDoorman uses the same <code>username</code> for both client authentication and server connections. However, if the client <code>password</code> is an MD5 or SCRAM hash (which is the typical setup), PostgreSQL will <strong>reject the connection</strong> because it expects a plaintext password, not a hash.</p>
-<p>To fix this, set <code>server_username</code> and <code>server_password</code> to the actual PostgreSQL credentials. Both must be specified together.</p>
-<h3 id="server_password"><a class="header" href="#server_password">server_password</a></h3>
+<p>By default, PgDoorman uses the same <code>username</code> for both client authentication and server connections, using <strong>passthrough authentication</strong>: the cryptographic material from the client's authentication (MD5 hash or SCRAM ClientKey) is reused to authenticate to the backend. This eliminates the need for plaintext <code>server_password</code>.</p>
+<p><strong>Passthrough mode</strong> (recommended for identity-matching users):</p>
+<ul>
+<li>Omit both <code>server_username</code> and <code>server_password</code></li>
+<li>pg_doorman reuses the client's auth proof to connect to PostgreSQL</li>
+<li>For MD5: the hash from <code>password</code> is used directly</li>
+<li>For SCRAM: the ClientKey is extracted from the client's first SCRAM auth and cached</li>
+<li>Requirement: the <code>password</code> verifier must match <code>pg_authid</code> on the backend (same salt/iterations for SCRAM, same hash for MD5)</li>
+</ul>
+<p><strong>Explicit credentials mode</strong> (when identities differ):</p>
+<ul>
+<li>Set <code>server_username</code> and <code>server_password</code> to the actual PostgreSQL credentials</li>
+<li><code>server_password</code> requires <code>server_username</code> to be set</li>
+<li><code>server_username</code> alone (without <code>server_password</code>) is allowed for trust authentication</li>
+</ul>
+<h3 id="server_password-1"><a class="header" href="#server_password-1">server_password</a></h3>
 <p>The plaintext password for the PostgreSQL server user specified in <code>server_username</code>.</p>
-<p>This is needed because PgDoorman stores client passwords as MD5/SCRAM hashes for client authentication, but PostgreSQL requires a plaintext password during server-side authentication.</p>
-<h3 id="pool_size"><a class="header" href="#pool_size">pool_size</a></h3>
+<p>When <code>server_password</code> is not set and the user is passthrough-eligible (no <code>server_username</code> or <code>server_username</code> equals <code>username</code>), PgDoorman uses passthrough authentication instead: the cryptographic material from the client's authentication is reused for the backend connection. This eliminates plaintext passwords from config files.</p>
+<p><code>server_password</code> requires <code>server_username</code> to be set.</p>
+<h3 id="pool_size-1"><a class="header" href="#pool_size-1">pool_size</a></h3>
 <p>The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.</p>
 <p>Default: <code>40</code>.</p>
 <h3 id="min_pool_size"><a class="header" href="#min_pool_size">min_pool_size</a></h3>
@@ -1541,21 +1627,21 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <h3 id="server_lifetime-2"><a class="header" href="#server_lifetime-2">server_lifetime</a></h3>
 <p>Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used.</p>
 <p>Default: <code>None (uses pool setting)</code>.</p>
-<div id="admonition-common-setup-issue" class="admonition admonish-warning" role="note" aria-labelledby="admonition-common-setup-issue-title">
+<div id="admonition-passthrough-authentication" class="admonition admonish-info" role="note" aria-labelledby="admonition-passthrough-authentication-title">
 <div class="admonition-title">
-<div id="admonition-common-setup-issue-title">
-<p>Common Setup Issue</p>
+<div id="admonition-passthrough-authentication-title">
+<p>Passthrough Authentication</p>
 </div>
-<a class="admonition-anchor-link" href="reference/pool.html#admonition-common-setup-issue"></a>
+<a class="admonition-anchor-link" href="reference/pool.html#admonition-passthrough-authentication"></a>
 </div>
 <div>
-<p>If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that <code>server_username</code> and <code>server_password</code> are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the <code>password</code> field, which PostgreSQL rejects.</p>
-<p><strong>Solution:</strong> Set both <code>server_username</code> and <code>server_password</code> to the actual PostgreSQL credentials:</p>
+<p>By default, PgDoorman uses <strong>passthrough authentication</strong>: the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is automatically reused to authenticate to PostgreSQL. No plaintext passwords in config needed.</p>
+<p>Set <code>server_username</code> and <code>server_password</code> <strong>only</strong> when the backend PostgreSQL user differs from the pool username (e.g., username mapping or JWT auth):</p>
 <pre><code class="language-yaml">users:
-  - username: "app_user"
+  - username: "app_user"              # client-facing name
     password: "md5..."                # hash for client authentication
-    server_username: "app_user"       # real PostgreSQL username
-    server_password: "plaintext_pwd"  # real PostgreSQL password
+    server_username: "pg_app_user"    # different backend PostgreSQL user
+    server_password: "plaintext_pwd"  # plaintext password for that user
 </code></pre>
 </div>
 </div>
@@ -1618,6 +1704,15 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <tr><td><code>pg_doorman_pools_avg_wait_time</code></td><td>Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks.</td></tr>
 </tbody></table>
 </div>
+<h3 id="auth-query-metrics"><a class="header" href="#auth-query-metrics">Auth Query Metrics</a></h3>
+<p>These metrics are only available when <code>auth_query</code> is configured for one or more pools.</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_auth_query_cache</code></td><td>Auth query cache metrics by type and database. Types include: <code>entries</code> (current cached credentials), <code>hits</code> (cache lookups that found a valid entry), <code>misses</code> (cache lookups that required a PostgreSQL fetch), <code>refetches</code> (re-fetches triggered by auth failure with stale credentials), <code>rate_limited</code> (re-fetch attempts that were rate-limited by <code>min_interval</code>).</td></tr>
+<tr><td><code>pg_doorman_auth_query_auth</code></td><td>Auth query authentication outcomes by result and database. Results include: <code>success</code> (successful authentication) and <code>failure</code> (wrong password or credential mismatch).</td></tr>
+<tr><td><code>pg_doorman_auth_query_executor</code></td><td>Auth query executor metrics by type and database. Types include: <code>queries</code> (total queries executed against PostgreSQL to fetch credentials) and <code>errors</code> (queries that failed due to connection or execution errors).</td></tr>
+<tr><td><code>pg_doorman_auth_query_dynamic_pools</code></td><td>Auth query dynamic pool lifecycle metrics by type and database. Types include: <code>current</code> (currently active dynamic pools), <code>created</code> (total pools created since startup), <code>destroyed</code> (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode.</td></tr>
+</tbody></table>
+</div>
 <h3 id="server-metrics"><a class="header" href="#server-metrics">Server Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead.</td></tr>
@@ -1646,6 +1741,12 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 </code></pre>
 <h3 id="client-wait-time"><a class="header" href="#client-wait-time">Client Wait Time</a></h3>
 <pre><code>pg_doorman_pools_avg_wait_time
+</code></pre>
+<h3 id="auth-query-cache-hit-rate"><a class="header" href="#auth-query-cache-hit-rate">Auth Query Cache Hit Rate</a></h3>
+<pre><code>pg_doorman_auth_query_cache{type="hits"} / (pg_doorman_auth_query_cache{type="hits"} + pg_doorman_auth_query_cache{type="misses"})
+</code></pre>
+<h3 id="auth-query-failure-rate"><a class="header" href="#auth-query-failure-rate">Auth Query Failure Rate</a></h3>
+<pre><code>rate(pg_doorman_auth_query_auth{result="failure"}[5m])
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="performance-benchmarks"><a class="header" href="#performance-benchmarks">Performance Benchmarks</a></h1>
 <h2 id="automated-benchmark-results"><a class="header" href="#automated-benchmark-results">Automated Benchmark Results</a></h2>
@@ -1762,7 +1863,7 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <p><strong><code>--no-comments</code> flag</strong>: Disables inline comments for minimal config output (plain serde serialization, the old default behavior).</p>
 </li>
 <li>
-<p><strong>Server authentication documentation</strong>: Prominently documents the <code>server_username</code>/<code>server_password</code> requirement in generated configs, README, reference docs, and troubleshooting guide — the #1 issue for new users who get authentication errors because PostgreSQL rejects MD5/SCRAM hashes as passwords.</p>
+<p><strong>Passthrough authentication documentation</strong>: Documents passthrough auth as the default mode — <code>server_username</code>/<code>server_password</code> are no longer needed when the pool user matches the backend PostgreSQL user. PgDoorman reuses the client's MD5 hash or SCRAM ClientKey to authenticate to the backend automatically.</p>
 </li>
 </ul>
 <p><strong>Testing:</strong></p>
