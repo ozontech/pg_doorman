@@ -911,6 +911,9 @@ pub fn create_dynamic_pool(
     if let Some(existing) = get_pool(pool_name, username) {
         // Update backend_auth (credentials may have changed)
         if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
+            debug!(
+                "[pool: {pool_name}] auth_query: dynamic pool for '{username}' already exists, updating backend_auth"
+            );
             *ba_lock.write() = new_ba.clone();
         }
         return Ok(existing);
@@ -1040,7 +1043,19 @@ pub fn create_dynamic_pool(
         return Ok(existing.clone());
     }
 
-    info!("[pool: {pool_name}] auth_query: created dynamic passthrough pool for '{username}'");
+    let auth_method = match &conn_pool.address.backend_auth {
+        Some(ba) => {
+            let guard = ba.read();
+            match &*guard {
+                BackendAuthMethod::Md5PassTheHash(_) => "md5-pass-the-hash",
+                BackendAuthMethod::ScramPassthrough(_) => "scram-passthrough",
+            }
+        }
+        None => "none",
+    };
+    info!(
+        "[pool: {pool_name}] auth_query: created dynamic passthrough pool for '{username}' (backend_auth={auth_method})"
+    );
     new_pools.insert(identifier.clone(), conn_pool.clone());
     POOLS.store(Arc::new(new_pools));
     register_dynamic_pool(&identifier);

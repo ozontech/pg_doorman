@@ -507,7 +507,9 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     /// Invalidate cache entry for a username.
     /// Called on auth failure to trigger re-fetch on next attempt.
     pub fn invalidate(&self, username: &str) {
-        self.entries.remove(username);
+        if self.entries.remove(username).is_some() {
+            info!("auth_query cache: invalidated entry for '{username}'");
+        }
     }
 
     /// Attempt re-fetch after auth failure (password may have changed).
@@ -532,6 +534,10 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
             if let Some(last) = entry.last_refetch_at {
                 if last.elapsed() < self.min_interval.as_std() {
                     self.inc(|s| &s.cache_rate_limited);
+                    warn!(
+                        "auth_query cache: refetch rate-limited for '{username}' ({:.1?} since last)",
+                        last.elapsed()
+                    );
                     return Ok(None); // Rate limited
                 }
             }

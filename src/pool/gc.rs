@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::info;
+use log::{debug, info};
 
 use super::{PoolIdentifier, AUTH_QUERY_STATE, DYNAMIC_POOLS, POOLS};
 
@@ -33,8 +33,14 @@ fn gc_idle_dynamic_pools() {
 
     for id in &dynamic_ids {
         match pools.get(id) {
-            Some(pool) if pool.pool_state().size == 0 => to_remove.push(id.clone()),
-            None => to_remove.push(id.clone()), // stale tracking entry
+            Some(pool) if pool.pool_state().size == 0 => {
+                debug!("GC: dynamic pool {id} has 0 connections, marking for removal");
+                to_remove.push(id.clone());
+            }
+            None => {
+                debug!("GC: dynamic pool {id} no longer in POOLS, removing stale entry");
+                to_remove.push(id.clone());
+            }
             _ => {}
         }
     }

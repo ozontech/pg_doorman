@@ -32,6 +32,7 @@ pub fn generate_pool_doc() -> String {
         "```toml\n[pools.exampledb] # Declaring the 'exampledb' database\n```\n"
     );
     write_pool_fields(&mut out, f);
+    write_auth_query_section(&mut out);
     write_user_fields(&mut out, f);
 
     out
@@ -280,6 +281,75 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
     }
 }
 
+fn write_auth_query_section(out: &mut String) {
+    let _ = writeln!(out, "## Auth Query Settings\n");
+    let _ = writeln!(out, "The `auth_query` section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.\n");
+    let _ = writeln!(out, "```yaml\npools:\n  mydb:\n    auth_query:\n      query: \"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"\n      user: \"doorman_auth\"\n      password: \"auth_password\"\n```\n");
+    let _ = writeln!(out, "There are two modes of operation:\n");
+    let _ = writeln!(out, "- **Dedicated mode** (`server_user` is set): All dynamically authenticated users share a single connection pool that connects to PostgreSQL as `server_user`. This is the simplest setup and works well when all users need the same backend access.");
+    let _ = writeln!(out, "- **Passthrough mode** (`server_user` is not set): Each dynamically authenticated user gets their own connection pool that connects to PostgreSQL using their own credentials (MD5 pass-the-hash or SCRAM ClientKey passthrough). This preserves per-user identity on the backend.\n");
+    let _ = writeln!(out, "Static users (defined in the `users` section) are always checked first. The auth_query is only used when the username is not found among static users.\n");
+    let _ = writeln!(out, "```admonish warning title=\"Security Recommendation\"");
+    let _ = writeln!(out, "The `user` that runs auth queries needs access to `pg_shadow` (or a similar view). **Do not use a superuser** for this purpose. Instead, create a dedicated role with minimal privileges:\n");
+    let _ = writeln!(out, "\\`\\`\\`sql\nCREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';\nGRANT SELECT ON pg_shadow TO doorman_auth;\n\\`\\`\\`\n```\n");
+
+    // Individual parameters
+    let _ = writeln!(out, "### query\n");
+    let _ = writeln!(out, "SQL query to fetch credentials. Must return two columns: `(username, password_hash)`. Use `$1` as the placeholder for the username parameter.\n");
+    let _ = writeln!(
+        out,
+        "Example: `\"SELECT usename, passwd FROM pg_shadow WHERE usename = $1\"`\n"
+    );
+
+    let _ = writeln!(out, "### user\n");
+    let _ = writeln!(
+        out,
+        "PostgreSQL username for the executor connection that runs auth queries.\n"
+    );
+
+    let _ = writeln!(out, "### password\n");
+    let _ = writeln!(out, "Password for the executor user (plaintext). Can be empty if the PostgreSQL server uses `trust` authentication for this user.\n");
+    let _ = writeln!(out, "Default: `\"\"`.\n");
+
+    let _ = writeln!(out, "### database\n");
+    let _ = writeln!(
+        out,
+        "Database for executor connections. If not specified, the pool name is used.\n"
+    );
+    let _ = writeln!(out, "Default: `None (uses pool name)`.\n");
+
+    let _ = writeln!(out, "### pool_size\n");
+    let _ = writeln!(out, "Number of executor connections (connections used to run auth queries, not data connections).\n");
+    let _ = writeln!(out, "Default: `2`.\n");
+
+    let _ = writeln!(out, "### server_user\n");
+    let _ = writeln!(out, "Backend PostgreSQL user for data connections in dedicated mode. When set, all dynamically authenticated users share one connection pool that connects as this user. When not set, passthrough mode is used.\n");
+    let _ = writeln!(out, "Default: `None (passthrough mode)`.\n");
+
+    let _ = writeln!(out, "### server_password\n");
+    let _ = writeln!(
+        out,
+        "Plaintext password for the `server_user`. Only meaningful when `server_user` is set.\n"
+    );
+    let _ = writeln!(out, "Default: `None`.\n");
+
+    let _ = writeln!(out, "### default_pool_size\n");
+    let _ = writeln!(out, "Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode).\n");
+    let _ = writeln!(out, "Default: `40`.\n");
+
+    let _ = writeln!(out, "### cache_ttl\n");
+    let _ = writeln!(out, "Maximum cache age for successfully fetched credentials. Accepts duration strings like `\"1h\"`, `\"30m\"`, `\"300s\"`.\n");
+    let _ = writeln!(out, "Default: `\"1h\"`.\n");
+
+    let _ = writeln!(out, "### cache_failure_ttl\n");
+    let _ = writeln!(out, "Cache TTL for \"user not found\" entries (negative cache). Prevents repeated queries for non-existent users.\n");
+    let _ = writeln!(out, "Default: `\"30s\"`.\n");
+
+    let _ = writeln!(out, "### min_interval\n");
+    let _ = writeln!(out, "Minimum interval between re-fetches for the same username after an authentication failure. Protects the backend from excessive queries during brute-force attempts.\n");
+    let _ = writeln!(out, "Default: `\"1s\"`.\n");
+}
+
 fn write_user_fields(out: &mut String, f: &FieldsData) {
     let _ = writeln!(out, "## Pool Users Settings\n");
     let _ = writeln!(
@@ -386,6 +456,19 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_pools_queries_total_time` | Total time spent executing queries in connection pools by user and database. Values are in milliseconds. Helps monitor overall query performance and identify users or databases with high query execution times. |");
     let _ = writeln!(out, "| `pg_doorman_pools_avg_wait_time` | Average wait time for clients in connection pools by user and database. Values are in milliseconds. Helps monitor client wait times and identify potential bottlenecks. |\n");
 
+    // Auth Query Metrics
+    let _ = writeln!(out, "### Auth Query Metrics\n");
+    let _ = writeln!(
+        out,
+        "These metrics are only available when `auth_query` is configured for one or more pools.\n"
+    );
+    let _ = writeln!(out, "| Metric | Description |");
+    let _ = writeln!(out, "|--------|-------------|");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_cache` | Auth query cache metrics by type and database. Types include: `entries` (current cached credentials), `hits` (cache lookups that found a valid entry), `misses` (cache lookups that required a PostgreSQL fetch), `refetches` (re-fetches triggered by auth failure with stale credentials), `rate_limited` (re-fetch attempts that were rate-limited by `min_interval`). |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_auth` | Auth query authentication outcomes by result and database. Results include: `success` (successful authentication) and `failure` (wrong password or credential mismatch). |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_executor` | Auth query executor metrics by type and database. Types include: `queries` (total queries executed against PostgreSQL to fetch credentials) and `errors` (queries that failed due to connection or execution errors). |");
+    let _ = writeln!(out, "| `pg_doorman_auth_query_dynamic_pools` | Auth query dynamic pool lifecycle metrics by type and database. Types include: `current` (currently active dynamic pools), `created` (total pools created since startup), `destroyed` (total pools garbage-collected or removed on RELOAD). Only relevant in passthrough mode. |\n");
+
     // Server Metrics
     let _ = writeln!(out, "### Server Metrics\n");
     let _ = writeln!(out, "| Metric | Description |");
@@ -422,6 +505,15 @@ fn write_prometheus_metrics_section(out: &mut String) {
 
     let _ = writeln!(out, "### Client Wait Time\n");
     let _ = writeln!(out, "```\npg_doorman_pools_avg_wait_time\n```\n");
+
+    let _ = writeln!(out, "### Auth Query Cache Hit Rate\n");
+    let _ = writeln!(out, "```\npg_doorman_auth_query_cache{{type=\"hits\"}} / (pg_doorman_auth_query_cache{{type=\"hits\"}} + pg_doorman_auth_query_cache{{type=\"misses\"}})\n```\n");
+
+    let _ = writeln!(out, "### Auth Query Failure Rate\n");
+    let _ = writeln!(
+        out,
+        "```\nrate(pg_doorman_auth_query_auth{{result=\"failure\"}}[5m])\n```\n"
+    );
 }
 
 #[cfg(test)]
