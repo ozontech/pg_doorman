@@ -153,20 +153,20 @@ The command connects to your PostgreSQL server, automatically detects all databa
 The `generate` command also respects standard PostgreSQL environment variables like `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE`.
 ```
 
-`````admonish warning title="Server Authentication (Common Issue)"
-By default, PgDoorman uses the same username and password for both client authentication and connecting to PostgreSQL. If you use MD5 or SCRAM password hashes for client auth (which is typical), **PostgreSQL will reject the connection** because it expects a plaintext password, not a hash.
+`````admonish info title="Passthrough Authentication (Default)"
+PgDoorman uses **passthrough authentication** by default: the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is automatically reused to authenticate to the backend PostgreSQL server. No plaintext passwords in config needed — just set `password` to the hash from `pg_shadow` / `pg_authid`.
 
-**To fix this**, set `server_username` and `server_password` in the user configuration:
+Set `server_username` and `server_password` **only** when the backend user differs from the pool username (e.g., username mapping or JWT auth):
 
 ```yaml
 users:
-  - username: "app_user"
-    password: "md5..."              # for client authentication
-    server_username: "app_user"     # for PostgreSQL server
-    server_password: "real_password" # plaintext password for PostgreSQL
+  - username: "app_user"              # client-facing name
+    password: "md5..."                # hash for client authentication
+    server_username: "pg_app_user"    # different backend PostgreSQL user
+    server_password: "real_password"  # plaintext password for that user
 ```
 
-The generated config includes detailed comments about this. See also [Pool User Settings](../reference/pool.md#server_username).
+See also [Pool User Settings](../reference/pool.md#server_username).
 `````
 
 ```admonish warning title="Superuser Privileges"

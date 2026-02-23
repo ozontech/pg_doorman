@@ -461,19 +461,13 @@ pool_size = 40
 
 # Server-side credentials for connecting to PostgreSQL.
 #
-# IMPORTANT: By default pg_doorman uses the same username and password
-# to authenticate on the PostgreSQL server. If the client password is
-# an MD5/SCRAM hash (which is typical), PostgreSQL will REJECT it because
-# the server expects the real plaintext password, not a hash.
+# By default pg_doorman uses passthrough authentication: the client's
+# cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to
+# authenticate to the backend automatically. This is the recommended
+# mode — no plaintext passwords in config needed.
 #
-# To fix this, set server_username and server_password to the actual
-# PostgreSQL credentials (plaintext password). Both must be specified together.
-#
-# Example: client authenticates with MD5 hash, server uses real password:
-#   username = "app_user"
-#   password = "md5..."                    # for client auth
-#   server_username = "app_user"            # for PostgreSQL auth
-#   server_password = "real_password_here"  # plaintext password
+# Set server_username/server_password only when the backend PostgreSQL
+# user differs from the pool username (e.g., username mapping or JWT auth).
 # server_username = "actual_pg_user"
 # server_password = "actual_pg_password"
 

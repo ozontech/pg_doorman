@@ -67,13 +67,13 @@ pools:
     pool_mode: "transaction"
     users:
       - username: "app"
-        password: "md5..."           # hash for client auth (from pg_shadow)
+        password: "md5..."           # hash from pg_shadow / pg_authid
         pool_size: 40
-        server_username: "app"       # real PostgreSQL username
-        server_password: "secret"    # real PostgreSQL password (plaintext)
 ```
 
-> **Important:** `server_username` and `server_password` are required if your client `password` is an MD5/SCRAM hash (which is typical). Without them, PgDoorman tries to authenticate to PostgreSQL using the hash itself, and PostgreSQL rejects it. This is the #1 setup issue for new users.
+> **Passthrough authentication (default):** When `server_username` and `server_password` are omitted, PgDoorman reuses the client's cryptographic proof (MD5 hash or SCRAM ClientKey) to authenticate to PostgreSQL automatically. This is the recommended setup when the pool username matches the backend PostgreSQL user — no plaintext passwords in config needed.
+>
+> Set `server_username` / `server_password` only when the backend user differs from the pool user (e.g., username mapping) or for JWT authentication where there is no password to pass through.
 
 ### Auth query (dynamic users)
 
@@ -91,11 +91,9 @@ pools:
       query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
       user: "postgres"
       password: "postgres_password"
-      server_user: "app"
-      server_password: "secret"
 ```
 
-`server_user` / `server_password` — the PostgreSQL role used for actual data connections (dedicated mode). All dynamically authenticated clients share this single backend pool.
+By default auth_query runs in **passthrough mode**: each dynamic user gets their own backend pool and authenticates as themselves. To force all users through a single backend role, set `server_user` / `server_password` (dedicated mode).
 
 > Static users (defined in `users`) are checked first. auth_query is only consulted when the username is not found among static users.
 

@@ -13,7 +13,7 @@
 
 - **`--no-comments` flag**: Disables inline comments for minimal config output (plain serde serialization, the old default behavior).
 
-- **Server authentication documentation**: Prominently documents the `server_username`/`server_password` requirement in generated configs, README, reference docs, and troubleshooting guide — the #1 issue for new users who get authentication errors because PostgreSQL rejects MD5/SCRAM hashes as passwords.
+- **Passthrough authentication documentation**: Documents passthrough auth as the default mode — `server_username`/`server_password` are no longer needed when the pool user matches the backend PostgreSQL user. PgDoorman reuses the client's MD5 hash or SCRAM ClientKey to authenticate to the backend automatically.
 
 **Testing:**
 

@@ -1336,8 +1336,7 @@ fn write_user_fields_yaml(w: &mut ConfigWriter, user: &User) {
     }
 }
 
-/// Write prominent documentation about server_username/server_password.
-/// This is the #1 pain point for new users — kept inline for precise formatting.
+/// Write documentation about server_username/server_password passthrough.
 fn write_server_credentials_comment(w: &mut ConfigWriter, indent: usize) {
     if w.russian {
         w.comment(
@@ -1347,47 +1346,28 @@ fn write_server_credentials_comment(w: &mut ConfigWriter, indent: usize) {
         w.comment(indent, "");
         w.comment(
             indent,
-            "ВАЖНО: По умолчанию pg_doorman использует те же username и password",
+            "По умолчанию pg_doorman использует passthrough-аутентификацию:",
         );
         w.comment(
             indent,
-            "для аутентификации на сервере PostgreSQL. Если пароль клиента — это",
+            "криптографический материал клиента (MD5-хеш или SCRAM ClientKey)",
         );
         w.comment(
             indent,
-            "хеш MD5/SCRAM (что типично при автогенерации), PostgreSQL ОТКЛОНИТ",
+            "автоматически передаётся для аутентификации на бэкенде.",
         );
         w.comment(
             indent,
-            "подключение, потому что сервер ожидает настоящий пароль, а не хеш.",
+            "Это рекомендуемый режим — не требует хранения паролей открытым текстом.",
         );
         w.comment(indent, "");
         w.comment(
             indent,
-            "Решение: укажите server_username и server_password с реальными",
+            "Указывайте server_username/server_password только если пользователь",
         );
         w.comment(
             indent,
-            "учётными данными PostgreSQL (пароль открытым текстом).",
-        );
-        w.comment(indent, "Оба параметра должны быть указаны вместе.");
-        w.comment(indent, "");
-        w.comment(
-            indent,
-            "Пример: клиент аутентифицируется MD5-хешем, сервер — реальным паролем:",
-        );
-        w.comment(indent, "  username = \"app_user\"");
-        w.comment(
-            indent,
-            "  password = \"md5...\"                    # для аутентификации клиента",
-        );
-        w.comment(
-            indent,
-            "  server_username = \"app_user\"            # для аутентификации на PostgreSQL",
-        );
-        w.comment(
-            indent,
-            "  server_password = \"настоящий_пароль\"    # пароль открытым текстом",
+            "на бэкенде отличается от пользователя пула (username mapping, JWT).",
         );
     } else {
         w.comment(
@@ -1397,46 +1377,25 @@ fn write_server_credentials_comment(w: &mut ConfigWriter, indent: usize) {
         w.comment(indent, "");
         w.comment(
             indent,
-            "IMPORTANT: By default pg_doorman uses the same username and password",
+            "By default pg_doorman uses passthrough authentication: the client's",
         );
         w.comment(
             indent,
-            "to authenticate on the PostgreSQL server. If the client password is",
+            "cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to",
         );
         w.comment(
             indent,
-            "an MD5/SCRAM hash (which is typical), PostgreSQL will REJECT it because",
+            "authenticate to the backend automatically. This is the recommended",
         );
-        w.comment(
-            indent,
-            "the server expects the real plaintext password, not a hash.",
-        );
+        w.comment(indent, "mode — no plaintext passwords in config needed.");
         w.comment(indent, "");
         w.comment(
             indent,
-            "To fix this, set server_username and server_password to the actual",
+            "Set server_username/server_password only when the backend PostgreSQL",
         );
         w.comment(
             indent,
-            "PostgreSQL credentials (plaintext password). Both must be specified together.",
-        );
-        w.comment(indent, "");
-        w.comment(
-            indent,
-            "Example: client authenticates with MD5 hash, server uses real password:",
-        );
-        w.comment(indent, "  username = \"app_user\"");
-        w.comment(
-            indent,
-            "  password = \"md5...\"                    # for client auth",
-        );
-        w.comment(
-            indent,
-            "  server_username = \"app_user\"            # for PostgreSQL auth",
-        );
-        w.comment(
-            indent,
-            "  server_password = \"real_password_here\"  # plaintext password",
+            "user differs from the pool username (e.g., username mapping or JWT auth).",
         );
     }
 }

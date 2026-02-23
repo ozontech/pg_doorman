@@ -20,9 +20,9 @@ pub struct User {
     pub pool_mode: Option<PoolMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_lifetime: Option<u64>,
-    // If the server_username parameter is specified,
-    // authorization on the server will be performed using the credentials
-    // of THIS server_user and server_password.
+    // Override backend credentials. When omitted, passthrough auth is used:
+    // pg_doorman reuses the client's MD5 hash or SCRAM ClientKey to authenticate.
+    // Only needed when the backend PostgreSQL user differs from the pool username.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

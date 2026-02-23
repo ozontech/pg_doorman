@@ -337,11 +337,14 @@ fn write_user_fields(out: &mut String, f: &FieldsData) {
         write_param(out, f, "user", name);
     }
 
-    // Add the server_credentials warning admonition (mdbook-admonish format)
-    let _ = writeln!(out, "`````admonish warning title=\"Common Setup Issue\"");
-    let _ = writeln!(out, "If you see authentication errors when PgDoorman tries to connect to PostgreSQL, the most likely cause is that `server_username` and `server_password` are not set. Without these, PgDoorman tries to authenticate to PostgreSQL using the MD5/SCRAM hash from the `password` field, which PostgreSQL rejects.\n");
-    let _ = writeln!(out, "**Solution:** Set both `server_username` and `server_password` to the actual PostgreSQL credentials:\n");
-    let _ = writeln!(out, "```yaml\nusers:\n  - username: \"app_user\"\n    password: \"md5...\"                # hash for client authentication\n    server_username: \"app_user\"       # real PostgreSQL username\n    server_password: \"plaintext_pwd\"  # real PostgreSQL password\n```\n`````\n");
+    // Add the passthrough auth info admonition (mdbook-admonish format)
+    let _ = writeln!(
+        out,
+        "`````admonish info title=\"Passthrough Authentication\""
+    );
+    let _ = writeln!(out, "By default, PgDoorman uses **passthrough authentication**: the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is automatically reused to authenticate to PostgreSQL. No plaintext passwords in config needed.\n");
+    let _ = writeln!(out, "Set `server_username` and `server_password` **only** when the backend PostgreSQL user differs from the pool username (e.g., username mapping or JWT auth):\n");
+    let _ = writeln!(out, "```yaml\nusers:\n  - username: \"app_user\"              # client-facing name\n    password: \"md5...\"                # hash for client authentication\n    server_username: \"pg_app_user\"    # different backend PostgreSQL user\n    server_password: \"plaintext_pwd\"  # plaintext password for that user\n```\n`````\n");
 }
 
 // ---------------------------------------------------------------------------
