@@ -46,7 +46,7 @@ Feature: Auth query passthrough mode — dynamic per-user pools
             cache_failure_ttl: "30s"
             min_interval: "0s"
       """
-    Then psql query "SELECT current_user" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "pt_md5_user"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "pt_md5_user"
 
   Scenario: SCRAM passthrough — dynamic user connects as themselves
     Given PostgreSQL started with pg_hba.conf:
@@ -89,7 +89,7 @@ Feature: Auth query passthrough mode — dynamic per-user pools
             cache_failure_ttl: "30s"
             min_interval: "0s"
       """
-    Then psql query "SELECT current_user" as user "pt_scram_user" to database "postgres" with password "scram_pass" returns "pt_scram_user"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_scram_user" to database "postgres" with password "scram_pass" returns "pt_scram_user"
 
   Scenario: Wrong password fails in passthrough mode
     Given PostgreSQL started with pg_hba.conf:
@@ -175,5 +175,5 @@ Feature: Auth query passthrough mode — dynamic per-user pools
             cache_failure_ttl: "30s"
             min_interval: "0s"
       """
-    Then psql query "SELECT current_user" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "pt_md5_user"
-    And psql query "SELECT current_user" as user "pt_md5_user2" to database "postgres" with password "md5_pass2" returns "pt_md5_user2"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "pt_md5_user"
+    And psql query "SELECT current_user" via pg_doorman as user "pt_md5_user2" to database "postgres" with password "md5_pass2" returns "pt_md5_user2"

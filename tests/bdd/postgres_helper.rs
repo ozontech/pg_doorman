@@ -587,9 +587,9 @@ pub async fn psql_connection_without_password_fails(
     );
 }
 
-/// Run a SQL query via psql and check that it fails (authentication rejected or query error)
+/// Run a SQL query via psql through pg_doorman and check that it fails (authentication rejected or query error)
 #[then(
-    expr = "psql query {string} as user {string} to database {string} with password {string} fails"
+    expr = "psql query {string} via pg_doorman as user {string} to database {string} with password {string} fails"
 )]
 pub async fn psql_query_fails(
     world: &mut DoormanWorld,
@@ -630,9 +630,9 @@ pub async fn psql_query_fails(
     );
 }
 
-/// Run a SQL query via psql and check that the output contains the expected string
+/// Run a SQL query via psql through pg_doorman and check that the output contains the expected string
 #[then(
-    expr = "psql query {string} as user {string} to database {string} with password {string} returns {string}"
+    expr = "psql query {string} via pg_doorman as user {string} to database {string} with password {string} returns {string}"
 )]
 pub async fn psql_query_returns(
     world: &mut DoormanWorld,

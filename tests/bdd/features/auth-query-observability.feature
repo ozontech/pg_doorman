@@ -46,9 +46,9 @@ Feature: Auth query observability (SHOW AUTH_QUERY)
             min_interval: "0s"
       """
     # First connection: cache miss
-    Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
+    Then psql query "SELECT 1" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
     # Second connection: cache hit
-    Then psql query "SELECT 2" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "2"
+    Then psql query "SELECT 2" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "2"
     # Check SHOW AUTH_QUERY
     When we create admin session "adm1" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
@@ -96,7 +96,7 @@ Feature: Auth query observability (SHOW AUTH_QUERY)
             min_interval: "0s"
       """
     # Attempt with wrong password — should fail
-    Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "wrong_pass" fails
+    Then psql query "SELECT 1" via pg_doorman as user "pt_md5_user" to database "postgres" with password "wrong_pass" fails
     # Check SHOW AUTH_QUERY shows the pool
     When we create admin session "adm1" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
@@ -144,7 +144,7 @@ Feature: Auth query observability (SHOW AUTH_QUERY)
             min_interval: "0s"
       """
     # Login to populate cache and stats
-    Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
+    Then psql query "SELECT 1" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
     # RELOAD with same config — should preserve state
     When we create admin session "adm1" to pg_doorman as "admin" with password "admin"
     And we execute "RELOAD" on admin session "adm1" and store response
@@ -153,4 +153,4 @@ Feature: Auth query observability (SHOW AUTH_QUERY)
     And we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
     Then admin session "adm1" response should contain "postgres"
     # Connection should still work (cache preserved)
-    Then psql query "SELECT 2" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "2"
+    Then psql query "SELECT 2" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "2"

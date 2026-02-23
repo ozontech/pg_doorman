@@ -48,11 +48,11 @@ Feature: Static user passthrough — backend auth without server_password
               pool_size: 5
       """
     # First connection — backend connection is created, MD5 hash used for auth
-    Then psql query "SELECT current_user" as user "pt_static_md5" to database "postgres" with password "md5pass" returns "pt_static_md5"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_static_md5" to database "postgres" with password "md5pass" returns "pt_static_md5"
     # Wait for server_lifetime + retain to close backend connection
     When we sleep for 4000 milliseconds
     # Second connection — new backend connection, MD5 hash reused from config
-    Then psql query "SELECT current_user" as user "pt_static_md5" to database "postgres" with password "md5pass" returns "pt_static_md5"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_static_md5" to database "postgres" with password "md5pass" returns "pt_static_md5"
 
   Scenario: SCRAM static passthrough — first and reconnect after retain
     Given PostgreSQL started with pg_hba.conf:
@@ -94,11 +94,11 @@ Feature: Static user passthrough — backend auth without server_password
               pool_size: 5
       """
     # First connection — ClientKey extracted from SCRAM proof, used for backend auth
-    Then psql query "SELECT current_user" as user "pt_static_scram" to database "postgres" with password "scrampass" returns "pt_static_scram"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_static_scram" to database "postgres" with password "scrampass" returns "pt_static_scram"
     # Wait for server_lifetime + retain to close backend connection
     When we sleep for 4000 milliseconds
     # Second connection — new backend connection, ClientKey reused from cache
-    Then psql query "SELECT current_user" as user "pt_static_scram" to database "postgres" with password "scrampass" returns "pt_static_scram"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_static_scram" to database "postgres" with password "scrampass" returns "pt_static_scram"
 
   Scenario: Static user with explicit server_password still works (regression)
     Given PostgreSQL started with pg_hba.conf:
@@ -139,7 +139,7 @@ Feature: Static user passthrough — backend auth without server_password
               server_password: "md5pass"
               pool_size: 5
       """
-    Then psql query "SELECT current_user" as user "pt_static_md5" to database "postgres" with password "md5pass" returns "pt_static_md5"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_static_md5" to database "postgres" with password "md5pass" returns "pt_static_md5"
 
   Scenario: Wrong password fails for static passthrough user
     Given PostgreSQL started with pg_hba.conf:

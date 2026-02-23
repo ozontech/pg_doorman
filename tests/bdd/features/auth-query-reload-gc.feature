@@ -46,7 +46,7 @@ Feature: Auth query RELOAD and idle pool GC
             min_interval: "0s"
       """
     # Connect dynamic user — creates dynamic pool
-    Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
+    Then psql query "SELECT 1" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
     # Verify pool exists
     When we create admin session "adm1" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW POOLS" on admin session "adm1" and store response
@@ -125,7 +125,7 @@ Feature: Auth query RELOAD and idle pool GC
             min_interval: "0s"
       """
     # Connect dynamic user — creates dynamic pool
-    Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
+    Then psql query "SELECT 1" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
     # Overwrite config: add static user with same name, keep auth_query
     When we overwrite pg_doorman config file with:
       """
@@ -164,7 +164,7 @@ Feature: Auth query RELOAD and idle pool GC
     And we execute "RELOAD" on admin session "adm1" and store response
     And we sleep for 500 milliseconds
     # Connection should still work (via static user now)
-    Then psql query "SELECT current_user" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "pt_md5_user"
+    Then psql query "SELECT current_user" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "pt_md5_user"
 
   Scenario: Idle dynamic pool GC removes empty pools
     Given PostgreSQL started with pg_hba.conf:
@@ -211,7 +211,7 @@ Feature: Auth query RELOAD and idle pool GC
             min_interval: "0s"
       """
     # Connect dynamic user — creates dynamic pool with server connection
-    Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
+    Then psql query "SELECT 1" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
     # Verify pool exists
     When we create admin session "adm1" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW POOLS" on admin session "adm1" and store response
@@ -228,4 +228,4 @@ Feature: Auth query RELOAD and idle pool GC
     When we execute "SHOW AUTH_QUERY" on admin session "adm1" and store response
     Then admin session "adm1" response should contain "postgres"
     # Reconnect — new pool should be created, query succeeds
-    Then psql query "SELECT 1" as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
+    Then psql query "SELECT 1" via pg_doorman as user "pt_md5_user" to database "postgres" with password "md5_pass" returns "1"
