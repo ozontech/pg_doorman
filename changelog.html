@@ -161,6 +161,51 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="330-feb-23-2026"><a class="header" href="#330-feb-23-2026">3.3.0 <small>Feb 23, 2026</small></a></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>Dynamic user authentication (<code>auth_query</code>)</strong>: PgDoorman can now authenticate users dynamically by querying PostgreSQL at connection time — no need to list every user in the config. Supports <code>pg_shadow</code>, custom tables, and <code>SECURITY DEFINER</code> functions. The query must return a column named <code>passwd</code> or <code>password</code> (or any single column) containing an MD5 or SCRAM-SHA-256 hash.</p>
+</li>
+<li>
+<p><strong>Passthrough authentication</strong>: Default mode for both static and dynamic users — PgDoorman reuses the client's cryptographic proof (MD5 hash or SCRAM ClientKey) to authenticate to the backend automatically. No plaintext <code>server_password</code> in config needed when the pool user matches the backend PostgreSQL user.</p>
+</li>
+<li>
+<p><strong>Two auth_query modes</strong>:</p>
+<ul>
+<li><em>Passthrough mode</em> (default) — each dynamic user gets their own backend connection pool and authenticates as themselves, preserving per-user identity on the backend.</li>
+<li><em>Dedicated mode</em> (<code>server_user</code> set) — all dynamic users share a single backend pool under one PostgreSQL role.</li>
+</ul>
+</li>
+<li>
+<p><strong>Auth query caching</strong>: DashMap-based cache with configurable TTL, double-checked locking, rate-limited refetch, and request coalescing. Supports separate TTLs for successful and failed lookups.</p>
+</li>
+<li>
+<p><strong><code>SHOW AUTH_QUERY</code> admin command</strong>: Displays per-pool metrics — cache entries/hits/misses, auth success/failure counters, executor stats, and dynamic pool count.</p>
+</li>
+<li>
+<p><strong>Prometheus metrics for auth_query</strong>: New metric families <code>pg_doorman_auth_query_cache</code>, <code>pg_doorman_auth_query_auth</code>, <code>pg_doorman_auth_query_executor</code>, <code>pg_doorman_auth_query_dynamic_pools</code>.</p>
+</li>
+<li>
+<p><strong>Idle dynamic pool garbage collection</strong>: Background task cleans up expired dynamic pools when all connections have been idle beyond <code>server_lifetime</code>. Zero overhead for static-only configs.</p>
+</li>
+<li>
+<p><strong>Smart password column lookup</strong>: Password column resolved by name (<code>passwd</code> → <code>password</code> → single-column fallback), works with <code>pg_shadow</code>, custom tables, and arbitrary single-column queries.</p>
+</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>
+<p><strong><code>server_username</code>/<code>server_password</code> now optional</strong>: Previously documented as required for MD5/SCRAM hash configs. Now only needed when the backend user differs from the pool user (username mapping, JWT auth).</p>
+</li>
+<li>
+<p><strong>Data-driven config &amp; docs generation</strong>: <code>fields.yaml</code> is the single source of truth for all config field descriptions (EN/RU). Reference docs, annotated configs, and inline comments are all generated from it.</p>
+</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li><strong>39 new BDD scenarios</strong> (260+ steps) covering auth_query executor, end-to-end auth, HBA integration, passthrough mode, SCRAM-only auth, RELOAD/GC lifecycle, observability, and static user passthrough.</li>
+</ul>
 <h3 id="324-feb-20-2026"><a class="header" href="#324-feb-20-2026">3.2.4 <small>Feb 20, 2026</small></a></h3>
 <p><strong>New Features:</strong></p>
 <ul>
