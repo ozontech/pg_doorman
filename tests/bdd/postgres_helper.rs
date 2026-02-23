@@ -513,6 +513,80 @@ pub async fn psql_connection_fails(
     );
 }
 
+/// Check that psql connection to pg_doorman succeeds without password (trust mode)
+#[then(
+    expr = "psql connection to pg_doorman as user {string} to database {string} without password succeeds"
+)]
+pub async fn psql_connection_without_password_succeeds(
+    world: &mut DoormanWorld,
+    user: String,
+    database: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+
+    let status = Command::new("psql")
+        .arg("-h")
+        .arg("127.0.0.1")
+        .arg("-p")
+        .arg(doorman_port.to_string())
+        .arg("-U")
+        .arg(&user)
+        .arg("-d")
+        .arg(&database)
+        .arg("-w")
+        .arg("-c")
+        .arg("SELECT 1")
+        .env("PGSSLMODE", "disable")
+        .env_remove("PGPASSWORD")
+        .status()
+        .expect("Failed to run psql");
+
+    assert!(
+        status.success(),
+        "psql connection without password to pg_doorman failed (user: {}, database: {})",
+        user,
+        database
+    );
+}
+
+/// Check that psql connection to pg_doorman fails without password
+#[then(
+    expr = "psql connection to pg_doorman as user {string} to database {string} without password fails"
+)]
+pub async fn psql_connection_without_password_fails(
+    world: &mut DoormanWorld,
+    user: String,
+    database: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+
+    let status = Command::new("psql")
+        .arg("-h")
+        .arg("127.0.0.1")
+        .arg("-p")
+        .arg(doorman_port.to_string())
+        .arg("-U")
+        .arg(&user)
+        .arg("-d")
+        .arg(&database)
+        .arg("-w")
+        .arg("-c")
+        .arg("SELECT 1")
+        .env("PGSSLMODE", "disable")
+        .env_remove("PGPASSWORD")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("Failed to run psql");
+
+    assert!(
+        !status.success(),
+        "psql connection without password to pg_doorman should have failed but succeeded (user: {}, database: {})",
+        user,
+        database
+    );
+}
+
 /// Run a SQL query via psql and check that the output contains the expected string
 #[then(
     expr = "psql query {string} as user {string} to database {string} with password {string} returns {string}"
