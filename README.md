@@ -77,7 +77,9 @@ pools:
 
 ### Auth query (dynamic users)
 
-Instead of listing users statically, pg_doorman can fetch credentials from PostgreSQL at runtime via `auth_query`:
+Instead of listing every user in the config, pg_doorman can look up credentials directly from PostgreSQL. The query must return two columns: `username` and `password` (MD5 or SCRAM hash).
+
+Quickstart — using `pg_shadow` directly (requires superuser):
 
 ```yaml
 pools:
@@ -86,16 +88,18 @@ pools:
     server_port: 5432
     pool_mode: "transaction"
     auth_query:
-      query: "SELECT * FROM pg_doorman_get_auth($1)"
-      user: "doorman_auth"
-      password: "auth_password"
+      query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
+      user: "postgres"
+      password: "postgres_password"
       server_user: "app"
       server_password: "secret"
 ```
 
+`server_user` / `server_password` — the PostgreSQL role used for actual data connections (dedicated mode). All dynamically authenticated clients share this single backend pool.
+
 > Static users (defined in `users`) are checked first. auth_query is only consulted when the username is not found among static users.
 
-> For secure setup without superuser access, see [auth_query reference](https://ozontech.github.io/pg_doorman/reference/pool.html#auth-query-settings).
+> **Production:** don't use superuser for auth queries. Create a [`SECURITY DEFINER` function](https://ozontech.github.io/pg_doorman/reference/pool.html#auth-query-settings) with a dedicated low-privilege role instead.
 
 Or generate a config automatically:
 
