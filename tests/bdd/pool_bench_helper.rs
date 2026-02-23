@@ -41,6 +41,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         database: "postgres".to_string(),
         username: "postgres".to_string(),
         password: "".to_string(),
+        backend_auth: None,
         pool_name: "bench_pool".to_string(),
         stats: Arc::new(AddressStats::default()),
     };

@@ -22,6 +22,7 @@ use crate::auth::scram::{
     parse_client_final_message, parse_client_first_message, parse_server_secret,
     prepare_server_final_message, prepare_server_first_response,
 };
+use crate::config::BackendAuthMethod;
 use crate::config::{get_config, PoolMode};
 use crate::errors::{ClientIdentifier, Error};
 use crate::messages::constants::{
@@ -32,7 +33,9 @@ use crate::messages::{
     md5_hash_second_pass, plain_password_challenge, read_password, scram_server_response,
     scram_start_challenge, vec_to_string, wrong_password,
 };
-use crate::pool::{get_auth_query_state, get_pool, get_pool_config, ConnectionPool};
+use crate::pool::{
+    create_dynamic_pool, get_auth_query_state, get_pool, get_pool_config, ConnectionPool,
+};
 use crate::server::ServerParameters;
 
 /// Authenticate a user based on the provided parameters
@@ -648,6 +651,8 @@ where
     }
 
     // 5. Authenticate based on password type
+    let mut auth_client_key: Option<Vec<u8>> = None;
+
     if hba_decision == CheckResult::Trust {
         // HBA trust — skip password check
     } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
@@ -755,8 +760,9 @@ where
         ) {
             Ok((server_final, client_key)) => {
                 scram_server_response(write, SASL_FINAL, &server_final).await?;
-                // Store ClientKey in cache for future SCRAM passthrough (Step 6)
-                cache.set_client_key(username, client_key);
+                // Store ClientKey in cache for future SCRAM passthrough
+                cache.set_client_key(username, client_key.clone());
+                auth_client_key = Some(client_key);
             }
             Err(_) => {
                 // SCRAM auth failed — password may have rotated (new salt).
@@ -785,64 +791,101 @@ where
         )));
     }
 
-    // 6. Get shared pool (server_user mode)
-    let shared_pool_id = match aq_state.shared_pool_id {
-        Some(ref id) => id,
-        None => {
-            error_response(
-                write,
-                "Auth query passthrough mode is not yet implemented.",
-                "58000",
-            )
-            .await?;
-            return Err(Error::AuthError(
-                "auth_query passthrough mode not implemented".into(),
-            ));
-        }
-    };
+    // 6. Route to shared pool (dedicated) or dynamic pool (passthrough)
+    match aq_state.shared_pool_id {
+        Some(ref shared_pool_id) => {
+            // === Dedicated mode: all dynamic users share the server_user pool ===
+            client_identifier.username = shared_pool_id.user.clone();
 
-    // Mutate client_identifier.username to server_user (same pattern as talos).
-    // This ensures Client.username = server_user for pool lookup via get_pool().
-    client_identifier.username = shared_pool_id.user.clone();
+            let mut pool = match get_pool(&shared_pool_id.db, &shared_pool_id.user) {
+                Some(pool) => pool,
+                None => {
+                    error!(
+                        "[pool: {pool_name}] auth_query: shared pool {}@{} not found",
+                        shared_pool_id.user, shared_pool_id.db
+                    );
+                    error_response(write, "Internal pool configuration error.", "58000").await?;
+                    return Err(Error::AuthError(format!(
+                        "auth_query shared pool not found: {}",
+                        shared_pool_id
+                    )));
+                }
+            };
 
-    let mut pool = match get_pool(&shared_pool_id.db, &shared_pool_id.user) {
-        Some(pool) => pool,
-        None => {
-            error!(
-                "[pool: {pool_name}] auth_query: shared pool {}@{} not found",
-                shared_pool_id.user, shared_pool_id.db
-            );
-            error_response(write, "Internal pool configuration error.", "58000").await?;
-            return Err(Error::AuthError(format!(
-                "auth_query shared pool not found: {}",
+            let transaction_mode = pool.settings.pool_mode == PoolMode::Transaction;
+            *prepared_statements_enabled =
+                transaction_mode && pool.prepared_statement_cache.is_some();
+
+            let server_parameters = match pool.get_server_parameters().await {
+                Ok(params) => params,
+                Err(err) => {
+                    error!(
+                        "[pool: {pool_name}] auth_query: failed to get server parameters: {err:?}"
+                    );
+                    error_response(
+                        write,
+                        "Unable to retrieve server parameters. Please try again later.",
+                        "58000",
+                    )
+                    .await?;
+                    return Err(err);
+                }
+            };
+
+            info!(
+                "[pool: {pool_name}] auth_query: user '{username}' authenticated, using shared pool '{}'",
                 shared_pool_id
-            )));
+            );
+
+            Ok((transaction_mode, server_parameters))
         }
-    };
+        None => {
+            // === Passthrough mode: each dynamic user gets their own pool ===
+            let backend_auth = if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
+                Some(BackendAuthMethod::Md5PassTheHash(pool_password.clone()))
+            } else {
+                auth_client_key.map(BackendAuthMethod::ScramPassthrough)
+            };
 
-    let transaction_mode = pool.settings.pool_mode == PoolMode::Transaction;
-    *prepared_statements_enabled = transaction_mode && pool.prepared_statement_cache.is_some();
+            let mut pool = create_dynamic_pool(pool_name, username, backend_auth).map_err(
+                |err| {
+                    error!(
+                        "[pool: {pool_name}] auth_query: failed to create dynamic pool for '{username}': {err}"
+                    );
+                    err
+                },
+            )?;
 
-    let server_parameters = match pool.get_server_parameters().await {
-        Ok(params) => params,
-        Err(err) => {
-            error!("[pool: {pool_name}] auth_query: failed to get server parameters: {err:?}");
-            error_response(
-                write,
-                "Unable to retrieve server parameters. Please try again later.",
-                "58000",
-            )
-            .await?;
-            return Err(err);
+            // Do NOT change client_identifier.username — stay as the dynamic user
+            // so that Client.username matches the pool's user for get_pool() lookups.
+
+            let transaction_mode = pool.settings.pool_mode == PoolMode::Transaction;
+            *prepared_statements_enabled =
+                transaction_mode && pool.prepared_statement_cache.is_some();
+
+            let server_parameters = match pool.get_server_parameters().await {
+                Ok(params) => params,
+                Err(err) => {
+                    error!(
+                        "[pool: {pool_name}] auth_query: passthrough pool for '{username}' failed: {err:?}"
+                    );
+                    error_response(
+                        write,
+                        "Unable to connect to database server. Please try again later.",
+                        "58000",
+                    )
+                    .await?;
+                    return Err(err);
+                }
+            };
+
+            info!(
+                "[pool: {pool_name}] auth_query: user '{username}' authenticated (passthrough mode)"
+            );
+
+            Ok((transaction_mode, server_parameters))
         }
-    };
-
-    info!(
-        "[pool: {pool_name}] auth_query: user '{username}' authenticated, using shared pool '{}'",
-        shared_pool_id
-    );
-
-    Ok((transaction_mode, server_parameters))
+    }
 }
 
 #[cfg(test)]

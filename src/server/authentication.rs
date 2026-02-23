@@ -4,10 +4,10 @@ use tokio::io::AsyncReadExt;
 
 use crate::auth::jwt::{new_claims, sign_with_jwt_priv_key};
 use crate::auth::scram_client::ScramSha256;
-use crate::config::User;
+use crate::config::{BackendAuthMethod, User};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::constants::*;
-use crate::messages::{md5_hash_password, write_all_flush};
+use crate::messages::{md5_hash_password, md5_hash_second_pass, write_all_flush};
 
 use super::stream::StreamInner;
 
@@ -20,6 +20,7 @@ pub(crate) async fn handle_authentication(
     user: &User,
     scram_client_auth: &mut Option<ScramSha256>,
     server_identifier: &ServerIdentifier,
+    backend_auth: Option<&BackendAuthMethod>,
 ) -> Result<(), Error> {
     match auth_code {
         AUTHENTICATION_SUCCESSFUL => Ok(()),
@@ -149,21 +150,7 @@ pub(crate) async fn handle_authentication(
 
         // MD5 password authentication
         MD5_ENCRYPTED_PASSWORD => {
-            if user.server_username.is_none() || user.server_password.is_none() {
-                error!(
-                    "authentication for server {}@{} with md5 auth is not configured",
-                    server_identifier.username, server_identifier.database,
-                );
-                return Err(Error::ServerAuthError(
-                    "server wants md5 authentication, but auth for this server is not configured"
-                        .into(),
-                    server_identifier.clone(),
-                ));
-            }
-
-            let server_username = user.server_username.as_ref().unwrap();
-            let server_password = user.server_password.as_ref().unwrap();
-
+            // Read salt first (always 4 bytes)
             let mut salt = BytesMut::with_capacity(4);
             stream.read_buf(&mut salt).await.map_err(|err| {
                 Error::ServerAuthError(
@@ -172,11 +159,34 @@ pub(crate) async fn handle_authentication(
                 )
             })?;
 
-            let password_hash = md5_hash_password(
-                server_username.as_str(),
-                server_password.as_str(),
-                salt.as_mut(),
-            );
+            // Check for pass-the-hash first (auth_query passthrough)
+            let password_hash = if let Some(BackendAuthMethod::Md5PassTheHash(md5_hash)) =
+                backend_auth
+            {
+                let hash_hex = md5_hash.strip_prefix("md5").unwrap_or(md5_hash);
+                md5_hash_second_pass(hash_hex, salt.as_mut())
+            } else {
+                // Static user: derive from server_username/server_password
+                if user.server_username.is_none() || user.server_password.is_none() {
+                    error!(
+                        "authentication for server {}@{} with md5 auth is not configured",
+                        server_identifier.username, server_identifier.database,
+                    );
+                    return Err(Error::ServerAuthError(
+                            "server wants md5 authentication, but auth for this server is not configured"
+                                .into(),
+                            server_identifier.clone(),
+                        ));
+                }
+
+                let server_username = user.server_username.as_ref().unwrap();
+                let server_password = user.server_password.as_ref().unwrap();
+                md5_hash_password(
+                    server_username.as_str(),
+                    server_password.as_str(),
+                    salt.as_mut(),
+                )
+            };
 
             let mut password_response = BytesMut::new();
             password_response.put_u8(b'p');

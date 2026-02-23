@@ -541,6 +541,13 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         }
     }
 
+    /// Get stored ClientKey for a cached user (for SCRAM passthrough).
+    pub fn get_client_key(&self, username: &str) -> Option<Vec<u8>> {
+        self.entries
+            .get(username)
+            .and_then(|e| e.client_key.clone())
+    }
+
     /// Number of cached entries (for metrics/admin).
     pub fn len(&self) -> usize {
         self.entries.len()

@@ -35,7 +35,7 @@ mod user;
 mod tests;
 
 // Re-exports
-pub use address::{Address, PoolMode};
+pub use address::{Address, BackendAuthMethod, PoolMode};
 pub use byte_size::ByteSize;
 pub use duration::Duration;
 pub use general::General;

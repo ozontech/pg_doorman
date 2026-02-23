@@ -513,6 +513,57 @@ pub async fn psql_connection_fails(
     );
 }
 
+/// Run a SQL query via psql and check that the output contains the expected string
+#[then(
+    expr = "psql query {string} as user {string} to database {string} with password {string} returns {string}"
+)]
+pub async fn psql_query_returns(
+    world: &mut DoormanWorld,
+    query: String,
+    user: String,
+    database: String,
+    password: String,
+    expected: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+
+    let output = Command::new("psql")
+        .args([
+            "-h",
+            "127.0.0.1",
+            "-p",
+            &doorman_port.to_string(),
+            "-U",
+            &user,
+            "-d",
+            &database,
+            "-t",
+            "-A",
+            "-c",
+            &query,
+        ])
+        .env("PGPASSWORD", &password)
+        .env("PGSSLMODE", "disable")
+        .output()
+        .expect("Failed to run psql");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "psql query failed (exit code {:?}): stderr: {}",
+        output.status.code(),
+        stderr,
+    );
+    assert!(
+        stdout.contains(&expected),
+        "Expected output to contain '{}', got: '{}' (stderr: {})",
+        expected,
+        stdout.trim(),
+        stderr.trim(),
+    );
+}
+
 /// Stop PostgreSQL and pg_doorman when the world is dropped
 impl Drop for DoormanWorld {
     fn drop(&mut self) {
