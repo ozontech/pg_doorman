@@ -21,9 +21,9 @@ impl ScalingConfig {
     /// - 20% warm pool (immediate creation)
     /// - 10 fast retries (~10-50μs)
     /// - 10ms sleep after fast retries
-    const DEFAULT_WARM_POOL_RATIO: f32 = 0.2;
-    const DEFAULT_FAST_RETRIES: u32 = 10;
-    const DEFAULT_COOLDOWN_SLEEP_MS: u64 = 10;
+    pub const DEFAULT_WARM_POOL_RATIO: f32 = 0.2;
+    pub const DEFAULT_FAST_RETRIES: u32 = 10;
+    pub const DEFAULT_COOLDOWN_SLEEP_MS: u64 = 10;
 }
 
 impl Default for ScalingConfig {

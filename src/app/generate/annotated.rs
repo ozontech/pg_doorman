@@ -141,6 +141,9 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         log_client_parameter_status_changes: false,
         application_name: None,
         prepared_statements_cache_size: None,
+        scaling_warm_pool_ratio: None,
+        scaling_fast_retries: None,
+        scaling_cooldown_sleep_ms: None,
         auth_query: None,
         users: vec![User {
             username: "app_user".to_string(),
@@ -610,6 +613,34 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         "256MB",
         "268435456 bytes",
     );
+
+    // --- Connection Scaling ---
+    w.separator(fi, f.section_title("scaling").get(w.russian));
+    w.blank();
+
+    write_field_comment(w, fi, "general", "scaling_warm_pool_ratio");
+    w.kv(
+        fi,
+        "scaling_warm_pool_ratio",
+        &w.num_val(g.scaling_warm_pool_ratio),
+    );
+    w.blank();
+
+    write_field_comment(w, fi, "general", "scaling_fast_retries");
+    w.kv(
+        fi,
+        "scaling_fast_retries",
+        &w.num_val(g.scaling_fast_retries),
+    );
+    w.blank();
+
+    write_field_comment(w, fi, "general", "scaling_cooldown_sleep_ms");
+    w.kv(
+        fi,
+        "scaling_cooldown_sleep_ms",
+        &w.num_val(g.scaling_cooldown_sleep_ms),
+    );
+    w.blank();
 
     // --- Logging ---
     w.separator(fi, f.section_title("logging").get(w.russian));
@@ -1139,6 +1170,34 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
         w.kv(fi, "prepared_statements_cache_size", &w.num_val(val));
     } else {
         w.commented_kv(fi, "prepared_statements_cache_size", "8192");
+    }
+    w.blank();
+
+    // --- Connection Scaling Overrides ---
+    w.separator(fi, f.section_title("pool_scaling").get(w.russian));
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "scaling_warm_pool_ratio");
+    if let Some(val) = pool.scaling_warm_pool_ratio {
+        w.kv(fi, "scaling_warm_pool_ratio", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "scaling_warm_pool_ratio", "30");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "scaling_fast_retries");
+    if let Some(val) = pool.scaling_fast_retries {
+        w.kv(fi, "scaling_fast_retries", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "scaling_fast_retries", "10");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "scaling_cooldown_sleep_ms");
+    if let Some(val) = pool.scaling_cooldown_sleep_ms {
+        w.kv(fi, "scaling_cooldown_sleep_ms", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "scaling_cooldown_sleep_ms", "10");
     }
     w.blank();
 

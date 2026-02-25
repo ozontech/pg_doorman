@@ -382,7 +382,7 @@ impl ConnectionPool {
                         recycle: None,
                     },
                     queue_mode: queue_strategy,
-                    scaling: ScalingConfig::default(),
+                    scaling: pool_config.resolve_scaling_config(&config.general),
                 });
 
                 let pool = builder_config.build();
@@ -528,7 +528,7 @@ impl ConnectionPool {
                                     recycle: None,
                                 },
                                 queue_mode: queue_strategy,
-                                scaling: ScalingConfig::default(),
+                                scaling: pool_config.resolve_scaling_config(&config.general),
                             })
                             .build();
 
@@ -1034,7 +1034,7 @@ pub fn create_dynamic_pool(
                 recycle: None,
             },
             queue_mode: queue_strategy,
-            scaling: ScalingConfig::default(),
+            scaling: pool_config.resolve_scaling_config(&config.general),
         })
         .build();
 

@@ -78,6 +78,19 @@ pub struct General {
     #[serde(default = "General::default_max_concurrent_creates")]
     pub max_concurrent_creates: usize,
 
+    /// Warm pool ratio for connection scaling (0-100, percentage).
+    /// Connections below this threshold of max_size are created immediately.
+    #[serde(default = "General::default_scaling_warm_pool_ratio")]
+    pub scaling_warm_pool_ratio: u32,
+
+    /// Number of fast retries with yield_now() for low-latency waiting during connection creation.
+    #[serde(default = "General::default_scaling_fast_retries")]
+    pub scaling_fast_retries: u32,
+
+    /// Sleep duration in ms after fast retries during connection creation (0 = disabled).
+    #[serde(default = "General::default_scaling_cooldown_sleep_ms")]
+    pub scaling_cooldown_sleep_ms: u64,
+
     #[serde(default = "General::default_server_lifetime")]
     pub server_lifetime: Duration,
 
@@ -242,6 +255,21 @@ impl General {
         4
     }
 
+    /// Default warm pool ratio: 20% (matches ScalingConfig::DEFAULT_WARM_POOL_RATIO * 100).
+    pub fn default_scaling_warm_pool_ratio() -> u32 {
+        20
+    }
+
+    /// Default fast retries: 10 (matches ScalingConfig::DEFAULT_FAST_RETRIES).
+    pub fn default_scaling_fast_retries() -> u32 {
+        10
+    }
+
+    /// Default cooldown sleep: 10ms (matches ScalingConfig::DEFAULT_COOLDOWN_SLEEP_MS).
+    pub fn default_scaling_cooldown_sleep_ms() -> u64 {
+        10
+    }
+
     pub fn default_backlog() -> u32 {
         0
     }
@@ -374,6 +402,9 @@ impl Default for General {
             max_memory_usage: Self::default_max_memory_usage(),
             max_connections: Self::default_max_connections(),
             max_concurrent_creates: Self::default_max_concurrent_creates(),
+            scaling_warm_pool_ratio: Self::default_scaling_warm_pool_ratio(),
+            scaling_fast_retries: Self::default_scaling_fast_retries(),
+            scaling_cooldown_sleep_ms: Self::default_scaling_cooldown_sleep_ms(),
             worker_threads: Self::default_worker_threads(),
             worker_cpu_affinity_pinning: Self::default_worker_cpu_affinity_pinning(),
             worker_stack_size: None,
