@@ -8,6 +8,8 @@ use std::{
     },
 };
 
+use log::warn;
+
 use crate::utils::clock;
 
 use parking_lot::Mutex;
@@ -594,6 +596,56 @@ impl Pool {
     #[inline(always)]
     pub fn timeouts(&self) -> Timeouts {
         self.inner.config.timeouts
+    }
+
+    /// Creates new connections to bring the pool up to the desired count.
+    /// Returns the number of connections successfully created.
+    /// Stops on the first creation failure to avoid hammering a failing server.
+    pub async fn replenish(&self, count: usize) -> usize {
+        let mut created = 0;
+        for _ in 0..count {
+            // Check if there's still room in the pool
+            {
+                let slots = self.inner.slots.lock();
+                if slots.size >= slots.max_size {
+                    break;
+                }
+            }
+
+            // Create a new connection
+            let obj = match self.inner.server_pool.create().await {
+                Ok(obj) => obj,
+                Err(e) => {
+                    warn!(
+                        "[pool: {}] failed to create connection during replenish: {}",
+                        self.inner.server_pool.address(),
+                        e
+                    );
+                    break;
+                }
+            };
+
+            let lifetime_ms = self.inner.server_pool.lifetime_ms();
+            let inner = ObjectInner {
+                obj,
+                metrics: Metrics::new_with_lifetime(lifetime_ms),
+            };
+
+            {
+                let mut slots = self.inner.slots.lock();
+                if slots.size >= slots.max_size {
+                    break;
+                }
+                slots.size += 1;
+                match self.inner.config.queue_mode {
+                    QueueMode::Fifo => slots.vec.push_back(inner),
+                    QueueMode::Lifo => slots.vec.push_front(inner),
+                }
+            }
+
+            created += 1;
+        }
+        created
     }
 
     /// Closes this Pool.

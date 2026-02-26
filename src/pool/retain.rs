@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use log::info;
+use log::{info, warn};
 
 use crate::config::get_config;
 
@@ -102,12 +102,67 @@ pub async fn retain_connections() {
         }
     );
 
+    // Prewarm pools with min_pool_size before the first retain cycle
+    for (_, pool) in get_all_pools().iter() {
+        if let Some(min_pool_size) = pool.settings.user.min_pool_size {
+            let min = min_pool_size as usize;
+            let created = pool.database.replenish(min).await;
+            if created > 0 {
+                info!(
+                    "[pool: {}][user: {}] prewarmed {} connection{} (min_pool_size: {})",
+                    pool.address.pool_name,
+                    pool.address.username,
+                    created,
+                    if created == 1 { "" } else { "s" },
+                    min,
+                );
+            } else {
+                warn!(
+                    "[pool: {}][user: {}] prewarm failed — could not create connections (min_pool_size: {})",
+                    pool.address.pool_name,
+                    pool.address.username,
+                    min,
+                );
+            }
+        }
+    }
+
     loop {
         interval.tick().await;
         for (_, pool) in get_all_pools().iter() {
             pool.retain_pool_connections(count.clone(), retain_max);
         }
         count.store(0, Ordering::Relaxed);
+
+        // Replenish pools below min_pool_size
+        for (_, pool) in get_all_pools().iter() {
+            if let Some(min_pool_size) = pool.settings.user.min_pool_size {
+                let min = min_pool_size as usize;
+                let current_size = pool.database.status().size;
+                if current_size < min {
+                    let deficit = min - current_size;
+                    let created = pool.database.replenish(deficit).await;
+                    if created > 0 {
+                        info!(
+                            "[pool: {}][user: {}] replenished {} connection{} (min_pool_size: {})",
+                            pool.address.pool_name,
+                            pool.address.username,
+                            created,
+                            if created == 1 { "" } else { "s" },
+                            min,
+                        );
+                    } else {
+                        warn!(
+                            "[pool: {}][user: {}] failed to replenish connections (deficit: {}, min_pool_size: {})",
+                            pool.address.pool_name,
+                            pool.address.username,
+                            deficit,
+                            min,
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 

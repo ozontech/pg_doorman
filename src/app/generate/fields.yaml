@@ -1079,11 +1079,13 @@ fields:
       config:
         en: |
           Minimum connections to maintain in the pool.
+          Prewarmed at startup, then maintained by retain cycle.
           Must be <= pool_size.
         ru: |
           Минимальное количество соединений для поддержания в пуле.
+          Создаются при старте (prewarm), затем поддерживаются retain-циклом.
           Должно быть <= pool_size.
-      doc: "The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size."
+      doc: "The minimum number of connections to maintain in the pool for this user. Connections are prewarmed at startup (before the first retain cycle) and then maintained by periodic replenishment. If specified, it must be less than or equal to pool_size."
       default: "None"
 
     pool_mode:

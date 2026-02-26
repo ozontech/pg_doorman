@@ -2,7 +2,13 @@
 
 ### 3.3.1 <small>Feb 26, 2026</small>
 
+**Bug Fixes:**
+
+- **Minimum pool size enforcement (`min_pool_size`)**: The `min_pool_size` user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, `min_pool_size` was accepted in config but never applied — pools started empty and could drop to 0 connections even with `min_pool_size` set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.
+
 **Improvements:**
+
+- **Pool prewarm at startup**: When `min_pool_size` is configured, pg_doorman now creates the minimum number of connections immediately at startup, before the first retain cycle. Previously, pools started empty and connections were only created lazily on first client request or after the first retain interval (default 60s). This eliminates cold-start latency for the first clients connecting after pg_doorman restart.
 
 - **Configurable connection scaling parameters**: New `general` settings `scaling_warm_pool_ratio`, `scaling_fast_retries`, and `scaling_cooldown_sleep` allow tuning connection pool scaling behavior. All three can be overridden at the pool level. `scaling_cooldown_sleep` uses the human-readable `Duration` type (e.g. `"10ms"`, `"1s"`) consistent with other timeout fields.
 

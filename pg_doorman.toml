@@ -483,6 +483,7 @@ password = "md5dd9a0f26a4302744db881776a09bbfad"
 pool_size = 40
 
 # Minimum connections to maintain in the pool.
+# Prewarmed at startup, then maintained by retain cycle.
 # Must be <= pool_size.
 # min_pool_size = 5
 
