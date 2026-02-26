@@ -164,7 +164,21 @@
 <h3 id="331-feb-26-2026"><a class="header" href="#331-feb-26-2026">3.3.1 <small>Feb 26, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
 <ul>
-<li><strong>Minimum pool size enforcement (<code>min_pool_size</code>)</strong>: The <code>min_pool_size</code> user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, <code>min_pool_size</code> was accepted in config but never applied — pools started empty and could drop to 0 connections even with <code>min_pool_size</code> set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.</li>
+<li>
+<p><strong>Fix Ctrl+C in foreground mode</strong>: Pressing Ctrl+C in foreground mode (with TTY attached) now performs a clean graceful shutdown instead of triggering a binary upgrade. Previously, each Ctrl+C would spawn a new pg_doorman process via <code>--inherit-fd</code>, leaving orphan processes accumulating. SIGINT in daemon mode (no TTY) retains its legacy binary upgrade behavior for backward compatibility with existing <code>systemd</code> units.</p>
+</li>
+<li>
+<p><strong>Minimum pool size enforcement (<code>min_pool_size</code>)</strong>: The <code>min_pool_size</code> user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, <code>min_pool_size</code> was accepted in config but never applied — pools started empty and could drop to 0 connections even with <code>min_pool_size</code> set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.</p>
+</li>
+</ul>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>SIGUSR2 for binary upgrade</strong>: New dedicated signal <code>SIGUSR2</code> triggers binary upgrade + graceful shutdown in all modes (daemon and foreground). This is now the recommended signal for binary upgrades. The <code>systemd</code> service file has been updated to use <code>SIGUSR2</code> for <code>ExecReload</code>.</p>
+</li>
+<li>
+<p><strong><code>UPGRADE</code> admin command</strong>: New admin console command that triggers binary upgrade via SIGUSR2. Use it from <code>psql</code> connected to the admin database: <code>UPGRADE;</code>.</p>
+</li>
 </ul>
 <p><strong>Improvements:</strong></p>
 <ul>

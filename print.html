@@ -825,14 +825,50 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <div style="break-before: page; page-break-before: always;"></div><h1 id="binary-upgrade-process"><a class="header" href="#binary-upgrade-process">Binary Upgrade Process</a></h1>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>PgDoorman supports seamless binary upgrades that allow you to update the software with minimal disruption to your database connections. This document explains how the upgrade process works and what to expect during an upgrade.</p>
+<h2 id="triggering-a-binary-upgrade"><a class="header" href="#triggering-a-binary-upgrade">Triggering a Binary Upgrade</a></h2>
+<p>The recommended way to trigger a binary upgrade is to send <code>SIGUSR2</code> to the PgDoorman process:</p>
+<pre><code class="language-bash">kill -USR2 $(pgrep pg_doorman)
+</code></pre>
+<p>Alternatively, you can use the admin console command:</p>
+<pre><code class="language-sql">UPGRADE;
+</code></pre>
+<h3 id="signal-reference"><a class="header" href="#signal-reference">Signal Reference</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>SIGUSR2</code></td><td>Binary upgrade + graceful shutdown <strong>(recommended)</strong></td></tr>
+<tr><td><code>SIGINT</code></td><td>Binary upgrade + graceful shutdown (legacy, daemon/no-TTY only). In foreground mode with a TTY, SIGINT (Ctrl+C) performs graceful shutdown <strong>without</strong> binary upgrade.</td></tr>
+<tr><td><code>SIGTERM</code></td><td>Immediate shutdown</td></tr>
+<tr><td><code>SIGHUP</code></td><td>Reload configuration</td></tr>
+</tbody></table>
+</div><div id="admonition-legacy-sigint-behavior" class="admonition admonish-note" role="note" aria-labelledby="admonition-legacy-sigint-behavior-title">
+<div class="admonition-title">
+<div id="admonition-legacy-sigint-behavior-title">
+<p>Legacy SIGINT behavior</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/binary-upgrade.html#admonition-legacy-sigint-behavior"></a>
+</div>
+<div>
+<p>SIGINT still triggers binary upgrade when running in daemon mode or without a TTY (e.g. when spawned by systemd). If you are running pg_doorman interactively in a terminal, Ctrl+C will cleanly stop the process without spawning a new one. Use <code>kill -USR2</code> or the <code>UPGRADE</code> admin command to trigger binary upgrade in foreground mode.</p>
+</div>
+</div>
 <h2 id="how-the-upgrade-process-works"><a class="header" href="#how-the-upgrade-process-works">How the Upgrade Process Works</a></h2>
-<p>When you send a <code>SIGINT</code> signal to the PgDoorman process, the binary upgrade process is initiated:</p>
+<p>When PgDoorman receives the upgrade signal:</p>
 <ol>
-<li>The current PgDoorman instance executes the exec command and starts a new, daemonized process</li>
+<li>The current PgDoorman instance validates the configuration of the new binary using <code>-t</code> flag</li>
+<li>If validation passes, a new process is started:
+<ul>
+<li><strong>Daemon mode</strong>: a new daemonized process is spawned</li>
+<li><strong>Foreground mode</strong>: the listener socket is passed to the new process via <code>--inherit-fd</code></li>
+</ul>
+</li>
 <li>The new process uses the <code>SO_REUSE_PORT</code> socket option, allowing the operating system to distribute incoming traffic to the new instance</li>
 <li>The old instance then closes its socket for incoming connections</li>
 <li>Existing connections are handled gracefully during the transition</li>
 </ol>
+<h2 id="systemd-integration"><a class="header" href="#systemd-integration">systemd Integration</a></h2>
+<p>The recommended systemd service configuration uses <code>SIGUSR2</code> for reload:</p>
+<pre><code class="language-ini">ExecReload=/bin/kill -SIGUSR2 $MAINPID
+</code></pre>
+<p>This triggers a binary upgrade when you run <code>systemctl reload pg_doorman</code>.</p>
 <h2 id="handling-existing-connections"><a class="header" href="#handling-existing-connections">Handling Existing Connections</a></h2>
 <p>During the upgrade process, PgDoorman handles existing connections as follows:</p>
 <ol>
@@ -1872,7 +1908,21 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <h3 id="331-feb-26-2026"><a class="header" href="#331-feb-26-2026">3.3.1 <small>Feb 26, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
 <ul>
-<li><strong>Minimum pool size enforcement (<code>min_pool_size</code>)</strong>: The <code>min_pool_size</code> user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, <code>min_pool_size</code> was accepted in config but never applied — pools started empty and could drop to 0 connections even with <code>min_pool_size</code> set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.</li>
+<li>
+<p><strong>Fix Ctrl+C in foreground mode</strong>: Pressing Ctrl+C in foreground mode (with TTY attached) now performs a clean graceful shutdown instead of triggering a binary upgrade. Previously, each Ctrl+C would spawn a new pg_doorman process via <code>--inherit-fd</code>, leaving orphan processes accumulating. SIGINT in daemon mode (no TTY) retains its legacy binary upgrade behavior for backward compatibility with existing <code>systemd</code> units.</p>
+</li>
+<li>
+<p><strong>Minimum pool size enforcement (<code>min_pool_size</code>)</strong>: The <code>min_pool_size</code> user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, <code>min_pool_size</code> was accepted in config but never applied — pools started empty and could drop to 0 connections even with <code>min_pool_size</code> set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.</p>
+</li>
+</ul>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>SIGUSR2 for binary upgrade</strong>: New dedicated signal <code>SIGUSR2</code> triggers binary upgrade + graceful shutdown in all modes (daemon and foreground). This is now the recommended signal for binary upgrades. The <code>systemd</code> service file has been updated to use <code>SIGUSR2</code> for <code>ExecReload</code>.</p>
+</li>
+<li>
+<p><strong><code>UPGRADE</code> admin command</strong>: New admin console command that triggers binary upgrade via SIGUSR2. Use it from <code>psql</code> connected to the admin database: <code>UPGRADE;</code>.</p>
+</li>
 </ul>
 <p><strong>Improvements:</strong></p>
 <ul>
