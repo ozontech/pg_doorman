@@ -1,5 +1,13 @@
 # Changelog
 
+### 3.3.1 <small>Feb 26, 2026</small>
+
+**Improvements:**
+
+- **Configurable connection scaling parameters**: New `general` settings `scaling_warm_pool_ratio`, `scaling_fast_retries`, and `scaling_cooldown_sleep` allow tuning connection pool scaling behavior. All three can be overridden at the pool level. `scaling_cooldown_sleep` uses the human-readable `Duration` type (e.g. `"10ms"`, `"1s"`) consistent with other timeout fields.
+
+- **`max_concurrent_creates` setting**: Controls the maximum number of server connections that can be created concurrently per pool. Uses a semaphore instead of a mutex for parallel connection creation.
+
 ### 3.3.0 <small>Feb 23, 2026</small>
 
 **New Features:**
