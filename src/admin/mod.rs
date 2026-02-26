@@ -13,6 +13,8 @@ use crate::errors::Error;
 use crate::messages::protocol::error_response;
 use crate::pool::ClientServerMap;
 
+#[cfg(not(windows))]
+use commands::upgrade;
 use commands::{reload, shutdown};
 #[cfg(target_os = "linux")]
 use show::show_sockets;
@@ -49,6 +51,8 @@ where
     match query_parts[0].to_ascii_uppercase().as_str() {
         "RELOAD" => reload(stream, client_server_map).await,
         "SHUTDOWN" => shutdown(stream).await,
+        #[cfg(not(windows))]
+        "UPGRADE" => upgrade(stream).await,
         "SHOW" => {
             if query_parts.len() != 2 {
                 error!("unsupported admin subcommand for SHOW: {query_parts:?}");

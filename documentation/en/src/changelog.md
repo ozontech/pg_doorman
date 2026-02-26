@@ -4,7 +4,15 @@
 
 **Bug Fixes:**
 
+- **Fix Ctrl+C in foreground mode**: Pressing Ctrl+C in foreground mode (with TTY attached) now performs a clean graceful shutdown instead of triggering a binary upgrade. Previously, each Ctrl+C would spawn a new pg_doorman process via `--inherit-fd`, leaving orphan processes accumulating. SIGINT in daemon mode (no TTY) retains its legacy binary upgrade behavior for backward compatibility with existing `systemd` units.
+
 - **Minimum pool size enforcement (`min_pool_size`)**: The `min_pool_size` user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, `min_pool_size` was accepted in config but never applied — pools started empty and could drop to 0 connections even with `min_pool_size` set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.
+
+**New Features:**
+
+- **SIGUSR2 for binary upgrade**: New dedicated signal `SIGUSR2` triggers binary upgrade + graceful shutdown in all modes (daemon and foreground). This is now the recommended signal for binary upgrades. The `systemd` service file has been updated to use `SIGUSR2` for `ExecReload`.
+
+- **`UPGRADE` admin command**: New admin console command that triggers binary upgrade via SIGUSR2. Use it from `psql` connected to the admin database: `UPGRADE;`.
 
 **Improvements:**
 

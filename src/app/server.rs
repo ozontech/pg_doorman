@@ -238,6 +238,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             crate::pool::gc::spawn_dynamic_pool_gc(gc_interval);
         }
 
+        let shutdown_timeout = config.general.shutdown_timeout.as_std();
+
         // Prometheus metrics exporter
         if config.prometheus.enabled {
             tokio::task::spawn(async move {
@@ -275,9 +277,25 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         let mut interrupt_signal = unix_signal(SignalKind::interrupt()).unwrap();
         #[cfg(not(windows))]
         let mut sighup_signal = unix_signal(SignalKind::hangup()).unwrap();
+        // SIGUSR2 for binary upgrade (unix only; on windows this future never resolves)
+        #[cfg(not(windows))]
+        let mut upgrade_signal = unix_signal(SignalKind::user_defined2()).unwrap();
 
         let (exit_tx, mut exit_rx) = mpsc::channel::<()>(1);
         let mut admin_only = false;
+
+        // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade)
+        let is_foreground_tty = {
+            #[cfg(not(windows))]
+            {
+                use std::io::IsTerminal;
+                !args.daemon && std::io::stdin().is_terminal()
+            }
+            #[cfg(windows)]
+            {
+                false
+            }
+        };
 
         let tls_rate_limiter = tls_state.rate_limiter.clone();
         let tls_acceptor = tls_state.acceptor.clone();
@@ -288,6 +306,18 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         info!("Waiting for dear clients");
         loop {
+            // Create upgrade signal future (SIGUSR2 on unix, never resolves on windows)
+            let upgrade_future = async {
+                #[cfg(not(windows))]
+                {
+                    upgrade_signal.recv().await;
+                }
+                #[cfg(windows)]
+                {
+                    std::future::pending::<()>().await;
+                }
+            };
+
             // Create accept future only if listener is available
             let accept_future = async {
                 if let Some(ref l) = listener {
@@ -308,260 +338,47 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     get_config().show();
                 },
 
-                // Initiate graceful shutdown sequence and run binary upgrade in background
-                // kill -SIGINT $(pgrep pg_doorman)
+                // SIGINT handler:
+                // - Foreground + TTY (Ctrl+C): graceful shutdown only (no binary upgrade)
+                // - Daemon / no TTY: legacy binary upgrade + graceful shutdown
                 _ = interrupt_signal.recv() => {
-                    info!("Got SIGINT, starting graceful shutdown");
-
-                    // First, validate configuration of the new binary before proceeding with shutdown
-                    #[cfg(not(windows))]
-                    if !admin_only {
-                        let full_exe_args: Vec<_> = std::env::args().collect();
-                        let exe_path = &full_exe_args[0];
-
-                        // Find config file from arguments (first positional argument)
-                        let config_file = full_exe_args
-                            .iter()
-                            .skip(1)
-                            .find(|arg| !arg.starts_with('-'))
-                            .cloned()
-                            .unwrap_or_else(|| "pg_doorman.toml".to_string());
-
-                        info!("Validating configuration with: {} -t {}", exe_path, config_file);
-
-                        let config_test_result = process::Command::new(exe_path)
-                            .arg("-t")
-                            .arg(&config_file)
-                            .stdout(process::Stdio::piped())
-                            .stderr(process::Stdio::piped())
-                            .output();
-
-                        match config_test_result {
-                            Ok(output) => {
-                                if !output.status.success() {
-                                    // Configuration test FAILED - DO NOT proceed with shutdown!
-                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                    error!("!!!                    CRITICAL ERROR                               !!!");
-                                    error!("!!!         CONFIGURATION VALIDATION FAILED                        !!!");
-                                    error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
-                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                    error!("");
-                                    error!("The new binary failed configuration validation!");
-                                    error!("Configuration file: {}", config_file);
-                                    error!("Exit code: {:?}", output.status.code());
-                                    if !output.stderr.is_empty() {
-                                        error!("Error output: {}", String::from_utf8_lossy(&output.stderr));
-                                    }
-                                    if !output.stdout.is_empty() {
-                                        error!("Standard output: {}", String::from_utf8_lossy(&output.stdout));
-                                    }
-                                    error!("");
-                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                    error!("!!!  FIX THE CONFIGURATION BEFORE ATTEMPTING BINARY UPGRADE AGAIN  !!!");
-                                    error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
-                                    error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                    continue;
-                                }
-                                info!("Configuration validation successful");
-                            }
-                            Err(e) => {
-                                // Failed to run the config test - DO NOT proceed with shutdown!
-                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                error!("!!!                    CRITICAL ERROR                               !!!");
-                                error!("!!!         FAILED TO VALIDATE CONFIGURATION                       !!!");
-                                error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
-                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                error!("");
-                                error!("Could not execute configuration test: {}", e);
-                                error!("Binary path: {}", exe_path);
-                                error!("");
-                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
-                                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                                continue;
-                            }
-                        }
-                    }
-
-                    SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
-
-                    // Drain all idle connections from pools to release PostgreSQL connections
-                    retain::drain_all_pools();
-
-                    #[cfg(not(windows))]
-                    if !admin_only {
-                        // Binary upgrade: start new process with inherited listener fd
-                        let full_exe_args: Vec<_> = std::env::args().collect();
-                        let exe_path = &full_exe_args[0];
-                        // Filter out any existing --inherit-fd argument and its value
-                        let mut exe_args: Vec<String> = Vec::new();
-                        let mut skip_next = false;
-                        for arg in full_exe_args.iter().skip(1) {
-                            if skip_next {
-                                skip_next = false;
-                                continue;
-                            }
-                            if arg == "--inherit-fd" {
-                                skip_next = true;
-                                continue;
-                            }
-                            if arg.starts_with("--inherit-fd=") {
-                                continue;
-                            }
-                            exe_args.push(arg.to_string());
-                        }
-                        core_affinity::clear_for_current();
-
-                        let listener_fd = listener.as_ref().unwrap().as_raw_fd();
-
-                        if args.daemon {
-                            // Daemon mode: start new daemon process
-                            let mut child = {
-                                let mut cmd = process::Command::new(exe_path);
-                                cmd.args(&exe_args)
-                                    .stderr(process::Stdio::null())
-                                    .stdout(process::Stdio::null())
-                                    .current_dir(std::env::current_dir().unwrap());
-                                cmd.process_group(0);
-                                cmd.spawn().unwrap()
-                            };
-                            child.wait().unwrap();
-                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                            unsafe {
-                                libc::close(listener_fd);
-                            }
-                        } else {
-                            // Foreground mode: start new process with inherited listener fd
-                            info!("Starting new process with inherited listener fd={}", listener_fd);
-
-                            // Get current process group to pass to child
-                            let current_pgid = unsafe { libc::getpgrp() };
-                            // Create a pipe for readiness signaling
-                            let mut pipe_fds: [libc::c_int; 2] = [0; 2];
-                            if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
-                                error!("Failed to create pipe for binary upgrade");
-                            } else {
-                                let pipe_read_fd = pipe_fds[0];
-                                let pipe_write_fd = pipe_fds[1];
-
-                                // Spawn child process with inherited listener fd and pipe write fd
-                                let child_result = unsafe {
-                                    let mut cmd = process::Command::new(exe_path);
-                                    cmd.args(&exe_args)
-                                        .arg("--inherit-fd")
-                                        .arg(listener_fd.to_string())
-                                        .env("PG_DOORMAN_READY_FD", pipe_write_fd.to_string())
-                                        .current_dir(std::env::current_dir().unwrap())
-                                        .pre_exec(move || {
-                                            // Clear FD_CLOEXEC for listener_fd and pipe_write_fd
-                                            // so they are inherited by the child
-                                            libc::fcntl(listener_fd, libc::F_SETFD, 0);
-                                            libc::fcntl(pipe_write_fd, libc::F_SETFD, 0);
-                                            // Explicitly set process group to parent's group
-                                            // This ensures the child stays in the same process group
-                                            // even after parent dies
-                                            libc::setpgid(0, current_pgid);
-
-                                            Ok(())
-                                        });
-                                    cmd.spawn()
-                                };
-
-                                match child_result {
-                                    Ok(_child) => {
-                                        // Close write end in parent
-                                        unsafe { libc::close(pipe_write_fd); }
-
-                                        // Wait for child to signal readiness (or timeout)
-                                        // Use a simple blocking read with timeout via select
-                                        let mut buf: [u8; 1] = [0];
-                                        let mut read_fds: libc::fd_set = unsafe { std::mem::zeroed() };
-                                        unsafe {
-                                            libc::FD_ZERO(&mut read_fds);
-                                            libc::FD_SET(pipe_read_fd, &mut read_fds);
-                                        }
-                                        let mut timeout = libc::timeval {
-                                            tv_sec: 10,
-                                            tv_usec: 0,
-                                        };
-                                        let select_result = unsafe {
-                                            libc::select(
-                                                pipe_read_fd + 1,
-                                                &mut read_fds,
-                                                std::ptr::null_mut(),
-                                                std::ptr::null_mut(),
-                                                &mut timeout,
-                                            )
-                                        };
-
-                                        if select_result > 0 {
-                                            unsafe {
-                                                libc::read(pipe_read_fd, buf.as_mut_ptr() as *mut libc::c_void, 1);
-                                            }
-                                            info!("New process signaled readiness");
-                                        } else {
-                                            warn!("Timeout waiting for new process readiness");
-                                        }
-
-                                        unsafe {
-                                            libc::close(pipe_read_fd);
-                                        }
-                                        // Drop the listener to release the fd
-                                        // Setting to None prevents "Bad file descriptor" errors
-                                        // while allowing graceful shutdown to continue
-                                        listener = None;
-                                        info!("Foreground binary upgrade complete, listener released");
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to spawn new process: {}", e);
-                                        unsafe {
-                                            libc::close(pipe_read_fd);
-                                            libc::close(pipe_write_fd);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Don't want this to happen more than once
-                    if admin_only {
+                    if is_foreground_tty {
+                        // Foreground + TTY: graceful shutdown only (no binary upgrade)
+                        info!("Got SIGINT (Ctrl+C), starting graceful shutdown");
+                        SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
+                        retain::drain_all_pools();
+                        if admin_only { continue; }
+                        admin_only = true;
+                        spawn_shutdown_timer(exit_tx.clone(), shutdown_timeout);
                         continue;
                     }
 
-                    admin_only = true;
-
-                    let exit_tx = exit_tx.clone();
-                    let shutdown_timeout = config.general.shutdown_timeout.as_std();
-
-                    tokio::task::spawn(async move {
-                        let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
-                        info!("waiting for {} client{} in transactions", clients_in_tx, if clients_in_tx == 1 { "" } else { "s" });
-
-                        let mut interval = tokio::time::interval(shutdown_timeout);
-                        let start = std::time::Instant::now();
-
-                        loop {
-                            interval.tick().await;
-
-                            // Drain all idle connections from pools to release PostgreSQL connections
-                            retain::drain_all_pools();
-
-                            let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
-                            let clients_total = CURRENT_CLIENT_COUNT.load(Ordering::Relaxed);
-                            if clients_total == 0 {
-                                info!("All clients disconnected, shutting down");
-                                let _ = exit_tx.send(()).await;
-                                return;
-                            }
-
-                            if start.elapsed() >= shutdown_timeout {
-                                error!("Graceful shutdown timed out. {} active clients in transactions being closed", clients_in_tx);
-                                let _ = exit_tx.send(()).await;
-                                return;
-                            }
+                    // Daemon / no TTY: legacy binary upgrade + graceful shutdown
+                    #[cfg(not(windows))]
+                    {
+                        info!("Got SIGINT, starting binary upgrade and graceful shutdown");
+                        if !binary_upgrade_and_shutdown(
+                            &args, admin_only, &mut listener, shutdown_timeout, &exit_tx,
+                        ).await {
+                            continue;
                         }
-                    });
+                        admin_only = true;
+                    }
+                },
+
+                // SIGUSR2: binary upgrade + graceful shutdown (recommended, works in all modes)
+                // kill -USR2 $(pgrep pg_doorman)
+                _ = upgrade_future => {
+                    #[cfg(not(windows))]
+                    {
+                        info!("Got SIGUSR2, starting binary upgrade and graceful shutdown");
+                        if !binary_upgrade_and_shutdown(
+                            &args, admin_only, &mut listener, shutdown_timeout, &exit_tx,
+                        ).await {
+                            continue;
+                        }
+                        admin_only = true;
+                    }
                 },
 
                 _ = term_signal.recv() => {
@@ -657,4 +474,286 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
     });
 
     Ok(())
+}
+
+/// Perform binary upgrade (spawn new process) and initiate graceful shutdown.
+/// Returns `true` if shutdown was initiated, `false` if upgrade was aborted (e.g. config validation failed).
+#[cfg(not(windows))]
+async fn binary_upgrade_and_shutdown(
+    args: &Args,
+    admin_only: bool,
+    listener: &mut Option<tokio::net::TcpListener>,
+    shutdown_timeout: Duration,
+    exit_tx: &mpsc::Sender<()>,
+) -> bool {
+    // First, validate configuration of the new binary before proceeding with shutdown
+    if !admin_only {
+        let full_exe_args: Vec<_> = std::env::args().collect();
+        let exe_path = &full_exe_args[0];
+
+        // Find config file from arguments (first positional argument)
+        let config_file = full_exe_args
+            .iter()
+            .skip(1)
+            .find(|arg| !arg.starts_with('-'))
+            .cloned()
+            .unwrap_or_else(|| "pg_doorman.toml".to_string());
+
+        info!(
+            "Validating configuration with: {} -t {}",
+            exe_path, config_file
+        );
+
+        let config_test_result = process::Command::new(exe_path)
+            .arg("-t")
+            .arg(&config_file)
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .output();
+
+        match config_test_result {
+            Ok(output) => {
+                if !output.status.success() {
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!(
+                        "!!!                    CRITICAL ERROR                               !!!"
+                    );
+                    error!(
+                        "!!!         CONFIGURATION VALIDATION FAILED                        !!!"
+                    );
+                    error!(
+                        "!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!"
+                    );
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!("");
+                    error!("The new binary failed configuration validation!");
+                    error!("Configuration file: {}", config_file);
+                    error!("Exit code: {:?}", output.status.code());
+                    if !output.stderr.is_empty() {
+                        error!("Error output: {}", String::from_utf8_lossy(&output.stderr));
+                    }
+                    if !output.stdout.is_empty() {
+                        error!(
+                            "Standard output: {}",
+                            String::from_utf8_lossy(&output.stdout)
+                        );
+                    }
+                    error!("");
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    error!(
+                        "!!!  FIX THE CONFIGURATION BEFORE ATTEMPTING BINARY UPGRADE AGAIN  !!!"
+                    );
+                    error!(
+                        "!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!"
+                    );
+                    error!(
+                        "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                    );
+                    return false;
+                }
+                info!("Configuration validation successful");
+            }
+            Err(e) => {
+                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                error!("!!!                    CRITICAL ERROR                               !!!");
+                error!("!!!         FAILED TO VALIDATE CONFIGURATION                       !!!");
+                error!("!!!         BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED            !!!");
+                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                error!("");
+                error!("Could not execute configuration test: {}", e);
+                error!("Binary path: {}", exe_path);
+                error!("");
+                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
+                error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                return false;
+            }
+        }
+    }
+
+    SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
+
+    // Drain all idle connections from pools to release PostgreSQL connections
+    retain::drain_all_pools();
+
+    if !admin_only {
+        // Binary upgrade: start new process with inherited listener fd
+        let full_exe_args: Vec<_> = std::env::args().collect();
+        let exe_path = &full_exe_args[0];
+        // Filter out any existing --inherit-fd argument and its value
+        let mut exe_args: Vec<String> = Vec::new();
+        let mut skip_next = false;
+        for arg in full_exe_args.iter().skip(1) {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            if arg == "--inherit-fd" {
+                skip_next = true;
+                continue;
+            }
+            if arg.starts_with("--inherit-fd=") {
+                continue;
+            }
+            exe_args.push(arg.to_string());
+        }
+        core_affinity::clear_for_current();
+
+        let listener_fd = listener.as_ref().unwrap().as_raw_fd();
+
+        if args.daemon {
+            // Daemon mode: start new daemon process
+            let mut child = {
+                let mut cmd = process::Command::new(exe_path);
+                cmd.args(&exe_args)
+                    .stderr(process::Stdio::null())
+                    .stdout(process::Stdio::null())
+                    .current_dir(std::env::current_dir().unwrap());
+                cmd.process_group(0);
+                cmd.spawn().unwrap()
+            };
+            child.wait().unwrap();
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            unsafe {
+                libc::close(listener_fd);
+            }
+        } else {
+            // Foreground mode: start new process with inherited listener fd
+            info!(
+                "Starting new process with inherited listener fd={}",
+                listener_fd
+            );
+
+            // Get current process group to pass to child
+            let current_pgid = unsafe { libc::getpgrp() };
+            // Create a pipe for readiness signaling
+            let mut pipe_fds: [libc::c_int; 2] = [0; 2];
+            if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+                error!("Failed to create pipe for binary upgrade");
+            } else {
+                let pipe_read_fd = pipe_fds[0];
+                let pipe_write_fd = pipe_fds[1];
+
+                // Spawn child process with inherited listener fd and pipe write fd
+                let child_result = unsafe {
+                    let mut cmd = process::Command::new(exe_path);
+                    cmd.args(&exe_args)
+                        .arg("--inherit-fd")
+                        .arg(listener_fd.to_string())
+                        .env("PG_DOORMAN_READY_FD", pipe_write_fd.to_string())
+                        .current_dir(std::env::current_dir().unwrap())
+                        .pre_exec(move || {
+                            libc::fcntl(listener_fd, libc::F_SETFD, 0);
+                            libc::fcntl(pipe_write_fd, libc::F_SETFD, 0);
+                            libc::setpgid(0, current_pgid);
+                            Ok(())
+                        });
+                    cmd.spawn()
+                };
+
+                match child_result {
+                    Ok(_child) => {
+                        unsafe {
+                            libc::close(pipe_write_fd);
+                        }
+
+                        let mut buf: [u8; 1] = [0];
+                        let mut read_fds: libc::fd_set = unsafe { std::mem::zeroed() };
+                        unsafe {
+                            libc::FD_ZERO(&mut read_fds);
+                            libc::FD_SET(pipe_read_fd, &mut read_fds);
+                        }
+                        let mut timeout = libc::timeval {
+                            tv_sec: 10,
+                            tv_usec: 0,
+                        };
+                        let select_result = unsafe {
+                            libc::select(
+                                pipe_read_fd + 1,
+                                &mut read_fds,
+                                std::ptr::null_mut(),
+                                std::ptr::null_mut(),
+                                &mut timeout,
+                            )
+                        };
+
+                        if select_result > 0 {
+                            unsafe {
+                                libc::read(pipe_read_fd, buf.as_mut_ptr() as *mut libc::c_void, 1);
+                            }
+                            info!("New process signaled readiness");
+                        } else {
+                            warn!("Timeout waiting for new process readiness");
+                        }
+
+                        unsafe {
+                            libc::close(pipe_read_fd);
+                        }
+                        *listener = None;
+                        info!("Foreground binary upgrade complete, listener released");
+                    }
+                    Err(e) => {
+                        error!("Failed to spawn new process: {}", e);
+                        unsafe {
+                            libc::close(pipe_read_fd);
+                            libc::close(pipe_write_fd);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Don't want this to happen more than once
+    if admin_only {
+        return true;
+    }
+
+    spawn_shutdown_timer(exit_tx.clone(), shutdown_timeout);
+    true
+}
+
+/// Spawn a task that waits for all clients to disconnect (or timeout) and then signals exit.
+fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
+    tokio::task::spawn(async move {
+        let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
+        info!(
+            "waiting for {} client{} in transactions",
+            clients_in_tx,
+            if clients_in_tx == 1 { "" } else { "s" }
+        );
+
+        let mut interval = tokio::time::interval(shutdown_timeout);
+        let start = std::time::Instant::now();
+
+        loop {
+            interval.tick().await;
+
+            // Drain all idle connections from pools to release PostgreSQL connections
+            retain::drain_all_pools();
+
+            let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
+            let clients_total = CURRENT_CLIENT_COUNT.load(Ordering::Relaxed);
+            if clients_total == 0 {
+                info!("All clients disconnected, shutting down");
+                let _ = exit_tx.send(()).await;
+                return;
+            }
+
+            if start.elapsed() >= shutdown_timeout {
+                error!(
+                    "Graceful shutdown timed out. {} active clients in transactions being closed",
+                    clients_in_tx
+                );
+                let _ = exit_tx.send(()).await;
+                return;
+            }
+        }
+    });
 }
