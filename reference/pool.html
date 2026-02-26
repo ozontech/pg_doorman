@@ -318,7 +318,7 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <p>The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.</p>
 <p>Default: <code>40</code>.</p>
 <h3 id="min_pool_size"><a class="header" href="#min_pool_size">min_pool_size</a></h3>
-<p>The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size.</p>
+<p>The minimum number of connections to maintain in the pool for this user. Connections are prewarmed at startup (before the first retain cycle) and then maintained by periodic replenishment. If specified, it must be less than or equal to pool_size.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="server_lifetime-1"><a class="header" href="#server_lifetime-1">server_lifetime</a></h3>
 <p>Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used.</p>

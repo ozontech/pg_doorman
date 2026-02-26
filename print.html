@@ -1645,7 +1645,7 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <p>The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.</p>
 <p>Default: <code>40</code>.</p>
 <h3 id="min_pool_size"><a class="header" href="#min_pool_size">min_pool_size</a></h3>
-<p>The minimum number of connections to maintain in the pool for this user. This helps with performance by keeping connections ready. If specified, it must be less than or equal to pool_size.</p>
+<p>The minimum number of connections to maintain in the pool for this user. Connections are prewarmed at startup (before the first retain cycle) and then maintained by periodic replenishment. If specified, it must be less than or equal to pool_size.</p>
 <p>Default: <code>None</code>.</p>
 <h3 id="server_lifetime-2"><a class="header" href="#server_lifetime-2">server_lifetime</a></h3>
 <p>Close server connections for this user that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the pool's server_lifetime setting is used.</p>
@@ -1870,8 +1870,15 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <h3 id="331-feb-26-2026"><a class="header" href="#331-feb-26-2026">3.3.1 <small>Feb 26, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Minimum pool size enforcement (<code>min_pool_size</code>)</strong>: The <code>min_pool_size</code> user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, <code>min_pool_size</code> was accepted in config but never applied — pools started empty and could drop to 0 connections even with <code>min_pool_size</code> set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.</li>
+</ul>
 <p><strong>Improvements:</strong></p>
 <ul>
+<li>
+<p><strong>Pool prewarm at startup</strong>: When <code>min_pool_size</code> is configured, pg_doorman now creates the minimum number of connections immediately at startup, before the first retain cycle. Previously, pools started empty and connections were only created lazily on first client request or after the first retain interval (default 60s). This eliminates cold-start latency for the first clients connecting after pg_doorman restart.</p>
+</li>
 <li>
 <p><strong>Configurable connection scaling parameters</strong>: New <code>general</code> settings <code>scaling_warm_pool_ratio</code>, <code>scaling_fast_retries</code>, and <code>scaling_cooldown_sleep</code> allow tuning connection pool scaling behavior. All three can be overridden at the pool level. <code>scaling_cooldown_sleep</code> uses the human-readable <code>Duration</code> type (e.g. <code>"10ms"</code>, <code>"1s"</code>) consistent with other timeout fields.</p>
 </li>
