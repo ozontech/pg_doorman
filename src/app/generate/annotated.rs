@@ -143,7 +143,7 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         prepared_statements_cache_size: None,
         scaling_warm_pool_ratio: None,
         scaling_fast_retries: None,
-        scaling_cooldown_sleep_ms: None,
+        scaling_cooldown_sleep: None,
         auth_query: None,
         users: vec![User {
             username: "app_user".to_string(),
@@ -634,13 +634,15 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     );
     w.blank();
 
-    write_field_comment(w, fi, "general", "scaling_cooldown_sleep_ms");
-    w.kv(
+    write_field_desc(w, fi, "general", "scaling_cooldown_sleep");
+    write_duration_value(
+        w,
         fi,
-        "scaling_cooldown_sleep_ms",
-        &w.num_val(g.scaling_cooldown_sleep_ms),
+        "scaling_cooldown_sleep",
+        g.scaling_cooldown_sleep.as_millis(),
+        "10ms",
+        "",
     );
-    w.blank();
 
     // --- Logging ---
     w.separator(fi, f.section_title("logging").get(w.russian));
@@ -1193,11 +1195,17 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
     }
     w.blank();
 
-    write_field_desc(w, fi, "pool", "scaling_cooldown_sleep_ms");
-    if let Some(val) = pool.scaling_cooldown_sleep_ms {
-        w.kv(fi, "scaling_cooldown_sleep_ms", &w.num_val(val));
+    write_field_desc(w, fi, "pool", "scaling_cooldown_sleep");
+    if let Some(val) = pool.scaling_cooldown_sleep {
+        match w.format {
+            ConfigFormat::Toml => w.kv(fi, "scaling_cooldown_sleep", &w.num_val(val.as_millis())),
+            ConfigFormat::Yaml => w.kv(fi, "scaling_cooldown_sleep", &w.str_val("10ms")),
+        }
     } else {
-        w.commented_kv(fi, "scaling_cooldown_sleep_ms", "10");
+        match w.format {
+            ConfigFormat::Toml => w.commented_kv(fi, "scaling_cooldown_sleep", "10"),
+            ConfigFormat::Yaml => w.commented_kv(fi, "scaling_cooldown_sleep", "\"10ms\""),
+        }
     }
     w.blank();
 

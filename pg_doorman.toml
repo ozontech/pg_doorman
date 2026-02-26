@@ -143,10 +143,10 @@ scaling_warm_pool_ratio = 20
 # Default: 10
 scaling_fast_retries = 10
 
-# Sleep duration in ms after fast retries during connection creation.
+# Sleep duration after fast retries during connection creation.
 # Applied when pool is above the warm threshold. 0 = disabled.
-# Default: 10
-scaling_cooldown_sleep_ms = 10
+# Default: "10ms"
+scaling_cooldown_sleep = 10
 
 # --------------------------------------------------------------------------
 # Logging
@@ -443,8 +443,8 @@ cleanup_server_connections = true
 # Override global scaling_fast_retries for this pool.
 # scaling_fast_retries = 10
 
-# Override global scaling_cooldown_sleep_ms for this pool.
-# scaling_cooldown_sleep_ms = 10
+# Override global scaling_cooldown_sleep for this pool.
+# scaling_cooldown_sleep = 10
 
 # --------------------------------------------------------------------------
 # Application Settings

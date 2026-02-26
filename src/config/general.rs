@@ -87,9 +87,9 @@ pub struct General {
     #[serde(default = "General::default_scaling_fast_retries")]
     pub scaling_fast_retries: u32,
 
-    /// Sleep duration in ms after fast retries during connection creation (0 = disabled).
-    #[serde(default = "General::default_scaling_cooldown_sleep_ms")]
-    pub scaling_cooldown_sleep_ms: u64,
+    /// Sleep duration after fast retries during connection creation (0 = disabled).
+    #[serde(default = "General::default_scaling_cooldown_sleep")]
+    pub scaling_cooldown_sleep: Duration,
 
     #[serde(default = "General::default_server_lifetime")]
     pub server_lifetime: Duration,
@@ -266,8 +266,8 @@ impl General {
     }
 
     /// Default cooldown sleep: 10ms (matches ScalingConfig::DEFAULT_COOLDOWN_SLEEP_MS).
-    pub fn default_scaling_cooldown_sleep_ms() -> u64 {
-        10
+    pub fn default_scaling_cooldown_sleep() -> Duration {
+        Duration::from_millis(10)
     }
 
     pub fn default_backlog() -> u32 {
@@ -404,7 +404,7 @@ impl Default for General {
             max_concurrent_creates: Self::default_max_concurrent_creates(),
             scaling_warm_pool_ratio: Self::default_scaling_warm_pool_ratio(),
             scaling_fast_retries: Self::default_scaling_fast_retries(),
-            scaling_cooldown_sleep_ms: Self::default_scaling_cooldown_sleep_ms(),
+            scaling_cooldown_sleep: Self::default_scaling_cooldown_sleep(),
             worker_threads: Self::default_worker_threads(),
             worker_cpu_affinity_pinning: Self::default_worker_cpu_affinity_pinning(),
             worker_stack_size: None,

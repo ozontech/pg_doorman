@@ -141,7 +141,7 @@ pub fn generate_config_with_client(
                     prepared_statements_cache_size: None,
                     scaling_warm_pool_ratio: None,
                     scaling_fast_retries: None,
-                    scaling_cooldown_sleep_ms: None,
+                    scaling_cooldown_sleep: None,
                     auth_query: None,
                     users: users.clone(),
                 },

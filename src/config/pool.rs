@@ -109,9 +109,9 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaling_fast_retries: Option<u32>,
 
-    /// Override global scaling_cooldown_sleep_ms for this pool.
+    /// Override global scaling_cooldown_sleep for this pool.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scaling_cooldown_sleep_ms: Option<u64>,
+    pub scaling_cooldown_sleep: Option<Duration>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
@@ -164,12 +164,12 @@ impl Pool {
             .scaling_fast_retries
             .unwrap_or(general.scaling_fast_retries);
         let sleep = self
-            .scaling_cooldown_sleep_ms
-            .unwrap_or(general.scaling_cooldown_sleep_ms);
+            .scaling_cooldown_sleep
+            .unwrap_or(general.scaling_cooldown_sleep);
         crate::pool::ScalingConfig {
             warm_pool_ratio: ratio as f32 / 100.0,
             fast_retries: retries,
-            cooldown_sleep_ms: sleep,
+            cooldown_sleep_ms: sleep.as_millis(),
         }
     }
 
@@ -236,7 +236,7 @@ impl Default for Pool {
             prepared_statements_cache_size: None,
             scaling_warm_pool_ratio: None,
             scaling_fast_retries: None,
-            scaling_cooldown_sleep_ms: None,
+            scaling_cooldown_sleep: None,
             auth_query: None,
         }
     }

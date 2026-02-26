@@ -245,7 +245,7 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "message_size_to_be_stream",
         "scaling_warm_pool_ratio",
         "scaling_fast_retries",
-        "scaling_cooldown_sleep_ms",
+        "scaling_cooldown_sleep",
         "max_memory_usage",
         "shutdown_timeout",
         "proxy_copy_data_timeout",
@@ -279,7 +279,7 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
         "cleanup_server_connections",
         "scaling_warm_pool_ratio",
         "scaling_fast_retries",
-        "scaling_cooldown_sleep_ms",
+        "scaling_cooldown_sleep",
     ];
 
     for name in &fields {

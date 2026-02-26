@@ -1161,7 +1161,7 @@ general:
   admin_password: "admin_password"
   scaling_warm_pool_ratio: 30
   scaling_fast_retries: 20
-  scaling_cooldown_sleep_ms: 5
+  scaling_cooldown_sleep: 5
 
 pools:
   mydb:
@@ -1182,7 +1182,10 @@ pools:
     let config = get_config();
     assert_eq!(config.general.scaling_warm_pool_ratio, 30);
     assert_eq!(config.general.scaling_fast_retries, 20);
-    assert_eq!(config.general.scaling_cooldown_sleep_ms, 5);
+    assert_eq!(
+        config.general.scaling_cooldown_sleep,
+        Duration::from_millis(5)
+    );
 }
 
 /// Test 2: Parsing defaults when scaling fields omitted
@@ -1215,12 +1218,15 @@ pools:
     let config = get_config();
     assert_eq!(config.general.scaling_warm_pool_ratio, 20);
     assert_eq!(config.general.scaling_fast_retries, 10);
-    assert_eq!(config.general.scaling_cooldown_sleep_ms, 10);
+    assert_eq!(
+        config.general.scaling_cooldown_sleep,
+        Duration::from_millis(10)
+    );
     // Pool-level should be None
     let pool = &config.pools["mydb"];
     assert_eq!(pool.scaling_warm_pool_ratio, None);
     assert_eq!(pool.scaling_fast_retries, None);
-    assert_eq!(pool.scaling_cooldown_sleep_ms, None);
+    assert_eq!(pool.scaling_cooldown_sleep, None);
 }
 
 /// Test 3: Pool-level override parsing
@@ -1263,12 +1269,12 @@ pools:
     let overridden = &config.pools["overridden_db"];
     assert_eq!(overridden.scaling_warm_pool_ratio, Some(50));
     assert_eq!(overridden.scaling_fast_retries, Some(5));
-    assert_eq!(overridden.scaling_cooldown_sleep_ms, None);
+    assert_eq!(overridden.scaling_cooldown_sleep, None);
 
     let default = &config.pools["default_db"];
     assert_eq!(default.scaling_warm_pool_ratio, None);
     assert_eq!(default.scaling_fast_retries, None);
-    assert_eq!(default.scaling_cooldown_sleep_ms, None);
+    assert_eq!(default.scaling_cooldown_sleep, None);
 }
 
 /// Test 4: resolve_scaling_config() — pool override wins
@@ -1277,7 +1283,7 @@ async fn test_resolve_scaling_config_pool_override() {
     let mut general = General::default();
     general.scaling_warm_pool_ratio = 20;
     general.scaling_fast_retries = 10;
-    general.scaling_cooldown_sleep_ms = 10;
+    general.scaling_cooldown_sleep = Duration::from_millis(10);
 
     let mut pool = Pool::default();
     pool.scaling_warm_pool_ratio = Some(50);
@@ -1294,7 +1300,7 @@ async fn test_resolve_scaling_config_general_fallback() {
     let mut general = General::default();
     general.scaling_warm_pool_ratio = 30;
     general.scaling_fast_retries = 15;
-    general.scaling_cooldown_sleep_ms = 20;
+    general.scaling_cooldown_sleep = Duration::from_millis(20);
 
     let pool = Pool::default(); // all scaling fields are None
 
@@ -1366,7 +1372,7 @@ admin_username = "admin"
 admin_password = "admin_password"
 scaling_warm_pool_ratio = 40
 scaling_fast_retries = 15
-scaling_cooldown_sleep_ms = 25
+scaling_cooldown_sleep = 25
 
 [pools.mydb]
 server_host = "localhost"
@@ -1388,12 +1394,15 @@ pool_size = 10
     let config = get_config();
     assert_eq!(config.general.scaling_warm_pool_ratio, 40);
     assert_eq!(config.general.scaling_fast_retries, 15);
-    assert_eq!(config.general.scaling_cooldown_sleep_ms, 25);
+    assert_eq!(
+        config.general.scaling_cooldown_sleep,
+        Duration::from_millis(25)
+    );
 
     let pool = &config.pools["mydb"];
     assert_eq!(pool.scaling_warm_pool_ratio, Some(60));
     assert_eq!(pool.scaling_fast_retries, None);
-    assert_eq!(pool.scaling_cooldown_sleep_ms, None);
+    assert_eq!(pool.scaling_cooldown_sleep, None);
 }
 
 /// Test 10: Edge case — warm_pool_ratio = 0 and 100
