@@ -4,14 +4,54 @@
 
 PgDoorman supports seamless binary upgrades that allow you to update the software with minimal disruption to your database connections. This document explains how the upgrade process works and what to expect during an upgrade.
 
+## Triggering a Binary Upgrade
+
+The recommended way to trigger a binary upgrade is to send `SIGUSR2` to the PgDoorman process:
+
+```bash
+kill -USR2 $(pgrep pg_doorman)
+```
+
+Alternatively, you can use the admin console command:
+
+```sql
+UPGRADE;
+```
+
+### Signal Reference
+
+| Signal | Behavior |
+|--------|----------|
+| `SIGUSR2` | Binary upgrade + graceful shutdown **(recommended)** |
+| `SIGINT` | Binary upgrade + graceful shutdown (legacy, daemon/no-TTY only). In foreground mode with a TTY, SIGINT (Ctrl+C) performs graceful shutdown **without** binary upgrade. |
+| `SIGTERM` | Immediate shutdown |
+| `SIGHUP` | Reload configuration |
+
+```admonish note title="Legacy SIGINT behavior"
+SIGINT still triggers binary upgrade when running in daemon mode or without a TTY (e.g. when spawned by systemd). If you are running pg_doorman interactively in a terminal, Ctrl+C will cleanly stop the process without spawning a new one. Use `kill -USR2` or the `UPGRADE` admin command to trigger binary upgrade in foreground mode.
+```
+
 ## How the Upgrade Process Works
 
-When you send a `SIGINT` signal to the PgDoorman process, the binary upgrade process is initiated:
+When PgDoorman receives the upgrade signal:
 
-1. The current PgDoorman instance executes the exec command and starts a new, daemonized process
-2. The new process uses the `SO_REUSE_PORT` socket option, allowing the operating system to distribute incoming traffic to the new instance
-3. The old instance then closes its socket for incoming connections
-4. Existing connections are handled gracefully during the transition
+1. The current PgDoorman instance validates the configuration of the new binary using `-t` flag
+2. If validation passes, a new process is started:
+   - **Daemon mode**: a new daemonized process is spawned
+   - **Foreground mode**: the listener socket is passed to the new process via `--inherit-fd`
+3. The new process uses the `SO_REUSE_PORT` socket option, allowing the operating system to distribute incoming traffic to the new instance
+4. The old instance then closes its socket for incoming connections
+5. Existing connections are handled gracefully during the transition
+
+## systemd Integration
+
+The recommended systemd service configuration uses `SIGUSR2` for reload:
+
+```ini
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+```
+
+This triggers a binary upgrade when you run `systemctl reload pg_doorman`.
 
 ## Handling Existing Connections
 

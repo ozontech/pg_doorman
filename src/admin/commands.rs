@@ -62,3 +62,33 @@ where
 
     write_all_half(stream, &res).await
 }
+
+/// Trigger binary upgrade via SIGUSR2 (graceful shutdown + spawn new process).
+#[cfg(not(windows))]
+pub async fn upgrade<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let mut res = BytesMut::new();
+
+    res.put(row_description(&vec![("success", DataType::Text)]));
+
+    let mut upgrade_success = "t";
+
+    let pid = std::process::id();
+    info!("UPGRADE command: sending SIGUSR2 to PID {pid}");
+    if signal::kill(Pid::from_raw(pid.try_into().unwrap()), Signal::SIGUSR2).is_err() {
+        error!("Unable to send SIGUSR2 to PID: {pid}");
+        upgrade_success = "f";
+    }
+
+    res.put(data_row(&[upgrade_success.to_string()]));
+
+    res.put(command_complete("UPGRADE"));
+
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+
+    write_all_half(stream, &res).await
+}

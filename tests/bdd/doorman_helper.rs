@@ -438,6 +438,34 @@ pub async fn store_foreground_pid(world: &mut DoormanWorld, name: String) {
         .insert((name, "foreground_pid".to_string()), pid);
 }
 
+/// Send SIGUSR2 to daemon for binary upgrade
+#[when(regex = r#"we send SIGUSR2 to daemon from PID file "([^"]+)""#)]
+pub async fn send_sigusr2_to_daemon(_world: &mut DoormanWorld, pid_path: String) {
+    let pid_content = std::fs::read_to_string(&pid_path).expect("Failed to read PID file");
+    let pid: i32 = pid_content
+        .trim()
+        .parse()
+        .expect("PID file should contain valid number");
+
+    unsafe {
+        libc::kill(pid, libc::SIGUSR2);
+    }
+}
+
+/// Send SIGUSR2 to foreground pg_doorman for binary upgrade
+#[when("we send SIGUSR2 to foreground pg_doorman")]
+pub async fn send_sigusr2_to_foreground(world: &mut DoormanWorld) {
+    let pid = world
+        .doorman_process
+        .as_ref()
+        .expect("pg_doorman process not running")
+        .id() as i32;
+
+    unsafe {
+        libc::kill(pid, libc::SIGUSR2);
+    }
+}
+
 /// Send SIGINT to foreground pg_doorman for binary upgrade
 #[when("we send SIGINT to foreground pg_doorman")]
 pub async fn send_sigint_to_foreground(world: &mut DoormanWorld) {

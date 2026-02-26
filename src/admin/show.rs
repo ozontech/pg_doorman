@@ -211,6 +211,7 @@ where
         "SHOW STATS",
         "RELOAD",
         "SHUTDOWN",
+        "UPGRADE",
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));

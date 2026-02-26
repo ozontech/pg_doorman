@@ -88,6 +88,43 @@ Feature: Foreground mode binary upgrade
     # Close sessions
     When we close session "new"
 
+  Scenario: SIGUSR2 triggers binary upgrade in foreground mode
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      pool_mode = "transaction"
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    # Wait for pg_doorman to be fully ready
+    When we sleep 1000ms
+    # Open session and verify it works
+    And we create session "before_upgrade" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    Then session "before_upgrade" should be connected
+    # Close session before upgrade
+    When we close session "before_upgrade"
+    # Store original PID for comparison
+    And we store foreground pg_doorman PID as "original"
+    # Send SIGUSR2 to trigger binary upgrade
+    And we send SIGUSR2 to foreground pg_doorman
+    # Wait for binary upgrade to complete
+    And we wait for foreground binary upgrade to complete
+    # Verify service is still available
+    Then foreground pg_doorman PID should be different from stored "original"
+    # Open new session and verify it works with new process
+    When we create session "after_upgrade" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    Then session "after_upgrade" should be connected
+
   @grac-shutdown-debug
   Scenario: Graceful shutdown rejects new queries after transaction completes
     Given pg_doorman started with config:
