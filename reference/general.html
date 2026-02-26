@@ -469,6 +469,23 @@ query-to-server-name mapping.</p>
 <p>Data responses from the server (message type 'D') greater than this value will be
 transmitted through the proxy in small chunks (1 MB).</p>
 <p>Default: <code>1048576</code>.</p>
+<h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
+<p>Warm pool ratio as a percentage (0-100). When the pool size is below this threshold
+of <code>max_size</code>, new connections are created immediately without backpressure.
+Above this threshold, the pool applies fast retries and cooldown sleep to avoid
+overwhelming the PostgreSQL server during connection storms.</p>
+<p>Default: <code>20</code>.</p>
+<h3 id="scaling_fast_retries"><a class="header" href="#scaling_fast_retries">scaling_fast_retries</a></h3>
+<p>Number of fast retries using <code>yield_now()</code> for low-latency waiting when creating
+connections above the warm pool threshold. Each retry takes approximately 1-5μs.
+After exhausting fast retries, the pool falls back to <code>scaling_cooldown_sleep</code>.</p>
+<p>Default: <code>10</code>.</p>
+<h3 id="scaling_cooldown_sleep"><a class="header" href="#scaling_cooldown_sleep">scaling_cooldown_sleep</a></h3>
+<p>Sleep duration after fast retries are exhausted during connection
+creation above the warm pool threshold. This provides backpressure to prevent
+overwhelming the PostgreSQL server. Set to <code>0</code> to disable (not recommended).
+Accepts duration strings like <code>"10ms"</code>, <code>"1s"</code>, or plain numbers (milliseconds).</p>
+<p>Default: <code>"10ms"</code>.</p>
 <h3 id="max_memory_usage"><a class="header" href="#max_memory_usage">max_memory_usage</a></h3>
 <p>We calculate the total amount of memory used by the internal buffers for all current queries.
 If the limit is reached, the client will receive an error (256 MB).</p>

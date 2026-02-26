@@ -196,6 +196,12 @@
 <h3 id="cleanup_server_connections"><a class="header" href="#cleanup_server_connections">cleanup_server_connections</a></h3>
 <p>When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections.</p>
 <p>Default: <code>true</code>.</p>
+<h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
+<p>Override global scaling_warm_pool_ratio for this pool. If not specified, the global setting is used.</p>
+<h3 id="scaling_fast_retries"><a class="header" href="#scaling_fast_retries">scaling_fast_retries</a></h3>
+<p>Override global scaling_fast_retries for this pool. If not specified, the global setting is used.</p>
+<h3 id="scaling_cooldown_sleep"><a class="header" href="#scaling_cooldown_sleep">scaling_cooldown_sleep</a></h3>
+<p>Override global scaling_cooldown_sleep for this pool. If not specified, the global setting is used. Accepts duration strings like <code>"10ms"</code>, <code>"1s"</code>, or plain numbers (milliseconds).</p>
 <h2 id="auth-query-settings"><a class="header" href="#auth-query-settings">Auth Query Settings</a></h2>
 <p>The <code>auth_query</code> section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.</p>
 <pre><code class="language-yaml">pools:

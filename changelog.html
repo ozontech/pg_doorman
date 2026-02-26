@@ -161,6 +161,16 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="331-feb-26-2026"><a class="header" href="#331-feb-26-2026">3.3.1 <small>Feb 26, 2026</small></a></h3>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>
+<p><strong>Configurable connection scaling parameters</strong>: New <code>general</code> settings <code>scaling_warm_pool_ratio</code>, <code>scaling_fast_retries</code>, and <code>scaling_cooldown_sleep</code> allow tuning connection pool scaling behavior. All three can be overridden at the pool level. <code>scaling_cooldown_sleep</code> uses the human-readable <code>Duration</code> type (e.g. <code>"10ms"</code>, <code>"1s"</code>) consistent with other timeout fields.</p>
+</li>
+<li>
+<p><strong><code>max_concurrent_creates</code> setting</strong>: Controls the maximum number of server connections that can be created concurrently per pool. Uses a semaphore instead of a mutex for parallel connection creation.</p>
+</li>
+</ul>
 <h3 id="330-feb-23-2026"><a class="header" href="#330-feb-23-2026">3.3.0 <small>Feb 23, 2026</small></a></h3>
 <p><strong>New Features:</strong></p>
 <ul>
