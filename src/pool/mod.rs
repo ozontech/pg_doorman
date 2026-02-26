@@ -858,6 +858,11 @@ impl ServerPool {
         }
     }
 
+    /// Returns the address of this pool.
+    pub fn address(&self) -> &Address {
+        &self.address
+    }
+
     /// Returns the base lifetime in milliseconds for connections in this pool.
     pub fn lifetime_ms(&self) -> u64 {
         self.lifetime_ms

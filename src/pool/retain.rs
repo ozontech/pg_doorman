@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use log::info;
+use log::{info, warn};
 
 use crate::config::get_config;
 
@@ -124,6 +124,14 @@ pub async fn retain_connections() {
                             pool.address.username,
                             created,
                             if created == 1 { "" } else { "s" },
+                            min,
+                        );
+                    } else {
+                        warn!(
+                            "[pool: {}][user: {}] failed to replenish connections (deficit: {}, min_pool_size: {})",
+                            pool.address.pool_name,
+                            pool.address.username,
+                            deficit,
                             min,
                         );
                     }

@@ -8,6 +8,8 @@ use std::{
     },
 };
 
+use log::warn;
+
 use crate::utils::clock;
 
 use parking_lot::Mutex;
@@ -613,7 +615,12 @@ impl Pool {
             // Create a new connection
             let obj = match self.inner.server_pool.create().await {
                 Ok(obj) => obj,
-                Err(_) => {
+                Err(e) => {
+                    warn!(
+                        "[pool: {}] failed to create connection during replenish: {}",
+                        self.inner.server_pool.address(),
+                        e
+                    );
                     break;
                 }
             };

@@ -2,6 +2,10 @@
 
 ### 3.3.1 <small>Feb 26, 2026</small>
 
+**Bug Fixes:**
+
+- **Minimum pool size enforcement (`min_pool_size`)**: The `min_pool_size` user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, `min_pool_size` was accepted in config but never applied — pools started empty and could drop to 0 connections even with `min_pool_size` set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.
+
 **Improvements:**
 
 - **Configurable connection scaling parameters**: New `general` settings `scaling_warm_pool_ratio`, `scaling_fast_retries`, and `scaling_cooldown_sleep` allow tuning connection pool scaling behavior. All three can be overridden at the pool level. `scaling_cooldown_sleep` uses the human-readable `Duration` type (e.g. `"10ms"`, `"1s"`) consistent with other timeout fields.
