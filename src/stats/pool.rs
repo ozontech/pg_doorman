@@ -12,7 +12,7 @@
 ///
 /// The statistics are used by administrative commands like SHOW POOLS, SHOW POOLS EXTENDED,
 /// and SHOW STATS to provide insights into the pooler's operation and performance.
-use log::{debug, error, warn};
+use log::{debug, error};
 
 use crate::{config::PoolMode, messages::DataType, pool::PoolIdentifier};
 use std::borrow::Cow;
@@ -259,13 +259,15 @@ impl PoolStats {
     ///
     /// A HashMap mapping pool identifiers to their aggregated statistics
     pub fn construct_pool_lookup() -> HashMap<PoolIdentifier, PoolStats> {
-        // Initialize maps and get client/server statistics
         let mut virtual_map: HashMap<PoolIdentifier, PoolStats> = HashMap::new();
+
+        // Snapshot POOLS first, then SERVER_STATS/CLIENT_STATS.
+        // This ordering reduces a race with dynamic pool GC: if a pool is removed
+        // from POOLS before our snapshot, its servers should already be disconnected
+        // from SERVER_STATS (retain closes them before GC removes the pool).
+        Self::initialize_pool_stats(&mut virtual_map);
         let client_map = super::get_client_stats();
         let server_map = super::get_server_stats();
-
-        // Initialize statistics for each virtual pool (percentiles are calculated from HDR histograms)
-        Self::initialize_pool_stats(&mut virtual_map);
 
         // Update client and server state counters
         Self::update_client_server_states(&mut virtual_map, &client_map, &server_map);
@@ -585,7 +587,10 @@ impl PoolStats {
                         _ => error!("unknown server state"),
                     }
                 }
-                None => warn!("Server from an obsolete pool"),
+                // Benign race: server snapshot was taken before pool snapshot,
+                // and the dynamic pool was GC'd in between. The server is already
+                // gone; its stats were captured via address stats in initialize_pool_stats.
+                None => debug!("Server from an obsolete pool"),
             }
         }
     }
