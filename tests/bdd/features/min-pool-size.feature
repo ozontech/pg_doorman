@@ -41,6 +41,35 @@ Feature: min_pool_size enforcement
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
     Then admin session "admin1" row count should be greater than or equal to 3
 
+  @prewarm-at-startup
+  Scenario: Pool is prewarmed at startup before retain cycle
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      retain_connections_time = 60000
+      server_lifetime = 60000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      min_pool_size = 2
+      """
+    # Wait for prewarm to complete, but retain cycle (60s) has NOT fired yet
+    When we sleep for 1000 milliseconds
+    When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW SERVERS" on admin session "admin1" and store row count
+    Then admin session "admin1" row count should be greater than or equal to 2
+
   @maintain-after-expiry
   Scenario: Pool maintains min_pool_size after connections expire
     Given pg_doorman started with config:

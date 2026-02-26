@@ -102,6 +102,31 @@ pub async fn retain_connections() {
         }
     );
 
+    // Prewarm pools with min_pool_size before the first retain cycle
+    for (_, pool) in get_all_pools().iter() {
+        if let Some(min_pool_size) = pool.settings.user.min_pool_size {
+            let min = min_pool_size as usize;
+            let created = pool.database.replenish(min).await;
+            if created > 0 {
+                info!(
+                    "[pool: {}][user: {}] prewarmed {} connection{} (min_pool_size: {})",
+                    pool.address.pool_name,
+                    pool.address.username,
+                    created,
+                    if created == 1 { "" } else { "s" },
+                    min,
+                );
+            } else {
+                warn!(
+                    "[pool: {}][user: {}] prewarm failed — could not create connections (min_pool_size: {})",
+                    pool.address.pool_name,
+                    pool.address.username,
+                    min,
+                );
+            }
+        }
+    }
+
     loop {
         interval.tick().await;
         for (_, pool) in get_all_pools().iter() {
