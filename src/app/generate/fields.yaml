@@ -71,6 +71,12 @@ sections:
   auth_query:
     en: "Dynamic Authentication (auth_query)"
     ru: "Динамическая аутентификация (auth_query)"
+  scaling:
+    en: "Connection Scaling"
+    ru: "Масштабирование соединений"
+  pool_scaling:
+    en: "Connection Scaling Overrides"
+    ru: "Переопределение масштабирования соединений"
   pool_examples:
     en: "Additional Pool Examples"
     ru: "Дополнительные примеры пулов"
@@ -475,6 +481,52 @@ fields:
 
         Higher values allow faster pool warm-up but may increase load on the PostgreSQL server during connection storms. Lower values provide more gradual connection creation.
       default: "4"
+
+    scaling_warm_pool_ratio:
+      config:
+        en: |
+          Warm pool ratio (0-100, percentage).
+          Connections below this threshold of max_size are created immediately.
+          Above this threshold, backpressure (fast retries + cooldown sleep) is applied.
+        ru: |
+          Коэффициент прогрева пула (0-100, в процентах).
+          Соединения ниже этого порога от max_size создаются немедленно.
+          Выше порога применяется обратное давление (быстрые повторы + пауза).
+      doc: |
+        Warm pool ratio as a percentage (0-100). When the pool size is below this threshold
+        of `max_size`, new connections are created immediately without backpressure.
+        Above this threshold, the pool applies fast retries and cooldown sleep to avoid
+        overwhelming the PostgreSQL server during connection storms.
+      default: "20"
+
+    scaling_fast_retries:
+      config:
+        en: |
+          Number of fast retries with yield_now() before sleeping during connection creation.
+          Higher values reduce latency but increase CPU usage.
+        ru: |
+          Количество быстрых повторов с yield_now() перед засыпанием при создании соединений.
+          Большие значения снижают задержку, но увеличивают нагрузку на CPU.
+      doc: |
+        Number of fast retries using `yield_now()` for low-latency waiting when creating
+        connections above the warm pool threshold. Each retry takes approximately 1-5μs.
+        After exhausting fast retries, the pool falls back to `scaling_cooldown_sleep`.
+      default: "10"
+
+    scaling_cooldown_sleep:
+      config:
+        en: |
+          Sleep duration after fast retries during connection creation.
+          Applied when pool is above the warm threshold. 0 = disabled.
+        ru: |
+          Время сна после быстрых повторов при создании соединений.
+          Применяется, когда пул выше порога прогрева. 0 = отключено.
+      doc: |
+        Sleep duration after fast retries are exhausted during connection
+        creation above the warm pool threshold. This provides backpressure to prevent
+        overwhelming the PostgreSQL server. Set to `0` to disable (not recommended).
+        Accepts duration strings like `"10ms"`, `"1s"`, or plain numbers (milliseconds).
+      default: '"10ms"'
 
     max_memory_usage:
       config:
@@ -948,6 +1000,24 @@ fields:
         en: "Override global prepared_statements_cache_size for this pool."
         ru: "Переопределить глобальный prepared_statements_cache_size для этого пула."
       doc: "Override global prepared_statements_cache_size for this pool. If not specified, the global setting is used."
+
+    scaling_warm_pool_ratio:
+      config:
+        en: "Override global scaling_warm_pool_ratio for this pool (0-100)."
+        ru: "Переопределить глобальный scaling_warm_pool_ratio для этого пула (0-100)."
+      doc: "Override global scaling_warm_pool_ratio for this pool. If not specified, the global setting is used."
+
+    scaling_fast_retries:
+      config:
+        en: "Override global scaling_fast_retries for this pool."
+        ru: "Переопределить глобальный scaling_fast_retries для этого пула."
+      doc: "Override global scaling_fast_retries for this pool. If not specified, the global setting is used."
+
+    scaling_cooldown_sleep:
+      config:
+        en: "Override global scaling_cooldown_sleep for this pool."
+        ru: "Переопределить глобальный scaling_cooldown_sleep для этого пула."
+      doc: "Override global scaling_cooldown_sleep for this pool. If not specified, the global setting is used. Accepts duration strings like `\"10ms\"`, `\"1s\"`, or plain numbers (milliseconds)."
 
     application_name:
       config:

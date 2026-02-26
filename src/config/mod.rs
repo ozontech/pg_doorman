@@ -341,6 +341,13 @@ impl Config {
             ));
         }
 
+        // Validate scaling_warm_pool_ratio
+        if self.general.scaling_warm_pool_ratio > 100 {
+            return Err(Error::BadConfig(
+                "general.scaling_warm_pool_ratio must be 0-100".to_string(),
+            ));
+        }
+
         // Validate mutual exclusion for HBA settings
         if self.general.pg_hba.is_some() && !self.general.hba.is_empty() {
             return Err(Error::BadConfig(

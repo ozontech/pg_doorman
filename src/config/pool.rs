@@ -101,6 +101,18 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_statements_cache_size: Option<usize>,
 
+    /// Override global scaling_warm_pool_ratio for this pool (0-100, percentage).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaling_warm_pool_ratio: Option<u32>,
+
+    /// Override global scaling_fast_retries for this pool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaling_fast_retries: Option<u32>,
+
+    /// Override global scaling_cooldown_sleep for this pool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaling_cooldown_sleep: Option<Duration>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
 
@@ -140,7 +152,37 @@ impl Pool {
         true
     }
 
+    /// Resolve scaling config by merging pool-level overrides with general defaults.
+    pub fn resolve_scaling_config(
+        &self,
+        general: &crate::config::General,
+    ) -> crate::pool::ScalingConfig {
+        let ratio = self
+            .scaling_warm_pool_ratio
+            .unwrap_or(general.scaling_warm_pool_ratio);
+        let retries = self
+            .scaling_fast_retries
+            .unwrap_or(general.scaling_fast_retries);
+        let sleep = self
+            .scaling_cooldown_sleep
+            .unwrap_or(general.scaling_cooldown_sleep);
+        crate::pool::ScalingConfig {
+            warm_pool_ratio: ratio as f32 / 100.0,
+            fast_retries: retries,
+            cooldown_sleep_ms: sleep.as_millis(),
+        }
+    }
+
     pub async fn validate(&mut self) -> Result<(), Error> {
+        // Validate scaling_warm_pool_ratio
+        if let Some(ratio) = self.scaling_warm_pool_ratio {
+            if ratio > 100 {
+                return Err(Error::BadConfig(
+                    "scaling_warm_pool_ratio must be 0-100".into(),
+                ));
+            }
+        }
+
         // Validate username uniqueness
         let mut seen_usernames = HashSet::new();
         for user in &self.users {
@@ -192,6 +234,9 @@ impl Default for Pool {
             log_client_parameter_status_changes: false,
             application_name: None,
             prepared_statements_cache_size: None,
+            scaling_warm_pool_ratio: None,
+            scaling_fast_retries: None,
+            scaling_cooldown_sleep: None,
             auth_query: None,
         }
     }

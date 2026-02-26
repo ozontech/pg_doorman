@@ -1144,3 +1144,289 @@ async fn test_auth_query_validate_empty_password_ok() {
     let result = pool.validate().await;
     assert!(result.is_ok());
 }
+
+// ============================================================
+// Scaling config tests
+// ============================================================
+
+/// Test 1: Parsing YAML with general scaling fields
+#[tokio::test]
+#[serial]
+async fn test_scaling_config_general_yaml() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+  scaling_warm_pool_ratio: 30
+  scaling_fast_retries: 20
+  scaling_cooldown_sleep: 5
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    users:
+      - username: "user1"
+        password: "pass1"
+        pool_size: 10
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.general.scaling_warm_pool_ratio, 30);
+    assert_eq!(config.general.scaling_fast_retries, 20);
+    assert_eq!(
+        config.general.scaling_cooldown_sleep,
+        Duration::from_millis(5)
+    );
+}
+
+/// Test 2: Parsing defaults when scaling fields omitted
+#[tokio::test]
+#[serial]
+async fn test_scaling_config_defaults() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    users:
+      - username: "user1"
+        password: "pass1"
+        pool_size: 10
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.general.scaling_warm_pool_ratio, 20);
+    assert_eq!(config.general.scaling_fast_retries, 10);
+    assert_eq!(
+        config.general.scaling_cooldown_sleep,
+        Duration::from_millis(10)
+    );
+    // Pool-level should be None
+    let pool = &config.pools["mydb"];
+    assert_eq!(pool.scaling_warm_pool_ratio, None);
+    assert_eq!(pool.scaling_fast_retries, None);
+    assert_eq!(pool.scaling_cooldown_sleep, None);
+}
+
+/// Test 3: Pool-level override parsing
+#[tokio::test]
+#[serial]
+async fn test_scaling_config_pool_override_yaml() {
+    let config_content = r#"
+general:
+  host: "127.0.0.1"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin_password"
+
+pools:
+  overridden_db:
+    server_host: "localhost"
+    server_port: 5432
+    scaling_warm_pool_ratio: 50
+    scaling_fast_retries: 5
+    users:
+      - username: "user1"
+        password: "pass1"
+        pool_size: 10
+  default_db:
+    server_host: "localhost"
+    server_port: 5432
+    users:
+      - username: "user2"
+        password: "pass2"
+        pool_size: 10
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".yaml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    let overridden = &config.pools["overridden_db"];
+    assert_eq!(overridden.scaling_warm_pool_ratio, Some(50));
+    assert_eq!(overridden.scaling_fast_retries, Some(5));
+    assert_eq!(overridden.scaling_cooldown_sleep, None);
+
+    let default = &config.pools["default_db"];
+    assert_eq!(default.scaling_warm_pool_ratio, None);
+    assert_eq!(default.scaling_fast_retries, None);
+    assert_eq!(default.scaling_cooldown_sleep, None);
+}
+
+/// Test 4: resolve_scaling_config() — pool override wins
+#[tokio::test]
+async fn test_resolve_scaling_config_pool_override() {
+    let mut general = General::default();
+    general.scaling_warm_pool_ratio = 20;
+    general.scaling_fast_retries = 10;
+    general.scaling_cooldown_sleep = Duration::from_millis(10);
+
+    let mut pool = Pool::default();
+    pool.scaling_warm_pool_ratio = Some(50);
+
+    let scaling = pool.resolve_scaling_config(&general);
+    assert!((scaling.warm_pool_ratio - 0.5).abs() < f32::EPSILON);
+    assert_eq!(scaling.fast_retries, 10); // general default
+    assert_eq!(scaling.cooldown_sleep_ms, 10); // general default
+}
+
+/// Test 5: resolve_scaling_config() — general fallback
+#[tokio::test]
+async fn test_resolve_scaling_config_general_fallback() {
+    let mut general = General::default();
+    general.scaling_warm_pool_ratio = 30;
+    general.scaling_fast_retries = 15;
+    general.scaling_cooldown_sleep = Duration::from_millis(20);
+
+    let pool = Pool::default(); // all scaling fields are None
+
+    let scaling = pool.resolve_scaling_config(&general);
+    assert!((scaling.warm_pool_ratio - 0.3).abs() < f32::EPSILON);
+    assert_eq!(scaling.fast_retries, 15);
+    assert_eq!(scaling.cooldown_sleep_ms, 20);
+}
+
+/// Test 6: Validation — general warm_pool_ratio > 100
+#[tokio::test]
+async fn test_validate_scaling_warm_pool_ratio_general_out_of_range() {
+    let mut config = Config::default();
+    config.general.scaling_warm_pool_ratio = 150;
+    let result = config.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("scaling_warm_pool_ratio"));
+    } else {
+        panic!("Expected BadConfig error about scaling_warm_pool_ratio");
+    }
+}
+
+/// Test 7: Validation — pool warm_pool_ratio > 100
+#[tokio::test]
+async fn test_validate_scaling_warm_pool_ratio_pool_out_of_range() {
+    let mut config = Config::default();
+    let mut pool = Pool::default();
+    pool.scaling_warm_pool_ratio = Some(101);
+    pool.users.push(User {
+        username: "user1".to_string(),
+        password: "pass1".to_string(),
+        ..User::default()
+    });
+    config.pools.insert("testdb".to_string(), pool);
+
+    let result = config.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("scaling_warm_pool_ratio"));
+    } else {
+        panic!("Expected BadConfig error about scaling_warm_pool_ratio");
+    }
+}
+
+/// Test 8: Hash changes when scaling config changes
+#[test]
+fn test_scaling_config_changes_pool_hash() {
+    let pool_a = Pool {
+        scaling_warm_pool_ratio: None,
+        ..Pool::default()
+    };
+    let pool_b = Pool {
+        scaling_warm_pool_ratio: Some(50),
+        ..Pool::default()
+    };
+    assert_ne!(pool_a.hash_value(), pool_b.hash_value());
+}
+
+/// Test 9: TOML backward compatibility
+#[tokio::test]
+#[serial]
+async fn test_scaling_config_toml_parsing() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+scaling_warm_pool_ratio = 40
+scaling_fast_retries = 15
+scaling_cooldown_sleep = 25
+
+[pools.mydb]
+server_host = "localhost"
+server_port = 5432
+scaling_warm_pool_ratio = 60
+
+[[pools.mydb.users]]
+username = "user1"
+password = "pass1"
+pool_size = 10
+"#;
+    let mut temp_file = NamedTempFile::with_suffix(".toml").unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let file_path = temp_file.path().to_str().unwrap();
+    parse(file_path).await.unwrap();
+
+    let config = get_config();
+    assert_eq!(config.general.scaling_warm_pool_ratio, 40);
+    assert_eq!(config.general.scaling_fast_retries, 15);
+    assert_eq!(
+        config.general.scaling_cooldown_sleep,
+        Duration::from_millis(25)
+    );
+
+    let pool = &config.pools["mydb"];
+    assert_eq!(pool.scaling_warm_pool_ratio, Some(60));
+    assert_eq!(pool.scaling_fast_retries, None);
+    assert_eq!(pool.scaling_cooldown_sleep, None);
+}
+
+/// Test 10: Edge case — warm_pool_ratio = 0 and 100
+#[tokio::test]
+async fn test_scaling_config_boundary_values() {
+    let general = General::default();
+
+    // warm_pool_ratio = 0 → valid, all connections go through cooldown
+    let pool_zero = Pool {
+        scaling_warm_pool_ratio: Some(0),
+        ..Pool::default()
+    };
+    let mut pool_zero_for_validate = pool_zero.clone();
+    assert!(pool_zero_for_validate.validate().await.is_ok());
+    let scaling = pool_zero.resolve_scaling_config(&general);
+    assert!((scaling.warm_pool_ratio - 0.0).abs() < f32::EPSILON);
+
+    // warm_pool_ratio = 100 → valid, all connections created immediately
+    let pool_hundred = Pool {
+        scaling_warm_pool_ratio: Some(100),
+        ..Pool::default()
+    };
+    let mut pool_hundred_for_validate = pool_hundred.clone();
+    assert!(pool_hundred_for_validate.validate().await.is_ok());
+    let scaling = pool_hundred.resolve_scaling_config(&general);
+    assert!((scaling.warm_pool_ratio - 1.0).abs() < f32::EPSILON);
+}

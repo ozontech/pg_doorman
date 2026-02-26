@@ -129,6 +129,26 @@ max_concurrent_creates = 4
 max_memory_usage = 268435456
 
 # --------------------------------------------------------------------------
+# Connection Scaling
+# --------------------------------------------------------------------------
+
+# Warm pool ratio (0-100, percentage).
+# Connections below this threshold of max_size are created immediately.
+# Above this threshold, backpressure (fast retries + cooldown sleep) is applied.
+# Default: 20
+scaling_warm_pool_ratio = 20
+
+# Number of fast retries with yield_now() before sleeping during connection creation.
+# Higher values reduce latency but increase CPU usage.
+# Default: 10
+scaling_fast_retries = 10
+
+# Sleep duration after fast retries during connection creation.
+# Applied when pool is above the warm threshold. 0 = disabled.
+# Default: "10ms"
+scaling_cooldown_sleep = 10
+
+# --------------------------------------------------------------------------
 # Logging
 # --------------------------------------------------------------------------
 
@@ -412,6 +432,19 @@ cleanup_server_connections = true
 
 # Override global prepared_statements_cache_size for this pool.
 # prepared_statements_cache_size = 8192
+
+# --------------------------------------------------------------------------
+# Connection Scaling Overrides
+# --------------------------------------------------------------------------
+
+# Override global scaling_warm_pool_ratio for this pool (0-100).
+# scaling_warm_pool_ratio = 30
+
+# Override global scaling_fast_retries for this pool.
+# scaling_fast_retries = 10
+
+# Override global scaling_cooldown_sleep for this pool.
+# scaling_cooldown_sleep = 10
 
 # --------------------------------------------------------------------------
 # Application Settings
