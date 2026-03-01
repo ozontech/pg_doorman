@@ -361,7 +361,9 @@ impl ConnectionPool {
                     prepared_statements_cache_size,
                     application_name,
                     config.general.max_concurrent_creates,
-                    config.general.server_lifetime.as_millis(),
+                    pool_config
+                        .server_lifetime
+                        .unwrap_or(config.general.server_lifetime.as_millis()),
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
                 );
@@ -398,8 +400,12 @@ impl ConnectionPool {
                         pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
                         user: user.clone(),
                         db: pool_name.clone(),
-                        idle_timeout_ms: config.general.idle_timeout.as_millis(),
-                        life_time_ms: config.general.server_lifetime.as_millis(),
+                        idle_timeout_ms: pool_config
+                            .idle_timeout
+                            .unwrap_or(config.general.idle_timeout.as_millis()),
+                        life_time_ms: pool_config
+                            .server_lifetime
+                            .unwrap_or(config.general.server_lifetime.as_millis()),
                         sync_server_parameters: config.general.sync_server_parameters,
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
@@ -504,7 +510,9 @@ impl ConnectionPool {
                             prepared_statements_cache_size,
                             application_name,
                             config.general.max_concurrent_creates,
-                            config.general.server_lifetime.as_millis(),
+                            pool_config
+                                .server_lifetime
+                                .unwrap_or(config.general.server_lifetime.as_millis()),
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
                         );
@@ -544,8 +552,12 @@ impl ConnectionPool {
                                 pool_mode: shared_user.pool_mode.unwrap_or(pool_config.pool_mode),
                                 user: shared_user,
                                 db: pool_name.clone(),
-                                idle_timeout_ms: config.general.idle_timeout.as_millis(),
-                                life_time_ms: config.general.server_lifetime.as_millis(),
+                                idle_timeout_ms: pool_config
+                                    .idle_timeout
+                                    .unwrap_or(config.general.idle_timeout.as_millis()),
+                                life_time_ms: pool_config
+                                    .server_lifetime
+                                    .unwrap_or(config.general.server_lifetime.as_millis()),
                                 sync_server_parameters: config.general.sync_server_parameters,
                             },
                             prepared_statement_cache: match config.general.prepared_statements {
@@ -1020,7 +1032,9 @@ pub fn create_dynamic_pool(
         prepared_statements_cache_size,
         application_name,
         config.general.max_concurrent_creates,
-        config.general.server_lifetime.as_millis(),
+        pool_config
+            .server_lifetime
+            .unwrap_or(config.general.server_lifetime.as_millis()),
         config.general.server_idle_check_timeout.as_millis(),
         config.general.connect_timeout.as_std(),
     );
@@ -1052,8 +1066,12 @@ pub fn create_dynamic_pool(
             pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
             user,
             db: pool_name.to_string(),
-            idle_timeout_ms: config.general.idle_timeout.as_millis(),
-            life_time_ms: config.general.server_lifetime.as_millis(),
+            idle_timeout_ms: pool_config
+                .idle_timeout
+                .unwrap_or(config.general.idle_timeout.as_millis()),
+            life_time_ms: pool_config
+                .server_lifetime
+                .unwrap_or(config.general.server_lifetime.as_millis()),
             sync_server_parameters: config.general.sync_server_parameters,
         },
         prepared_statement_cache: match config.general.prepared_statements {
