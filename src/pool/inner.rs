@@ -197,6 +197,19 @@ impl Pool {
             self.inner.users.fetch_sub(1, Ordering::Relaxed);
         }
 
+        // PAUSE check: wait for resume or timeout
+        if self.inner.server_pool.is_paused() {
+            let notify = self.inner.server_pool.resume_notified();
+            match timeouts.wait {
+                Some(duration) => {
+                    if tokio::time::timeout(duration, notify).await.is_err() {
+                        return Err(PoolError::Timeout(TimeoutType::Wait));
+                    }
+                }
+                None => notify.await,
+            }
+        }
+
         let mut try_fast = 0;
         let permit: SemaphorePermit<'_>;
         loop {
@@ -481,10 +494,11 @@ impl Pool {
         permit.forget();
         let lifetime_ms = self.inner.server_pool.lifetime_ms();
         let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
+        let epoch = self.inner.server_pool.current_epoch();
         Ok(Object {
             inner: Some(ObjectInner {
                 obj,
-                metrics: Metrics::new_with_timeouts(lifetime_ms, idle_timeout_ms),
+                metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
             }),
             pool: Arc::downgrade(&self.inner),
         })
@@ -628,9 +642,10 @@ impl Pool {
 
             let lifetime_ms = self.inner.server_pool.lifetime_ms();
             let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
+            let epoch = self.inner.server_pool.current_epoch();
             let inner = ObjectInner {
                 obj,
-                metrics: Metrics::new_with_timeouts(lifetime_ms, idle_timeout_ms),
+                metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
             };
 
             {
@@ -683,6 +698,35 @@ impl Pool {
     #[must_use]
     pub fn server_pool(&self) -> &ServerPool {
         &self.inner.server_pool
+    }
+
+    /// Pauses the pool — blocks new connection acquisition.
+    pub fn pause(&self) {
+        self.inner.server_pool.pause();
+    }
+
+    /// Resumes the pool — unblocks waiting clients.
+    pub fn resume(&self) {
+        self.inner.server_pool.resume();
+    }
+
+    /// Returns whether the pool is paused.
+    pub fn is_paused(&self) -> bool {
+        self.inner.server_pool.is_paused()
+    }
+
+    /// Bumps reconnect epoch and drains all idle connections.
+    /// Returns the new epoch value.
+    pub fn reconnect(&self) -> u64 {
+        let new_epoch = self.inner.server_pool.bump_epoch();
+        // Drain all idle connections — they have the old epoch
+        self.retain(|_, _| false);
+        new_epoch
+    }
+
+    /// Returns the current reconnect epoch.
+    pub fn reconnect_epoch(&self) -> u64 {
+        self.inner.server_pool.current_epoch()
     }
 }
 

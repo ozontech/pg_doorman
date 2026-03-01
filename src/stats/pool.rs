@@ -158,6 +158,9 @@ pub struct PoolStats {
 
     /// Average query processing time (microseconds)
     avg_query_time_microseconds: u64,
+
+    /// Whether the pool is paused (PAUSE command)
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +245,7 @@ impl PoolStats {
             avg_sent: 0,
             avg_xact_time_microsecons: 0,
             avg_query_time_microseconds: 0,
+            paused: false,
         }
     }
 
@@ -291,6 +295,7 @@ impl PoolStats {
             ("sv_login", DataType::Numeric),
             ("maxwait", DataType::Numeric),
             ("maxwait_us", DataType::Numeric),
+            ("paused", DataType::Text),
         ]
     }
 
@@ -358,6 +363,7 @@ impl PoolStats {
             Cow::Owned(self.sv_login.to_string()),
             Cow::Owned((self.maxwait / 1_000_000).to_string()),
             Cow::Owned((self.maxwait % 1_000_000).to_string()),
+            Cow::Borrowed(if self.paused { "1" } else { "0" }),
         ]
     }
 
@@ -466,6 +472,9 @@ impl PoolStats {
                     p99: xact_p99,
                 },
             );
+
+            // Load pause state
+            current.paused = pool.database.is_paused();
 
             // Load average statistics
             current.avg_xact_count = address.averages.xact_count.load(Ordering::Relaxed);

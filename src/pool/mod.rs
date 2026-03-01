@@ -5,10 +5,10 @@ use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 
 use crate::auth::auth_query::{AuthQueryCache, AuthQueryExecutor};
 use crate::config::{
@@ -771,6 +771,16 @@ pub struct ServerPool {
 
     /// Connect timeout for alive checks.
     connect_timeout: Duration,
+
+    /// Whether the pool is paused (PAUSE command).
+    paused: AtomicBool,
+
+    /// Reconnect epoch — incremented by RECONNECT command.
+    /// Connections with epoch < current are rejected in recycle().
+    reconnect_epoch: AtomicU64,
+
+    /// Notify to wake up clients blocked on PAUSE.
+    resume_notify: Notify,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -829,6 +839,9 @@ impl ServerPool {
             idle_timeout_ms,
             idle_check_timeout_ms,
             connect_timeout,
+            paused: AtomicBool::new(false),
+            reconnect_epoch: AtomicU64::new(0),
+            resume_notify: Notify::new(),
         }
     }
 
@@ -897,11 +910,49 @@ impl ServerPool {
         self.idle_timeout_ms
     }
 
+    /// Returns whether the pool is paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
+    }
+
+    /// Sets the pool as paused.
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::Release);
+    }
+
+    /// Resumes the pool and wakes all waiting clients.
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::Release);
+        self.resume_notify.notify_waiters();
+    }
+
+    /// Returns a future that completes when the pool is resumed.
+    pub fn resume_notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.resume_notify.notified()
+    }
+
+    /// Returns the current reconnect epoch.
+    pub fn current_epoch(&self) -> u64 {
+        self.reconnect_epoch.load(Ordering::Acquire)
+    }
+
+    /// Increments the reconnect epoch and returns the new value.
+    pub fn bump_epoch(&self) -> u64 {
+        self.reconnect_epoch.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     /// Checks if the connection can be recycled.
     /// Performs lifetime check and alive check for idle connections.
     pub async fn recycle(&self, conn: &mut Server, metrics: &Metrics) -> RecycleResult {
         if conn.is_bad() {
             return Err(RecycleError::StaticMessage("Bad connection"));
+        }
+
+        // RECONNECT epoch check: reject connections created before current epoch
+        if metrics.epoch < self.reconnect_epoch.load(Ordering::Acquire) {
+            return Err(RecycleError::StaticMessage(
+                "Connection outdated (RECONNECT)",
+            ));
         }
 
         // Check server_lifetime - applies to all connections, not just idle

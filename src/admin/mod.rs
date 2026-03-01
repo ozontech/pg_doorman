@@ -15,7 +15,7 @@ use crate::pool::ClientServerMap;
 
 #[cfg(not(windows))]
 use commands::upgrade;
-use commands::{reload, shutdown};
+use commands::{pause, reconnect, reload, resume, shutdown};
 #[cfg(target_os = "linux")]
 use show::show_sockets;
 use show::{
@@ -53,6 +53,18 @@ where
         "SHUTDOWN" => shutdown(stream).await,
         #[cfg(not(windows))]
         "UPGRADE" => upgrade(stream).await,
+        "PAUSE" => {
+            let db = query_parts.get(1).map(|s| s.to_string());
+            pause(stream, db).await
+        }
+        "RESUME" => {
+            let db = query_parts.get(1).map(|s| s.to_string());
+            resume(stream, db).await
+        }
+        "RECONNECT" => {
+            let db = query_parts.get(1).map(|s| s.to_string());
+            reconnect(stream, db).await
+        }
         "SHOW" => {
             if query_parts.len() != 2 {
                 error!("unsupported admin subcommand for SHOW: {query_parts:?}");

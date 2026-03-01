@@ -1,4 +1,4 @@
-//! Admin commands implementation (reload, shutdown).
+//! Admin commands implementation (reload, shutdown, pause, resume, reconnect).
 
 use bytes::{BufMut, BytesMut};
 use log::{error, info};
@@ -10,7 +10,7 @@ use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::ClientServerMap;
+use crate::pool::{get_all_pools, ClientServerMap};
 
 /// Reload the configuration file without restarting the process.
 pub async fn reload<T>(stream: &mut T, client_server_map: ClientServerMap) -> Result<(), Error>
@@ -90,5 +90,85 @@ where
     res.put_i32(5);
     res.put_u8(b'I');
 
+    write_all_half(stream, &res).await
+}
+
+/// Pause connection pools — blocks new backend connection acquisition.
+/// Active transactions continue to work.
+/// If `db` is Some, only pools for that database are paused.
+pub async fn pause<T>(stream: &mut T, db: Option<String>) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let pools = get_all_pools();
+    for (identifier, pool) in pools.iter() {
+        if let Some(ref db_name) = db {
+            if identifier.db != *db_name {
+                continue;
+            }
+        }
+        pool.database.pause();
+        info!("PAUSE: paused pool {}", identifier);
+    }
+
+    let mut res = BytesMut::new();
+    res.put(command_complete("PAUSE"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Resume connection pools — unblocks clients waiting due to PAUSE.
+/// If `db` is Some, only pools for that database are resumed.
+pub async fn resume<T>(stream: &mut T, db: Option<String>) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let pools = get_all_pools();
+    for (identifier, pool) in pools.iter() {
+        if let Some(ref db_name) = db {
+            if identifier.db != *db_name {
+                continue;
+            }
+        }
+        pool.database.resume();
+        info!("RESUME: resumed pool {}", identifier);
+    }
+
+    let mut res = BytesMut::new();
+    res.put(command_complete("RESUME"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Reconnect connection pools — bumps epoch and drains idle connections.
+/// Active connections are rejected when returned to the pool.
+/// If `db` is Some, only pools for that database are reconnected.
+pub async fn reconnect<T>(stream: &mut T, db: Option<String>) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let pools = get_all_pools();
+    for (identifier, pool) in pools.iter() {
+        if let Some(ref db_name) = db {
+            if identifier.db != *db_name {
+                continue;
+            }
+        }
+        let new_epoch = pool.database.reconnect();
+        info!(
+            "RECONNECT: reconnected pool {} (new epoch: {})",
+            identifier, new_epoch
+        );
+    }
+
+    let mut res = BytesMut::new();
+    res.put(command_complete("RECONNECT"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
     write_all_half(stream, &res).await
 }

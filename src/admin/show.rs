@@ -212,6 +212,9 @@ where
         "RELOAD",
         "SHUTDOWN",
         "UPGRADE",
+        "PAUSE [db]",
+        "RESUME [db]",
+        "RECONNECT [db]",
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));

@@ -154,6 +154,10 @@ pub async fn retain_connections() {
 
         // Replenish pools below min_pool_size
         for pool in &pool_refs {
+            // Don't replenish paused pools — no new connections during PAUSE
+            if pool.database.is_paused() {
+                continue;
+            }
             if let Some(min_pool_size) = pool.settings.user.min_pool_size {
                 let min = min_pool_size as usize;
                 let current_size = pool.database.status().size;
