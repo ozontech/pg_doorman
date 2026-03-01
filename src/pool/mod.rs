@@ -5,7 +5,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, Semaphore};
@@ -772,12 +772,8 @@ pub struct ServerPool {
     /// Connect timeout for alive checks.
     connect_timeout: Duration,
 
-    /// Whether the pool is paused (PAUSE command).
-    paused: AtomicBool,
-
-    /// Reconnect epoch — incremented by RECONNECT command.
-    /// Connections with epoch < current are rejected in recycle().
-    reconnect_epoch: AtomicU64,
+    /// Combined pool state: bit 32 = paused, bits 0-31 = reconnect epoch (u32).
+    pool_state: AtomicU64,
 
     /// Notify to wake up clients blocked on PAUSE.
     resume_notify: Notify,
@@ -839,8 +835,7 @@ impl ServerPool {
             idle_timeout_ms,
             idle_check_timeout_ms,
             connect_timeout,
-            paused: AtomicBool::new(false),
-            reconnect_epoch: AtomicU64::new(0),
+            pool_state: AtomicU64::new(0),
             resume_notify: Notify::new(),
         }
     }
@@ -910,19 +905,26 @@ impl ServerPool {
         self.idle_timeout_ms
     }
 
+    /// Bit flag for the paused state within `pool_state`.
+    const PAUSED_BIT: u64 = 1 << 32;
+    /// Mask for the reconnect epoch (lower 32 bits) within `pool_state`.
+    const EPOCH_MASK: u64 = 0xFFFF_FFFF;
+
     /// Returns whether the pool is paused.
     pub fn is_paused(&self) -> bool {
-        self.paused.load(Ordering::Acquire)
+        self.pool_state.load(Ordering::Acquire) & Self::PAUSED_BIT != 0
     }
 
     /// Sets the pool as paused.
     pub fn pause(&self) {
-        self.paused.store(true, Ordering::Release);
+        self.pool_state
+            .fetch_or(Self::PAUSED_BIT, Ordering::Release);
     }
 
     /// Resumes the pool and wakes all waiting clients.
     pub fn resume(&self) {
-        self.paused.store(false, Ordering::Release);
+        self.pool_state
+            .fetch_and(!Self::PAUSED_BIT, Ordering::Release);
         self.resume_notify.notify_waiters();
     }
 
@@ -932,13 +934,14 @@ impl ServerPool {
     }
 
     /// Returns the current reconnect epoch.
-    pub fn current_epoch(&self) -> u64 {
-        self.reconnect_epoch.load(Ordering::Acquire)
+    pub fn current_epoch(&self) -> u32 {
+        (self.pool_state.load(Ordering::Acquire) & Self::EPOCH_MASK) as u32
     }
 
     /// Increments the reconnect epoch and returns the new value.
-    pub fn bump_epoch(&self) -> u64 {
-        self.reconnect_epoch.fetch_add(1, Ordering::AcqRel) + 1
+    pub fn bump_epoch(&self) -> u32 {
+        let prev = self.pool_state.fetch_add(1, Ordering::AcqRel);
+        (prev as u32).wrapping_add(1)
     }
 
     /// Checks if the connection can be recycled.
@@ -949,7 +952,7 @@ impl ServerPool {
         }
 
         // RECONNECT epoch check: reject connections created before current epoch
-        if metrics.epoch < self.reconnect_epoch.load(Ordering::Acquire) {
+        if metrics.epoch < self.current_epoch() {
             return Err(RecycleError::StaticMessage(
                 "Connection outdated (RECONNECT)",
             ));

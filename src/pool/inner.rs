@@ -720,7 +720,7 @@ impl Pool {
 
     /// Bumps reconnect epoch and drains all idle connections.
     /// Returns the new epoch value.
-    pub fn reconnect(&self) -> u64 {
+    pub fn reconnect(&self) -> u32 {
         let new_epoch = self.inner.server_pool.bump_epoch();
         // Drain all idle connections — they have the old epoch
         self.retain(|_, _| false);
@@ -728,7 +728,7 @@ impl Pool {
     }
 
     /// Returns the current reconnect epoch.
-    pub fn reconnect_epoch(&self) -> u64 {
+    pub fn reconnect_epoch(&self) -> u32 {
         self.inner.server_pool.current_epoch()
     }
 }

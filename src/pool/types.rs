@@ -141,7 +141,7 @@ pub struct Metrics {
     pub idle_timeout_ms: u64,
     /// Reconnect epoch at which this connection was created.
     /// Connections with epoch < current pool epoch are rejected in recycle().
-    pub epoch: u64,
+    pub epoch: u32,
 }
 
 impl Metrics {
@@ -163,7 +163,7 @@ impl Metrics {
     /// Creates new Metrics with jitter applied to both lifetime and idle timeout.
     /// Applies ±20% random jitter to prevent mass connection closures
     /// when connections are created or become idle simultaneously.
-    pub fn new(base_lifetime_ms: u64, base_idle_timeout_ms: u64, epoch: u64) -> Self {
+    pub fn new(base_lifetime_ms: u64, base_idle_timeout_ms: u64, epoch: u32) -> Self {
         Self {
             created: clock::now(),
             recycled: None,
