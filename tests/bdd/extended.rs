@@ -1794,6 +1794,64 @@ pub async fn verify_backend_pid_different(
     );
 }
 
+#[then(regex = r#"^we verify backend_pid from session "([^"]+)" is same as "([^"]+)"$"#)]
+pub async fn verify_backend_pid_same(
+    world: &mut DoormanWorld,
+    session_name: String,
+    pid_name: String,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
+
+    let mut current_pid: Option<i32> = None;
+    for (msg_type, data) in messages {
+        match msg_type {
+            'D' => {
+                if data.len() >= 2 {
+                    let field_count = i16::from_be_bytes([data[0], data[1]]);
+                    if field_count >= 1 {
+                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
+                        if field_len > 0 {
+                            let value_bytes = &data[6..6 + field_len as usize];
+                            let value_str = String::from_utf8_lossy(value_bytes);
+                            current_pid = Some(
+                                value_str
+                                    .parse()
+                                    .expect("Failed to parse backend_pid as integer"),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+            'E' => {
+                panic!(
+                    "Error received from session '{}': {:?}",
+                    session_name,
+                    String::from_utf8_lossy(data)
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let current = current_pid
+        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
+
+    let stored = world
+        .named_backend_pids
+        .get(&(session_name.clone(), pid_name.clone()))
+        .unwrap_or_else(|| panic!("No stored backend_pid with name '{}'", pid_name));
+
+    assert_eq!(
+        current, *stored,
+        "Backend PID should NOT have changed but was {} (stored '{}' = {})",
+        current, pid_name, stored
+    );
+}
+
 #[when(regex = r#"^we sleep for (\d+) milliseconds$"#)]
 pub async fn sleep_for_milliseconds(_world: &mut DoormanWorld, ms: String) {
     let duration = ms.parse::<u64>().expect("Invalid sleep duration");
