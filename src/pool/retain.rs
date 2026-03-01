@@ -14,17 +14,18 @@ impl ConnectionPool {
     /// If `max` > 0, at most `max` connections will be closed across all pools,
     /// prioritizing the oldest connections first.
     pub fn retain_pool_connections(&self, count: Arc<AtomicUsize>, max: usize) -> usize {
-        let idle_timeout_ms = self.settings.idle_timeout_ms;
-
         // Closure to determine if a connection should be closed
-        // Uses per-connection lifetime with jitter to prevent mass closures
+        // Uses per-connection timeouts with jitter to prevent mass closures
         let should_close = |_: &crate::server::Server, metrics: &crate::pool::Metrics| -> bool {
-            if let Some(v) = metrics.recycled {
-                if (v.elapsed().as_millis() as u64) > idle_timeout_ms {
-                    return true;
+            // Check idle timeout (per-connection with jitter, 0 = disabled)
+            if metrics.idle_timeout_ms > 0 {
+                if let Some(v) = metrics.recycled {
+                    if (v.elapsed().as_millis() as u64) > metrics.idle_timeout_ms {
+                        return true;
+                    }
                 }
             }
-            // Use individual connection lifetime (with jitter applied)
+            // Check server lifetime (per-connection with jitter, 0 = disabled)
             if metrics.lifetime_ms > 0 && (metrics.age().as_millis() as u64) > metrics.lifetime_ms {
                 return true;
             }
@@ -50,12 +51,12 @@ impl ConnectionPool {
 
         if closed > 0 {
             info!(
-                "[pool: {}][user: {}] closed {} idle connection{} (idle_timeout: {}ms, base_lifetime: {}ms±20%, oldest_first: {})",
+                "[pool: {}][user: {}] closed {} idle connection{} (base_idle_timeout: {}ms±20%, base_lifetime: {}ms±20%, oldest_first: {})",
                 self.address.pool_name,
                 self.address.username,
                 closed,
                 if closed == 1 { "" } else { "s" },
-                idle_timeout_ms,
+                self.settings.idle_timeout_ms,
                 self.settings.life_time_ms,
                 max > 0,
             );

@@ -14,6 +14,10 @@
 
 - **`server_lifetime` default changed from 5 minutes to 20 minutes**: The previous default of 5 minutes was shorter than `idle_timeout` (10 minutes), which meant `idle_timeout` could never trigger — connections were always killed by `server_lifetime` first. Changed to 20 minutes so that `idle_timeout` (10 min) handles idle cleanup while `server_lifetime` (20 min) rotates long-lived connections. Note: `idle_timeout` only applies to connections that have been used at least once — prewarmed/replenished connections that were never checked out by a client are not subject to `idle_timeout` and will only be closed when `server_lifetime` expires.
 
+- **`idle_timeout = 0` did not disable idle timeout**: Setting `idle_timeout` to `0` was supposed to disable idle connection cleanup (consistent with PgBouncer's `server_idle_timeout = 0` semantics and our own `server_lifetime = 0` behavior). Instead, it closed connections after ~1ms of being idle. Fixed by adding an `idle_timeout_ms > 0` guard before the elapsed time check.
+
+- **`idle_timeout` had no jitter — synchronized mass closures**: Unlike `server_lifetime` which applies ±20% per-connection jitter to prevent thundering herd, `idle_timeout` used a single pool-wide value. When many connections became idle simultaneously (e.g., after a traffic burst), they all expired at the exact same moment, causing mass closures in one retain cycle. Now `idle_timeout` applies the same ±20% per-connection jitter as `server_lifetime`.
+
 ### 3.3.1 <small>Feb 26, 2026</small>
 
 **Bug Fixes:**

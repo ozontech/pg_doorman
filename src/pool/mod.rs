@@ -364,6 +364,9 @@ impl ConnectionPool {
                     pool_config
                         .server_lifetime
                         .unwrap_or(config.general.server_lifetime.as_millis()),
+                    pool_config
+                        .idle_timeout
+                        .unwrap_or(config.general.idle_timeout.as_millis()),
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
                 );
@@ -513,6 +516,9 @@ impl ConnectionPool {
                             pool_config
                                 .server_lifetime
                                 .unwrap_or(config.general.server_lifetime.as_millis()),
+                            pool_config
+                                .idle_timeout
+                                .unwrap_or(config.general.idle_timeout.as_millis()),
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
                         );
@@ -756,6 +762,10 @@ pub struct ServerPool {
     /// Server lifetime in milliseconds (0 = unlimited).
     lifetime_ms: u64,
 
+    /// Idle timeout in milliseconds (0 = disabled).
+    /// Connections idle longer than this are closed by retain.
+    idle_timeout_ms: u64,
+
     /// Time after which idle connections should be checked before reuse (0 = disabled).
     idle_check_timeout_ms: u64,
 
@@ -800,6 +810,7 @@ impl ServerPool {
         application_name: String,
         max_concurrent_creates: usize,
         lifetime_ms: u64,
+        idle_timeout_ms: u64,
         idle_check_timeout_ms: u64,
         connect_timeout: Duration,
     ) -> ServerPool {
@@ -815,6 +826,7 @@ impl ServerPool {
             connection_counter: AtomicU64::new(0),
             application_name,
             lifetime_ms,
+            idle_timeout_ms,
             idle_check_timeout_ms,
             connect_timeout,
         }
@@ -878,6 +890,11 @@ impl ServerPool {
     /// Returns the base lifetime in milliseconds for connections in this pool.
     pub fn lifetime_ms(&self) -> u64 {
         self.lifetime_ms
+    }
+
+    /// Returns the base idle timeout in milliseconds for connections in this pool.
+    pub fn idle_timeout_ms(&self) -> u64 {
+        self.idle_timeout_ms
     }
 
     /// Checks if the connection can be recycled.
@@ -1035,6 +1052,9 @@ pub fn create_dynamic_pool(
         pool_config
             .server_lifetime
             .unwrap_or(config.general.server_lifetime.as_millis()),
+        pool_config
+            .idle_timeout
+            .unwrap_or(config.general.idle_timeout.as_millis()),
         config.general.server_idle_check_timeout.as_millis(),
         config.general.connect_timeout.as_std(),
     );
