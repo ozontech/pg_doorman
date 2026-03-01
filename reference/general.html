@@ -256,7 +256,7 @@ pg_doorman generate --no-comments --output config.yaml
   # connect_timeout: "3s"      # human-readable
   # connect_timeout: "3000ms"  # explicit milliseconds
   connect_timeout: "3s"
-  idle_timeout: "5m"         # 5 minutes
+  idle_timeout: "10m"        # 10 minutes
   server_lifetime: "1h"      # 1 hour
 </code></pre>
 <h3 id="byte-size-format"><a class="header" href="#byte-size-format">Byte Size Format</a></h3>
@@ -378,10 +378,10 @@ Modern tokio versions handle this well by default, so this parameter is optional
 <p>Default: <code>5000 (5 sec)</code>.</p>
 <h3 id="idle_timeout"><a class="header" href="#idle_timeout">idle_timeout</a></h3>
 <p>Server idle timeout in milliseconds.</p>
-<p>Default: <code>300000000 (5000 min)</code>.</p>
+<p>Default: <code>600000 (10 min)</code>.</p>
 <h3 id="server_lifetime"><a class="header" href="#server_lifetime">server_lifetime</a></h3>
 <p>Server lifetime in milliseconds.</p>
-<p>Default: <code>300000 (5 min)</code>.</p>
+<p>Default: <code>1200000 (20 min)</code>.</p>
 <h3 id="retain_connections_time"><a class="header" href="#retain_connections_time">retain_connections_time</a></h3>
 <p>Interval for checking and closing idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code>.
 The retain task runs periodically at this interval to clean up expired connections.</p>

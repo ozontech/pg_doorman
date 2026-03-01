@@ -272,6 +272,9 @@ password: "strong_password"
 <h3 id="default_pool_size"><a class="header" href="#default_pool_size">default_pool_size</a></h3>
 <p>Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode).</p>
 <p>Default: <code>40</code>.</p>
+<h3 id="default_min_pool_size"><a class="header" href="#default_min_pool_size">default_min_pool_size</a></h3>
+<p>Minimum number of backend connections to maintain per dynamic user pool in passthrough mode. Connections are prewarmed when the pool is first created and replenished by the retain cycle. Set to <code>0</code> to disable (default). Note: pools with <code>default_min_pool_size &gt; 0</code> are never garbage-collected, and total backend connections scale as <code>active_users × default_min_pool_size</code>.</p>
+<p>Default: <code>0</code>.</p>
 <h3 id="cache_ttl"><a class="header" href="#cache_ttl">cache_ttl</a></h3>
 <p>Maximum cache age for successfully fetched credentials. Accepts duration strings like <code>"1h"</code>, <code>"30m"</code>, <code>"300s"</code>.</p>
 <p>Default: <code>"1h"</code>.</p>
