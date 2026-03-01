@@ -206,7 +206,7 @@ impl General {
         0
     }
     pub fn default_server_lifetime() -> Duration {
-        Duration::from_mins(5) // 5 min
+        Duration::from_mins(20) // 20 min
     }
 
     pub fn default_retain_connections_time() -> Duration {

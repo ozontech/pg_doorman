@@ -493,8 +493,8 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         fi,
         "server_lifetime",
         g.server_lifetime.as_millis(),
-        "5m",
-        "300000 ms",
+        "20m",
+        "1200000 ms",
     );
 
     write_field_desc(w, fi, "general", "retain_connections_time");

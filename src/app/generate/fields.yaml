@@ -311,7 +311,7 @@ fields:
         en: "Server lifetime. Only applied to idle connections."
         ru: "Время жизни серверного соединения. Применяется только к простаивающим соединениям."
       doc: "Server lifetime in milliseconds."
-      default: "300000 (5 min)"
+      default: "1200000 (20 min)"
 
     retain_connections_time:
       config:

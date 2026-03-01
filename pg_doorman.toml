@@ -50,8 +50,8 @@ query_wait_timeout = 5000
 idle_timeout = 600000
 
 # Server lifetime. Only applied to idle connections.
-# Default: 300000 (300000 ms)
-server_lifetime = 300000
+# Default: 1200000 (1200000 ms)
+server_lifetime = 1200000
 
 # Interval for checking and closing idle connections.
 # Default: 30000 (30000 ms)

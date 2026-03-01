@@ -12,6 +12,8 @@
 
 - **`retain_connections_max` doc comment incorrectly stated default as `0` (unlimited)**: The actual default is `3`.
 
+- **`server_lifetime` default changed from 5 minutes to 20 minutes**: The previous default of 5 minutes was shorter than `idle_timeout` (10 minutes), which meant `idle_timeout` could never trigger — connections were always killed by `server_lifetime` first. Changed to 20 minutes so that `idle_timeout` (10 min) handles idle cleanup while `server_lifetime` (20 min) rotates long-lived connections.
+
 ### 3.3.1 <small>Feb 26, 2026</small>
 
 **Bug Fixes:**

@@ -81,9 +81,9 @@ general:
   idle_timeout: "10m"
 
   # Server lifetime. Only applied to idle connections.
-  # Supports human-readable format: "5m", "300000ms", or 300000 (milliseconds)
-  # Default: "5m" (300000 ms)
-  server_lifetime: "5m"
+  # Supports human-readable format: "20m", "1200000ms", or 1200000 (milliseconds)
+  # Default: "20m" (1200000 ms)
+  server_lifetime: "20m"
 
   # Interval for checking and closing idle connections.
   # Supports human-readable format: "30s", "30000ms", or 30000 (milliseconds)
