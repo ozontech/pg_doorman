@@ -131,13 +131,15 @@ Feature: Pool-level timeout overrides for auth_query dynamic pools and min_pool_
     Then we verify backend_pid from session "one" is different from "first_pid"
 
   @min-pool-size-with-pool-lifetime
-  Scenario: min_pool_size maintained after pool-level server_lifetime expiry
-    # Pool-level server_lifetime=1000ms (general=60s), min_pool_size=2.
-    # We verify that:
-    # 1. Prewarm creates min_pool_size connections
-    # 2. Pool-level server_lifetime causes them to expire (not general=60s)
-    # 3. Retain replenishes back to min_pool_size
-    # 4. Backend PID changes — proving connections were actually replaced
+  Scenario: Pool scales to pool_size under load, then shrinks to min_pool_size after expiry
+    # pool_size=5, min_pool_size=2, pool-level server_lifetime=1000ms (general=60s).
+    # Steps:
+    # 1. Open 5 concurrent transactions (BEGIN) → forces pool to scale to pool_size=5
+    # 2. Record all 5 backend PIDs
+    # 3. COMMIT all → release backends to idle
+    # 4. Wait for pool-level server_lifetime (1000ms) to expire + retain cycles
+    # 5. Verify pool shrank to min_pool_size=2 (not 0, not 5)
+    # 6. Verify all backends were replaced (new PIDs ≠ original PIDs)
     Given PostgreSQL started with pg_hba.conf:
       """
       local all all trust
@@ -167,28 +169,43 @@ Feature: Pool-level timeout overrides for auth_query dynamic pools and min_pool_
       pool_size = 5
       min_pool_size = 2
       """
-    # Get initial backend PID right after prewarm
-    When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "" with query "select pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
-    Then we remember backend_pid from session "one" as "initial_pid"
-    # Verify min_pool_size connections exist
+    # Step 1: Open 5 sessions and start transactions to pin all backends
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we create session "s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we create session "s3" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we create session "s4" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we create session "s5" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "s1"
+    And we send SimpleQuery "BEGIN" to session "s2"
+    And we send SimpleQuery "BEGIN" to session "s3"
+    And we send SimpleQuery "BEGIN" to session "s4"
+    And we send SimpleQuery "BEGIN" to session "s5"
+    # Step 2: Record all 5 backend PIDs (each session pinned to its own backend)
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "pid1"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s2" and store backend_pid as "pid2"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s3" and store backend_pid as "pid3"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s4" and store backend_pid as "pid4"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s5" and store backend_pid as "pid5"
+    # Verify all 5 server connections exist
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
-    Then admin session "admin1" row count should be greater than or equal to 2
-    # Wait for pool-level server_lifetime (1000ms ±20%) to expire
-    # and retain to close + replenish. 3s is enough for multiple cycles.
-    When we sleep for 3000 milliseconds
-    # Connections should be replenished to min_pool_size
+    Then admin session "admin1" row count should be 5
+    # Step 3: Commit all transactions — backends return to idle
+    When we send SimpleQuery "COMMIT" to session "s1"
+    And we send SimpleQuery "COMMIT" to session "s2"
+    And we send SimpleQuery "COMMIT" to session "s3"
+    And we send SimpleQuery "COMMIT" to session "s4"
+    And we send SimpleQuery "COMMIT" to session "s5"
+    # Step 4: Wait for pool-level server_lifetime (1000ms ±20%) + retain cycles
+    When we sleep for 4000 milliseconds
+    # Step 5: Pool should shrink to min_pool_size=2 (expired connections closed,
+    # but retain replenishes back to min_pool_size)
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
-    Then admin session "admin1" row count should be greater than or equal to 2
-    # Verify backend was replaced: the original connection expired
-    # and a new one was created by replenish, so PID must be different.
+    Then admin session "admin1" row count should be 2
+    # Step 6: Verify backends were replaced — new PIDs must differ from originals.
     # This proves pool-level server_lifetime=1000ms was applied (not general=60s).
-    When we send Parse "" with query "select pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
-    Then we verify backend_pid from session "one" is different from "initial_pid"
+    # Each session stored its original PID, now query again and compare.
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "new_pid1"
+    Then named backend_pid "new_pid1" from session "s1" is different from "pid1"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "s2" and store backend_pid as "new_pid2"
+    Then named backend_pid "new_pid2" from session "s2" is different from "pid2"
