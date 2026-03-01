@@ -939,9 +939,22 @@ impl ServerPool {
     }
 
     /// Increments the reconnect epoch and returns the new value.
+    /// Uses CAS loop to modify only the lower 32 bits, preventing
+    /// epoch overflow from corrupting PAUSED_BIT at bit 32.
     pub fn bump_epoch(&self) -> u32 {
-        let prev = self.pool_state.fetch_add(1, Ordering::AcqRel);
-        (prev as u32).wrapping_add(1)
+        loop {
+            let old = self.pool_state.load(Ordering::Acquire);
+            let old_epoch = (old & Self::EPOCH_MASK) as u32;
+            let new_epoch = old_epoch.wrapping_add(1);
+            let new = (old & !Self::EPOCH_MASK) | (new_epoch as u64);
+            if self
+                .pool_state
+                .compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return new_epoch;
+            }
+        }
     }
 
     /// Checks if the connection can be recycled.

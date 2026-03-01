@@ -135,3 +135,64 @@ Feature: Admin PAUSE, RESUME, RECONNECT commands
     Then admin session "admin1" response should contain "PAUSE"
     And admin session "admin1" response should contain "RESUME"
     And admin session "admin1" response should contain "RECONNECT"
+
+  @show-pools-paused-column
+  Scenario: SHOW POOLS reflects paused state
+    When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
+    # Initially pool is not paused
+    And we execute "SHOW POOLS" on admin session "admin1" and store response
+    Then admin session "admin1" column "paused" should be between 0 and 0
+    # PAUSE — paused column becomes 1
+    When we execute "PAUSE example_db" on admin session "admin1" and store response
+    And we execute "SHOW POOLS" on admin session "admin1" and store response
+    Then admin session "admin1" column "paused" should be between 1 and 1
+    # RESUME — paused column returns to 0
+    When we execute "RESUME example_db" on admin session "admin1" and store response
+    And we execute "SHOW POOLS" on admin session "admin1" and store response
+    Then admin session "admin1" column "paused" should be between 0 and 0
+
+  @global-pause-resume
+  Scenario: Global PAUSE and RESUME without database argument
+    # Establish a working connection first
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s1" and store backend_pid
+    # Global PAUSE via admin
+    When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
+    And we execute "PAUSE" on admin session "admin1" and store response
+    Then admin session "admin1" response should contain "PAUSE"
+    # Verify paused state via SHOW POOLS
+    When we execute "SHOW POOLS" on admin session "admin1" and store response
+    Then admin session "admin1" column "paused" should be between 1 and 1
+    # New query on a different session should timeout (pool is paused)
+    When we create session "s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s2" expecting error
+    Then session "s2" should receive error containing "timeout"
+    # Global RESUME
+    When we execute "RESUME" on admin session "admin1" and store response
+    Then admin session "admin1" response should contain "RESUME"
+    # Verify unpaused state via SHOW POOLS
+    When we execute "SHOW POOLS" on admin session "admin1" and store response
+    Then admin session "admin1" column "paused" should be between 0 and 0
+    # New query should succeed after resume
+    When we create session "s3" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s3" and store backend_pid
+
+  @global-reconnect
+  Scenario: Global RECONNECT without database argument rotates connections
+    # Establish a connection and get backend PID
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
+    And we send Bind "" to "" with params "" to session "s1"
+    And we send Execute "" to session "s1"
+    And we send Sync to session "s1"
+    Then we remember backend_pid from session "s1" as "pid_before"
+    # Global RECONNECT via admin
+    When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
+    And we execute "RECONNECT" on admin session "admin1" and store response
+    Then admin session "admin1" response should contain "RECONNECT"
+    # Query again — should get a new backend PID
+    When we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
+    And we send Bind "" to "" with params "" to session "s1"
+    And we send Execute "" to session "s1"
+    And we send Sync to session "s1"
+    Then we verify backend_pid from session "s1" is different from "pid_before"
