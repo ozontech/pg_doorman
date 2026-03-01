@@ -1875,6 +1875,26 @@ pub async fn send_simple_query_to_session_without_waiting(
     // Don't wait for response - just send the query
 }
 
+#[then(regex = r#"^we read SimpleQuery response from session "([^"]+)" within (\d+)ms$"#)]
+pub async fn read_simple_query_response_within_timeout(
+    world: &mut DoormanWorld,
+    session_name: String,
+    timeout_ms: u64,
+) {
+    let conn = world
+        .named_sessions
+        .get_mut(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    let duration = std::time::Duration::from_millis(timeout_ms);
+    let messages = tokio::time::timeout(duration, conn.read_all_messages_until_ready())
+        .await
+        .unwrap_or_else(|_| panic!("Response not received within {}ms", timeout_ms))
+        .expect("Failed to read messages");
+
+    world.session_messages.insert(session_name, messages);
+}
+
 #[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" expecting error$"#)]
 pub async fn send_simple_query_to_session_expecting_error(
     world: &mut DoormanWorld,

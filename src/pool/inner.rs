@@ -197,16 +197,19 @@ impl Pool {
             self.inner.users.fetch_sub(1, Ordering::Relaxed);
         }
 
-        // PAUSE check: wait for resume or timeout
+        // PAUSE check: wait for resume or timeout.
+        // IMPORTANT: `resume_notified()` must be called BEFORE `is_paused()` to avoid
+        // a race condition where RESUME fires between the two calls and the notification
+        // is lost, causing the client to wait until query_wait_timeout (or forever).
+        let resume_notify = self.inner.server_pool.resume_notified();
         if self.inner.server_pool.is_paused() {
-            let notify = self.inner.server_pool.resume_notified();
             match timeouts.wait {
                 Some(duration) => {
-                    if tokio::time::timeout(duration, notify).await.is_err() {
+                    if tokio::time::timeout(duration, resume_notify).await.is_err() {
                         return Err(PoolError::Timeout(TimeoutType::Wait));
                     }
                 }
-                None => notify.await,
+                None => resume_notify.await,
             }
         }
 
