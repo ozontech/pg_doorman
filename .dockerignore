@@ -1,0 +1,22 @@
+# Exclude everything by default
+*
+
+# Cargo manifest & lockfile
+!Cargo.toml
+!Cargo.lock
+
+# Rust toolchain
+!rust-toolchain.toml
+
+# Source code
+!src/
+!src/**
+
+# Patched crates ([replace] in Cargo.toml)
+!patches/
+!patches/**
+
+# Cargo requires [[bench]] and [[test]] sources to exist at manifest parse time
+!benches/
+!benches/**
+!tests/bdd/main.rs
