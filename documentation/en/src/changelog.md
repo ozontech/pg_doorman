@@ -1,5 +1,17 @@
 # Changelog
 
+### 3.3.2 <small>Mar 1, 2026</small>
+
+**Bug Fixes:**
+
+- **Pool-level `server_lifetime` and `idle_timeout` overrides ignored**: Pool-level overrides for `server_lifetime` and `idle_timeout` were silently ignored — the general (global) values were always used instead. Fixed in 6 places across 3 pool creation contexts (static pools, auth_query shared pools, dynamic pools). Now `pool.server_lifetime` and `pool.idle_timeout` correctly override the general settings when specified.
+
+- **`idle_timeout` default was 83 hours instead of 10 minutes**: The default `idle_timeout` was set to 300,000,000ms (83 hours), effectively disabling idle connection cleanup. Idle server connections could accumulate indefinitely. Changed default to 600,000ms (10 minutes).
+
+- **`retain_connections_max` quota exhaustion causing unlimited closure**: When `retain_connections_max > 0` and the global counter reached the limit, the remaining quota became `0` via `saturating_sub`. Since `0` means "unlimited" in `retain_oldest_first()`, pools processed after quota exhaustion lost ALL idle connections in a single retain cycle instead of none. With non-deterministic HashMap iteration order, this bug manifested as random pools losing all connections. Fixed by adding an early return when the quota is exhausted.
+
+- **`retain_connections_max` doc comment incorrectly stated default as `0` (unlimited)**: The actual default is `3`.
+
 ### 3.3.1 <small>Feb 26, 2026</small>
 
 **Bug Fixes:**
