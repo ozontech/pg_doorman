@@ -132,8 +132,12 @@ Feature: Pool-level timeout overrides for auth_query dynamic pools and min_pool_
 
   @min-pool-size-with-pool-lifetime
   Scenario: min_pool_size maintained after pool-level server_lifetime expiry
-    # Pool-level server_lifetime=1000ms, min_pool_size=2.
-    # After connections expire, retain should replenish to min_pool_size.
+    # Pool-level server_lifetime=1000ms (general=60s), min_pool_size=2.
+    # We verify that:
+    # 1. Prewarm creates min_pool_size connections
+    # 2. Pool-level server_lifetime causes them to expire (not general=60s)
+    # 3. Retain replenishes back to min_pool_size
+    # 4. Backend PID changes — proving connections were actually replaced
     Given PostgreSQL started with pg_hba.conf:
       """
       local all all trust
@@ -163,14 +167,28 @@ Feature: Pool-level timeout overrides for auth_query dynamic pools and min_pool_
       pool_size = 5
       min_pool_size = 2
       """
-    # Wait for prewarm + retain cycle to bring pool up to min_pool_size
-    When we sleep for 2000 milliseconds
+    # Get initial backend PID right after prewarm
+    When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send Parse "" with query "select pg_backend_pid()" to session "one"
+    And we send Bind "" to "" with params "" to session "one"
+    And we send Execute "" to session "one"
+    And we send Sync to session "one"
+    Then we remember backend_pid from session "one" as "initial_pid"
+    # Verify min_pool_size connections exist
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
     Then admin session "admin1" row count should be greater than or equal to 2
-    # Wait for pool-level server_lifetime (1000ms ±20% jitter) to expire
-    # and retain to close + replenish. 4s gives enough time.
-    When we sleep for 4000 milliseconds
-    # Connections should be replenished to min_pool_size despite expiry
+    # Wait for pool-level server_lifetime (1000ms ±20%) to expire
+    # and retain to close + replenish. 3s is enough for multiple cycles.
+    When we sleep for 3000 milliseconds
+    # Connections should be replenished to min_pool_size
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
     Then admin session "admin1" row count should be greater than or equal to 2
+    # Verify backend was replaced: the original connection expired
+    # and a new one was created by replenish, so PID must be different.
+    # This proves pool-level server_lifetime=1000ms was applied (not general=60s).
+    When we send Parse "" with query "select pg_backend_pid()" to session "one"
+    And we send Bind "" to "" with params "" to session "one"
+    And we send Execute "" to session "one"
+    And we send Sync to session "one"
+    Then we verify backend_pid from session "one" is different from "initial_pid"
