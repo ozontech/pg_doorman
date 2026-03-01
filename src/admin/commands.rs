@@ -10,7 +10,7 @@ use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::{get_all_pools, ClientServerMap};
+use crate::pool::{get_all_pools, ClientServerMap, PoolMap};
 
 /// Reload the configuration file without restarting the process.
 pub async fn reload<T>(stream: &mut T, client_server_map: ClientServerMap) -> Result<(), Error>
@@ -93,6 +93,60 @@ where
     write_all_half(stream, &res).await
 }
 
+/// Send an ERROR-severity response (non-fatal — keeps the admin session open).
+async fn admin_error_response<T>(stream: &mut T, message: &str, code: &str) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let mut error = BytesMut::new();
+    error.put_u8(b'S');
+    error.put_slice(b"ERROR\0");
+    error.put_u8(b'V');
+    error.put_slice(b"ERROR\0");
+    error.put_u8(b'C');
+    error.put_slice(format!("{code}\0").as_bytes());
+    error.put_u8(b'M');
+    error.put_slice(format!("{message}\0").as_bytes());
+    error.put_u8(0);
+
+    let mut res = BytesMut::new();
+    res.put_u8(b'E');
+    res.put_i32(error.len() as i32 + 4);
+    res.put(error);
+
+    // ReadyForQuery — session stays open
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+
+    write_all_half(stream, &res).await
+}
+
+/// Check that the specified database has at least one pool.
+/// Returns `Ok(true)` if pools exist (or no db filter was given).
+/// Returns `Ok(false)` after sending an error response if db was specified but no pools matched.
+async fn check_db_has_pools<T>(
+    stream: &mut T,
+    db: &Option<String>,
+    pools: &PoolMap,
+) -> Result<bool, Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    if let Some(ref db_name) = db {
+        if !pools.keys().any(|id| id.db == *db_name) {
+            admin_error_response(
+                stream,
+                &format!("No pool for database \"{}\"", db_name),
+                "3D000",
+            )
+            .await?;
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Pause connection pools — blocks new backend connection acquisition.
 /// Active transactions continue to work.
 /// If `db` is Some, only pools for that database are paused.
@@ -101,6 +155,9 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let pools = get_all_pools();
+    if !check_db_has_pools(stream, &db, &pools).await? {
+        return Ok(());
+    }
     for (identifier, pool) in pools.iter() {
         if let Some(ref db_name) = db {
             if identifier.db != *db_name {
@@ -126,6 +183,9 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let pools = get_all_pools();
+    if !check_db_has_pools(stream, &db, &pools).await? {
+        return Ok(());
+    }
     for (identifier, pool) in pools.iter() {
         if let Some(ref db_name) = db {
             if identifier.db != *db_name {
@@ -152,6 +212,9 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let pools = get_all_pools();
+    if !check_db_has_pools(stream, &db, &pools).await? {
+        return Ok(());
+    }
     for (identifier, pool) in pools.iter() {
         if let Some(ref db_name) = db {
             if identifier.db != *db_name {

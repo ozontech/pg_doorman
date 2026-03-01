@@ -584,7 +584,7 @@ The following table describes behavior in edge cases for PAUSE, RESUME, and RECO
 | **PAUSE an already paused pool** | No-op (idempotent). No error is returned. |
 | **RESUME a non-paused pool** | No-op (idempotent). No error is returned. |
 | **RECONNECT a paused pool** | Works: idle connections are drained and epoch is bumped. When RESUME is issued, new connections will be created with the new epoch. |
-| **PAUSE/RESUME/RECONNECT with nonexistent database** | Silent success — no pools are matched, no error is returned. This is consistent with PgBouncer behavior. |
+| **PAUSE/RESUME/RECONNECT with nonexistent database** | Returns an error: `No pool for database "xxx"`. Without a database argument, all pools are affected (no error even if there are no pools). |
 | **`query_wait_timeout` during PAUSE** | Clients waiting for a connection receive a timeout error, as expected. The pool remains paused. |
 | **RELOAD during PAUSE** | RELOAD recreates pools from configuration, so pause state is lost. This is expected — new configuration means new pools. |
 | **GC of paused dynamic pools** | Paused dynamic pools are protected from garbage collection, even if they have 0 connections. |

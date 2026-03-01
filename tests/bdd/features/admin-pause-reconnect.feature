@@ -116,11 +116,15 @@ Feature: Admin PAUSE, RESUME, RECONNECT commands
     And we send SimpleQuery "SELECT 1" to session "s1" and store backend_pid
 
   @pause-nonexistent-db
-  Scenario: PAUSE nonexistent database is a silent no-op
+  Scenario: PAUSE/RESUME/RECONNECT nonexistent database returns error
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
-    And we execute "PAUSE nonexistent_db" on admin session "admin1" and store response
-    Then admin session "admin1" response should contain "PAUSE"
-    # Pool should still be working normally
+    When we execute "PAUSE nonexistent_db" on admin session "admin1" and store response
+    Then admin session "admin1" response should contain "No pool for database"
+    When we execute "RESUME nonexistent_db" on admin session "admin1" and store response
+    Then admin session "admin1" response should contain "No pool for database"
+    When we execute "RECONNECT nonexistent_db" on admin session "admin1" and store response
+    Then admin session "admin1" response should contain "No pool for database"
+    # Existing pools should still be working normally
     When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "SELECT 1" to session "s1" and store backend_pid
 
