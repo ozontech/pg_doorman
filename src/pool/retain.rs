@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use log::{info, warn};
+use rand::seq::SliceRandom;
 
 use crate::config::get_config;
 
@@ -14,17 +15,18 @@ impl ConnectionPool {
     /// If `max` > 0, at most `max` connections will be closed across all pools,
     /// prioritizing the oldest connections first.
     pub fn retain_pool_connections(&self, count: Arc<AtomicUsize>, max: usize) -> usize {
-        let idle_timeout_ms = self.settings.idle_timeout_ms;
-
         // Closure to determine if a connection should be closed
-        // Uses per-connection lifetime with jitter to prevent mass closures
+        // Uses per-connection timeouts with jitter to prevent mass closures
         let should_close = |_: &crate::server::Server, metrics: &crate::pool::Metrics| -> bool {
-            if let Some(v) = metrics.recycled {
-                if (v.elapsed().as_millis() as u64) > idle_timeout_ms {
-                    return true;
+            // Check idle timeout (per-connection with jitter, 0 = disabled)
+            if metrics.idle_timeout_ms > 0 {
+                if let Some(v) = metrics.recycled {
+                    if (v.elapsed().as_millis() as u64) > metrics.idle_timeout_ms {
+                        return true;
+                    }
                 }
             }
-            // Use individual connection lifetime (with jitter applied)
+            // Check server lifetime (per-connection with jitter, 0 = disabled)
             if metrics.lifetime_ms > 0 && (metrics.age().as_millis() as u64) > metrics.lifetime_ms {
                 return true;
             }
@@ -33,24 +35,29 @@ impl ConnectionPool {
 
         // Calculate remaining quota for this pool
         let current_count = count.load(Ordering::Relaxed);
-        let remaining = if max > 0 {
-            max.saturating_sub(current_count)
+        if max > 0 && current_count >= max {
+            return 0; // Quota exhausted, skip this pool
+        }
+        let max_to_close = if max > 0 {
+            max - current_count
         } else {
             0 // 0 means unlimited
         };
 
         // Use retain_oldest_first which sorts by age when max > 0
-        let closed = self.database.retain_oldest_first(should_close, remaining);
+        let closed = self
+            .database
+            .retain_oldest_first(should_close, max_to_close);
         count.fetch_add(closed, Ordering::Relaxed);
 
         if closed > 0 {
             info!(
-                "[pool: {}][user: {}] closed {} idle connection{} (idle_timeout: {}ms, base_lifetime: {}ms±20%, oldest_first: {})",
+                "[pool: {}][user: {}] closed {} idle connection{} (base_idle_timeout: {}ms±20%, base_lifetime: {}ms±20%, oldest_first: {})",
                 self.address.pool_name,
                 self.address.username,
                 closed,
                 if closed == 1 { "" } else { "s" },
-                idle_timeout_ms,
+                self.settings.idle_timeout_ms,
                 self.settings.life_time_ms,
                 max > 0,
             );
@@ -129,13 +136,24 @@ pub async fn retain_connections() {
 
     loop {
         interval.tick().await;
-        for (_, pool) in get_all_pools().iter() {
+
+        // Use a single snapshot for both retain and replenish phases
+        // to avoid inconsistency if POOLS is atomically updated between them.
+        let pools = get_all_pools();
+
+        // Shuffle pool iteration order for fair retain_connections_max distribution.
+        // HashMap iteration order is deterministic within a process (fixed RandomState seed),
+        // so without shuffling the same pool always gets the entire quota.
+        let mut pool_refs: Vec<_> = pools.values().collect();
+        pool_refs.shuffle(&mut rand::rng());
+
+        for pool in &pool_refs {
             pool.retain_pool_connections(count.clone(), retain_max);
         }
         count.store(0, Ordering::Relaxed);
 
         // Replenish pools below min_pool_size
-        for (_, pool) in get_all_pools().iter() {
+        for pool in &pool_refs {
             if let Some(min_pool_size) = pool.settings.user.min_pool_size {
                 let min = min_pool_size as usize;
                 let current_size = pool.database.status().size;

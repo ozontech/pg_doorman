@@ -480,10 +480,11 @@ impl Pool {
 
         permit.forget();
         let lifetime_ms = self.inner.server_pool.lifetime_ms();
+        let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
         Ok(Object {
             inner: Some(ObjectInner {
                 obj,
-                metrics: Metrics::new_with_lifetime(lifetime_ms),
+                metrics: Metrics::new_with_timeouts(lifetime_ms, idle_timeout_ms),
             }),
             pool: Arc::downgrade(&self.inner),
         })
@@ -626,9 +627,10 @@ impl Pool {
             };
 
             let lifetime_ms = self.inner.server_pool.lifetime_ms();
+            let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
             let inner = ObjectInner {
                 obj,
-                metrics: Metrics::new_with_lifetime(lifetime_ms),
+                metrics: Metrics::new_with_timeouts(lifetime_ms, idle_timeout_ms),
             };
 
             {

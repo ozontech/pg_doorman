@@ -34,6 +34,11 @@ fn gc_idle_dynamic_pools() {
     for id in &dynamic_ids {
         match pools.get(id) {
             Some(pool) if pool.pool_state().size == 0 => {
+                // Don't GC pools with min_pool_size — retain cycle manages them
+                if pool.settings.user.min_pool_size.unwrap_or(0) > 0 {
+                    debug!("GC: dynamic pool {id} has min_pool_size > 0, skipping despite size=0");
+                    continue;
+                }
                 debug!("GC: dynamic pool {id} has 0 connections, marking for removal");
                 to_remove.push(id.clone());
             }

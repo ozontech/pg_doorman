@@ -361,7 +361,12 @@ impl ConnectionPool {
                     prepared_statements_cache_size,
                     application_name,
                     config.general.max_concurrent_creates,
-                    config.general.server_lifetime.as_millis(),
+                    pool_config
+                        .server_lifetime
+                        .unwrap_or(config.general.server_lifetime.as_millis()),
+                    pool_config
+                        .idle_timeout
+                        .unwrap_or(config.general.idle_timeout.as_millis()),
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
                 );
@@ -398,8 +403,12 @@ impl ConnectionPool {
                         pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
                         user: user.clone(),
                         db: pool_name.clone(),
-                        idle_timeout_ms: config.general.idle_timeout.as_millis(),
-                        life_time_ms: config.general.server_lifetime.as_millis(),
+                        idle_timeout_ms: pool_config
+                            .idle_timeout
+                            .unwrap_or(config.general.idle_timeout.as_millis()),
+                        life_time_ms: pool_config
+                            .server_lifetime
+                            .unwrap_or(config.general.server_lifetime.as_millis()),
                         sync_server_parameters: config.general.sync_server_parameters,
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
@@ -504,7 +513,12 @@ impl ConnectionPool {
                             prepared_statements_cache_size,
                             application_name,
                             config.general.max_concurrent_creates,
-                            config.general.server_lifetime.as_millis(),
+                            pool_config
+                                .server_lifetime
+                                .unwrap_or(config.general.server_lifetime.as_millis()),
+                            pool_config
+                                .idle_timeout
+                                .unwrap_or(config.general.idle_timeout.as_millis()),
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
                         );
@@ -544,8 +558,12 @@ impl ConnectionPool {
                                 pool_mode: shared_user.pool_mode.unwrap_or(pool_config.pool_mode),
                                 user: shared_user,
                                 db: pool_name.clone(),
-                                idle_timeout_ms: config.general.idle_timeout.as_millis(),
-                                life_time_ms: config.general.server_lifetime.as_millis(),
+                                idle_timeout_ms: pool_config
+                                    .idle_timeout
+                                    .unwrap_or(config.general.idle_timeout.as_millis()),
+                                life_time_ms: pool_config
+                                    .server_lifetime
+                                    .unwrap_or(config.general.server_lifetime.as_millis()),
                                 sync_server_parameters: config.general.sync_server_parameters,
                             },
                             prepared_statement_cache: match config.general.prepared_statements {
@@ -744,6 +762,10 @@ pub struct ServerPool {
     /// Server lifetime in milliseconds (0 = unlimited).
     lifetime_ms: u64,
 
+    /// Idle timeout in milliseconds (0 = disabled).
+    /// Connections idle longer than this are closed by retain.
+    idle_timeout_ms: u64,
+
     /// Time after which idle connections should be checked before reuse (0 = disabled).
     idle_check_timeout_ms: u64,
 
@@ -788,6 +810,7 @@ impl ServerPool {
         application_name: String,
         max_concurrent_creates: usize,
         lifetime_ms: u64,
+        idle_timeout_ms: u64,
         idle_check_timeout_ms: u64,
         connect_timeout: Duration,
     ) -> ServerPool {
@@ -803,6 +826,7 @@ impl ServerPool {
             connection_counter: AtomicU64::new(0),
             application_name,
             lifetime_ms,
+            idle_timeout_ms,
             idle_check_timeout_ms,
             connect_timeout,
         }
@@ -866,6 +890,11 @@ impl ServerPool {
     /// Returns the base lifetime in milliseconds for connections in this pool.
     pub fn lifetime_ms(&self) -> u64 {
         self.lifetime_ms
+    }
+
+    /// Returns the base idle timeout in milliseconds for connections in this pool.
+    pub fn idle_timeout_ms(&self) -> u64 {
+        self.idle_timeout_ms
     }
 
     /// Checks if the connection can be recycled.
@@ -993,6 +1022,11 @@ pub fn create_dynamic_pool(
         username: username.to_string(),
         password: String::new(),
         pool_size: aq_config.default_pool_size,
+        min_pool_size: if aq_config.default_min_pool_size > 0 {
+            Some(aq_config.default_min_pool_size)
+        } else {
+            None
+        },
         server_username: Some(username.to_string()),
         server_password: None,
         ..Default::default()
@@ -1020,7 +1054,12 @@ pub fn create_dynamic_pool(
         prepared_statements_cache_size,
         application_name,
         config.general.max_concurrent_creates,
-        config.general.server_lifetime.as_millis(),
+        pool_config
+            .server_lifetime
+            .unwrap_or(config.general.server_lifetime.as_millis()),
+        pool_config
+            .idle_timeout
+            .unwrap_or(config.general.idle_timeout.as_millis()),
         config.general.server_idle_check_timeout.as_millis(),
         config.general.connect_timeout.as_std(),
     );
@@ -1052,8 +1091,12 @@ pub fn create_dynamic_pool(
             pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
             user,
             db: pool_name.to_string(),
-            idle_timeout_ms: config.general.idle_timeout.as_millis(),
-            life_time_ms: config.general.server_lifetime.as_millis(),
+            idle_timeout_ms: pool_config
+                .idle_timeout
+                .unwrap_or(config.general.idle_timeout.as_millis()),
+            life_time_ms: pool_config
+                .server_lifetime
+                .unwrap_or(config.general.server_lifetime.as_millis()),
             sync_server_parameters: config.general.sync_server_parameters,
         },
         prepared_statement_cache: match config.general.prepared_statements {
@@ -1098,6 +1141,26 @@ pub fn create_dynamic_pool(
     new_pools.insert(identifier.clone(), conn_pool.clone());
     POOLS.store(Arc::new(new_pools));
     register_dynamic_pool(&identifier);
+
+    // Prewarm: spawn background task to create default_min_pool_size connections
+    if aq_config.default_min_pool_size > 0 {
+        let pool_clone = conn_pool.clone();
+        let min = aq_config.default_min_pool_size as usize;
+        let pn = pool_name.to_string();
+        let un = username.to_string();
+        tokio::spawn(async move {
+            let created = pool_clone.database.replenish(min).await;
+            if created > 0 {
+                info!(
+                    "[pool: {pn}][user: {un}] prewarmed {created} dynamic connection(s) (default_min_pool_size: {min})"
+                );
+            } else {
+                warn!(
+                    "[pool: {pn}][user: {un}] dynamic prewarm failed (default_min_pool_size: {min})"
+                );
+            }
+        });
+    }
 
     // Increment dynamic_pools_created stat
     if let Some(state) = get_auth_query_state(pool_name) {

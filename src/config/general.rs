@@ -99,7 +99,7 @@ pub struct General {
 
     /// Maximum number of idle connections to close per retain cycle.
     /// 0 means unlimited (close all idle connections that exceed timeout).
-    /// Default: 0 (unlimited)
+    /// Default: 3
     #[serde(default = "General::default_retain_connections_max")]
     pub retain_connections_max: usize,
 
@@ -206,7 +206,7 @@ impl General {
         0
     }
     pub fn default_server_lifetime() -> Duration {
-        Duration::from_mins(5) // 5 min
+        Duration::from_mins(20) // 20 min
     }
 
     pub fn default_retain_connections_time() -> Duration {
@@ -303,7 +303,7 @@ impl General {
     }
 
     pub fn default_idle_timeout() -> Duration {
-        Duration::from_millis(300_000_000) // 5000 minutes
+        Duration::from_millis(600_000) // 10 minutes
     }
 
     pub fn default_shutdown_timeout() -> Duration {

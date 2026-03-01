@@ -483,8 +483,8 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         fi,
         "idle_timeout",
         g.idle_timeout.as_millis(),
-        "5m",
-        "300000 ms",
+        "10m",
+        "600000 ms",
     );
 
     write_field_desc(w, fi, "general", "server_lifetime");
@@ -493,8 +493,8 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         fi,
         "server_lifetime",
         g.server_lifetime.as_millis(),
-        "5m",
-        "300000 ms",
+        "20m",
+        "1200000 ms",
     );
 
     write_field_desc(w, fi, "general", "retain_connections_time");
@@ -1510,6 +1510,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "auth_query.server_user = \"app\"");
             w.comment(fi, "auth_query.server_password = \"secret\"");
             w.comment(fi, "auth_query.default_pool_size = 40");
+            w.comment(fi, "auth_query.default_min_pool_size = 0");
             w.comment(fi, "auth_query.cache_ttl = 3600000");
             w.comment(fi, "auth_query.cache_failure_ttl = 30000");
             w.comment(fi, "auth_query.min_interval = 1000");
@@ -1527,6 +1528,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "  server_user: \"app\"");
             w.comment(fi, "  server_password: \"secret\"");
             w.comment(fi, "  default_pool_size: 40");
+            w.comment(fi, "  default_min_pool_size: 0");
             w.comment(fi, "  cache_ttl: \"1h\"");
             w.comment(fi, "  cache_failure_ttl: \"30s\"");
             w.comment(fi, "  min_interval: \"1s\"");
@@ -1971,6 +1973,7 @@ mod tests {
             "server_user",
             "server_password",
             "default_pool_size",
+            "default_min_pool_size",
             "cache_ttl",
             "cache_failure_ttl",
             "min_interval",

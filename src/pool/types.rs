@@ -136,29 +136,37 @@ pub struct Metrics {
     pub recycle_count: usize,
     /// Individual lifetime for this connection in milliseconds (with jitter applied).
     pub lifetime_ms: u64,
+    /// Individual idle timeout for this connection in milliseconds (with jitter applied).
+    /// 0 means disabled (no idle timeout).
+    pub idle_timeout_ms: u64,
 }
 
 impl Metrics {
-    /// Jitter ratio for lifetime randomization (±20%).
-    const LIFETIME_JITTER_RATIO: f64 = 0.2;
+    /// Jitter ratio for timeout randomization (±20%).
+    const JITTER_RATIO: f64 = 0.2;
 
-    /// Creates new Metrics with lifetime jitter applied.
-    /// Applies ±20% random jitter to the base lifetime to prevent
-    /// mass connection closures when connections are created simultaneously.
-    pub fn new_with_lifetime(base_lifetime_ms: u64) -> Self {
-        let lifetime_ms = if base_lifetime_ms > 0 {
-            let jitter_range = (base_lifetime_ms as f64 * Self::LIFETIME_JITTER_RATIO) as i64;
+    /// Applies ±20% random jitter to a base timeout value.
+    /// Returns 0 if the base value is 0 (meaning disabled).
+    fn apply_jitter(base_ms: u64) -> u64 {
+        if base_ms > 0 {
+            let jitter_range = (base_ms as f64 * Self::JITTER_RATIO) as i64;
             let offset = rand::rng().random_range(-jitter_range..=jitter_range);
-            (base_lifetime_ms as i64 + offset).max(1) as u64
+            (base_ms as i64 + offset).max(1) as u64
         } else {
             0
-        };
+        }
+    }
 
+    /// Creates new Metrics with jitter applied to both lifetime and idle timeout.
+    /// Applies ±20% random jitter to prevent mass connection closures
+    /// when connections are created or become idle simultaneously.
+    pub fn new_with_timeouts(base_lifetime_ms: u64, base_idle_timeout_ms: u64) -> Self {
         Self {
             created: clock::now(),
             recycled: None,
             recycle_count: 0,
-            lifetime_ms,
+            lifetime_ms: Self::apply_jitter(base_lifetime_ms),
+            idle_timeout_ms: Self::apply_jitter(base_idle_timeout_ms),
         }
     }
 
@@ -180,6 +188,7 @@ impl Default for Metrics {
             recycled: None,
             recycle_count: 0,
             lifetime_ms: 0,
+            idle_timeout_ms: 0,
         }
     }
 }

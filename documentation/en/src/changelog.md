@@ -1,5 +1,31 @@
 # Changelog
 
+### 3.3.2 <small>Mar 1, 2026</small>
+
+**Bug Fixes:**
+
+- **Pool-level `server_lifetime` and `idle_timeout` overrides ignored**: Pool-level overrides for `server_lifetime` and `idle_timeout` were silently ignored — the general (global) values were always used instead. Fixed in 6 places across 3 pool creation contexts (static pools, auth_query shared pools, dynamic pools). Now `pool.server_lifetime` and `pool.idle_timeout` correctly override the general settings when specified.
+
+- **`idle_timeout` default was 83 hours instead of 10 minutes**: The default `idle_timeout` was set to 300,000,000ms (83 hours), effectively disabling idle connection cleanup. Idle server connections could accumulate indefinitely. Changed default to 600,000ms (10 minutes).
+
+- **`retain_connections_max` quota exhaustion causing unlimited closure**: When `retain_connections_max > 0` and the global counter reached the limit, the remaining quota became `0` via `saturating_sub`. Since `0` means "unlimited" in `retain_oldest_first()`, pools processed after quota exhaustion lost ALL idle connections in a single retain cycle instead of none. With non-deterministic HashMap iteration order, this bug manifested as random pools losing all connections. Fixed by adding an early return when the quota is exhausted.
+
+- **`retain_connections_max` doc comment incorrectly stated default as `0` (unlimited)**: The actual default is `3`.
+
+- **`server_lifetime` default changed from 5 minutes to 20 minutes**: The previous default of 5 minutes was shorter than `idle_timeout` (10 minutes), which meant `idle_timeout` could never trigger — connections were always killed by `server_lifetime` first. Changed to 20 minutes so that `idle_timeout` (10 min) handles idle cleanup while `server_lifetime` (20 min) rotates long-lived connections. Note: `idle_timeout` only applies to connections that have been used at least once — prewarmed/replenished connections that were never checked out by a client are not subject to `idle_timeout` and will only be closed when `server_lifetime` expires.
+
+- **`idle_timeout = 0` did not disable idle timeout**: Setting `idle_timeout` to `0` was supposed to disable idle connection cleanup (consistent with PgBouncer's `server_idle_timeout = 0` semantics and our own `server_lifetime = 0` behavior). Instead, it closed connections after ~1ms of being idle. Fixed by adding an `idle_timeout_ms > 0` guard before the elapsed time check.
+
+- **`idle_timeout` had no jitter — synchronized mass closures**: Unlike `server_lifetime` which applies ±20% per-connection jitter to prevent thundering herd, `idle_timeout` used a single pool-wide value. When many connections became idle simultaneously (e.g., after a traffic burst), they all expired at the exact same moment, causing mass closures in one retain cycle. Now `idle_timeout` applies the same ±20% per-connection jitter as `server_lifetime`.
+
+- **`retain_connections_max` unfair quota distribution across pools**: The retain cycle iterated pools via HashMap, whose order is deterministic within a process (fixed RandomState seed). The same pool always got iterated first and consumed the entire `retain_connections_max` quota, starving other pools. Expired connections in starved pools were never cleaned up by retain — clients had to discover them via failed `recycle()` checks, adding latency. Fixed by shuffling pool iteration order each cycle.
+
+- **Retain and replenish used separate pool snapshots**: The retain and replenish phases each called `get_all_pools()` separately. If `POOLS` was atomically updated between them (config reload, dynamic pool GC), retain operated on one set of pools and replenish on another, potentially missing pools that need replenishment. Fixed by using a single snapshot for both phases.
+
+**New Features:**
+
+- **`default_min_pool_size` for dynamic auth_query passthrough pools**: New `auth_query.default_min_pool_size` setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after `server_lifetime` expiry. Pools with `default_min_pool_size > 0` are never garbage-collected. Default is `0` (no prewarm — backward compatible). Note: total backend connections scale as `active_users × default_min_pool_size`.
+
 ### 3.3.1 <small>Feb 26, 2026</small>
 
 **Bug Fixes:**

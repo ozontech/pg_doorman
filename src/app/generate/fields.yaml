@@ -134,8 +134,8 @@ texts:
     en: "  connect_timeout: \"3s\"        # instead of 3000"
     ru: "  connect_timeout: \"3s\"        # вместо 3000"
   example_idle_timeout:
-    en: "  idle_timeout: \"5m\"           # instead of 300000"
-    ru: "  idle_timeout: \"5m\"           # вместо 300000"
+    en: "  idle_timeout: \"10m\"          # instead of 600000"
+    ru: "  idle_timeout: \"10m\"          # вместо 600000"
   example_max_memory:
     en: "  max_memory_usage: \"256MB\"    # instead of 268435456"
     ru: "  max_memory_usage: \"256MB\"    # вместо 268435456"
@@ -304,14 +304,14 @@ fields:
         en: "Server idle timeout."
         ru: "Таймаут простоя серверного соединения."
       doc: "Server idle timeout in milliseconds."
-      default: "300000000 (5000 min)"
+      default: "600000 (10 min)"
 
     server_lifetime:
       config:
         en: "Server lifetime. Only applied to idle connections."
         ru: "Время жизни серверного соединения. Применяется только к простаивающим соединениям."
       doc: "Server lifetime in milliseconds."
-      default: "300000 (5 min)"
+      default: "1200000 (20 min)"
 
     retain_connections_time:
       config:
@@ -1218,6 +1218,13 @@ fields:
         ru: "Размер пула для соединений данных динамических пользователей."
       doc: "Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode)."
       default: "40"
+
+    default_min_pool_size:
+      config:
+        en: "Minimum connections to maintain per dynamic user pool (passthrough mode only)."
+        ru: "Минимальное количество поддерживаемых соединений для каждого динамического пула (только passthrough-режим)."
+      doc: "Minimum number of backend connections to maintain per dynamic user pool in passthrough mode. Connections are prewarmed when the pool is first created and replenished by the retain cycle. Set to `0` to disable (default). Note: pools with `default_min_pool_size > 0` are never garbage-collected, and total backend connections scale as `active_users × default_min_pool_size`."
+      default: "0"
 
     cache_ttl:
       config:

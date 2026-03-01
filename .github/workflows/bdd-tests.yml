@@ -413,6 +413,32 @@ jobs:
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
               cargo test --test bdd -- --tags @rust-3
 
+  # Job 8d: Run BDD tests with Rust client (Part 4) — sleep-heavy pool lifecycle tests
+  rust-tests-4:
+    name: Rust BDD Tests (Part 4)
+    needs: prepare-tests
+    if: always() && needs.prepare-tests.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull test image from GHCR
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }}
+
+      - name: Run BDD tests for Rust (Part 4)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: |
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              -w /workspace \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
+              cargo test --test bdd -- --tags @rust-4
+
   # Job 9: Run Binary Upgrade Graceful Shutdown BDD tests
   binary-upgrade-grac-shutdown-tests:
     name: Binary Upgrade Graceful Shutdown BDD Tests

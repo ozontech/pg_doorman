@@ -1,3 +1,7 @@
+use base64::{engine::general_purpose, Engine as _};
+use hmac::{Hmac, Mac};
+use rand::Rng;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -76,6 +80,104 @@ impl PgConnection {
                             let hash = self.compute_md5_hash(user, password, salt);
                             self.send_password(&hash).await?;
                         }
+                        10 => {
+                            // AuthenticationSASL — start SCRAM-SHA-256
+                            // data contains mechanism list (null-terminated strings, double-null at end)
+                            let mechanisms = String::from_utf8_lossy(&data[4..]);
+                            assert!(
+                                mechanisms.contains("SCRAM-SHA-256"),
+                                "Server doesn't support SCRAM-SHA-256: {mechanisms}"
+                            );
+
+                            let nonce = Self::generate_nonce();
+                            let client_first_bare = format!("n=,r={nonce}");
+                            let client_first_message = format!("n,,{client_first_bare}");
+
+                            // Send SASLInitialResponse
+                            let mechanism = b"SCRAM-SHA-256\0";
+                            let response = client_first_message.as_bytes();
+                            let msg_len = 4 + mechanism.len() + 4 + response.len();
+                            let mut msg = Vec::new();
+                            msg.push(b'p');
+                            msg.extend_from_slice(&(msg_len as i32).to_be_bytes());
+                            msg.extend_from_slice(mechanism);
+                            msg.extend_from_slice(&(response.len() as i32).to_be_bytes());
+                            msg.extend_from_slice(response);
+                            self.stream.write_all(&msg).await?;
+
+                            // Read SASLContinue (auth_type=11)
+                            let (mt, d) = self.read_message().await?;
+                            assert_eq!(mt, 'R');
+                            let at = i32::from_be_bytes([d[0], d[1], d[2], d[3]]);
+                            assert_eq!(at, 11, "Expected SASL_CONTINUE");
+                            let server_first = String::from_utf8_lossy(&d[4..]).to_string();
+
+                            // Parse server-first-message
+                            let (server_nonce, salt_b64, iterations) =
+                                Self::parse_server_first(&server_first);
+                            assert!(
+                                server_nonce.starts_with(&nonce),
+                                "Server nonce doesn't start with client nonce"
+                            );
+                            let salt = general_purpose::STANDARD
+                                .decode(&salt_b64)
+                                .expect("Invalid base64 salt");
+
+                            // Derive keys
+                            let salted_password =
+                                Self::scram_hi(password.as_bytes(), &salt, iterations);
+                            let client_key = Self::scram_hmac(&salted_password, b"Client Key");
+                            let stored_key = Sha256::digest(&client_key);
+                            let server_key = Self::scram_hmac(&salted_password, b"Server Key");
+
+                            // Build client-final-message-without-proof
+                            let cbind = general_purpose::STANDARD.encode(b"n,,");
+                            let client_final_without_proof = format!("c={cbind},r={server_nonce}");
+
+                            let auth_message = format!(
+                                "{client_first_bare},{server_first},{client_final_without_proof}"
+                            );
+
+                            let client_signature =
+                                Self::scram_hmac(&stored_key, auth_message.as_bytes());
+                            let mut client_proof = client_key.clone();
+                            for (p, s) in client_proof.iter_mut().zip(client_signature.iter()) {
+                                *p ^= s;
+                            }
+
+                            let client_final = format!(
+                                "{client_final_without_proof},p={}",
+                                general_purpose::STANDARD.encode(&client_proof)
+                            );
+
+                            // Send SASLResponse
+                            let response = client_final.as_bytes();
+                            let msg_len = 4 + response.len();
+                            let mut msg = Vec::new();
+                            msg.push(b'p');
+                            msg.extend_from_slice(&(msg_len as i32).to_be_bytes());
+                            msg.extend_from_slice(response);
+                            self.stream.write_all(&msg).await?;
+
+                            // Read SASLFinal (auth_type=12)
+                            let (mt, d) = self.read_message().await?;
+                            assert_eq!(mt, 'R');
+                            let at = i32::from_be_bytes([d[0], d[1], d[2], d[3]]);
+                            assert_eq!(at, 12, "Expected SASL_FINAL");
+                            let server_final = String::from_utf8_lossy(&d[4..]).to_string();
+
+                            // Verify server signature
+                            let server_signature =
+                                Self::scram_hmac(&server_key, auth_message.as_bytes());
+                            let expected = format!(
+                                "v={}",
+                                general_purpose::STANDARD.encode(&server_signature)
+                            );
+                            assert_eq!(
+                                server_final, expected,
+                                "Server signature verification failed"
+                            );
+                        }
                         _ => panic!("Unsupported auth type: {}", auth_type),
                     }
                 }
@@ -134,6 +236,67 @@ impl PgConnection {
         hasher.update(salt);
         let res2 = hasher.finalize();
         format!("md5{:x}", res2)
+    }
+
+    fn generate_nonce() -> String {
+        let mut rng = rand::rng();
+        (0..24)
+            .map(|_| {
+                let mut v = rng.random_range(0x21u8..0x7e);
+                if v == 0x2c {
+                    v = 0x7e;
+                }
+                v as char
+            })
+            .collect()
+    }
+
+    fn parse_server_first(msg: &str) -> (String, String, u32) {
+        let mut nonce = String::new();
+        let mut salt = String::new();
+        let mut iterations = 0u32;
+        for part in msg.split(',') {
+            if let Some(v) = part.strip_prefix("r=") {
+                nonce = v.to_string();
+            } else if let Some(v) = part.strip_prefix("s=") {
+                salt = v.to_string();
+            } else if let Some(v) = part.strip_prefix("i=") {
+                iterations = v.parse().expect("Invalid iteration count");
+            }
+        }
+        (nonce, salt, iterations)
+    }
+
+    fn scram_hi(password: &[u8], salt: &[u8], iterations: u32) -> Vec<u8> {
+        let password = match std::str::from_utf8(password) {
+            Ok(s) => match stringprep::saslprep(s) {
+                Ok(p) => p.into_owned().into_bytes(),
+                Err(_) => password.to_vec(),
+            },
+            Err(_) => password.to_vec(),
+        };
+        let mut hmac =
+            Hmac::<Sha256>::new_from_slice(&password).expect("HMAC accepts all key sizes");
+        hmac.update(salt);
+        hmac.update(&[0, 0, 0, 1]);
+        let mut prev = hmac.finalize().into_bytes();
+        let mut hi = prev;
+        for _ in 1..iterations {
+            let mut hmac =
+                Hmac::<Sha256>::new_from_slice(&password).expect("HMAC accepts all key sizes");
+            hmac.update(&prev);
+            prev = hmac.finalize().into_bytes();
+            for (h, p) in hi.iter_mut().zip(prev.iter()) {
+                *h ^= p;
+            }
+        }
+        hi.to_vec()
+    }
+
+    fn scram_hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
+        let mut hmac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts all key sizes");
+        hmac.update(data);
+        hmac.finalize().into_bytes().to_vec()
     }
 
     pub async fn send_simple_query(&mut self, query: &str) -> tokio::io::Result<()> {
