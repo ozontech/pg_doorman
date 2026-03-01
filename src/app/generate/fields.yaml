@@ -134,8 +134,8 @@ texts:
     en: "  connect_timeout: \"3s\"        # instead of 3000"
     ru: "  connect_timeout: \"3s\"        # вместо 3000"
   example_idle_timeout:
-    en: "  idle_timeout: \"5m\"           # instead of 300000"
-    ru: "  idle_timeout: \"5m\"           # вместо 300000"
+    en: "  idle_timeout: \"10m\"          # instead of 600000"
+    ru: "  idle_timeout: \"10m\"          # вместо 600000"
   example_max_memory:
     en: "  max_memory_usage: \"256MB\"    # instead of 268435456"
     ru: "  max_memory_usage: \"256MB\"    # вместо 268435456"
@@ -304,7 +304,7 @@ fields:
         en: "Server idle timeout."
         ru: "Таймаут простоя серверного соединения."
       doc: "Server idle timeout in milliseconds."
-      default: "300000000 (5000 min)"
+      default: "600000 (10 min)"
 
     server_lifetime:
       config:

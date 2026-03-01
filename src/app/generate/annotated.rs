@@ -483,8 +483,8 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         fi,
         "idle_timeout",
         g.idle_timeout.as_millis(),
-        "5m",
-        "300000 ms",
+        "10m",
+        "600000 ms",
     );
 
     write_field_desc(w, fi, "general", "server_lifetime");

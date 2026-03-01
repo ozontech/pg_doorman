@@ -303,7 +303,7 @@ impl General {
     }
 
     pub fn default_idle_timeout() -> Duration {
-        Duration::from_millis(300_000_000) // 5000 minutes
+        Duration::from_millis(600_000) // 10 minutes
     }
 
     pub fn default_shutdown_timeout() -> Duration {

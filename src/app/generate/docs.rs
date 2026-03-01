@@ -166,7 +166,7 @@ fn write_human_readable_section(out: &mut String) {
     );
 
     let _ = writeln!(out, "**Examples:**");
-    let _ = writeln!(out, "```yaml\ngeneral:\n  # All these are equivalent (3 seconds):\n  # connect_timeout: 3000      # backward compatible (milliseconds)\n  # connect_timeout: \"3s\"      # human-readable\n  # connect_timeout: \"3000ms\"  # explicit milliseconds\n  connect_timeout: \"3s\"\n  idle_timeout: \"5m\"         # 5 minutes\n  server_lifetime: \"1h\"      # 1 hour\n```\n");
+    let _ = writeln!(out, "```yaml\ngeneral:\n  # All these are equivalent (3 seconds):\n  # connect_timeout: 3000      # backward compatible (milliseconds)\n  # connect_timeout: \"3s\"      # human-readable\n  # connect_timeout: \"3000ms\"  # explicit milliseconds\n  connect_timeout: \"3s\"\n  idle_timeout: \"10m\"        # 10 minutes\n  server_lifetime: \"1h\"      # 1 hour\n```\n");
 
     let _ = writeln!(out, "### Byte Size Format\n");
     let _ = writeln!(out, "Byte size values can be specified as:\n");
