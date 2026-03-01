@@ -18,6 +18,10 @@
 
 - **`idle_timeout` had no jitter — synchronized mass closures**: Unlike `server_lifetime` which applies ±20% per-connection jitter to prevent thundering herd, `idle_timeout` used a single pool-wide value. When many connections became idle simultaneously (e.g., after a traffic burst), they all expired at the exact same moment, causing mass closures in one retain cycle. Now `idle_timeout` applies the same ±20% per-connection jitter as `server_lifetime`.
 
+- **`retain_connections_max` unfair quota distribution across pools**: The retain cycle iterated pools via HashMap, whose order is deterministic within a process (fixed RandomState seed). The same pool always got iterated first and consumed the entire `retain_connections_max` quota, starving other pools. Expired connections in starved pools were never cleaned up by retain — clients had to discover them via failed `recycle()` checks, adding latency. Fixed by shuffling pool iteration order each cycle.
+
+- **Retain and replenish used separate pool snapshots**: The retain and replenish phases each called `get_all_pools()` separately. If `POOLS` was atomically updated between them (config reload, dynamic pool GC), retain operated on one set of pools and replenish on another, potentially missing pools that need replenishment. Fixed by using a single snapshot for both phases.
+
 ### 3.3.1 <small>Feb 26, 2026</small>
 
 **Bug Fixes:**

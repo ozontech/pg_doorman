@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use log::{info, warn};
+use rand::seq::SliceRandom;
 
 use crate::config::get_config;
 
@@ -135,13 +136,24 @@ pub async fn retain_connections() {
 
     loop {
         interval.tick().await;
-        for (_, pool) in get_all_pools().iter() {
+
+        // Use a single snapshot for both retain and replenish phases
+        // to avoid inconsistency if POOLS is atomically updated between them.
+        let pools = get_all_pools();
+
+        // Shuffle pool iteration order for fair retain_connections_max distribution.
+        // HashMap iteration order is deterministic within a process (fixed RandomState seed),
+        // so without shuffling the same pool always gets the entire quota.
+        let mut pool_refs: Vec<_> = pools.values().collect();
+        pool_refs.shuffle(&mut rand::rng());
+
+        for pool in &pool_refs {
             pool.retain_pool_connections(count.clone(), retain_max);
         }
         count.store(0, Ordering::Relaxed);
 
         // Replenish pools below min_pool_size
-        for (_, pool) in get_all_pools().iter() {
+        for pool in &pool_refs {
             if let Some(min_pool_size) = pool.settings.user.min_pool_size {
                 let min = min_pool_size as usize;
                 let current_size = pool.database.status().size;
