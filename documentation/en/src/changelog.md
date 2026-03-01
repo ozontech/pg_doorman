@@ -22,6 +22,10 @@
 
 - **Retain and replenish used separate pool snapshots**: The retain and replenish phases each called `get_all_pools()` separately. If `POOLS` was atomically updated between them (config reload, dynamic pool GC), retain operated on one set of pools and replenish on another, potentially missing pools that need replenishment. Fixed by using a single snapshot for both phases.
 
+**New Features:**
+
+- **`default_min_pool_size` for dynamic auth_query passthrough pools**: New `auth_query.default_min_pool_size` setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after `server_lifetime` expiry. Pools with `default_min_pool_size > 0` are never garbage-collected. Default is `0` (no prewarm — backward compatible). Note: total backend connections scale as `active_users × default_min_pool_size`.
+
 ### 3.3.1 <small>Feb 26, 2026</small>
 
 **Bug Fixes:**
