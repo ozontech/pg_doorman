@@ -33,14 +33,19 @@ impl ConnectionPool {
 
         // Calculate remaining quota for this pool
         let current_count = count.load(Ordering::Relaxed);
-        let remaining = if max > 0 {
-            max.saturating_sub(current_count)
+        if max > 0 && current_count >= max {
+            return 0; // Quota exhausted, skip this pool
+        }
+        let max_to_close = if max > 0 {
+            max - current_count
         } else {
             0 // 0 means unlimited
         };
 
         // Use retain_oldest_first which sorts by age when max > 0
-        let closed = self.database.retain_oldest_first(should_close, remaining);
+        let closed = self
+            .database
+            .retain_oldest_first(should_close, max_to_close);
         count.fetch_add(closed, Ordering::Relaxed);
 
         if closed > 0 {

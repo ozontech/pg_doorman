@@ -99,7 +99,7 @@ pub struct General {
 
     /// Maximum number of idle connections to close per retain cycle.
     /// 0 means unlimited (close all idle connections that exceed timeout).
-    /// Default: 0 (unlimited)
+    /// Default: 3
     #[serde(default = "General::default_retain_connections_max")]
     pub retain_connections_max: usize,
 
