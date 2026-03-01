@@ -28,7 +28,7 @@
 #
 # Examples:
 #   connect_timeout: "3s"        # instead of 3000
-#   idle_timeout: "5m"           # instead of 300000
+#   idle_timeout: "10m"          # instead of 600000
 #   max_memory_usage: "256MB"    # instead of 268435456
 # ============================================================================
 
