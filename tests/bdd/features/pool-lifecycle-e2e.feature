@@ -1,4 +1,4 @@
-@rust @rust-3 @pool-lifecycle-e2e
+@rust @rust-4 @pool-lifecycle-e2e
 Feature: Pool lifecycle end-to-end (prewarm → scale up → shrink)
   Comprehensive tests verifying the full connection pool lifecycle:
   1. Prewarm at startup (min_pool_size connections created)

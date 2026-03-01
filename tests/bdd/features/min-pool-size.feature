@@ -1,4 +1,4 @@
-@rust @rust-3 @min-pool-size
+@rust @rust-4 @min-pool-size
 Feature: min_pool_size enforcement
   Test that min_pool_size setting is enforced at runtime.
   After each retain cycle, pg_doorman should replenish pools below min_pool_size.

@@ -1,4 +1,4 @@
-@rust @rust-3 @pool-timeout-override
+@rust @rust-4 @pool-timeout-override
 Feature: Pool-level timeout overrides (server_lifetime, idle_timeout)
   Verify that pool-level overrides for server_lifetime and idle_timeout
   take effect instead of being silently ignored in favor of general settings.

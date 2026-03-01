@@ -1,4 +1,4 @@
-@rust @rust-3 @retain-max-quota
+@rust @rust-4 @retain-max-quota
 Feature: retain_connections_max quota enforcement across multiple pools
   When retain_connections_max is set, the total number of connections closed
   per retain cycle must not exceed the configured limit across ALL pools.
