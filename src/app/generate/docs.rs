@@ -311,6 +311,7 @@ fn write_auth_query_section(out: &mut String) {
         "server_user",
         "server_password",
         "default_pool_size",
+        "default_min_pool_size",
         "cache_ttl",
         "cache_failure_ttl",
         "min_interval",

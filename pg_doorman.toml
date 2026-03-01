@@ -533,6 +533,7 @@ pool_size = 40
 # auth_query.server_user = "app"
 # auth_query.server_password = "secret"
 # auth_query.default_pool_size = 40
+# auth_query.default_min_pool_size = 0
 # auth_query.cache_ttl = 3600000
 # auth_query.cache_failure_ttl = 30000
 # auth_query.min_interval = 1000

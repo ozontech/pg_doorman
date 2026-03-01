@@ -1219,6 +1219,13 @@ fields:
       doc: "Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode)."
       default: "40"
 
+    default_min_pool_size:
+      config:
+        en: "Minimum connections to maintain per dynamic user pool (passthrough mode only)."
+        ru: "Минимальное количество поддерживаемых соединений для каждого динамического пула (только passthrough-режим)."
+      doc: "Minimum number of backend connections to maintain per dynamic user pool in passthrough mode. Connections are prewarmed when the pool is first created and replenished by the retain cycle. Set to `0` to disable (default). Note: pools with `default_min_pool_size > 0` are never garbage-collected, and total backend connections scale as `active_users × default_min_pool_size`."
+      default: "0"
+
     cache_ttl:
       config:
         en: "Maximum cache age for successfully fetched credentials."

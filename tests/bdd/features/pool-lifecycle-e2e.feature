@@ -74,7 +74,7 @@ Feature: Pool lifecycle end-to-end (prewarm → scale up → shrink)
   @e2e-auth-query-lifecycle
   Scenario: Auth_query pool lifecycle: scale up under load → shrink to 0 after retain
     # auth_query dynamic pool with default_pool_size=5, pool-level server_lifetime=1000ms.
-    # min_pool_size is not supported for dynamic pools, so no prewarm.
+    # default_min_pool_size is not set (defaults to 0), so no prewarm.
     # Phase 1: Open 5 concurrent transactions via auth_query user → pool scales to 5.
     # Phase 2: Release all, wait for lifetime+retain → pool shrinks to 0.
     Given PostgreSQL started with pg_hba.conf:
@@ -144,6 +144,6 @@ Feature: Pool lifecycle end-to-end (prewarm → scale up → shrink)
     And we send SimpleQuery "COMMIT" to session "s5"
     # Wait for pool-level server_lifetime (1000ms ±20%) + retain cycles
     When we sleep for 4000 milliseconds
-    # All connections should be closed (no min_pool_size for dynamic pools)
+    # All connections should be closed (default_min_pool_size=0, no prewarm)
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
     Then admin session "admin1" row count should be 0
