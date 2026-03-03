@@ -660,12 +660,51 @@ where
                     let message = match initial_message {
                         None => {
                             self.stats.active_read();
-                            match read_message(&mut self.read, self.max_memory_usage).await {
-                                Ok(message) => message,
-                                Err(err) => {
-                                    self.stats.disconnect();
-                                    server.checkin_cleanup().await?;
-                                    return self.process_error(err).await;
+
+                            tokio::select! {
+                            biased;
+
+                                result = read_message(&mut self.read, self.max_memory_usage) => {
+                                    match result {
+                                        Ok(message) => message,
+                                        Err(err) => {
+                                            self.stats.disconnect();
+                                            CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+                                            self.connected_to_server = false;
+                                            server.checkin_cleanup().await?;
+                                            self.release();
+                                            return self.process_error(err).await;
+                                        }
+                                    }
+                                }
+
+                                _ = server.server_readable() => {
+                                    // Verify readiness is genuine, not spurious from BufStream buffering
+                                    let mut verify_buf = [0u8; 1];
+                                    match server.stream.get_ref().try_read(&mut verify_buf) {
+                                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                            continue;
+                                        }
+                                        _ => {
+                                            warn!(
+                                                "Server {} connection event while waiting for client {} — \
+                                                 server likely terminated (idle_in_transaction_session_timeout, \
+                                                 pg_terminate_backend)",
+                                                server, self.addr
+                                            );
+                                            server.mark_bad("server closed while client idle in transaction");
+                                            let _ = error_response(
+                                                &mut self.write,
+                                                "server closed the connection, possibly due to idle_in_transaction_session_timeout",
+                                                "08006",
+                                            ).await;
+                                            self.stats.disconnect();
+                                            CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+                                            self.connected_to_server = false;
+                                            self.release();
+                                            return Ok(());
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -697,6 +736,8 @@ where
                             // принудительно закрываем чтобы не допустить длинную транзакцию
                             server.checkin_cleanup().await?;
                             self.stats.disconnect();
+                            CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+                            self.connected_to_server = false;
                             self.release();
                             return Ok(());
                         }
