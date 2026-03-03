@@ -525,18 +525,6 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         "",
     );
 
-    w.blank();
-
-    write_field_desc(w, fi, "general", "client_idle_in_transaction_timeout");
-    write_duration_value(
-        w,
-        fi,
-        "client_idle_in_transaction_timeout",
-        g.client_idle_in_transaction_timeout.as_millis(),
-        "0",
-        "",
-    );
-
     write_field_desc(w, fi, "general", "shutdown_timeout");
     write_duration_value(
         w,

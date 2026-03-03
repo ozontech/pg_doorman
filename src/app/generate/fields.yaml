@@ -364,35 +364,6 @@ fields:
         or PostgreSQL restarts).
       default: "60s (60 seconds)"
 
-    client_idle_in_transaction_timeout:
-      config:
-        en: |
-          Maximum time a client can remain idle while holding a server connection
-          inside a transaction. If exceeded, pg_doorman closes the client connection
-          and releases the server slot.
-          0 means disabled (no timeout).
-        ru: |
-          Максимальное время простоя клиента, удерживающего серверное соединение
-          внутри транзакции. При превышении pg_doorman закрывает клиентское соединение
-          и освобождает серверный слот.
-          0 — таймаут отключён.
-      doc: |
-        Maximum time a client can remain idle while holding a server connection inside a transaction.
-        When a client opens a transaction (BEGIN) and then stops sending queries, the server connection
-        is held exclusively and cannot be used by other clients. This timeout prevents indefinite
-        resource exhaustion caused by abandoned or stalled client connections.
-
-        When the timeout fires, pg_doorman sends an ErrorResponse (SQLSTATE 57014) to the client,
-        marks the server connection as bad, and releases the pool slot for reuse.
-
-        Additionally, pg_doorman monitors the server socket for unexpected events (e.g., PostgreSQL
-        terminating the backend via `idle_in_transaction_session_timeout` or `pg_terminate_backend`).
-        If the server closes the connection, pg_doorman immediately detects it and releases the slot,
-        regardless of this timeout setting.
-
-        Set to `0` to disable the timeout (default, backward compatible).
-      default: "0 (disabled)"
-
     shutdown_timeout:
       config:
         en: "Graceful shutdown timeout."

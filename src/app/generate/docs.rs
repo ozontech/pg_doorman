@@ -228,7 +228,6 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "retain_connections_time",
         "retain_connections_max",
         "server_idle_check_timeout",
-        "client_idle_in_transaction_timeout",
         "server_round_robin",
         "sync_server_parameters",
         "tcp_so_linger",

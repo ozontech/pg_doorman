@@ -1,7 +1,6 @@
 use bytes::{BufMut, BytesMut};
 use log::{debug, error, warn};
 use std::ops::DerefMut;
-use std::pin::pin;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -12,7 +11,6 @@ use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
-use crate::config::get_config;
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, deallocate_response, error_response, error_response_terminal,
@@ -652,12 +650,6 @@ where
 
                 let mut initial_message = Some(message);
 
-                // Read client_idle_in_transaction_timeout from config (0 = disabled)
-                let client_idle_in_transaction_timeout_ms = get_config()
-                    .general
-                    .client_idle_in_transaction_timeout
-                    .as_millis();
-
                 // Transaction loop. Multiple queries can be issued by the client here.
                 // The connection belongs to the client until the transaction is over,
                 // or until the client disconnects if we are in session mode.
@@ -669,126 +661,48 @@ where
                         None => {
                             self.stats.active_read();
 
-                            if client_idle_in_transaction_timeout_ms > 0 {
-                                // Three-branch select: client read + server monitor + idle timeout
-                                let idle_timeout_fut = pin!(tokio::time::sleep(
-                                    Duration::from_millis(client_idle_in_transaction_timeout_ms,)
-                                ));
+                            tokio::select! {
+                            biased;
 
-                                tokio::select! {
-                                    biased;
-
-                                    result = read_message(&mut self.read, self.max_memory_usage) => {
-                                        match result {
-                                            Ok(message) => message,
-                                            Err(err) => {
-                                                self.stats.disconnect();
-                                                CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
-                                                self.connected_to_server = false;
-                                                server.checkin_cleanup().await?;
-                                                self.release();
-                                                return self.process_error(err).await;
-                                            }
+                                result = read_message(&mut self.read, self.max_memory_usage) => {
+                                    match result {
+                                        Ok(message) => message,
+                                        Err(err) => {
+                                            self.stats.disconnect();
+                                            CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+                                            self.connected_to_server = false;
+                                            server.checkin_cleanup().await?;
+                                            self.release();
+                                            return self.process_error(err).await;
                                         }
-                                    }
-
-                                    _ = server.server_readable() => {
-                                        // Verify readiness is genuine, not spurious from BufStream buffering.
-                                        // After execute_server_roundtrip, BufReader may have drained the protocol
-                                        // data without reading the underlying socket until WouldBlock, leaving
-                                        // a stale readiness flag.
-                                        let mut verify_buf = [0u8; 1];
-                                        match server.stream.get_ref().try_read(&mut verify_buf) {
-                                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                                // Spurious readiness — no actual data, continue waiting
-                                                continue;
-                                            }
-                                            _ => {
-                                                // Genuine: EOF (Ok(0)), data (Ok(n)), or socket error
-                                                warn!(
-                                                    "Server {} connection event while waiting for client {} — \
-                                                     server likely terminated (idle_in_transaction_session_timeout, \
-                                                     pg_terminate_backend)",
-                                                    server, self.addr
-                                                );
-                                                server.mark_bad("server closed while client idle in transaction");
-                                                let _ = error_response(
-                                                    &mut self.write,
-                                                    "server closed the connection, possibly due to idle_in_transaction_session_timeout",
-                                                    "08006",
-                                                ).await;
-                                                self.stats.disconnect();
-                                                CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
-                                                self.connected_to_server = false;
-                                                self.release();
-                                                return Ok(());
-                                            }
-                                        }
-                                    }
-
-                                    _ = idle_timeout_fut => {
-                                        warn!(
-                                            "Client {} idle in transaction timeout ({}ms) exceeded",
-                                            self.addr, client_idle_in_transaction_timeout_ms
-                                        );
-                                        server.mark_bad("client idle in transaction timeout");
-                                        let _ = error_response(
-                                            &mut self.write,
-                                            "client idle in transaction timeout exceeded",
-                                            "57014",
-                                        ).await;
-                                        self.stats.disconnect();
-                                        CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
-                                        self.connected_to_server = false;
-                                        self.release();
-                                        return Ok(());
                                     }
                                 }
-                            } else {
-                                // Two-branch select: client read + server monitor (no idle timeout)
-                                tokio::select! {
-                                    biased;
 
-                                    result = read_message(&mut self.read, self.max_memory_usage) => {
-                                        match result {
-                                            Ok(message) => message,
-                                            Err(err) => {
-                                                self.stats.disconnect();
-                                                CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
-                                                self.connected_to_server = false;
-                                                server.checkin_cleanup().await?;
-                                                self.release();
-                                                return self.process_error(err).await;
-                                            }
+                                _ = server.server_readable() => {
+                                    // Verify readiness is genuine (see 3-branch select comment above)
+                                    let mut verify_buf = [0u8; 1];
+                                    match server.stream.get_ref().try_read(&mut verify_buf) {
+                                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                            continue;
                                         }
-                                    }
-
-                                    _ = server.server_readable() => {
-                                        // Verify readiness is genuine (see 3-branch select comment above)
-                                        let mut verify_buf = [0u8; 1];
-                                        match server.stream.get_ref().try_read(&mut verify_buf) {
-                                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                                continue;
-                                            }
-                                            _ => {
-                                                warn!(
-                                                    "Server {} connection event while waiting for client {} — \
-                                                     server likely terminated (idle_in_transaction_session_timeout, \
-                                                     pg_terminate_backend)",
-                                                    server, self.addr
-                                                );
-                                                server.mark_bad("server closed while client idle in transaction");
-                                                let _ = error_response(
-                                                    &mut self.write,
-                                                    "server closed the connection, possibly due to idle_in_transaction_session_timeout",
-                                                    "08006",
-                                                ).await;
-                                                self.stats.disconnect();
-                                                CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
-                                                self.connected_to_server = false;
-                                                self.release();
-                                                return Ok(());
-                                            }
+                                        _ => {
+                                            warn!(
+                                                "Server {} connection event while waiting for client {} — \
+                                                 server likely terminated (idle_in_transaction_session_timeout, \
+                                                 pg_terminate_backend)",
+                                                server, self.addr
+                                            );
+                                            server.mark_bad("server closed while client idle in transaction");
+                                            let _ = error_response(
+                                                &mut self.write,
+                                                "server closed the connection, possibly due to idle_in_transaction_session_timeout",
+                                                "08006",
+                                            ).await;
+                                            self.stats.disconnect();
+                                            CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+                                            self.connected_to_server = false;
+                                            self.release();
+                                            return Ok(());
                                         }
                                     }
                                 }
