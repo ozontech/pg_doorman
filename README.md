@@ -48,6 +48,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
+| TLS: minimum TLS 1.2, Mozilla ciphers | Yes | Yes | No (allows TLS 1.0, weak ciphers) |
 | Prometheus metrics | Built-in | External | Built-in |
 
 ## Quick Start
@@ -148,11 +149,14 @@ What works in each pooling mode:
 | Cursors (DECLARE / FETCH / CLOSE) | Yes (auto-CLOSE ALL on checkin) | Yes |
 | LISTEN / NOTIFY | No — use session mode | Yes |
 | Temporary tables | No — use session mode | Yes |
-| Advisory locks | No — use session mode | Yes |
+| Advisory locks (`pg_advisory_xact_lock`) | Yes (transaction-scoped) | Yes |
+| Session-level advisory locks | No — use `pg_advisory_xact_lock` | Unreliable with pooling |
 | DISCARD ALL | Yes | Yes |
 | COPY | Yes | Yes |
 
 In transaction mode, PgDoorman automatically cleans up server state (`RESET ALL`, `CLOSE ALL`) when returning a connection to the pool, so the next client gets a clean connection.
+
+> **Advisory locks and connection pooling:** Session-level advisory locks (`pg_advisory_lock`) are unreliable with any connection pooler — the lock is tied to a backend connection, not to your application session, so another client may inherit or release it unexpectedly. Use transaction-level `pg_advisory_xact_lock()` instead, which is automatically released at transaction end and works correctly in transaction mode.
 
 ## Admin Commands
 
@@ -209,6 +213,15 @@ general:
   server_tls: true
   verify_server_certificate: true         # verify PostgreSQL server certificate
 ```
+
+### Security defaults
+
+PgDoorman enforces strict TLS defaults out of the box:
+
+- **TLS 1.2 minimum** — TLS 1.0/1.1 are rejected (deprecated per RFC 8996)
+- **Mozilla Intermediate cipher suites** — only modern AEAD ciphers (AES-GCM, ChaCha20-Poly1305) with forward secrecy (ECDHE/DHE); no RC4, DES, or CBC
+- **Full hostname verification** — `verify-full` checks both Subject Alternative Names (SANs) and Common Name (CN) via OpenSSL's `verify_hostname()`; Odyssey only checks CN, which is [obsolete practice](https://datatracker.ietf.org/doc/html/rfc6125)
+- **Startup validation** — certificates and keys are loaded and verified at startup, not at first connection
 
 ## Monitoring
 
