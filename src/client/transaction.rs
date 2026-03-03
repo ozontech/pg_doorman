@@ -693,23 +693,37 @@ where
                                     }
 
                                     _ = server.server_readable() => {
-                                        warn!(
-                                            "Server {} connection event while waiting for client {} — \
-                                             server likely terminated (idle_in_transaction_session_timeout, \
-                                             pg_terminate_backend)",
-                                            server, self.addr
-                                        );
-                                        server.mark_bad("server closed while client idle in transaction");
-                                        let _ = error_response(
-                                            &mut self.write,
-                                            "server closed the connection, possibly due to idle_in_transaction_session_timeout",
-                                            "08006",
-                                        ).await;
-                                        self.stats.disconnect();
-                                        CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
-                                        self.connected_to_server = false;
-                                        self.release();
-                                        return Ok(());
+                                        // Verify readiness is genuine, not spurious from BufStream buffering.
+                                        // After execute_server_roundtrip, BufReader may have drained the protocol
+                                        // data without reading the underlying socket until WouldBlock, leaving
+                                        // a stale readiness flag.
+                                        let mut verify_buf = [0u8; 1];
+                                        match server.stream.get_ref().try_read(&mut verify_buf) {
+                                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                                // Spurious readiness — no actual data, continue waiting
+                                                continue;
+                                            }
+                                            _ => {
+                                                // Genuine: EOF (Ok(0)), data (Ok(n)), or socket error
+                                                warn!(
+                                                    "Server {} connection event while waiting for client {} — \
+                                                     server likely terminated (idle_in_transaction_session_timeout, \
+                                                     pg_terminate_backend)",
+                                                    server, self.addr
+                                                );
+                                                server.mark_bad("server closed while client idle in transaction");
+                                                let _ = error_response(
+                                                    &mut self.write,
+                                                    "server closed the connection, possibly due to idle_in_transaction_session_timeout",
+                                                    "08006",
+                                                ).await;
+                                                self.stats.disconnect();
+                                                CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+                                                self.connected_to_server = false;
+                                                self.release();
+                                                return Ok(());
+                                            }
+                                        }
                                     }
 
                                     _ = idle_timeout_fut => {
@@ -750,23 +764,32 @@ where
                                     }
 
                                     _ = server.server_readable() => {
-                                        warn!(
-                                            "Server {} connection event while waiting for client {} — \
-                                             server likely terminated (idle_in_transaction_session_timeout, \
-                                             pg_terminate_backend)",
-                                            server, self.addr
-                                        );
-                                        server.mark_bad("server closed while client idle in transaction");
-                                        let _ = error_response(
-                                            &mut self.write,
-                                            "server closed the connection, possibly due to idle_in_transaction_session_timeout",
-                                            "08006",
-                                        ).await;
-                                        self.stats.disconnect();
-                                        CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
-                                        self.connected_to_server = false;
-                                        self.release();
-                                        return Ok(());
+                                        // Verify readiness is genuine (see 3-branch select comment above)
+                                        let mut verify_buf = [0u8; 1];
+                                        match server.stream.get_ref().try_read(&mut verify_buf) {
+                                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                                continue;
+                                            }
+                                            _ => {
+                                                warn!(
+                                                    "Server {} connection event while waiting for client {} — \
+                                                     server likely terminated (idle_in_transaction_session_timeout, \
+                                                     pg_terminate_backend)",
+                                                    server, self.addr
+                                                );
+                                                server.mark_bad("server closed while client idle in transaction");
+                                                let _ = error_response(
+                                                    &mut self.write,
+                                                    "server closed the connection, possibly due to idle_in_transaction_session_timeout",
+                                                    "08006",
+                                                ).await;
+                                                self.stats.disconnect();
+                                                CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+                                                self.connected_to_server = false;
+                                                self.release();
+                                                return Ok(());
+                                            }
+                                        }
                                     }
                                 }
                             }
