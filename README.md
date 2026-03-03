@@ -47,6 +47,8 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Auth query (dynamic users) | Yes | Yes | Yes |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
+| PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
+| TLS: minimum TLS 1.2, Mozilla ciphers | Yes | Yes | No (allows TLS 1.0, weak ciphers) |
 | Prometheus metrics | Built-in | External | Built-in |
 
 ## Quick Start
@@ -121,6 +123,160 @@ Your application connection string changes only the host and port:
 postgresql://app:secret@localhost:6432/mydb
 ```
 
+## Pooling Modes
+
+PgDoorman supports two pooling modes, configured per pool or per user:
+
+**Transaction mode** (default, recommended) — server connection is acquired when a transaction starts and released back to the pool when it ends. One backend serves many clients, giving the best connection utilization.
+
+**Session mode** — server connection is held for the entire client session. Use this when your application relies on session-level features like `LISTEN/NOTIFY`, temporary tables, or advisory locks.
+
+```yaml
+pools:
+  mydb:
+    pool_mode: "transaction"   # or "session"
+```
+
+## SQL Feature Compatibility
+
+What works in each pooling mode:
+
+| Feature | Transaction | Session |
+|---------|:-----------:|:-------:|
+| Regular queries (SELECT, INSERT, ...) | Yes | Yes |
+| Prepared statements (Parse/Bind/Execute) | Yes (transparent caching) | Yes |
+| SET / RESET | Yes (auto-RESET ALL on checkin) | Yes |
+| Cursors (DECLARE / FETCH / CLOSE) | Yes (auto-CLOSE ALL on checkin) | Yes |
+| LISTEN / NOTIFY | No — use session mode | Yes |
+| Temporary tables | No — use session mode | Yes |
+| Advisory locks (`pg_advisory_xact_lock`) | Yes (transaction-scoped) | Yes |
+| Session-level advisory locks | No — use `pg_advisory_xact_lock` | Unreliable with pooling |
+| DISCARD ALL | Yes | Yes |
+| COPY | Yes | Yes |
+
+In transaction mode, PgDoorman automatically cleans up server state (`RESET ALL`, `CLOSE ALL`) when returning a connection to the pool, so the next client gets a clean connection.
+
+> **Advisory locks and connection pooling:** Session-level advisory locks (`pg_advisory_lock`) are unreliable with any connection pooler — the lock is tied to a backend connection, not to your application session, so another client may inherit or release it unexpectedly. Use transaction-level `pg_advisory_xact_lock()` instead, which is automatically released at transaction end and works correctly in transaction mode.
+
+## Admin Commands
+
+Connect to the admin console and manage pools at runtime:
+
+```sql
+-- Block new connections (active transactions continue)
+PAUSE mydb;
+PAUSE;          -- all pools
+
+-- Unblock waiting clients
+RESUME mydb;
+RESUME;         -- all pools
+
+-- Force backend connection rotation (epoch-based, no downtime)
+RECONNECT mydb;
+RECONNECT;      -- all pools
+```
+
+Full connection rotation pattern: `PAUSE → RECONNECT → RESUME`.
+
+See [admin commands documentation](https://ozontech.github.io/pg_doorman/tutorials/basic-usage.html) for details.
+
+## TLS / SSL
+
+PgDoorman supports TLS encryption on both the client-facing and server-facing sides.
+
+### Client-facing TLS
+
+Encrypt connections between your application and PgDoorman:
+
+```yaml
+general:
+  tls_certificate: "/path/to/server.crt"
+  tls_private_key: "/path/to/server.key"
+  tls_mode: "require"                      # disable | allow | require | verify-full
+  # tls_ca_cert: "/path/to/ca.crt"        # required for verify-full
+  # tls_rate_limit_per_second: 500         # limit TLS handshakes (0 = unlimited)
+```
+
+| Mode | Behavior |
+|------|----------|
+| `disable` | TLS not allowed |
+| `allow` | TLS accepted but not required (default when cert is configured) |
+| `require` | TLS required, client certificates not verified |
+| `verify-full` | TLS required, client certificate verified against CA |
+
+### Server-facing TLS
+
+Encrypt connections from PgDoorman to PostgreSQL:
+
+```yaml
+general:
+  server_tls: true
+  verify_server_certificate: true         # verify PostgreSQL server certificate
+```
+
+### Security defaults
+
+PgDoorman enforces strict TLS defaults out of the box:
+
+- **TLS 1.2 minimum** — TLS 1.0/1.1 are rejected (deprecated per RFC 8996)
+- **Mozilla Intermediate cipher suites** — only modern AEAD ciphers (AES-GCM, ChaCha20-Poly1305) with forward secrecy (ECDHE/DHE); no RC4, DES, or CBC
+- **Full hostname verification** — `verify-full` checks both Subject Alternative Names (SANs) and Common Name (CN) via OpenSSL's `verify_hostname()`; Odyssey only checks CN, which is [obsolete practice](https://datatracker.ietf.org/doc/html/rfc6125)
+- **Startup validation** — certificates and keys are loaded and verified at startup, not at first connection
+
+## Monitoring
+
+Built-in Prometheus metrics endpoint — no external exporters needed.
+
+```yaml
+prometheus:
+  enabled: true
+  host: "0.0.0.0"
+  port: 9127
+```
+
+Scrape `http://host:9127/` to collect metrics. Key metrics:
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `pg_doorman_pools_clients` | status, user, database | Clients by status (active / idle / waiting) |
+| `pg_doorman_pools_servers` | status, user, database | Servers by status (active / idle) |
+| `pg_doorman_pools_queries_count` | user, database | Total queries executed |
+| `pg_doorman_pools_queries_percentile` | percentile, user, database | Query time p50 / p90 / p95 / p99 (ms) |
+| `pg_doorman_pools_transactions_count` | user, database | Total transactions executed |
+| `pg_doorman_pools_avg_wait_time` | user, database | Avg client wait for server (ms) |
+| `pg_doorman_pools_bytes` | direction, user, database | Bytes sent / received |
+| `pg_doorman_pool_prepared_cache_entries` | user, database | Prepared statement cache entries |
+| `pg_doorman_total_memory` | — | Process memory usage (bytes) |
+| `pg_doorman_connection_count` | type | Connections by type (plain / tls / total) |
+
+## Signals & Zero-Downtime Upgrade
+
+| Signal | Effect |
+|--------|--------|
+| `SIGHUP` | Reload configuration without restart |
+| `SIGUSR2` | Start binary upgrade + graceful shutdown of old process |
+| `SIGTERM` | Immediate shutdown |
+
+### Binary upgrade (zero downtime)
+
+Replace the pg_doorman binary while clients stay connected:
+
+```bash
+# Replace the binary on disk, then:
+kill -USR2 $(cat /tmp/pg_doorman.pid)
+
+# Or from the admin console:
+UPGRADE;
+```
+
+PgDoorman validates the new binary's configuration (`-t` flag) before starting it. If validation fails, the upgrade is aborted and the old process continues. Active clients experience no interruption — new connections are served by the new process, existing ones drain gracefully.
+
+For systemd services:
+
+```ini
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+```
+
 ## Installation
 
 **Pre-built binaries:** Download from [GitHub Releases](https://github.com/ozontech/pg_doorman/releases).
@@ -145,6 +301,29 @@ JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,backgro
 
 # Binary will be at target/release/pg_doorman
 ```
+
+## Coming from PgBouncer?
+
+PgDoorman uses YAML instead of INI, but the concepts are the same:
+
+| PgBouncer (INI) | PgDoorman (YAML) | Notes |
+|-----------------|-------------------|-------|
+| `pool_mode = transaction` | `pool_mode: "transaction"` | Same semantics |
+| `max_client_conn = 1000` | `general.max_connections: 1000` | |
+| `default_pool_size = 20` | `users[].pool_size: 20` | Set per-user, not globally |
+| `server_lifetime = 3600` | `general.server_lifetime: "1h"` | Human-readable durations |
+| `server_idle_timeout = 600` | `general.idle_timeout: "10m"` | |
+| `auth_query = ...` | `pools.<db>.auth_query.query: ...` | Same concept, YAML structure |
+| `listen_addr = *` | `general.host: "0.0.0.0"` | |
+| `listen_port = 6432` | `general.port: 6432` | |
+| `admin_users = admin` | `general.admin_username: "admin"` | |
+
+Key differences:
+
+- **Prepared statements work out of the box** — no `DEALLOCATE` required, transparent caching across connections
+- **Multithreaded** — one process, one pool, all CPU cores; no need for `SO_REUSE_PORT` hacks
+- **Auto-config** — run `pg_doorman generate --host your-db` to create a config from PostgreSQL
+- **Human-readable durations** — `"30s"`, `"5m"`, `"1h"` instead of raw seconds
 
 ## patroni_proxy
 
