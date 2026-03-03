@@ -679,7 +679,7 @@ where
                                 }
 
                                 _ = server.server_readable() => {
-                                    // Verify readiness is genuine (see 3-branch select comment above)
+                                    // Verify readiness is genuine, not spurious from BufStream buffering
                                     let mut verify_buf = [0u8; 1];
                                     match server.stream.get_ref().try_read(&mut verify_buf) {
                                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
