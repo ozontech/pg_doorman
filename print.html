@@ -531,8 +531,11 @@ DETAIL:
 	SHOW CONNECTIONS
 	SHOW STATS
 	RELOAD
-    SHUTDOWN
-	SHOW
+	SHUTDOWN
+	UPGRADE
+	PAUSE [db]
+	RESUME [db]
+	RECONNECT [db]
 </code></pre>
 <div id="admonition-protocol-compatibility" class="admonition admonish-note" role="note" aria-labelledby="admonition-protocol-compatibility-title">
 <div class="admonition-title">
@@ -701,6 +704,7 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <tr><td><code>sv_login</code></td><td>Number of server connections currently in the login process</td></tr>
 <tr><td><code>maxwait</code></td><td>Maximum wait time in seconds for the oldest client in the queue</td></tr>
 <tr><td><code>maxwait_us</code></td><td>Microsecond part of the maximum waiting time</td></tr>
+<tr><td><code>paused</code></td><td>Whether the pool is paused: <strong>1</strong> (paused) or <strong>0</strong> (active)</td></tr>
 </tbody></table>
 </div><div id="admonition-performance-alert" class="admonition admonish-warning" role="note" aria-labelledby="admonition-performance-alert-title">
 <div class="admonition-title">
@@ -803,6 +807,96 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <div>
 <p>The <code>RELOAD</code> command allows you to modify most configuration parameters without disrupting existing connections. This is ideal for production environments where downtime must be minimized.</p>
 </div>
+</div>
+<h4 id="pause"><a class="header" href="#pause">PAUSE</a></h4>
+<p>The <code>PAUSE [db]</code> command blocks new backend connection acquisition for the specified database (or all databases if no argument is given). Active transactions continue to work — only new connection requests are blocked.</p>
+<pre><code class="language-sql">-- Pause all pools
+pgdoorman=&gt; PAUSE;
+
+-- Pause only pools for a specific database
+pgdoorman=&gt; PAUSE mydb;
+</code></pre>
+<p>Clients that request a new backend connection while the pool is paused will wait until <code>RESUME</code> is issued or until <code>query_wait_timeout</code> expires (whichever comes first). If the timeout expires, the client receives a timeout error.</p>
+<p>Use <code>SHOW POOLS</code> to verify pause state — the <code>paused</code> column will show <code>1</code> for paused pools.</p>
+<div id="admonition-when-to-use-pause" class="admonition admonish-info" role="note" aria-labelledby="admonition-when-to-use-pause-title">
+<div class="admonition-title">
+<div id="admonition-when-to-use-pause-title">
+<p>When to use PAUSE</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/basic-usage.html#admonition-when-to-use-pause"></a>
+</div>
+<div>
+<p>PAUSE is useful during maintenance operations when you want to prevent new queries from reaching the backend:</p>
+<ul>
+<li><strong>Database failover</strong>: PAUSE → switch backend → RECONNECT → RESUME</li>
+<li><strong>Full connection rotation</strong>: PAUSE → RECONNECT → RESUME ensures all connections are recreated</li>
+<li><strong>Backend maintenance</strong>: PAUSE while performing schema changes, then RESUME</li>
+</ul>
+</div>
+</div>
+<h4 id="resume"><a class="header" href="#resume">RESUME</a></h4>
+<p>The <code>RESUME [db]</code> command lifts a PAUSE and immediately unblocks all waiting clients:</p>
+<pre><code class="language-sql">-- Resume all pools
+pgdoorman=&gt; RESUME;
+
+-- Resume only pools for a specific database
+pgdoorman=&gt; RESUME mydb;
+</code></pre>
+<p>Clients that were waiting due to PAUSE will immediately proceed to acquire a backend connection.</p>
+<h4 id="reconnect"><a class="header" href="#reconnect">RECONNECT</a></h4>
+<p>The <code>RECONNECT [db]</code> command forces all backend connections to be recreated:</p>
+<pre><code class="language-sql">-- Reconnect all pools
+pgdoorman=&gt; RECONNECT;
+
+-- Reconnect only pools for a specific database
+pgdoorman=&gt; RECONNECT mydb;
+</code></pre>
+<p>When executed:</p>
+<ol>
+<li>The pool's internal epoch counter is incremented</li>
+<li>All idle connections are immediately closed</li>
+<li>Active connections (currently serving a transaction) continue working but are discarded when returned to the pool — they will not be reused</li>
+</ol>
+<p>This means RECONNECT does <strong>not</strong> interrupt active transactions. New connections are created on demand with the current epoch, so they will be accepted by <code>recycle()</code>.</p>
+<div id="admonition-connection-rotation-patterns" class="admonition admonish-tip" role="note" aria-labelledby="admonition-connection-rotation-patterns-title">
+<div class="admonition-title">
+<div id="admonition-connection-rotation-patterns-title">
+<p>Connection Rotation Patterns</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/basic-usage.html#admonition-connection-rotation-patterns"></a>
+</div>
+<div>
+<p><strong>Gradual rotation</strong> (minimal disruption):
+RECONNECT alone — idle connections are dropped immediately, active connections are dropped when they finish their current transaction. New connections are created as needed.</p>
+<p><strong>Full rotation</strong> (guaranteed all-new connections):
+PAUSE → RECONNECT → RESUME — pausing first ensures no new transactions start, then RECONNECT marks everything for disposal. After RESUME, all subsequent queries get fresh connections.</p>
+</div>
+</div>
+<div id="admonition-reconnect-and-min_pool_size" class="admonition admonish-warning" role="note" aria-labelledby="admonition-reconnect-and-min_pool_size-title">
+<div class="admonition-title">
+<div id="admonition-reconnect-and-min_pool_size-title">
+<p>RECONNECT and min_pool_size</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/basic-usage.html#admonition-reconnect-and-min_pool_size"></a>
+</div>
+<div>
+<p>After RECONNECT, pools with <code>min_pool_size</code> configured will be automatically replenished to their minimum size on the next retain cycle. The new connections will have the current epoch.</p>
+</div>
+</div>
+<h3 id="edge-cases-and-behavior"><a class="header" href="#edge-cases-and-behavior">Edge Cases and Behavior</a></h3>
+<p>The following table describes behavior in edge cases for PAUSE, RESUME, and RECONNECT:</p>
+<div class="table-wrapper"><table><thead><tr><th>Scenario</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><strong>PAUSE an already paused pool</strong></td><td>No-op (idempotent). No error is returned.</td></tr>
+<tr><td><strong>RESUME a non-paused pool</strong></td><td>No-op (idempotent). No error is returned.</td></tr>
+<tr><td><strong>RECONNECT a paused pool</strong></td><td>Works: idle connections are drained and epoch is bumped. When RESUME is issued, new connections will be created with the new epoch.</td></tr>
+<tr><td><strong>PAUSE/RESUME/RECONNECT with nonexistent database</strong></td><td>Returns an error: <code>No pool for database "xxx"</code>. Without a database argument, all pools are affected (no error even if there are no pools).</td></tr>
+<tr><td><strong><code>query_wait_timeout</code> during PAUSE</strong></td><td>Clients waiting for a connection receive a timeout error, as expected. The pool remains paused.</td></tr>
+<tr><td><strong>RELOAD during PAUSE</strong></td><td>RELOAD recreates pools from configuration, so pause state is lost. This is expected — new configuration means new pools.</td></tr>
+<tr><td><strong>GC of paused dynamic pools</strong></td><td>Paused dynamic pools are protected from garbage collection, even if they have 0 connections.</td></tr>
+<tr><td><strong>Replenish during PAUSE</strong></td><td>Pools with <code>min_pool_size</code> are not replenished while paused — no new connections are created. Replenishment resumes after RESUME.</td></tr>
+<tr><td><strong>Connection lifetime during PAUSE</strong></td><td>The retain task continues to close expired connections (idle timeout, server lifetime). Connections still age normally.</td></tr>
+<tr><td><strong>Multiple RECONNECT calls</strong></td><td>Each call increments the epoch further. Only connections created after the latest RECONNECT are valid.</td></tr>
+</tbody></table>
 </div>
 <h2 id="signal-handling"><a class="header" href="#signal-handling">Signal Handling</a></h2>
 <p>PgDoorman responds to standard Unix signals for control and management. These signals can be sent using the <code>kill</code> command (e.g., <code>kill -HUP &lt;pid&gt;</code>).</p>
@@ -1941,7 +2035,12 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 </ul>
 <p><strong>New Features:</strong></p>
 <ul>
-<li><strong><code>default_min_pool_size</code> for dynamic auth_query passthrough pools</strong>: New <code>auth_query.default_min_pool_size</code> setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after <code>server_lifetime</code> expiry. Pools with <code>default_min_pool_size &gt; 0</code> are never garbage-collected. Default is <code>0</code> (no prewarm — backward compatible). Note: total backend connections scale as <code>active_users × default_min_pool_size</code>.</li>
+<li>
+<p><strong>PAUSE, RESUME, RECONNECT admin commands</strong>: New admin console commands for managing connection pools. <code>PAUSE [db]</code> blocks new backend connection acquisition (active transactions continue). <code>RESUME [db]</code> lifts the pause and unblocks waiting clients. <code>RECONNECT [db]</code> forces connection rotation by incrementing the pool epoch — idle connections are immediately closed and active connections are discarded when returned to the pool. Without arguments, all pools are affected; with a database name, only matching pools. Specifying a nonexistent database returns an error. Use <code>SHOW POOLS</code> to see the <code>paused</code> status column.</p>
+</li>
+<li>
+<p><strong><code>default_min_pool_size</code> for dynamic auth_query passthrough pools</strong>: New <code>auth_query.default_min_pool_size</code> setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after <code>server_lifetime</code> expiry. Pools with <code>default_min_pool_size &gt; 0</code> are never garbage-collected. Default is <code>0</code> (no prewarm — backward compatible). Note: total backend connections scale as <code>active_users × default_min_pool_size</code>.</p>
+</li>
 </ul>
 <h3 id="331-feb-26-2026"><a class="header" href="#331-feb-26-2026">3.3.1 <small>Feb 26, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
