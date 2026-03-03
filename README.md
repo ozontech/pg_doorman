@@ -292,21 +292,6 @@ sudo dnf copr enable vadvya/pg-doorman && sudo dnf install pg-doorman
 docker pull ghcr.io/ozontech/pg_doorman
 ```
 
-### Docker
-
-```bash
-docker run -v /path/to/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
-  -p 6432:6432 -p 9127:9127 \
-  ghcr.io/ozontech/pg_doorman
-```
-
-| Environment variable | Default | Description |
-|---------------------|---------|-------------|
-| `RUST_LOG` | `info` | Log level (`debug`, `info`, `warn`, `error`) |
-| `CONFIG_FILE` | `pg_doorman.toml` | Config file path |
-
-The image uses `SIGINT` as stop signal for graceful shutdown. Images are published for `linux/amd64` and `linux/arm64`.
-
 ### Building from source
 
 ```bash
