@@ -144,9 +144,49 @@ jobs:
           name: ${{ env.PACKAGE_NAME }}
           path: ./package/${{ env.PACKAGE_NAME }}
 
+  static-binary:
+    name: Build static musl binary.
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1.87.0-alpine
+      env:
+        JEMALLOC_SYS_WITH_MALLOC_CONF: "dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto"
+        OPENSSL_STATIC: "1"
+    steps:
+      - name: Install dependencies
+        run: apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig perl make git
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Build static binary
+        run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Verify static linking
+        run: |
+          file target/x86_64-unknown-linux-musl/release/pg_doorman | grep "statically linked"
+          file target/x86_64-unknown-linux-musl/release/patroni_proxy | grep "statically linked"
+      - name: Check versions
+        run: |
+          target/x86_64-unknown-linux-musl/release/pg_doorman --version
+          target/x86_64-unknown-linux-musl/release/patroni_proxy --version
+      - name: Prepare artifacts
+        run: |
+          mkdir -p ./artifacts
+          cp target/x86_64-unknown-linux-musl/release/pg_doorman ./artifacts/pg_doorman-linux-amd64-static
+          cp target/x86_64-unknown-linux-musl/release/patroni_proxy ./artifacts/patroni_proxy-linux-amd64-static
+      - name: Upload pg_doorman static binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg_doorman-linux-amd64-static
+          path: ./artifacts/pg_doorman-linux-amd64-static
+      - name: Upload patroni_proxy static binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: patroni_proxy-linux-amd64-static
+          path: ./artifacts/patroni_proxy-linux-amd64-static
+
   release-packages:
     name: Release packages.
-    needs: ['deb', 'rpm']
+    needs: ['deb', 'rpm', 'static-binary']
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -159,6 +199,8 @@ jobs:
           - "pg_doorman-ubuntu-22.04.deb"
           - "pg_doorman-ubuntu-24.04.deb"
           - "pg_doorman-debian-12.deb"
+          - "pg_doorman-linux-amd64-static"
+          - "patroni_proxy-linux-amd64-static"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4

@@ -47,6 +47,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Auth query (dynamic users) | Yes | Yes | Yes |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
+| PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
 | Prometheus metrics | Built-in | External | Built-in |
 
 ## Quick Start
@@ -120,6 +121,28 @@ Your application connection string changes only the host and port:
 ```
 postgresql://app:secret@localhost:6432/mydb
 ```
+
+## Admin Commands
+
+Connect to the admin console and manage pools at runtime:
+
+```sql
+-- Block new connections (active transactions continue)
+PAUSE mydb;
+PAUSE;          -- all pools
+
+-- Unblock waiting clients
+RESUME mydb;
+RESUME;         -- all pools
+
+-- Force backend connection rotation (epoch-based, no downtime)
+RECONNECT mydb;
+RECONNECT;      -- all pools
+```
+
+Full connection rotation pattern: `PAUSE → RECONNECT → RESUME`.
+
+See [admin commands documentation](https://ozontech.github.io/pg_doorman/tutorials/basic-usage.html) for details.
 
 ## Installation
 
