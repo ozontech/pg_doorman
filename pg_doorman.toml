@@ -69,6 +69,14 @@ retain_connections_max = 3
 # Default: "60s"
 server_idle_check_timeout = 60000
 
+
+# Maximum time a client can remain idle while holding a server connection
+# inside a transaction. If exceeded, pg_doorman closes the client connection
+# and releases the server slot.
+# 0 means disabled (no timeout).
+# Default: "0"
+client_idle_in_transaction_timeout = 0
+
 # Graceful shutdown timeout.
 # Default: 10000 (10000 ms)
 shutdown_timeout = 10000

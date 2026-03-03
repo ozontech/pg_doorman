@@ -188,6 +188,13 @@ pub struct General {
     )]
     pub hba: Vec<IpNet>,
 
+    /// Client idle in transaction timeout (in milliseconds).
+    /// If a client holds a server connection inside a transaction and sends no data
+    /// for longer than this timeout, pg_doorman closes the connection and releases
+    /// the server slot. 0 means disabled (default, backward compatible).
+    #[serde(default = "General::default_client_idle_in_transaction_timeout")]
+    pub client_idle_in_transaction_timeout: Duration,
+
     // New pg_hba rules: either inline content or a file path (see `PgHba` deserialization).
     #[serde(default, skip_serializing)]
     pub pg_hba: Option<PgHba>,
@@ -337,6 +344,11 @@ impl General {
         0
     }
 
+    /// Default: 0 (disabled)
+    pub fn default_client_idle_in_transaction_timeout() -> Duration {
+        Duration::from_millis(0)
+    }
+
     pub fn default_daemon_pid_file() -> String {
         "/tmp/pg_doorman.pid".to_string()
     }
@@ -437,6 +449,7 @@ impl Default for General {
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
             client_prepared_statements_cache_size:
                 Self::default_client_prepared_statements_cache_size(),
+            client_idle_in_transaction_timeout: Self::default_client_idle_in_transaction_timeout(),
             hba: Self::default_hba(),
             pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),
