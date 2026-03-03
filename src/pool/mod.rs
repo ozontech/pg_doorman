@@ -8,7 +8,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 
 use crate::auth::auth_query::{AuthQueryCache, AuthQueryExecutor};
 use crate::config::{
@@ -771,6 +771,12 @@ pub struct ServerPool {
 
     /// Connect timeout for alive checks.
     connect_timeout: Duration,
+
+    /// Combined pool state: bit 32 = paused, bits 0-31 = reconnect epoch (u32).
+    pool_state: AtomicU64,
+
+    /// Notify to wake up clients blocked on PAUSE.
+    resume_notify: Notify,
 }
 
 impl std::fmt::Debug for ServerPool {
@@ -829,6 +835,8 @@ impl ServerPool {
             idle_timeout_ms,
             idle_check_timeout_ms,
             connect_timeout,
+            pool_state: AtomicU64::new(0),
+            resume_notify: Notify::new(),
         }
     }
 
@@ -897,11 +905,70 @@ impl ServerPool {
         self.idle_timeout_ms
     }
 
+    /// Bit flag for the paused state within `pool_state`.
+    const PAUSED_BIT: u64 = 1 << 32;
+    /// Mask for the reconnect epoch (lower 32 bits) within `pool_state`.
+    const EPOCH_MASK: u64 = 0xFFFF_FFFF;
+
+    /// Returns whether the pool is paused.
+    pub fn is_paused(&self) -> bool {
+        self.pool_state.load(Ordering::Acquire) & Self::PAUSED_BIT != 0
+    }
+
+    /// Sets the pool as paused.
+    pub fn pause(&self) {
+        self.pool_state
+            .fetch_or(Self::PAUSED_BIT, Ordering::Release);
+    }
+
+    /// Resumes the pool and wakes all waiting clients.
+    pub fn resume(&self) {
+        self.pool_state
+            .fetch_and(!Self::PAUSED_BIT, Ordering::Release);
+        self.resume_notify.notify_waiters();
+    }
+
+    /// Returns a future that completes when the pool is resumed.
+    pub fn resume_notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.resume_notify.notified()
+    }
+
+    /// Returns the current reconnect epoch.
+    pub fn current_epoch(&self) -> u32 {
+        (self.pool_state.load(Ordering::Acquire) & Self::EPOCH_MASK) as u32
+    }
+
+    /// Increments the reconnect epoch and returns the new value.
+    /// Uses CAS loop to modify only the lower 32 bits, preventing
+    /// epoch overflow from corrupting PAUSED_BIT at bit 32.
+    pub fn bump_epoch(&self) -> u32 {
+        loop {
+            let old = self.pool_state.load(Ordering::Acquire);
+            let old_epoch = (old & Self::EPOCH_MASK) as u32;
+            let new_epoch = old_epoch.wrapping_add(1);
+            let new = (old & !Self::EPOCH_MASK) | (new_epoch as u64);
+            if self
+                .pool_state
+                .compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return new_epoch;
+            }
+        }
+    }
+
     /// Checks if the connection can be recycled.
     /// Performs lifetime check and alive check for idle connections.
     pub async fn recycle(&self, conn: &mut Server, metrics: &Metrics) -> RecycleResult {
         if conn.is_bad() {
             return Err(RecycleError::StaticMessage("Bad connection"));
+        }
+
+        // RECONNECT epoch check: reject connections created before current epoch
+        if metrics.epoch < self.current_epoch() {
+            return Err(RecycleError::StaticMessage(
+                "Connection outdated (RECONNECT)",
+            ));
         }
 
         // Check server_lifetime - applies to all connections, not just idle

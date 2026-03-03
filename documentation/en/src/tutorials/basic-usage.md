@@ -228,8 +228,11 @@ DETAIL:
 	SHOW CONNECTIONS
 	SHOW STATS
 	RELOAD
-    SHUTDOWN
-	SHOW
+	SHUTDOWN
+	UPGRADE
+	PAUSE [db]
+	RESUME [db]
+	RECONNECT [db]
 ```
 
 ```admonish note title="Protocol Compatibility"
@@ -397,6 +400,7 @@ pgdoorman=> SHOW POOLS;
 | `sv_login` | Number of server connections currently in the login process |
 | `maxwait` | Maximum wait time in seconds for the oldest client in the queue |
 | `maxwait_us` | Microsecond part of the maximum waiting time |
+| `paused` | Whether the pool is paused: **1** (paused) or **0** (active) |
 
 ```admonish warning title="Performance Alert"
 If the `maxwait` value starts increasing, your server pool may not be handling requests quickly enough. This could be due to an overloaded PostgreSQL server or insufficient `pool_size` setting.
@@ -500,6 +504,93 @@ This command:
 ```admonish tip title="Zero-Downtime Configuration Changes"
 The `RELOAD` command allows you to modify most configuration parameters without disrupting existing connections. This is ideal for production environments where downtime must be minimized.
 ```
+
+#### PAUSE
+
+The `PAUSE [db]` command blocks new backend connection acquisition for the specified database (or all databases if no argument is given). Active transactions continue to work — only new connection requests are blocked.
+
+```sql
+-- Pause all pools
+pgdoorman=> PAUSE;
+
+-- Pause only pools for a specific database
+pgdoorman=> PAUSE mydb;
+```
+
+Clients that request a new backend connection while the pool is paused will wait until `RESUME` is issued or until `query_wait_timeout` expires (whichever comes first). If the timeout expires, the client receives a timeout error.
+
+Use `SHOW POOLS` to verify pause state — the `paused` column will show `1` for paused pools.
+
+```admonish info title="When to use PAUSE"
+PAUSE is useful during maintenance operations when you want to prevent new queries from reaching the backend:
+
+- **Database failover**: PAUSE → switch backend → RECONNECT → RESUME
+- **Full connection rotation**: PAUSE → RECONNECT → RESUME ensures all connections are recreated
+- **Backend maintenance**: PAUSE while performing schema changes, then RESUME
+```
+
+#### RESUME
+
+The `RESUME [db]` command lifts a PAUSE and immediately unblocks all waiting clients:
+
+```sql
+-- Resume all pools
+pgdoorman=> RESUME;
+
+-- Resume only pools for a specific database
+pgdoorman=> RESUME mydb;
+```
+
+Clients that were waiting due to PAUSE will immediately proceed to acquire a backend connection.
+
+#### RECONNECT
+
+The `RECONNECT [db]` command forces all backend connections to be recreated:
+
+```sql
+-- Reconnect all pools
+pgdoorman=> RECONNECT;
+
+-- Reconnect only pools for a specific database
+pgdoorman=> RECONNECT mydb;
+```
+
+When executed:
+
+1. The pool's internal epoch counter is incremented
+2. All idle connections are immediately closed
+3. Active connections (currently serving a transaction) continue working but are discarded when returned to the pool — they will not be reused
+
+This means RECONNECT does **not** interrupt active transactions. New connections are created on demand with the current epoch, so they will be accepted by `recycle()`.
+
+```admonish tip title="Connection Rotation Patterns"
+**Gradual rotation** (minimal disruption):
+RECONNECT alone — idle connections are dropped immediately, active connections are dropped when they finish their current transaction. New connections are created as needed.
+
+**Full rotation** (guaranteed all-new connections):
+PAUSE → RECONNECT → RESUME — pausing first ensures no new transactions start, then RECONNECT marks everything for disposal. After RESUME, all subsequent queries get fresh connections.
+```
+
+```admonish warning title="RECONNECT and min_pool_size"
+After RECONNECT, pools with `min_pool_size` configured will be automatically replenished to their minimum size on the next retain cycle. The new connections will have the current epoch.
+```
+
+### Edge Cases and Behavior
+
+The following table describes behavior in edge cases for PAUSE, RESUME, and RECONNECT:
+
+| Scenario | Behavior |
+|----------|----------|
+| **PAUSE an already paused pool** | No-op (idempotent). No error is returned. |
+| **RESUME a non-paused pool** | No-op (idempotent). No error is returned. |
+| **RECONNECT a paused pool** | Works: idle connections are drained and epoch is bumped. When RESUME is issued, new connections will be created with the new epoch. |
+| **PAUSE/RESUME/RECONNECT with nonexistent database** | Returns an error: `No pool for database "xxx"`. Without a database argument, all pools are affected (no error even if there are no pools). |
+| **`query_wait_timeout` during PAUSE** | Clients waiting for a connection receive a timeout error, as expected. The pool remains paused. |
+| **RELOAD during PAUSE** | RELOAD recreates pools from configuration, so pause state is lost. This is expected — new configuration means new pools. |
+| **GC of paused dynamic pools** | Paused dynamic pools are protected from garbage collection, even if they have 0 connections. |
+| **Replenish during PAUSE** | Pools with `min_pool_size` are not replenished while paused — no new connections are created. Replenishment resumes after RESUME. |
+| **Connection lifetime during PAUSE** | The retain task continues to close expired connections (idle timeout, server lifetime). Connections still age normally. |
+| **Multiple RECONNECT calls** | Each call increments the epoch further. Only connections created after the latest RECONNECT are valid. |
 
 ## Signal Handling
 
