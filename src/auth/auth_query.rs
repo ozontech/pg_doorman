@@ -692,7 +692,7 @@ mod tests {
             server_user: None,
             server_password: None,
             default_pool_size: 40,
-            default_min_pool_size: 0,
+            min_pool_size: 0,
             cache_ttl: Duration::from_hours(1),
             cache_failure_ttl: Duration::from_secs(30),
             min_interval: Duration::from_secs(1),

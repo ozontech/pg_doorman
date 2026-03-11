@@ -578,7 +578,7 @@ pools:
     #   server_user: "app"
     #   server_password: "secret"
     #   default_pool_size: 40
-    #   default_min_pool_size: 0
+    #   min_pool_size: 0
     #   cache_ttl: "1h"
     #   cache_failure_ttl: "30s"
     #   min_interval: "1s"
