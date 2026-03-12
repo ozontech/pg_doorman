@@ -1,10 +1,10 @@
 @auth-query @auth-query-min-pool-size
-Feature: Auth query default_min_pool_size for dynamic passthrough pools
+Feature: Auth query min_pool_size for dynamic passthrough pools
 
-  Tests that default_min_pool_size prewarmed connections are created and maintained
+  Tests that min_pool_size prewarmed connections are created and maintained
   for dynamic auth_query passthrough pools.
 
-  Scenario: Dynamic pool prewarm with default_min_pool_size
+  Scenario: Dynamic pool prewarm with min_pool_size
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
@@ -49,7 +49,7 @@ Feature: Auth query default_min_pool_size for dynamic passthrough pools
             password: ""
             pool_size: 1
             default_pool_size: 5
-            default_min_pool_size: 2
+            min_pool_size: 2
             cache_ttl: "1h"
             cache_failure_ttl: "30s"
             min_interval: "0s"
@@ -59,12 +59,12 @@ Feature: Auth query default_min_pool_size for dynamic passthrough pools
     And we send SimpleQuery "SELECT 1" to session "md5_session"
     # Wait for prewarm + retain cycles to establish min_pool_size connections
     When we sleep for 2000 milliseconds
-    # Check server connections — should have at least 2 (default_min_pool_size=2)
+    # Check server connections — should have at least 2 (min_pool_size=2)
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
     Then admin session "admin1" row count should be greater than or equal to 2
 
-  Scenario: Dynamic pool maintains default_min_pool_size after server_lifetime expiry
+  Scenario: Dynamic pool maintains min_pool_size after server_lifetime expiry
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
@@ -110,7 +110,7 @@ Feature: Auth query default_min_pool_size for dynamic passthrough pools
             password: ""
             pool_size: 1
             default_pool_size: 5
-            default_min_pool_size: 2
+            min_pool_size: 2
             cache_ttl: "1h"
             cache_failure_ttl: "30s"
             min_interval: "0s"

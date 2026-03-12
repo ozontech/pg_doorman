@@ -1089,8 +1089,8 @@ pub fn create_dynamic_pool(
         username: username.to_string(),
         password: String::new(),
         pool_size: aq_config.default_pool_size,
-        min_pool_size: if aq_config.default_min_pool_size > 0 {
-            Some(aq_config.default_min_pool_size)
+        min_pool_size: if aq_config.min_pool_size > 0 {
+            Some(aq_config.min_pool_size)
         } else {
             None
         },
@@ -1209,21 +1209,21 @@ pub fn create_dynamic_pool(
     POOLS.store(Arc::new(new_pools));
     register_dynamic_pool(&identifier);
 
-    // Prewarm: spawn background task to create default_min_pool_size connections
-    if aq_config.default_min_pool_size > 0 {
+    // Prewarm: spawn background task to create min_pool_size connections
+    if aq_config.min_pool_size > 0 {
         let pool_clone = conn_pool.clone();
-        let min = aq_config.default_min_pool_size as usize;
+        let min = aq_config.min_pool_size as usize;
         let pn = pool_name.to_string();
         let un = username.to_string();
         tokio::spawn(async move {
             let created = pool_clone.database.replenish(min).await;
             if created > 0 {
                 info!(
-                    "[pool: {pn}][user: {un}] prewarmed {created} dynamic connection(s) (default_min_pool_size: {min})"
+                    "[pool: {pn}][user: {un}] prewarmed {created} dynamic connection(s) (min_pool_size: {min})"
                 );
             } else {
                 warn!(
-                    "[pool: {pn}][user: {un}] dynamic prewarm failed (default_min_pool_size: {min})"
+                    "[pool: {pn}][user: {un}] dynamic prewarm failed (min_pool_size: {min})"
                 );
             }
         });

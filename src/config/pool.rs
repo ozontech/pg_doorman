@@ -213,9 +213,9 @@ impl Pool {
             if aq.pool_size == 0 {
                 return Err(Error::BadConfig("auth_query.pool_size must be > 0".into()));
             }
-            if aq.default_min_pool_size > aq.default_pool_size {
+            if aq.min_pool_size > aq.default_pool_size {
                 return Err(Error::BadConfig(
-                    "auth_query: default_min_pool_size must be <= default_pool_size".into(),
+                    "auth_query: min_pool_size must be <= default_pool_size".into(),
                 ));
             }
         }
@@ -285,7 +285,7 @@ pub struct AuthQueryConfig {
     /// Minimum connections to maintain per dynamic user pool (default: 0 = no prewarm).
     /// Only applies in passthrough mode (when server_user is not set).
     #[serde(default)]
-    pub default_min_pool_size: u32,
+    pub min_pool_size: u32,
 
     /// Max cache age for positive entries (default: "1h").
     #[serde(default = "AuthQueryConfig::default_cache_ttl")]
