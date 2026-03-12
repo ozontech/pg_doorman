@@ -303,6 +303,18 @@ impl Server {
         self.address.to_string()
     }
 
+    pub async fn server_readable(&self) {
+        let _ = self.stream.get_ref().readable().await;
+    }
+
+    pub fn check_server_alive(&self) -> bool {
+        let mut buf = [0u8; 1];
+        matches!(
+            self.stream.get_ref().try_read(&mut buf),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
+        )
+    }
+
     /// Perform any necessary cleanup before putting the server
     /// connection back in the pool
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {

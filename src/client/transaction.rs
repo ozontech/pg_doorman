@@ -128,6 +128,29 @@ use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 /// When the buffer reaches this size, it will be flushed to avoid excessive memory usage.
 const BUFFER_FLUSH_THRESHOLD: usize = 8192;
 
+/// RAII guard for CLIENTS_IN_TRANSACTIONS counter.
+/// Increments on creation, decrements on drop.
+struct TransactionGuard;
+
+impl TransactionGuard {
+    fn new() -> Self {
+        CLIENTS_IN_TRANSACTIONS.fetch_add(1, Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for TransactionGuard {
+    fn drop(&mut self) {
+        CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Result of waiting for the next client message while monitoring server liveness.
+enum NextClientMessage {
+    Message(BytesMut),
+    ServerDead,
+}
+
 /// Action to take after processing a message in the transaction loop
 enum TransactionAction {
     /// Continue processing messages in the transaction loop
@@ -174,6 +197,26 @@ where
             ));
         }
         Ok(())
+    }
+
+    /// Wait for the next client message while monitoring server connection liveness.
+    /// Uses `select!` to race client read against server readability, detecting dead
+    /// server connections (e.g., `pg_terminate_backend`) while client is idle in transaction.
+    async fn wait_for_next_message(&mut self, server: &Server) -> Result<NextClientMessage, Error> {
+        loop {
+            tokio::select! {
+                biased;
+                result = read_message(&mut self.read, self.max_memory_usage) => {
+                    return result.map(NextClientMessage::Message);
+                }
+                _ = server.server_readable() => {
+                    if server.check_server_alive() {
+                        continue;
+                    }
+                    return Ok(NextClientMessage::ServerDead);
+                }
+            }
+        }
     }
 
     /// Handle cancel mode - when client wants to cancel a previously issued query.
@@ -590,8 +633,9 @@ where
                 server.claim(self.process_id, self.secret_key);
                 self.connected_to_server = true;
 
-                // Signal that client is now in transaction (has server connection)
-                CLIENTS_IN_TRANSACTIONS.fetch_add(1, Ordering::Relaxed);
+                // RAII guard: increments CLIENTS_IN_TRANSACTIONS now,
+                // decrements automatically when this block exits (normal or early return).
+                let _tx_guard = TransactionGuard::new();
 
                 // Update statistics
                 self.stats.active_idle();
@@ -660,11 +704,32 @@ where
                     let message = match initial_message {
                         None => {
                             self.stats.active_read();
-                            match read_message(&mut self.read, self.max_memory_usage).await {
-                                Ok(message) => message,
+                            match self.wait_for_next_message(server).await {
+                                Ok(NextClientMessage::Message(msg)) => msg,
+                                Ok(NextClientMessage::ServerDead) => {
+                                    warn!(
+                                        "Server {} connection died while client {} idle in transaction",
+                                        server, self.addr
+                                    );
+                                    server.mark_bad(
+                                        "server closed while client idle in transaction",
+                                    );
+                                    let _ = error_response(
+                                        &mut self.write,
+                                        "server closed the connection unexpectedly while client was idle in transaction",
+                                        "08006",
+                                    )
+                                    .await;
+                                    self.stats.disconnect();
+                                    self.connected_to_server = false;
+                                    self.release();
+                                    return Ok(());
+                                }
                                 Err(err) => {
                                     self.stats.disconnect();
+                                    self.connected_to_server = false;
                                     server.checkin_cleanup().await?;
+                                    self.release();
                                     return self.process_error(err).await;
                                 }
                             }
@@ -694,9 +759,9 @@ where
 
                         // Terminate
                         'X' => {
-                            // принудительно закрываем чтобы не допустить длинную транзакцию
                             server.checkin_cleanup().await?;
                             self.stats.disconnect();
+                            self.connected_to_server = false;
                             self.release();
                             return Ok(());
                         }
@@ -790,8 +855,7 @@ where
                 self.client_last_messages_in_tx.clear();
             }
 
-            // Signal that client finished transaction (released server connection)
-            CLIENTS_IN_TRANSACTIONS.fetch_sub(1, Ordering::Relaxed);
+            // TransactionGuard dropped at end of block above, counter already decremented.
             self.connected_to_server = false;
 
             // If shutdown is in progress, send error to client and exit

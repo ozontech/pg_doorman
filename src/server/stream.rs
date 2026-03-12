@@ -77,6 +77,20 @@ impl StreamInner {
             StreamInner::UnixSocket { stream } => stream.try_write(buf),
         }
     }
+
+    pub fn try_read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            StreamInner::TCPPlain { stream } => stream.try_read(buf),
+            StreamInner::UnixSocket { stream } => stream.try_read(buf),
+        }
+    }
+
+    pub async fn readable(&self) -> std::io::Result<()> {
+        match self {
+            StreamInner::TCPPlain { stream } => stream.readable().await,
+            StreamInner::UnixSocket { stream } => stream.readable().await,
+        }
+    }
 }
 
 pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<StreamInner, Error> {
