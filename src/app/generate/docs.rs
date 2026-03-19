@@ -418,6 +418,7 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_pools_clients` | Number of clients in connection pools by status, user, and database. Status values include: 'idle' (connected but not executing queries), 'waiting' (waiting for a server connection), and 'active' (currently executing queries). Helps monitor connection pool utilization and client distribution. |");
     let _ = writeln!(out, "| `pg_doorman_pools_servers` | Number of servers in connection pools by status, user, and database. Status values include: 'active' (actively serving clients) and 'idle' (available for new connections). Helps monitor server availability and load distribution. |");
     let _ = writeln!(out, "| `pg_doorman_pools_bytes` | Total bytes transferred through connection pools by direction, user, and database. Direction values include: 'received' (bytes received from clients) and 'sent' (bytes sent to clients). Useful for monitoring network traffic and identifying high-volume connections. |\n");
+    let _ = writeln!(out, "| `pg_doorman_pool_size` | Pool size from pg_doorman config by user and database. Default value will be used if parameter is not set in the config. Useful for monitoring pool remaining capacity using pg_doorman_pools_servers. |\n");
 
     // Query and Transaction Metrics
     let _ = writeln!(out, "### Query and Transaction Metrics\n");

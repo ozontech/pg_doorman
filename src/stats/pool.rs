@@ -161,6 +161,9 @@ pub struct PoolStats {
 
     /// Whether the pool is paused (PAUSE command)
     pub paused: bool,
+
+    /// Pool size defined in the config (or default value)
+    pub size: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +249,7 @@ impl PoolStats {
             avg_xact_time_microsecons: 0,
             avg_query_time_microseconds: 0,
             paused: false,
+            size: 0,
         }
     }
 
@@ -450,6 +454,7 @@ impl PoolStats {
         for (identifier, pool) in get_all_pools().iter() {
             // Get address stats for this pool
             let address = pool.address().stats.clone();
+            let user = pool.settings.user.clone();
 
             // Get percentiles directly from HDR histograms (O(1) operation)
             let (query_p50, query_p90, query_p95, query_p99) = address.get_query_percentiles();
@@ -472,6 +477,9 @@ impl PoolStats {
                     p99: xact_p99,
                 },
             );
+
+            // Pool size
+            current.size = user.pool_size.clone();
 
             // Load pause state
             current.paused = pool.database.is_paused();

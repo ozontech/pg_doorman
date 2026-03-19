@@ -69,6 +69,19 @@ pub(crate) static SHOW_POOLS_CLIENT: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+pub(crate) static SHOW_POOL_SIZE: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pool_size",
+            "Pool size from the config by user and database. If not set in the config default value will be used",
+        ),
+        &["user", "database"],
+    )
+        .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
 pub(crate) static SHOW_POOLS_SERVER: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
