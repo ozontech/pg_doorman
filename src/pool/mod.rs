@@ -468,7 +468,7 @@ impl ConnectionPool {
                         let shared_user = User {
                             username: su.clone(),
                             password: String::new(),
-                            pool_size: aq_config.default_pool_size,
+                            pool_size: aq_config.pool_size,
                             server_username: Some(su.clone()),
                             server_password: Some(sp),
                             ..Default::default()
@@ -1088,7 +1088,7 @@ pub fn create_dynamic_pool(
     let user = User {
         username: username.to_string(),
         password: String::new(),
-        pool_size: aq_config.default_pool_size,
+        pool_size: aq_config.pool_size,
         min_pool_size: if aq_config.min_pool_size > 0 {
             Some(aq_config.min_pool_size)
         } else {

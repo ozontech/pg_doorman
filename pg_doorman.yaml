@@ -574,10 +574,10 @@ pools:
     #   user: "doorman_auth"
     #   password: "auth_password"
     #   database: "postgres"
-    #   pool_size: 2
+    #   credential_lookup_pool_size: 2
     #   server_user: "app"
     #   server_password: "secret"
-    #   default_pool_size: 40
+    #   pool_size: 40
     #   min_pool_size: 0
     #   cache_ttl: "1h"
     #   cache_failure_ttl: "30s"

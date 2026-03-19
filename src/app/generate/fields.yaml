@@ -1185,7 +1185,7 @@ fields:
       doc: "Database for executor connections. If not specified, the pool name is used."
       default: "None (uses pool name)"
 
-    pool_size:
+    credential_lookup_pool_size:
       config:
         en: "Number of executor connections (for running auth queries, not data connections)."
         ru: "Количество соединений-исполнителей (для auth-запросов, не для данных)."
@@ -1212,7 +1212,7 @@ fields:
       doc: "Plaintext password for the `server_user`. Only meaningful when `server_user` is set."
       default: "None"
 
-    default_pool_size:
+    pool_size:
       config:
         en: "Pool size for dynamic user data connections."
         ru: "Размер пула для соединений данных динамических пользователей."
