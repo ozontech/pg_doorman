@@ -28,6 +28,10 @@
 
 - **`min_pool_size` for dynamic auth_query passthrough pools**: New `auth_query.min_pool_size` setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after `server_lifetime` expiry. Pools with `min_pool_size > 0` are never garbage-collected. Default is `0` (no prewarm — backward compatible). Note: total backend connections scale as `active_users × min_pool_size`.
 
+**Breaking Changes:**
+
+- **`auth_query` config field renames**: Two fields in the `auth_query` section have been renamed for clarity. `auth_query.pool_size` (executor connection count) is now `auth_query.credential_lookup_pool_size`. `auth_query.default_pool_size` (data pool size for dynamic users) is now `auth_query.pool_size`. Existing configs must be updated — old field names are silently ignored and defaults will be used instead.
+
 ### 3.3.1 <small>Feb 26, 2026</small>
 
 **Bug Fixes:**

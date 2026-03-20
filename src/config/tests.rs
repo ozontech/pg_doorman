@@ -1151,6 +1151,36 @@ async fn test_auth_query_validate_empty_password_ok() {
     assert!(result.is_ok());
 }
 
+/// Validation: min_pool_size > pool_size must be rejected
+#[tokio::test]
+async fn test_auth_query_validate_min_pool_size_exceeds_pool_size() {
+    let mut pool = Pool::default();
+    pool.auth_query = Some(pool::AuthQueryConfig {
+        query: "SELECT usename, passwd FROM pg_shadow WHERE usename = $1".to_string(),
+        user: "pg_doorman_auth".to_string(),
+        password: "secret".to_string(),
+        database: None,
+        credential_lookup_pool_size: 2,
+        server_user: None,
+        server_password: None,
+        pool_size: 5,
+        min_pool_size: 10,
+        cache_ttl: Duration::from_hours(1),
+        cache_failure_ttl: Duration::from_secs(30),
+        min_interval: Duration::from_secs(1),
+    });
+
+    let result = pool.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(
+            msg.contains("min_pool_size must be <= pool_size"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+}
+
 // ============================================================
 // Scaling config tests
 // ============================================================
