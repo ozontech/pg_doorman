@@ -73,11 +73,11 @@ pub(crate) static SHOW_POOL_SIZE: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
             "pg_doorman_pool_size",
-            "Pool size from the config by user and database. If not set in the config default value will be used",
+            "Configured maximum pool size per user and database. Useful for calculating remaining pool capacity together with pg_doorman_pools_servers.",
         ),
         &["user", "database"],
     )
-        .unwrap();
+    .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
 });

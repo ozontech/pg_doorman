@@ -1222,9 +1222,7 @@ pub fn create_dynamic_pool(
                     "[pool: {pn}][user: {un}] prewarmed {created} dynamic connection(s) (min_pool_size: {min})"
                 );
             } else {
-                warn!(
-                    "[pool: {pn}][user: {un}] dynamic prewarm failed (min_pool_size: {min})"
-                );
+                warn!("[pool: {pn}][user: {un}] dynamic prewarm failed (min_pool_size: {min})");
             }
         });
     }

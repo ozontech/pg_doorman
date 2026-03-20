@@ -240,7 +240,7 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 |--------|--------|---------------------------------------------|
 | `pg_doorman_pools_clients` | status, user, database | Clients by status (active / idle / waiting) |
 | `pg_doorman_pools_servers` | status, user, database | Servers by status (active / idle)           |
-| `pg_doorman_pool_size` | user, database | Pool capacity                               |
+| `pg_doorman_pool_size` | user, database | Configured max pool size                    |
 | `pg_doorman_pools_queries_count` | user, database | Total queries executed                      |
 | `pg_doorman_pools_queries_percentile` | percentile, user, database | Query time p50 / p90 / p95 / p99 (ms)       |
 | `pg_doorman_pools_transactions_count` | user, database | Total transactions executed                 |
