@@ -208,6 +208,7 @@
 <tr><td><code>pg_doorman_pools_bytes</code></td><td>Total bytes transferred through connection pools by direction, user, and database. Direction values include: 'received' (bytes received from clients) and 'sent' (bytes sent to clients). Useful for monitoring network traffic and identifying high-volume connections.</td></tr>
 </tbody></table>
 </div>
+<p>| <code>pg_doorman_pool_size</code> | Configured maximum pool size per user and database. Useful for calculating remaining pool capacity together with pg_doorman_pools_servers. |</p>
 <h3 id="query-and-transaction-metrics"><a class="header" href="#query-and-transaction-metrics">Query and Transaction Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_pools_queries_percentile</code></td><td>Query execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps identify slow queries and performance trends across different users and databases.</td></tr>

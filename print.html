@@ -1849,6 +1849,7 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <tr><td><code>pg_doorman_pools_bytes</code></td><td>Total bytes transferred through connection pools by direction, user, and database. Direction values include: 'received' (bytes received from clients) and 'sent' (bytes sent to clients). Useful for monitoring network traffic and identifying high-volume connections.</td></tr>
 </tbody></table>
 </div>
+<p>| <code>pg_doorman_pool_size</code> | Configured maximum pool size per user and database. Useful for calculating remaining pool capacity together with pg_doorman_pools_servers. |</p>
 <h3 id="query-and-transaction-metrics"><a class="header" href="#query-and-transaction-metrics">Query and Transaction Metrics</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>pg_doorman_pools_queries_percentile</code></td><td>Query execution time percentiles by user and database. Percentile values include: '99', '95', '90', and '50' (median). Values are in milliseconds. Helps identify slow queries and performance trends across different users and databases.</td></tr>
@@ -2035,6 +2036,9 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 </ul>
 <p><strong>New Features:</strong></p>
 <ul>
+<li>
+<p><strong><code>pool_size</code> observability</strong>: New <code>pg_doorman_pool_size</code> Prometheus gauge exposes the configured maximum pool size per user/database. The <code>pool_size</code> column is also added to <code>SHOW POOLS</code> and <code>SHOW POOLS_EXTENDED</code> admin commands (after <code>sv_login</code>), allowing operators to compare current server connections against configured capacity directly from the admin console. Works for both static and dynamic (auth_query) pools.</p>
+</li>
 <li>
 <p><strong>PAUSE, RESUME, RECONNECT admin commands</strong>: New admin console commands for managing connection pools. <code>PAUSE [db]</code> blocks new backend connection acquisition (active transactions continue). <code>RESUME [db]</code> lifts the pause and unblocks waiting clients. <code>RECONNECT [db]</code> forces connection rotation by incrementing the pool epoch — idle connections are immediately closed and active connections are discarded when returned to the pool. Without arguments, all pools are affected; with a database name, only matching pools. Specifying a nonexistent database returns an error. Use <code>SHOW POOLS</code> to see the <code>paused</code> status column.</p>
 </li>
