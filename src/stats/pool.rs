@@ -161,6 +161,9 @@ pub struct PoolStats {
 
     /// Whether the pool is paused (PAUSE command)
     pub paused: bool,
+
+    /// Configured maximum pool size (from user config or default)
+    pub pool_size: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +249,7 @@ impl PoolStats {
             avg_xact_time_microsecons: 0,
             avg_query_time_microseconds: 0,
             paused: false,
+            pool_size: 0,
         }
     }
 
@@ -293,6 +297,7 @@ impl PoolStats {
             ("sv_idle", DataType::Numeric),
             ("sv_used", DataType::Numeric),
             ("sv_login", DataType::Numeric),
+            ("pool_size", DataType::Numeric),
             ("maxwait", DataType::Numeric),
             ("maxwait_us", DataType::Numeric),
             ("paused", DataType::Text),
@@ -310,6 +315,7 @@ impl PoolStats {
             ("sv_idle", DataType::Numeric),
             ("sv_used", DataType::Numeric),
             ("sv_login", DataType::Numeric),
+            ("pool_size", DataType::Numeric),
             ("maxwait", DataType::Numeric),
             ("maxwait_us", DataType::Numeric),
             ("pool_mode", DataType::Text),
@@ -334,6 +340,7 @@ impl PoolStats {
             Cow::Owned(self.sv_idle.to_string()),
             Cow::Owned(self.sv_used.to_string()),
             Cow::Owned(self.sv_login.to_string()),
+            Cow::Owned(self.pool_size.to_string()),
             Cow::Owned((self.maxwait as f64 / 1_000_000f64).to_string()),
             Cow::Owned((self.maxwait % 1_000_000).to_string()),
             Cow::Owned(self.mode.to_string()),
@@ -361,6 +368,7 @@ impl PoolStats {
             Cow::Owned(self.sv_idle.to_string()),
             Cow::Owned(self.sv_used.to_string()),
             Cow::Owned(self.sv_login.to_string()),
+            Cow::Owned(self.pool_size.to_string()),
             Cow::Owned((self.maxwait / 1_000_000).to_string()),
             Cow::Owned((self.maxwait % 1_000_000).to_string()),
             Cow::Borrowed(if self.paused { "1" } else { "0" }),
@@ -450,7 +458,6 @@ impl PoolStats {
         for (identifier, pool) in get_all_pools().iter() {
             // Get address stats for this pool
             let address = pool.address().stats.clone();
-
             // Get percentiles directly from HDR histograms (O(1) operation)
             let (query_p50, query_p90, query_p95, query_p99) = address.get_query_percentiles();
             let (xact_p50, xact_p90, xact_p95, xact_p99) = address.get_xact_percentiles();
@@ -472,6 +479,9 @@ impl PoolStats {
                     p99: xact_p99,
                 },
             );
+
+            // Pool size from config
+            current.pool_size = pool.settings.user.pool_size;
 
             // Load pause state
             current.paused = pool.database.is_paused();

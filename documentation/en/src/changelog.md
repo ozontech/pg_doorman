@@ -24,6 +24,8 @@
 
 **New Features:**
 
+- **`pool_size` observability**: New `pg_doorman_pool_size` Prometheus gauge exposes the configured maximum pool size per user/database. The `pool_size` column is also added to `SHOW POOLS` and `SHOW POOLS_EXTENDED` admin commands (after `sv_login`), allowing operators to compare current server connections against configured capacity directly from the admin console. Works for both static and dynamic (auth_query) pools.
+
 - **PAUSE, RESUME, RECONNECT admin commands**: New admin console commands for managing connection pools. `PAUSE [db]` blocks new backend connection acquisition (active transactions continue). `RESUME [db]` lifts the pause and unblocks waiting clients. `RECONNECT [db]` forces connection rotation by incrementing the pool epoch — idle connections are immediately closed and active connections are discarded when returned to the pool. Without arguments, all pools are affected; with a database name, only matching pools. Specifying a nonexistent database returns an error. Use `SHOW POOLS` to see the `paused` status column.
 
 - **`min_pool_size` for dynamic auth_query passthrough pools**: New `auth_query.min_pool_size` setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after `server_lifetime` expiry. Pools with `min_pool_size > 0` are never garbage-collected. Default is `0` (no prewarm — backward compatible). Note: total backend connections scale as `active_users × min_pool_size`.

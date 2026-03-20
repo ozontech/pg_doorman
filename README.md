@@ -236,18 +236,19 @@ prometheus:
 
 Scrape `http://host:9127/` to collect metrics. Key metrics:
 
-| Metric | Labels | Description |
-|--------|--------|-------------|
+| Metric | Labels | Description                                 |
+|--------|--------|---------------------------------------------|
 | `pg_doorman_pools_clients` | status, user, database | Clients by status (active / idle / waiting) |
-| `pg_doorman_pools_servers` | status, user, database | Servers by status (active / idle) |
-| `pg_doorman_pools_queries_count` | user, database | Total queries executed |
-| `pg_doorman_pools_queries_percentile` | percentile, user, database | Query time p50 / p90 / p95 / p99 (ms) |
-| `pg_doorman_pools_transactions_count` | user, database | Total transactions executed |
-| `pg_doorman_pools_avg_wait_time` | user, database | Avg client wait for server (ms) |
-| `pg_doorman_pools_bytes` | direction, user, database | Bytes sent / received |
-| `pg_doorman_pool_prepared_cache_entries` | user, database | Prepared statement cache entries |
-| `pg_doorman_total_memory` | — | Process memory usage (bytes) |
-| `pg_doorman_connection_count` | type | Connections by type (plain / tls / total) |
+| `pg_doorman_pools_servers` | status, user, database | Servers by status (active / idle)           |
+| `pg_doorman_pool_size` | user, database | Configured max pool size                    |
+| `pg_doorman_pools_queries_count` | user, database | Total queries executed                      |
+| `pg_doorman_pools_queries_percentile` | percentile, user, database | Query time p50 / p90 / p95 / p99 (ms)       |
+| `pg_doorman_pools_transactions_count` | user, database | Total transactions executed                 |
+| `pg_doorman_pools_avg_wait_time` | user, database | Avg client wait for server (ms)             |
+| `pg_doorman_pools_bytes` | direction, user, database | Bytes sent / received                       |
+| `pg_doorman_pool_prepared_cache_entries` | user, database | Prepared statement cache entries            |
+| `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
+| `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |
 
 ## Signals & Zero-Downtime Upgrade
 

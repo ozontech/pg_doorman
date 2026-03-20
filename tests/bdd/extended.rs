@@ -2678,6 +2678,116 @@ pub async fn verify_admin_column_in_range(
     );
 }
 
+#[then(
+    regex = r#"^admin session "([^"]+)" column "([^"]+)" for row with "([^"]+)" = "([^"]+)" should be between (\d+) and (\d+)$"#
+)]
+pub async fn verify_admin_column_in_range_for_row(
+    world: &mut DoormanWorld,
+    session_name: String,
+    column_name: String,
+    filter_column: String,
+    filter_value: String,
+    min_value: u64,
+    max_value: u64,
+) {
+    let messages = world
+        .session_messages
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
+
+    let response_content = if let Some((_, data)) = messages.first() {
+        String::from_utf8_lossy(data).to_string()
+    } else {
+        panic!("No response content for session '{}'", session_name);
+    };
+
+    let lines: Vec<&str> = response_content.lines().collect();
+    if lines.is_empty() {
+        panic!(
+            "Admin session '{}': empty response, cannot find column '{}'",
+            session_name, column_name
+        );
+    }
+
+    let use_pipe = lines[0].contains('|');
+
+    let headers: Vec<&str> = if use_pipe {
+        lines[0].split('|').map(|s| s.trim()).collect()
+    } else {
+        lines[0].split_whitespace().collect()
+    };
+
+    let col_idx = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case(&column_name))
+        .unwrap_or_else(|| {
+            panic!(
+                "Admin session '{}': column '{}' not found in headers: {:?}",
+                session_name, column_name, headers
+            )
+        });
+
+    let filter_col_idx = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case(&filter_column))
+        .unwrap_or_else(|| {
+            panic!(
+                "Admin session '{}': filter column '{}' not found in headers: {:?}",
+                session_name, filter_column, headers
+            )
+        });
+
+    // Find the row where filter_column == filter_value
+    let mut found = false;
+    for line in &lines[1..] {
+        let values: Vec<&str> = if use_pipe {
+            line.split('|').map(|s| s.trim()).collect()
+        } else {
+            line.split_whitespace().collect()
+        };
+
+        if filter_col_idx >= values.len() || col_idx >= values.len() {
+            continue;
+        }
+
+        if values[filter_col_idx] == filter_value {
+            let value: u64 = values[col_idx].parse().unwrap_or_else(|_| {
+                panic!(
+                    "Admin session '{}': cannot parse '{}' as u64 for column '{}'",
+                    session_name, values[col_idx], column_name
+                )
+            });
+
+            assert!(
+                value >= min_value && value <= max_value,
+                "Admin session '{}': column '{}' value {} (row {}={}) is not between {} and {}",
+                session_name,
+                column_name,
+                value,
+                filter_column,
+                filter_value,
+                min_value,
+                max_value
+            );
+
+            eprintln!(
+                "Admin session '{}': column '{}' = {} for row {}={} (expected between {} and {})",
+                session_name, column_name, value, filter_column, filter_value, min_value, max_value
+            );
+
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        panic!(
+            "Admin session '{}': no row found with {}='{}'",
+            session_name, filter_column, filter_value
+        );
+    }
+}
+
 // Cancel request steps
 
 #[when(
