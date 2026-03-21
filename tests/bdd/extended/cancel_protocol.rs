@@ -48,27 +48,6 @@ pub async fn create_named_session_with_backend_key(
     world.named_sessions.insert(session_name, conn);
 }
 
-#[when(
-    regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" without waiting for response$"#
-)]
-pub async fn send_simple_query_to_session_no_wait(
-    world: &mut DoormanWorld,
-    query: String,
-    session_name: String,
-) {
-    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
-
-    conn.send_simple_query(&query)
-        .await
-        .expect("Failed to send query");
-
-    // Don't wait for response - the query is running
-    eprintln!(
-        "Session '{}': sent query '{}' without waiting",
-        session_name, query
-    );
-}
-
 #[when(regex = r#"^we send cancel request for session "([^"]+)"$"#)]
 pub async fn send_cancel_request_for_session(world: &mut DoormanWorld, session_name: String) {
     let doorman_port = world.doorman_port.expect("pg_doorman not started");
