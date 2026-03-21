@@ -1,210 +1,8 @@
+pub mod helpers;
+
 use crate::pg_connection::PgConnection;
 use crate::world::DoormanWorld;
 use cucumber::{then, when};
-
-// Helper function to format message details for debugging
-fn format_message_details(msg_type: char, data: &[u8]) -> String {
-    let mut details = format!("type='{}' len={}", msg_type, data.len());
-
-    match msg_type {
-        'R' => {
-            // Authentication request
-            if data.len() >= 4 {
-                let auth_type = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                details.push_str(&format!(" [AuthenticationRequest type={}]", auth_type));
-            }
-        }
-        'S' => {
-            // ParameterStatus: name\0value\0
-            if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                let name = String::from_utf8_lossy(&data[..null_pos]);
-                let value = String::from_utf8_lossy(
-                    data[null_pos + 1..]
-                        .split(|&b| b == 0)
-                        .next()
-                        .unwrap_or(&[]),
-                );
-                details.push_str(&format!(" [ParameterStatus {}={}]", name, value));
-            }
-        }
-        'K' => {
-            // BackendKeyData: process_id(4) + secret_key(4)
-            if data.len() >= 8 {
-                let pid = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                let key = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                details.push_str(&format!(" [BackendKeyData pid={} key={}]", pid, key));
-            }
-        }
-        'Z' => {
-            // ReadyForQuery: status(1)
-            if !data.is_empty() {
-                let status = match data[0] {
-                    b'I' => "Idle",
-                    b'T' => "InTransaction",
-                    b'E' => "FailedTransaction",
-                    _ => "Unknown",
-                };
-                details.push_str(&format!(" [ReadyForQuery status={}]", status));
-            }
-        }
-        'T' => {
-            // RowDescription
-            if data.len() >= 2 {
-                let field_count = i16::from_be_bytes([data[0], data[1]]);
-                details.push_str(&format!(" [RowDescription fields={}]", field_count));
-            }
-        }
-        'D' => {
-            // DataRow
-            if data.len() >= 2 {
-                let field_count = i16::from_be_bytes([data[0], data[1]]);
-                details.push_str(&format!(" [DataRow fields={}]", field_count));
-            }
-        }
-        'C' => {
-            // CommandComplete: tag\0
-            if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                let tag = String::from_utf8_lossy(&data[..null_pos]);
-                details.push_str(&format!(" [CommandComplete tag='{}']", tag));
-            }
-        }
-        'E' => {
-            // ErrorResponse: parse fields
-            details.push_str(" [ErrorResponse");
-            let mut pos = 0;
-            while pos < data.len() {
-                let field_type = data[pos] as char;
-                if field_type == '\0' {
-                    break;
-                }
-                pos += 1;
-                if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
-                    let value = String::from_utf8_lossy(&data[pos..pos + null_pos]);
-                    match field_type {
-                        'S' => details.push_str(&format!(" severity={}", value)),
-                        'C' => details.push_str(&format!(" code={}", value)),
-                        'M' => details.push_str(&format!(" message={}", value)),
-                        _ => {}
-                    }
-                    pos += null_pos + 1;
-                } else {
-                    break;
-                }
-            }
-            details.push(']');
-        }
-        'N' => {
-            // NoticeResponse: similar to ErrorResponse
-            details.push_str(" [NoticeResponse");
-            let mut pos = 0;
-            while pos < data.len() {
-                let field_type = data[pos] as char;
-                if field_type == '\0' {
-                    break;
-                }
-                pos += 1;
-                if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
-                    let value = String::from_utf8_lossy(&data[pos..pos + null_pos]);
-                    match field_type {
-                        'S' => details.push_str(&format!(" severity={}", value)),
-                        'C' => details.push_str(&format!(" code={}", value)),
-                        'M' => details.push_str(&format!(" message={}", value)),
-                        _ => {}
-                    }
-                    pos += null_pos + 1;
-                } else {
-                    break;
-                }
-            }
-            details.push(']');
-        }
-        '1' => {
-            // ParseComplete
-            details.push_str(" [ParseComplete]");
-        }
-        '2' => {
-            // BindComplete
-            details.push_str(" [BindComplete]");
-        }
-        't' => {
-            // ParameterDescription
-            if data.len() >= 2 {
-                let param_count = i16::from_be_bytes([data[0], data[1]]);
-                details.push_str(&format!(" [ParameterDescription params={}]", param_count));
-            }
-        }
-        'n' => {
-            // NoData
-            details.push_str(" [NoData]");
-        }
-        's' => {
-            // PortalSuspended
-            details.push_str(" [PortalSuspended]");
-        }
-        _ => {
-            // Unknown message type, show first 32 bytes as hex
-            let preview_len = data.len().min(32);
-            let hex_preview: String = data[..preview_len]
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<Vec<_>>()
-                .join(" ");
-            details.push_str(&format!(
-                " [data: {}{}]",
-                hex_preview,
-                if data.len() > 32 { "..." } else { "" }
-            ));
-        }
-    }
-
-    details
-}
-
-/// Normalize RowDescription message by zeroing out table OIDs
-/// RowDescription format:
-///   Int16 - number of fields
-///   For each field:
-///     String - field name (null-terminated)
-///     Int32 - table OID (if from a table, else 0) <- we zero this
-///     Int16 - column attribute number
-///     Int32 - data type OID
-///     Int16 - data type size
-///     Int32 - type modifier
-///     Int16 - format code
-fn normalize_row_description(data: &[u8]) -> Vec<u8> {
-    let mut result = data.to_vec();
-    if data.len() < 2 {
-        return result;
-    }
-
-    let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
-    let mut pos = 2;
-
-    for _ in 0..field_count {
-        // Skip field name (null-terminated string)
-        while pos < result.len() && result[pos] != 0 {
-            pos += 1;
-        }
-        pos += 1; // skip null terminator
-
-        // Zero out table OID (4 bytes)
-        if pos + 4 <= result.len() {
-            result[pos] = 0;
-            result[pos + 1] = 0;
-            result[pos + 2] = 0;
-            result[pos + 3] = 0;
-        }
-        pos += 4; // table OID
-
-        pos += 2; // column attribute number
-        pos += 4; // data type OID
-        pos += 2; // data type size
-        pos += 4; // type modifier
-        pos += 2; // format code
-    }
-
-    result
-}
 
 // BDD step implementations
 
@@ -914,7 +712,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
             error_msg.push_str(&format!(
                 "  [{}] {}\n",
                 i,
-                format_message_details(*msg_type, data)
+                helpers::format_message_details(*msg_type, data)
             ));
         }
 
@@ -923,7 +721,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
             error_msg.push_str(&format!(
                 "  [{}] {}\n",
                 i,
-                format_message_details(*msg_type, data)
+                helpers::format_message_details(*msg_type, data)
             ));
         }
 
@@ -942,10 +740,13 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         // Check message type
         if pg_type != doorman_type {
             eprintln!("\n=== MESSAGE TYPE MISMATCH at position {} ===", i);
-            eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
+            eprintln!(
+                "PostgreSQL: {}",
+                helpers::format_message_details(*pg_type, pg_data)
+            );
             eprintln!(
                 "pg_doorman: {}",
-                format_message_details(*doorman_type, doorman_data)
+                helpers::format_message_details(*doorman_type, doorman_data)
             );
             panic!(
                 "Message {} type differs: PostgreSQL='{}', pg_doorman='{}'",
@@ -956,10 +757,13 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         // Check message length
         if pg_data.len() != doorman_data.len() {
             eprintln!("\n=== MESSAGE LENGTH MISMATCH at position {} ===", i);
-            eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
+            eprintln!(
+                "PostgreSQL: {}",
+                helpers::format_message_details(*pg_type, pg_data)
+            );
             eprintln!(
                 "pg_doorman: {}",
-                format_message_details(*doorman_type, doorman_data)
+                helpers::format_message_details(*doorman_type, doorman_data)
             );
 
             // Show hex diff for first 64 bytes
@@ -997,8 +801,8 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         // because temp tables have different OIDs on different connections
         let (pg_data_normalized, doorman_data_normalized) = if *pg_type == 'T' {
             (
-                normalize_row_description(pg_data),
-                normalize_row_description(doorman_data),
+                helpers::normalize_row_description(pg_data),
+                helpers::normalize_row_description(doorman_data),
             )
         } else {
             (pg_data.clone(), doorman_data.clone())
@@ -1006,10 +810,13 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
 
         if pg_data_normalized != doorman_data_normalized {
             eprintln!("\n=== MESSAGE DATA MISMATCH at position {} ===", i);
-            eprintln!("PostgreSQL: {}", format_message_details(*pg_type, pg_data));
+            eprintln!(
+                "PostgreSQL: {}",
+                helpers::format_message_details(*pg_type, pg_data)
+            );
             eprintln!(
                 "pg_doorman: {}",
-                format_message_details(*doorman_type, doorman_data)
+                helpers::format_message_details(*doorman_type, doorman_data)
             );
 
             // Find first difference
@@ -1054,7 +861,7 @@ pub async fn verify_identical_messages(world: &mut DoormanWorld) {
         println!(
             "Message {} is identical: {}",
             i,
-            format_message_details(*pg_type, pg_data)
+            helpers::format_message_details(*pg_type, pg_data)
         );
     }
 
