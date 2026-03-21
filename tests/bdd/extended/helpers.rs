@@ -41,31 +41,6 @@ pub(crate) fn parse_first_datarow_int(data: &[u8]) -> Option<i32> {
     value_str.parse::<i32>().ok()
 }
 
-/// Scan a list of collected messages for a DataRow and extract the first integer field.
-///
-/// This is used for patterns like "extract backend_pid from stored messages".
-/// Panics on ErrorResponse ('E') messages with a descriptive message.
-pub(crate) fn extract_pid_from_messages(messages: &[(char, Vec<u8>)], session_name: &str) -> i32 {
-    for (msg_type, data) in messages {
-        match msg_type {
-            'D' => {
-                if let Some(pid) = parse_first_datarow_int(data) {
-                    return pid;
-                }
-            }
-            'E' => {
-                panic!(
-                    "Error received from session '{}': {:?}",
-                    session_name,
-                    String::from_utf8_lossy(data)
-                );
-            }
-            _ => {}
-        }
-    }
-    panic!("No backend_pid received from session '{}'", session_name)
-}
-
 /// Parse all fields from a DataRow message as strings.
 ///
 /// DataRow format:
