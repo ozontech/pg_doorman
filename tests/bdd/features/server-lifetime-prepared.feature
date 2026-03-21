@@ -34,23 +34,19 @@ Feature: Prepared statements work correctly after server_lifetime expires
 
   Scenario: Prepared statement works after server_lifetime expires and backend changes
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "" with query "select pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
-    Then we remember backend_pid from session "one" as "first_pid"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "first_pid"
+    # Create and use a named prepared statement
     When we send Parse "stmt1" with query "select $1::int + $2::int" to session "one"
     And we send Sync to session "one"
     And we send Bind "" to "stmt1" with params "10, 20" to session "one"
     And we send Execute "" to session "one"
     And we send Sync to session "one"
     Then session "one" should receive DataRow with "30"
+    # Wait for server_lifetime to expire and backend to change
     When we sleep for 2000 milliseconds
-    And we send Parse "" with query "select pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
-    Then we verify backend_pid from session "one" is different from "first_pid"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "new_pid_one"
+    Then named backend_pid "new_pid_one" from session "one" is different from "first_pid"
+    # Prepared statement should still work on the new backend
     When we send Bind "" to "stmt1" with params "5, 15" to session "one"
     And we send Execute "" to session "one"
     And we send Sync to session "one"

@@ -116,19 +116,12 @@ Feature: Pool-level timeout overrides for auth_query dynamic pools and min_pool_
       """
     # Connect via extended protocol with MD5 auth (triggers auth_query → dynamic pool)
     When we create session "one" to pg_doorman as "pt_md5_user" with password "md5_pass" and database "postgres"
-    And we send Parse "" with query "select pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
-    Then we remember backend_pid from session "one" as "first_pid"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "first_pid"
     # Wait for pool server_lifetime (500ms) to expire
     When we sleep for 1500 milliseconds
-    And we send Parse "" with query "select pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "new_pid_dynamic"
     # Backend should be recycled — different PID
-    Then we verify backend_pid from session "one" is different from "first_pid"
+    Then named backend_pid "new_pid_dynamic" from session "one" is different from "first_pid"
 
   @min-pool-size-with-pool-lifetime
   Scenario: Pool scales to pool_size under load, then shrinks to min_pool_size after expiry

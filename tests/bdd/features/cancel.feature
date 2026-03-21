@@ -34,7 +34,7 @@ Feature: Cancel request (pqCancel) functionality
     # Connect to pg_doorman and store backend_pid and secret_key
     When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
     # Start a long-running query (pg_sleep for 10 seconds)
-    And we send SimpleQuery "SELECT pg_sleep(10)" to session "main" without waiting for response
+    And we send SimpleQuery "SELECT pg_sleep(10)" to session "main" without waiting
     # Wait a bit to ensure the query has started
     And we sleep 500ms
     # Send cancel request from a separate connection
@@ -55,7 +55,7 @@ Feature: Cancel request (pqCancel) functionality
     # Create second session - it may get the same backend connection from pool
     And we create session "second" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
     # Start a long-running query on second session
-    And we send SimpleQuery "SELECT pg_sleep(2)" to session "second" without waiting for response
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "second" without waiting
     # Wait a bit to ensure the query has started
     And we sleep 200ms
     # Send cancel request using main session's old backend_pid/secret_key
@@ -85,7 +85,7 @@ Feature: Cancel request (pqCancel) functionality
     And we sleep 100ms
     # Now create final session that will run a long query
     And we create session "final" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
-    And we send SimpleQuery "SELECT pg_sleep(2)" to session "final" without waiting for response
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "final" without waiting
     And we sleep 200ms
     # Try to cancel using all old session credentials - none should work
     And we send cancel request for session "first"
@@ -111,7 +111,7 @@ Feature: Cancel request (pqCancel) functionality
     # Verify we got the same backend_pid (same PostgreSQL connection from pool)
     And we send SimpleQuery "SELECT pg_backend_pid()" to session "second" and store backend_pid
     # Start a long-running query
-    And we send SimpleQuery "SELECT pg_sleep(2)" to session "second" without waiting for response
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "second" without waiting
     And we sleep 200ms
     # Send cancel using first session's credentials
     # Even if backend_pid is the same, secret_key should be different
@@ -125,7 +125,7 @@ Feature: Cancel request (pqCancel) functionality
   Scenario: Interleaved connect/disconnect/cancel should not affect other sessions
     # Create session A and start a long query
     When we create session "A" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
-    And we send SimpleQuery "SELECT pg_sleep(3)" to session "A" without waiting for response
+    And we send SimpleQuery "SELECT pg_sleep(3)" to session "A" without waiting
     And we sleep 500ms
     # Try to cancel session A with correct credentials - this should work
     And we send cancel request for session "A"
@@ -138,7 +138,7 @@ Feature: Cancel request (pqCancel) functionality
     And we sleep 100ms
     # Create session C and start a long query
     And we create session "C" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
-    And we send SimpleQuery "SELECT pg_sleep(2)" to session "C" without waiting for response
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "C" without waiting
     And we sleep 200ms
     # Try to cancel session B (which is already disconnected) - should not affect C
     And we send cancel request for session "B"

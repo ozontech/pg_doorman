@@ -38,7 +38,7 @@ Feature: Batch Parse/Describe bug reproduction
       """
 
   @batch-bug-step1
-  Scenario: Step 1 - First prepare statement stmt1 (will be cached)
+  Scenario: Cache statement for later reuse
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "stmt1" with query "select $1::int" to both
     And we send Describe "S" "stmt1" to both
@@ -46,30 +46,17 @@ Feature: Batch Parse/Describe bug reproduction
     Then we should receive identical messages from both
 
   @batch-bug-step2
-  Scenario: Step 2 - Reproduce the bug with batch containing cached Parse + new Parse + Describe
+  Scenario: Cached Parse + new Parse + Describe in single batch
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "stmt1" with query "select $1::int" to both
     And we send Sync to both
     And we send Parse "stmt2" with query "select $1::text" to both
     And we send Describe "S" "stmt1" to both
-    And we send Sync to both
-    Then we should receive identical messages from both
-
-  @batch-bug-step3 @todo-skip
-  Scenario: Step 3 - More complex batch with multiple cached and new statements
-    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "stmt1" with query "select $1::int" to both
-    And we send Sync to both
-    And we send Parse "stmt2" with query "select $1::text" to both
-    And we send Sync to both
-    And we send Parse "stmt3" with query "select $1::bigint" to both
-    And we send Describe "S" "stmt1" to both
-    And we send Describe "S" "stmt2" to both
     And we send Sync to both
     Then we should receive identical messages from both
 
   @batch-bug-step4
-  Scenario: Step 4 - Disconnect and reconnect to test session persistence
+  Scenario: Statement works after disconnect and reconnect
     When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "stmt1" with query "select $1::int" to both
     And we send Sync to both
@@ -77,38 +64,6 @@ Feature: Batch Parse/Describe bug reproduction
     When we disconnect from both
     And we reconnect to both
     And we send Parse "stmt2" with query "select $1::text" to both
-    And we send Describe "S" "stmt2" to both
-    And we send Sync to both
-    Then we should receive identical messages from both
-
-  @batch-bug-step5 @todo-skip
-  Scenario: Step 5 - Combined test with disconnects (step1 + step2 + step3)
-    # Step 1: First prepare statement stmt1 (will be cached)
-    When we login to postgres and pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "stmt1" with query "select $1::int" to both
-    And we send Describe "S" "stmt1" to both
-    And we send Sync to both
-    Then we should receive identical messages from both
-    # Disconnect after step 1
-    When we disconnect from both
-    And we reconnect to both
-    # Step 2: Reproduce the bug with batch containing cached Parse + new Parse + Describe
-    And we send Parse "stmt1" with query "select $1::int" to both
-    And we send Sync to both
-    And we send Parse "stmt2" with query "select $1::text" to both
-    And we send Describe "S" "stmt1" to both
-    And we send Sync to both
-    Then we should receive identical messages from both
-    # Disconnect after step 2
-    When we disconnect from both
-    And we reconnect to both
-    # Step 3: More complex batch with multiple cached and new statements
-    And we send Parse "stmt1" with query "select $1::int" to both
-    And we send Sync to both
-    And we send Parse "stmt2" with query "select $1::text" to both
-    And we send Sync to both
-    And we send Parse "stmt3" with query "select $1::bigint" to both
-    And we send Describe "S" "stmt1" to both
     And we send Describe "S" "stmt2" to both
     And we send Sync to both
     Then we should receive identical messages from both

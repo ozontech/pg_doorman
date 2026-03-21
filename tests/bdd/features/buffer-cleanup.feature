@@ -36,7 +36,7 @@ Feature: Server buffer cleanup on client disconnect
     # Session one: start a query that returns 8MB of text data
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
     # Generate 8MB of data using repeat() - each row is about 1MB
-    And we send SimpleQuery "SELECT repeat('X', 1048576) as large_data FROM generate_series(1, 8)" to session "one" without waiting for response
+    And we send SimpleQuery "SELECT repeat('X', 1048576) as large_data FROM generate_series(1, 8)" to session "one" without waiting
     # Read only 8KB of data (partial read)
     And we read 8192 bytes from session "one"
     # Abruptly disconnect (TCP abort)
@@ -54,19 +54,19 @@ Feature: Server buffer cleanup on client disconnect
   Scenario: Multiple disconnects during large transfers don't leak data
     # First disconnect
     When we create session "first" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "SELECT repeat('A', 1048576) as data FROM generate_series(1, 4)" to session "first" without waiting for response
+    And we send SimpleQuery "SELECT repeat('A', 1048576) as data FROM generate_series(1, 4)" to session "first" without waiting
     And we read 4096 bytes from session "first"
     And we abort TCP connection for session "first"
     And we sleep 300ms
     # Second disconnect
     When we create session "second" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "SELECT repeat('B', 1048576) as data FROM generate_series(1, 4)" to session "second" without waiting for response
+    And we send SimpleQuery "SELECT repeat('B', 1048576) as data FROM generate_series(1, 4)" to session "second" without waiting
     And we read 4096 bytes from session "second"
     And we abort TCP connection for session "second"
     And we sleep 300ms
     # Third disconnect
     When we create session "third" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "SELECT repeat('C', 1048576) as data FROM generate_series(1, 4)" to session "third" without waiting for response
+    And we send SimpleQuery "SELECT repeat('C', 1048576) as data FROM generate_series(1, 4)" to session "third" without waiting
     And we read 4096 bytes from session "third"
     And we abort TCP connection for session "third"
     And we sleep 300ms
@@ -80,7 +80,7 @@ Feature: Server buffer cleanup on client disconnect
     # Start a transaction and begin large query
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "BEGIN" to session "one"
-    And we send SimpleQuery "SELECT repeat('T', 1048576) as data FROM generate_series(1, 8)" to session "one" without waiting for response
+    And we send SimpleQuery "SELECT repeat('T', 1048576) as data FROM generate_series(1, 8)" to session "one" without waiting
     And we read 8192 bytes from session "one"
     And we abort TCP connection for session "one"
     And we sleep 500ms
