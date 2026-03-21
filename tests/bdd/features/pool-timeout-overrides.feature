@@ -15,7 +15,6 @@ Feature: Pool-level timeout overrides (server_lifetime, idle_timeout)
   Scenario: Pool-level server_lifetime override triggers recycle
     # General server_lifetime is 60s, but pool override is 500ms.
     # After ~1s the backend PID should change on next reuse (recycle).
-    # BUG: pool override is ignored — general value is always used.
     Given pg_doorman started with config:
       """
       [general]
@@ -57,7 +56,6 @@ Feature: Pool-level timeout overrides (server_lifetime, idle_timeout)
     # General idle_timeout is 60s, but pool override is 500ms.
     # retain_connections_time=200ms ensures retain cycle runs frequently.
     # After the connection goes idle and retain runs, it should be closed.
-    # BUG: pool override is ignored — general value is always used.
     Given pg_doorman started with config:
       """
       [general]
@@ -99,7 +97,6 @@ Feature: Pool-level timeout overrides (server_lifetime, idle_timeout)
   Scenario: Two pools with different pool-level server_lifetime
     # Pool A has server_lifetime=500ms, Pool B has server_lifetime=60s.
     # After 1.5s, Pool A should recycle (new PID), Pool B should keep same PID.
-    # BUG: both pools use general server_lifetime, so both behave the same.
     Given pg_doorman started with config:
       """
       [general]
