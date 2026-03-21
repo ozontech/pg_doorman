@@ -103,40 +103,16 @@ pub async fn send_simple_query_and_store_backend_pid(
                 // RowDescription - skip
             }
             'D' => {
-                // DataRow - parse the integer value
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]);
-                    if field_count == 1 {
-                        // Read field length (4 bytes)
-                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-                        if field_len > 0 {
-                            // Read the value as string and parse to int
-                            let value_bytes = &data[6..6 + field_len as usize];
-                            let value_str = String::from_utf8_lossy(value_bytes);
-                            backend_pid =
-                                Some(value_str.parse().expect("Failed to parse backend_pid"));
-                        }
-                    }
-                }
+                backend_pid = super::helpers::parse_first_datarow_int(&data);
             }
-            'C' => {
-                // CommandComplete - skip
-            }
-            'Z' => {
-                // ReadyForQuery - done
-                break;
-            }
+            'Z' => break,
             'E' => {
-                // Error - this is expected for "bad sql"
                 eprintln!(
                     "Error received (expected for bad sql): {:?}",
                     String::from_utf8_lossy(&data)
                 );
-                // Continue reading until ReadyForQuery
             }
-            _ => {
-                // Other messages - skip
-            }
+            _ => {}
         }
     }
 
@@ -173,40 +149,16 @@ pub async fn send_simple_query_and_store_named_backend_pid(
                 // RowDescription - skip
             }
             'D' => {
-                // DataRow - parse the integer value
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]);
-                    if field_count == 1 {
-                        // Read field length (4 bytes)
-                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-                        if field_len > 0 {
-                            // Read the value as string and parse to int
-                            let value_bytes = &data[6..6 + field_len as usize];
-                            let value_str = String::from_utf8_lossy(value_bytes);
-                            backend_pid =
-                                Some(value_str.parse().expect("Failed to parse backend_pid"));
-                        }
-                    }
-                }
+                backend_pid = super::helpers::parse_first_datarow_int(&data);
             }
-            'C' => {
-                // CommandComplete - skip
-            }
-            'Z' => {
-                // ReadyForQuery - done
-                break;
-            }
+            'Z' => break,
             'E' => {
-                // Error - this is expected for "bad sql"
                 eprintln!(
                     "Error received (expected for bad sql): {:?}",
                     String::from_utf8_lossy(&data)
                 );
-                // Continue reading until ReadyForQuery
             }
-            _ => {
-                // Other messages - skip
-            }
+            _ => {}
         }
     }
 
@@ -482,38 +434,24 @@ pub async fn session_should_receive_datarow(
         .get(&session_name)
         .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
-    // Find DataRow in the messages
     let mut found_value: Option<String> = None;
     for (msg_type, data) in messages {
         match msg_type {
             'D' => {
-                // DataRow - parse the value
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]);
-                    if field_count >= 1 {
-                        // Read first field length (4 bytes)
-                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-                        if field_len > 0 {
-                            // Read the value as string
-                            let value_bytes = &data[6..6 + field_len as usize];
-                            let value_str = String::from_utf8_lossy(value_bytes).to_string();
-                            found_value = Some(value_str);
-                            break;
-                        }
-                    }
+                let fields = super::helpers::parse_datarow_fields(data);
+                if let Some(first) = fields.into_iter().next() {
+                    found_value = Some(first);
+                    break;
                 }
             }
             'E' => {
-                // Error
                 panic!(
                     "Error received from session '{}': {:?}",
                     session_name,
                     String::from_utf8_lossy(data)
                 );
             }
-            _ => {
-                // Other messages - skip
-            }
+            _ => {}
         }
     }
 

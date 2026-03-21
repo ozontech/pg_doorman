@@ -145,53 +145,12 @@ pub async fn remember_backend_pid_from_session(
     session_name: String,
     pid_name: String,
 ) {
-    // Get messages from the stored session messages
     let messages = world
         .session_messages
         .get(&session_name)
         .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
-    // Find DataRow and extract backend_pid
-    let mut backend_pid: Option<i32> = None;
-    for (msg_type, data) in messages {
-        match msg_type {
-            'D' => {
-                // DataRow - parse the integer value
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]);
-                    if field_count >= 1 {
-                        // Read first field length (4 bytes)
-                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-                        if field_len > 0 {
-                            // Read the value as string and parse to int
-                            let value_bytes = &data[6..6 + field_len as usize];
-                            let value_str = String::from_utf8_lossy(value_bytes);
-                            backend_pid = Some(
-                                value_str
-                                    .parse()
-                                    .expect("Failed to parse backend_pid as integer"),
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-            'E' => {
-                // Error
-                panic!(
-                    "Error received from session '{}': {:?}",
-                    session_name,
-                    String::from_utf8_lossy(data)
-                );
-            }
-            _ => {
-                // Other messages - skip
-            }
-        }
-    }
-
-    let pid = backend_pid
-        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
+    let pid = super::helpers::extract_pid_from_messages(messages, &session_name);
 
     world
         .named_backend_pids
@@ -204,53 +163,12 @@ pub async fn verify_backend_pid_different(
     session_name: String,
     pid_name: String,
 ) {
-    // Get messages from the stored session messages
     let messages = world
         .session_messages
         .get(&session_name)
         .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
-    // Find DataRow and extract current backend_pid
-    let mut current_pid: Option<i32> = None;
-    for (msg_type, data) in messages {
-        match msg_type {
-            'D' => {
-                // DataRow - parse the integer value
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]);
-                    if field_count >= 1 {
-                        // Read first field length (4 bytes)
-                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-                        if field_len > 0 {
-                            // Read the value as string and parse to int
-                            let value_bytes = &data[6..6 + field_len as usize];
-                            let value_str = String::from_utf8_lossy(value_bytes);
-                            current_pid = Some(
-                                value_str
-                                    .parse()
-                                    .expect("Failed to parse backend_pid as integer"),
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-            'E' => {
-                // Error
-                panic!(
-                    "Error received from session '{}': {:?}",
-                    session_name,
-                    String::from_utf8_lossy(data)
-                );
-            }
-            _ => {
-                // Other messages - skip
-            }
-        }
-    }
-
-    let current = current_pid
-        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
+    let current = super::helpers::extract_pid_from_messages(messages, &session_name);
 
     let stored = world
         .named_backend_pids
@@ -275,40 +193,7 @@ pub async fn verify_backend_pid_same(
         .get(&session_name)
         .unwrap_or_else(|| panic!("No messages stored for session '{}'", session_name));
 
-    let mut current_pid: Option<i32> = None;
-    for (msg_type, data) in messages {
-        match msg_type {
-            'D' => {
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]);
-                    if field_count >= 1 {
-                        let field_len = i32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-                        if field_len > 0 {
-                            let value_bytes = &data[6..6 + field_len as usize];
-                            let value_str = String::from_utf8_lossy(value_bytes);
-                            current_pid = Some(
-                                value_str
-                                    .parse()
-                                    .expect("Failed to parse backend_pid as integer"),
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-            'E' => {
-                panic!(
-                    "Error received from session '{}': {:?}",
-                    session_name,
-                    String::from_utf8_lossy(data)
-                );
-            }
-            _ => {}
-        }
-    }
-
-    let current = current_pid
-        .unwrap_or_else(|| panic!("No backend_pid received from session '{}'", session_name));
+    let current = super::helpers::extract_pid_from_messages(messages, &session_name);
 
     let stored = world
         .named_backend_pids
