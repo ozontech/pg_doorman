@@ -56,10 +56,7 @@ pub async fn send_simple_query_to_session_no_wait(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -106,10 +103,7 @@ pub async fn session_should_receive_cancel_error(
     session_name: String,
     expected_text: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     // Read messages until we get an error or ReadyForQuery
     let mut error_found = false;
@@ -157,10 +151,7 @@ pub async fn session_should_receive_cancel_error(
 
 #[then(regex = r#"^session "([^"]+)" should complete without error$"#)]
 pub async fn session_should_complete_without_error(world: &mut DoormanWorld, session_name: String) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     // Read messages until ReadyForQuery, checking for errors
     let mut error_found = false;

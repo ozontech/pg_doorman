@@ -3,10 +3,7 @@ use cucumber::{then, when};
 
 #[when(regex = r#"^we read (\d+) bytes from session "([^"]+)"$"#)]
 pub async fn read_bytes_from_session(world: &mut DoormanWorld, bytes: usize, session_name: String) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     let bytes_read = conn
         .read_limited_bytes(bytes)
@@ -25,10 +22,7 @@ pub async fn send_query_and_verify_no_stale_data(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -160,10 +154,7 @@ pub async fn verify_clean_response_with_marker(
 /// Used when we expect the server roundtrip to timeout (e.g., PostgreSQL is frozen).
 #[when(regex = r#"^we send Sync to session "([^"]+)" without waiting for response$"#)]
 pub async fn send_sync_to_session_no_wait(world: &mut DoormanWorld, session_name: String) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_sync().await.expect("Failed to send Sync");
     eprintln!(
@@ -291,10 +282,7 @@ pub async fn send_large_parse_batch(
 ) {
     let count: usize = count.parse().expect("Invalid count");
     let query_kb: usize = query_kb.parse().expect("Invalid query_kb");
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     // Build a large SQL query padded with comments
     let base_query = "SELECT 1";
@@ -336,10 +324,7 @@ pub async fn send_large_simple_query_no_wait(
     session_name: String,
 ) {
     let size_kb: usize = size_kb.parse().expect("Invalid size_kb");
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     let base_query = "SELECT 1";
     let padding_size = size_kb * 1024 - base_query.len() - 6; // 6 for "/* */"
@@ -371,10 +356,7 @@ pub async fn verify_error_response_on_flush_timeout(
     world: &mut DoormanWorld,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     // Try to read any message with a timeout.
     // We expect either:

@@ -62,10 +62,7 @@ pub async fn send_simple_query_to_session(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -84,10 +81,7 @@ pub async fn send_simple_query_and_store_backend_pid(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -130,10 +124,7 @@ pub async fn send_simple_query_and_store_named_backend_pid(
     session_name: String,
     pid_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -187,10 +178,7 @@ pub async fn send_simple_query_to_session_without_waiting(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -204,10 +192,7 @@ pub async fn read_simple_query_response_within_timeout(
     session_name: String,
     timeout_ms: u64,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     let duration = std::time::Duration::from_millis(timeout_ms);
     let messages = tokio::time::timeout(duration, conn.read_all_messages_until_ready())
@@ -224,10 +209,7 @@ pub async fn send_simple_query_to_session_expecting_error(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -252,10 +234,7 @@ pub async fn send_simple_query_to_session_expecting_error_after_ready(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -280,10 +259,7 @@ pub async fn send_simple_query_to_session_expecting_connection_close(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     // Try to send query - may fail if connection already closed
     if conn.send_simple_query(&query).await.is_err() {
@@ -322,10 +298,7 @@ pub async fn send_parse_to_session(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_parse(&name, &query)
         .await
@@ -345,10 +318,7 @@ pub async fn send_bind_to_session(
     params_str: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     // Parse params - simple implementation for comma-separated values
     let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
@@ -372,10 +342,7 @@ pub async fn send_execute_to_session(
     portal: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_execute(&portal, 0)
         .await
@@ -385,10 +352,7 @@ pub async fn send_execute_to_session(
 #[when(regex = r#"^we send Sync to session "([^"]+)"$"#)]
 #[then(regex = r#"^we send Sync to session "([^"]+)"$"#)]
 pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_sync().await.expect("Failed to send Sync");
 
@@ -590,10 +554,7 @@ pub async fn send_copy_from_stdin_to_session_expecting_error(
     data: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     // Unescape the data string (handle \t and \n)
     let unescaped_data = data.replace("\\t", "\t").replace("\\n", "\n");

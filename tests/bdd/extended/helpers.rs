@@ -104,6 +104,54 @@ pub(crate) fn parse_datarow_fields(data: &[u8]) -> Vec<String> {
     fields
 }
 
+/// Extract the stored admin response string from session_messages.
+pub(crate) fn get_admin_response(
+    session_messages: &std::collections::HashMap<String, Vec<(char, Vec<u8>)>>,
+    session_name: &str,
+) -> String {
+    let messages = session_messages
+        .get(session_name)
+        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
+
+    if let Some((_, data)) = messages.first() {
+        String::from_utf8_lossy(data).to_string()
+    } else {
+        panic!("No response content for session '{}'", session_name);
+    }
+}
+
+/// Parse a table response into headers and find a column index by name.
+/// Supports both pipe-separated ("col1|col2") and whitespace-separated formats.
+pub(crate) fn find_column_index(header_line: &str, column_name: &str) -> (usize, bool) {
+    let use_pipe = header_line.contains('|');
+    let headers: Vec<&str> = if use_pipe {
+        header_line.split('|').map(|s| s.trim()).collect()
+    } else {
+        header_line.split_whitespace().collect()
+    };
+
+    let idx = headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case(column_name))
+        .unwrap_or_else(|| {
+            panic!(
+                "Column '{}' not found in headers: {:?}",
+                column_name, headers
+            )
+        });
+
+    (idx, use_pipe)
+}
+
+/// Split a table row using the detected separator.
+pub(crate) fn split_row<'a>(line: &'a str, use_pipe: bool) -> Vec<&'a str> {
+    if use_pipe {
+        line.split('|').map(|s| s.trim()).collect()
+    } else {
+        line.split_whitespace().collect()
+    }
+}
+
 /// Format message details for debugging output.
 ///
 /// Produces a human-readable summary of a PostgreSQL protocol message,

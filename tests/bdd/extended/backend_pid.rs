@@ -226,10 +226,7 @@ pub async fn terminate_backend_of_session(
     );
 
     // Get killer session connection
-    let conn = world
-        .named_sessions
-        .get_mut(&killer_session)
-        .unwrap_or_else(|| panic!("Session '{}' not found", killer_session));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &killer_session);
 
     // Send terminate query
     conn.send_simple_query(&terminate_query)
@@ -285,10 +282,7 @@ pub async fn terminate_named_backend_via_session(
     );
 
     // Get killer session connection
-    let conn = world
-        .named_sessions
-        .get_mut(&killer_session)
-        .unwrap_or_else(|| panic!("Session '{}' not found", killer_session));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &killer_session);
 
     // Send terminate query
     conn.send_simple_query(&terminate_query)

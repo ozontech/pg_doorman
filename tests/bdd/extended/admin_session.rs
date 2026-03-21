@@ -34,10 +34,7 @@ pub async fn execute_admin_query_and_store_row_count(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -87,10 +84,7 @@ pub async fn execute_admin_query_expecting_possible_error(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
@@ -150,16 +144,12 @@ pub async fn execute_admin_query_and_store_response(
     query: String,
     session_name: String,
 ) {
-    let conn = world
-        .named_sessions
-        .get_mut(&session_name)
-        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
     conn.send_simple_query(&query)
         .await
         .expect("Failed to send query");
 
-    // Read messages and collect all response content as structured table
     let mut response_content = String::new();
     let mut headers: Vec<String> = Vec::new();
     let mut is_first_row = true;
@@ -169,59 +159,28 @@ pub async fn execute_admin_query_and_store_response(
 
         match msg_type {
             'T' => {
-                // RowDescription - parse column names
                 if data.len() >= 2 {
                     let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
                     let mut pos = 2;
                     for _ in 0..field_count {
-                        // Read column name (null-terminated string)
                         if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
                             let col_name = String::from_utf8_lossy(&data[pos..pos + null_pos]);
                             headers.push(col_name.to_string());
                             pos += null_pos + 1;
-                            // Skip: table OID (4), column attr (2), type OID (4), type size (2), type mod (4), format (2) = 18 bytes
-                            pos += 18;
+                            pos += 18; // table OID(4) + col attr(2) + type OID(4) + type size(2) + type mod(4) + format(2)
                         }
                     }
-                    // Write header line
                     response_content.push_str(&headers.join("|"));
                     response_content.push('\n');
                 }
             }
             'D' => {
-                // DataRow - extract text content
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
-                    let mut pos = 2;
-                    let mut row_values: Vec<String> = Vec::new();
-                    for _ in 0..field_count {
-                        if pos + 4 <= data.len() {
-                            let field_len = i32::from_be_bytes([
-                                data[pos],
-                                data[pos + 1],
-                                data[pos + 2],
-                                data[pos + 3],
-                            ]);
-                            pos += 4;
-                            if field_len > 0 && pos + field_len as usize <= data.len() {
-                                let value =
-                                    String::from_utf8_lossy(&data[pos..pos + field_len as usize]);
-                                row_values.push(value.to_string());
-                                pos += field_len as usize;
-                            } else if field_len == -1 {
-                                // NULL value
-                                row_values.push(String::new());
-                            } else {
-                                row_values.push(String::new());
-                            }
-                        }
-                    }
-                    if !is_first_row {
-                        response_content.push('\n');
-                    }
-                    response_content.push_str(&row_values.join("|"));
-                    is_first_row = false;
+                let row_values = super::helpers::parse_datarow_fields(&data);
+                if !is_first_row {
+                    response_content.push('\n');
                 }
+                response_content.push_str(&row_values.join("|"));
+                is_first_row = false;
             }
             'C' => {
                 // CommandComplete - extract tag
@@ -340,25 +299,16 @@ pub async fn verify_admin_response_contains(
     session_name: String,
     expected_text: String,
 ) {
-    let messages = world
-        .session_messages
-        .get(&session_name)
-        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
-
-    let response_content = if let Some((_, data)) = messages.first() {
-        String::from_utf8_lossy(data).to_string()
-    } else {
-        String::new()
-    };
+    let response = super::helpers::get_admin_response(&world.session_messages, &session_name);
 
     assert!(
-        response_content
+        response
             .to_uppercase()
             .contains(&expected_text.to_uppercase()),
         "Admin session '{}': expected response to contain '{}', got '{}'",
         session_name,
         expected_text,
-        response_content
+        response
     );
 }
 
@@ -368,25 +318,16 @@ pub async fn verify_admin_response_not_contains(
     session_name: String,
     unexpected_text: String,
 ) {
-    let messages = world
-        .session_messages
-        .get(&session_name)
-        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
-
-    let response_content = if let Some((_, data)) = messages.first() {
-        String::from_utf8_lossy(data).to_string()
-    } else {
-        String::new()
-    };
+    let response = super::helpers::get_admin_response(&world.session_messages, &session_name);
 
     assert!(
-        !response_content
+        !response
             .to_uppercase()
             .contains(&unexpected_text.to_uppercase()),
         "Admin session '{}': expected response NOT to contain '{}', but got '{}'",
         session_name,
         unexpected_text,
-        response_content
+        response
     );
 }
 
@@ -398,70 +339,21 @@ pub async fn verify_admin_column_in_range(
     min_value: u64,
     max_value: u64,
 ) {
-    let messages = world
-        .session_messages
-        .get(&session_name)
-        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
+    let response = super::helpers::get_admin_response(&world.session_messages, &session_name);
+    let lines: Vec<&str> = response.lines().collect();
+    assert!(
+        lines.len() >= 2,
+        "Admin session '{}': need header + data row",
+        session_name
+    );
 
-    let response_content = if let Some((_, data)) = messages.first() {
-        String::from_utf8_lossy(data).to_string()
-    } else {
-        panic!("No response content for session '{}'", session_name);
-    };
+    let (col_idx, use_pipe) = super::helpers::find_column_index(lines[0], &column_name);
+    let values = super::helpers::split_row(lines[1], use_pipe);
 
-    // Parse the response as a table (header row + data rows)
-    // Format can be either "col1|col2|col3\nval1|val2|val3\n..." or space-separated
-    let lines: Vec<&str> = response_content.lines().collect();
-    if lines.is_empty() {
-        panic!(
-            "Admin session '{}': empty response, cannot find column '{}'",
-            session_name, column_name
-        );
-    }
-
-    // Determine separator: if first line contains '|', use it; otherwise use whitespace
-    let use_pipe = lines[0].contains('|');
-
-    // Find column index in header
-    let headers: Vec<&str> = if use_pipe {
-        lines[0].split('|').map(|s| s.trim()).collect()
-    } else {
-        lines[0].split_whitespace().collect()
-    };
-
-    let col_idx = headers
-        .iter()
-        .position(|h| h.eq_ignore_ascii_case(&column_name))
-        .unwrap_or_else(|| {
-            panic!(
-                "Admin session '{}': column '{}' not found in headers: {:?}",
-                session_name, column_name, headers
-            )
-        });
-
-    // Get value from first data row
-    if lines.len() < 2 {
-        panic!("Admin session '{}': no data rows in response", session_name);
-    }
-
-    let values: Vec<&str> = if use_pipe {
-        lines[1].split('|').map(|s| s.trim()).collect()
-    } else {
-        lines[1].split_whitespace().collect()
-    };
-
-    if col_idx >= values.len() {
-        panic!(
-            "Admin session '{}': column index {} out of bounds for row: {:?}",
-            session_name, col_idx, values
-        );
-    }
-
-    let value_str = values[col_idx];
-    let value: u64 = value_str.parse().unwrap_or_else(|_| {
+    let value: u64 = values[col_idx].parse().unwrap_or_else(|_| {
         panic!(
             "Admin session '{}': cannot parse '{}' as u64 for column '{}'",
-            session_name, value_str, column_name
+            session_name, values[col_idx], column_name
         )
     });
 
@@ -473,11 +365,6 @@ pub async fn verify_admin_column_in_range(
         value,
         min_value,
         max_value
-    );
-
-    eprintln!(
-        "Admin session '{}': column '{}' = {} (expected between {} and {})",
-        session_name, column_name, value, min_value, max_value
     );
 }
 
@@ -493,100 +380,49 @@ pub async fn verify_admin_column_in_range_for_row(
     min_value: u64,
     max_value: u64,
 ) {
-    let messages = world
-        .session_messages
-        .get(&session_name)
-        .unwrap_or_else(|| panic!("No response stored for session '{}'", session_name));
+    let response = super::helpers::get_admin_response(&world.session_messages, &session_name);
+    let lines: Vec<&str> = response.lines().collect();
+    assert!(
+        !lines.is_empty(),
+        "Admin session '{}': empty response",
+        session_name
+    );
 
-    let response_content = if let Some((_, data)) = messages.first() {
-        String::from_utf8_lossy(data).to_string()
-    } else {
-        panic!("No response content for session '{}'", session_name);
-    };
+    let (col_idx, use_pipe) = super::helpers::find_column_index(lines[0], &column_name);
+    let (filter_col_idx, _) = super::helpers::find_column_index(lines[0], &filter_column);
 
-    let lines: Vec<&str> = response_content.lines().collect();
-    if lines.is_empty() {
-        panic!(
-            "Admin session '{}': empty response, cannot find column '{}'",
-            session_name, column_name
-        );
-    }
-
-    let use_pipe = lines[0].contains('|');
-
-    let headers: Vec<&str> = if use_pipe {
-        lines[0].split('|').map(|s| s.trim()).collect()
-    } else {
-        lines[0].split_whitespace().collect()
-    };
-
-    let col_idx = headers
-        .iter()
-        .position(|h| h.eq_ignore_ascii_case(&column_name))
-        .unwrap_or_else(|| {
-            panic!(
-                "Admin session '{}': column '{}' not found in headers: {:?}",
-                session_name, column_name, headers
-            )
-        });
-
-    let filter_col_idx = headers
-        .iter()
-        .position(|h| h.eq_ignore_ascii_case(&filter_column))
-        .unwrap_or_else(|| {
-            panic!(
-                "Admin session '{}': filter column '{}' not found in headers: {:?}",
-                session_name, filter_column, headers
-            )
-        });
-
-    // Find the row where filter_column == filter_value
-    let mut found = false;
     for line in &lines[1..] {
-        let values: Vec<&str> = if use_pipe {
-            line.split('|').map(|s| s.trim()).collect()
-        } else {
-            line.split_whitespace().collect()
-        };
-
+        let values = super::helpers::split_row(line, use_pipe);
         if filter_col_idx >= values.len() || col_idx >= values.len() {
             continue;
         }
-
-        if values[filter_col_idx] == filter_value {
-            let value: u64 = values[col_idx].parse().unwrap_or_else(|_| {
-                panic!(
-                    "Admin session '{}': cannot parse '{}' as u64 for column '{}'",
-                    session_name, values[col_idx], column_name
-                )
-            });
-
-            assert!(
-                value >= min_value && value <= max_value,
-                "Admin session '{}': column '{}' value {} (row {}={}) is not between {} and {}",
-                session_name,
-                column_name,
-                value,
-                filter_column,
-                filter_value,
-                min_value,
-                max_value
-            );
-
-            eprintln!(
-                "Admin session '{}': column '{}' = {} for row {}={} (expected between {} and {})",
-                session_name, column_name, value, filter_column, filter_value, min_value, max_value
-            );
-
-            found = true;
-            break;
+        if values[filter_col_idx] != filter_value {
+            continue;
         }
+
+        let value: u64 = values[col_idx].parse().unwrap_or_else(|_| {
+            panic!(
+                "Admin session '{}': cannot parse '{}' as u64 for column '{}'",
+                session_name, values[col_idx], column_name
+            )
+        });
+
+        assert!(
+            value >= min_value && value <= max_value,
+            "Admin session '{}': column '{}' value {} (row {}={}) is not between {} and {}",
+            session_name,
+            column_name,
+            value,
+            filter_column,
+            filter_value,
+            min_value,
+            max_value
+        );
+        return;
     }
 
-    if !found {
-        panic!(
-            "Admin session '{}': no row found with {}='{}'",
-            session_name, filter_column, filter_value
-        );
-    }
+    panic!(
+        "Admin session '{}': no row found with {}='{}'",
+        session_name, filter_column, filter_value
+    );
 }
