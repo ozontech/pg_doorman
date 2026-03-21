@@ -1,6 +1,7 @@
 use crate::utils::create_temp_file;
 use crate::world::DoormanWorld;
 use cucumber::{gherkin::Step, given, then, when};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -183,7 +184,7 @@ fn parse_tps(output: &str) -> Option<f64> {
 /// Parse TPS from progress lines when pgbench times out or hangs
 /// Looks for patterns like:
 /// - "progress: 28.0 s, 26161.5 tps, lat 3.739 ms stddev 2.837, 0 failed"
-/// Returns average of all non-zero TPS values found
+///   Returns average of all non-zero TPS values found
 fn parse_progress_tps(output: &str) -> Option<f64> {
     let mut tps_values: Vec<f64> = Vec::new();
 
@@ -215,6 +216,196 @@ fn parse_progress_tps(output: &str) -> Option<f64> {
     }
 }
 
+/// Handle pgbench result: parse TPS from Ok/Err output and store in bench_results
+fn handle_pgbench_result(
+    result: Result<String, String>,
+    target: &str,
+    bench_results: &mut HashMap<String, f64>,
+) {
+    match result {
+        Ok(output) => {
+            if let Some(tps) = parse_tps(&output) {
+                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
+                bench_results.insert(target.to_string(), tps);
+            } else {
+                panic!(
+                    "Failed to parse TPS from pgbench output for {}:\n{}",
+                    target, output
+                );
+            }
+        }
+        Err(e) => {
+            if e.contains("prepared statement") && e.contains("does not exist") {
+                eprintln!(
+                    "\x1b[1;33m⚠ TPS for {}: 0.00 (prepared statements not supported)\x1b[0m",
+                    target
+                );
+                bench_results.insert(target.to_string(), 0.0);
+            } else if e.contains("timed out") {
+                if let Some(tps) = parse_tps(&e).or_else(|| parse_progress_tps(&e)) {
+                    eprintln!(
+                        "\x1b[1;33m⚠ TPS for {} (from progress, timed out): {:.2}\x1b[0m",
+                        target, tps
+                    );
+                    bench_results.insert(target.to_string(), tps);
+                } else {
+                    eprintln!(
+                        "\x1b[1;31m✗ TPS for {}: 0.00 (timed out, no progress data)\x1b[0m",
+                        target
+                    );
+                    bench_results.insert(target.to_string(), 0.0);
+                }
+            } else {
+                panic!("pgbench failed for {}: {}", target, e);
+            }
+        }
+    }
+}
+
+/// Add a comparison metric (doorman vs competitor) to the metrics map
+fn add_comparison_metric(
+    metrics: &mut serde_json::Map<String, serde_json::Value>,
+    metric_name: &str,
+    doorman_tps: f64,
+    competitor_tps: f64,
+    color_code: &str,
+) {
+    let (ratio, log_msg) = if competitor_tps > 0.0 && doorman_tps > 0.0 {
+        let ratio = doorman_tps / competitor_tps;
+        let msg = format!(
+            "\x1b[1;{}m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
+            color_code, metric_name, doorman_tps, competitor_tps, ratio
+        );
+        (Some(ratio), msg)
+    } else if doorman_tps > 0.0 {
+        let competitor_name = if metric_name.contains("pgbouncer") {
+            "pgbouncer"
+        } else {
+            "odyssey"
+        };
+        let msg = format!(
+            "\x1b[1;32m{}: pg_doorman={:.2}, {}=0 (pg_doorman wins)\x1b[0m",
+            metric_name, doorman_tps, competitor_name
+        );
+        (Some(10.0), msg)
+    } else {
+        return;
+    };
+
+    if let Some(value) = ratio {
+        eprintln!("{}", log_msg);
+        let mut metric = serde_json::Map::new();
+        let mut throughput = serde_json::Map::new();
+        throughput.insert("value".to_string(), serde_json::json!(value));
+        metric.insert(
+            "throughput".to_string(),
+            serde_json::Value::Object(throughput),
+        );
+        metrics.insert(metric_name.to_string(), serde_json::Value::Object(metric));
+    }
+}
+
+/// Send metrics to bencher.dev API
+async fn send_metrics_to_bencher(
+    metrics: serde_json::Map<String, serde_json::Value>,
+    label: &str,
+    start_time: Option<chrono::DateTime<chrono::Utc>>,
+) {
+    let api_token = match std::env::var("BENCHER_API_TOKEN") {
+        Ok(token) if !token.trim().is_empty() => token.trim().to_string(),
+        _ => {
+            eprintln!(
+                "\nBENCHER_API_TOKEN not set, skipping bencher.dev upload for {}",
+                label
+            );
+            return;
+        }
+    };
+
+    if metrics.is_empty() {
+        eprintln!("No metrics to send for {}", label);
+        return;
+    }
+
+    let metrics_json_str = serde_json::to_string(&metrics).expect("Failed to serialize metrics");
+
+    let now = chrono::Utc::now();
+    let effective_start = start_time.unwrap_or_else(|| now - chrono::Duration::minutes(30));
+
+    let payload = serde_json::json!({
+        "branch": std::env::var("BENCHER_BRANCH").unwrap_or_else(|_| "main".to_string()),
+        "testbed": std::env::var("BENCHER_TESTBED").unwrap_or_else(|_| "localhost".to_string()),
+        "start_time": effective_start.to_rfc3339(),
+        "end_time": now.to_rfc3339(),
+        "results": [metrics_json_str]
+    });
+
+    eprintln!(
+        "Sending to bencher.dev: {}",
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
+    );
+
+    let project = std::env::var("BENCHER_PROJECT").unwrap_or_else(|_| "pg-doorman".to_string());
+    let url = format!("https://api.bencher.dev/v0/projects/{}/reports", project);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_token))
+        .json(&payload)
+        .send()
+        .await;
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+
+            if status.is_success() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(message) = json.get("message") {
+                        eprintln!(
+                            "\x1b[1;31m✗ Failed to send {} results to bencher.dev: {}\x1b[0m",
+                            label, message
+                        );
+                        eprintln!("Response: {}", body);
+                    } else if json.get("uuid").is_some() || json.get("report").is_some() {
+                        eprintln!(
+                            "\x1b[1;32m✓ Successfully sent {} results to bencher.dev\x1b[0m",
+                            label
+                        );
+                        eprintln!("Response: {}", body);
+                    } else {
+                        eprintln!(
+                            "\x1b[1;33m⚠ Unexpected response from bencher.dev for {}\x1b[0m",
+                            label
+                        );
+                        eprintln!("Response: {}", body);
+                    }
+                } else {
+                    eprintln!(
+                        "\x1b[1;33m⚠ Could not parse bencher.dev response as JSON for {}\x1b[0m",
+                        label
+                    );
+                    eprintln!("Response: {}", body);
+                }
+            } else {
+                eprintln!(
+                    "\x1b[1;31m✗ Failed to send {} results to bencher.dev (HTTP {})\x1b[0m\nResponse: {}",
+                    label, status, body
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "\x1b[1;31m✗ Failed to send request to bencher.dev for {}: {}\x1b[0m",
+                label, e
+            );
+        }
+    }
+}
+
 /// Run pgbench and store result for a target
 #[when(expr = "I run pgbench for {string} with:")]
 pub async fn run_pgbench_for_target(world: &mut DoormanWorld, target: String, step: &Step) {
@@ -228,23 +419,8 @@ pub async fn run_pgbench_for_target(world: &mut DoormanWorld, target: String, st
 
     eprintln!("Running pgbench for {}: {}", target, command);
 
-    match run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS)) {
-        Ok(output) => {
-            if let Some(tps) = parse_tps(&output) {
-                // Print TPS with bright colors for visibility
-                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
-                world.bench_results.insert(target, tps);
-            } else {
-                panic!(
-                    "Failed to parse TPS from pgbench output for {}:\n{}",
-                    target, output
-                );
-            }
-        }
-        Err(e) => {
-            panic!("pgbench failed for {}: {}", target, e);
-        }
-    }
+    let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
+    handle_pgbench_result(result, &target, &mut world.bench_results);
 }
 
 /// Run pgbench with inline command (single line)
@@ -267,47 +443,8 @@ pub async fn run_pgbench_for_target_inline(
 
     eprintln!("Running pgbench for {}: {}", target, command);
 
-    match run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS)) {
-        Ok(output) => {
-            if let Some(tps) = parse_tps(&output) {
-                // Print TPS with bright colors for visibility
-                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
-                world.bench_results.insert(target, tps);
-            } else {
-                panic!(
-                    "Failed to parse TPS from pgbench output for {}:\n{}",
-                    target, output
-                );
-            }
-        }
-        Err(e) => {
-            // Check if this is a "prepared statement does not exist" error (e.g., odyssey doesn't support prepared protocol)
-            if e.contains("prepared statement") && e.contains("does not exist") {
-                eprintln!(
-                    "\x1b[1;33m⚠ TPS for {}: 0.00 (prepared statements not supported)\x1b[0m",
-                    target
-                );
-                world.bench_results.insert(target, 0.0);
-            } else if e.contains("timed out") {
-                // Try to parse progress lines for average TPS on timeout
-                if let Some(tps) = parse_tps(&e).or_else(|| parse_progress_tps(&e)) {
-                    eprintln!(
-                        "\x1b[1;33m⚠ TPS for {} (from progress, timed out): {:.2}\x1b[0m",
-                        target, tps
-                    );
-                    world.bench_results.insert(target, tps);
-                } else {
-                    eprintln!(
-                        "\x1b[1;31m✗ TPS for {}: 0.00 (timed out, no progress data)\x1b[0m",
-                        target
-                    );
-                    world.bench_results.insert(target, 0.0);
-                }
-            } else {
-                panic!("pgbench failed for {}: {}", target, e);
-            }
-        }
-    }
+    let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
+    handle_pgbench_result(result, &target, &mut world.bench_results);
 }
 
 /// Run pgbench with inline command and explicit environment variables
@@ -331,47 +468,8 @@ pub async fn run_pgbench_for_target_with_env(
 
     eprintln!("Running pgbench for {}: {}", target, command);
 
-    match run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS)) {
-        Ok(output) => {
-            if let Some(tps) = parse_tps(&output) {
-                // Print TPS with bright colors for visibility
-                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
-                world.bench_results.insert(target, tps);
-            } else {
-                panic!(
-                    "Failed to parse TPS from pgbench output for {}:\n{}",
-                    target, output
-                );
-            }
-        }
-        Err(e) => {
-            // Check if this is a "prepared statement does not exist" error (e.g., odyssey doesn't support prepared protocol)
-            if e.contains("prepared statement") && e.contains("does not exist") {
-                eprintln!(
-                    "\x1b[1;33m⚠ TPS for {}: 0.00 (prepared statements not supported)\x1b[0m",
-                    target
-                );
-                world.bench_results.insert(target, 0.0);
-            } else if e.contains("timed out") {
-                // Try to parse progress lines for average TPS on timeout
-                if let Some(tps) = parse_tps(&e).or_else(|| parse_progress_tps(&e)) {
-                    eprintln!(
-                        "\x1b[1;33m⚠ TPS for {} (from progress, timed out): {:.2}\x1b[0m",
-                        target, tps
-                    );
-                    world.bench_results.insert(target, tps);
-                } else {
-                    eprintln!(
-                        "\x1b[1;31m✗ TPS for {}: 0.00 (timed out, no progress data)\x1b[0m",
-                        target
-                    );
-                    world.bench_results.insert(target, 0.0);
-                }
-            } else {
-                panic!("pgbench failed for {}: {}", target, e);
-            }
-        }
-    }
+    let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
+    handle_pgbench_result(result, &target, &mut world.bench_results);
 }
 
 /// Run pgbench with a script file (script content in docstring, options inline)
@@ -412,23 +510,8 @@ pub async fn run_pgbench_with_script(
     );
     eprintln!("Script content:\n{}", script_content);
 
-    match run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS)) {
-        Ok(output) => {
-            if let Some(tps) = parse_tps(&output) {
-                // Print TPS with bright colors for visibility
-                eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
-                world.bench_results.insert(target, tps);
-            } else {
-                panic!(
-                    "Failed to parse TPS from pgbench output for {}:\n{}",
-                    target, output
-                );
-            }
-        }
-        Err(e) => {
-            panic!("pgbench failed for {}: {}", target, e);
-        }
-    }
+    let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
+    handle_pgbench_result(result, &target, &mut world.bench_results);
 }
 
 /// Extract environment variable prefix from options string
@@ -477,8 +560,8 @@ fn extract_test_suffix(target: &str) -> Option<String> {
     let prefixes = ["postgresql_", "pg_doorman_", "odyssey_", "pgbouncer_"];
 
     for prefix in &prefixes {
-        if target.starts_with(prefix) {
-            return Some(target[prefix.len()..].to_string());
+        if let Some(suffix) = target.strip_prefix(prefix) {
+            return Some(suffix.to_string());
         }
     }
     None
@@ -516,174 +599,18 @@ pub async fn send_to_bencher(world: &mut DoormanWorld) {
             .copied()
             .unwrap_or(0.0);
 
-        // Compare pg_doorman vs pgbouncer
         if let Some(&pgbouncer_tps) = world.bench_results.get(&pgbouncer_key) {
-            if pgbouncer_tps > 0.0 && doorman_tps > 0.0 {
-                let ratio = doorman_tps / pgbouncer_tps;
-                let metric_name = format!("pg_doorman_vs_pgbouncer_{}", suffix);
-
-                eprintln!(
-                    "\x1b[1;36m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
-                    metric_name, doorman_tps, pgbouncer_tps, ratio
-                );
-
-                let mut metric = serde_json::Map::new();
-                let mut throughput = serde_json::Map::new();
-                throughput.insert("value".to_string(), serde_json::json!(ratio));
-                metric.insert(
-                    "throughput".to_string(),
-                    serde_json::Value::Object(throughput),
-                );
-                metrics.insert(metric_name, serde_json::Value::Object(metric));
-            } else if doorman_tps > 0.0 {
-                // pgbouncer failed (0 tps), pg_doorman wins
-                let metric_name = format!("pg_doorman_vs_pgbouncer_{}", suffix);
-                eprintln!(
-                    "\x1b[1;32m{}: pg_doorman={:.2}, pgbouncer=0 (pg_doorman wins)\x1b[0m",
-                    metric_name, doorman_tps
-                );
-                // Use a high value to indicate pg_doorman is much better
-                let mut metric = serde_json::Map::new();
-                let mut throughput = serde_json::Map::new();
-                throughput.insert("value".to_string(), serde_json::json!(10.0));
-                metric.insert(
-                    "throughput".to_string(),
-                    serde_json::Value::Object(throughput),
-                );
-                metrics.insert(metric_name, serde_json::Value::Object(metric));
-            }
+            let metric_name = format!("pg_doorman_vs_pgbouncer_{}", suffix);
+            add_comparison_metric(&mut metrics, &metric_name, doorman_tps, pgbouncer_tps, "36");
         }
 
-        // Compare pg_doorman vs odyssey
         if let Some(&odyssey_tps) = world.bench_results.get(&odyssey_key) {
-            if odyssey_tps > 0.0 && doorman_tps > 0.0 {
-                let ratio = doorman_tps / odyssey_tps;
-                let metric_name = format!("pg_doorman_vs_odyssey_{}", suffix);
-
-                eprintln!(
-                    "\x1b[1;35m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
-                    metric_name, doorman_tps, odyssey_tps, ratio
-                );
-
-                let mut metric = serde_json::Map::new();
-                let mut throughput = serde_json::Map::new();
-                throughput.insert("value".to_string(), serde_json::json!(ratio));
-                metric.insert(
-                    "throughput".to_string(),
-                    serde_json::Value::Object(throughput),
-                );
-                metrics.insert(metric_name, serde_json::Value::Object(metric));
-            } else if doorman_tps > 0.0 {
-                // odyssey failed (0 tps), pg_doorman wins
-                let metric_name = format!("pg_doorman_vs_odyssey_{}", suffix);
-                eprintln!(
-                    "\x1b[1;32m{}: pg_doorman={:.2}, odyssey=0 (pg_doorman wins)\x1b[0m",
-                    metric_name, doorman_tps
-                );
-                let mut metric = serde_json::Map::new();
-                let mut throughput = serde_json::Map::new();
-                throughput.insert("value".to_string(), serde_json::json!(10.0));
-                metric.insert(
-                    "throughput".to_string(),
-                    serde_json::Value::Object(throughput),
-                );
-                metrics.insert(metric_name, serde_json::Value::Object(metric));
-            }
+            let metric_name = format!("pg_doorman_vs_odyssey_{}", suffix);
+            add_comparison_metric(&mut metrics, &metric_name, doorman_tps, odyssey_tps, "35");
         }
     }
 
-    // Get API token from environment
-    let api_token = match std::env::var("BENCHER_API_TOKEN") {
-        Ok(token) if !token.trim().is_empty() => token.trim().to_string(),
-        _ => {
-            eprintln!("\nBENCHER_API_TOKEN not set, skipping bencher.dev upload");
-            return;
-        }
-    };
-
-    if metrics.is_empty() {
-        eprintln!("No metrics to send to bencher.dev");
-        return;
-    }
-
-    // Build the JSON payload for bencher.dev
-    // See: https://bencher.dev/docs/api/projects/reports/
-    // The "results" field must be an array of JSON strings in BMF (Bencher Metric Format)
-    let metrics_json_str = serde_json::to_string(&metrics).expect("Failed to serialize metrics");
-
-    // Get current time for end_time, and 30 minutes ago for start_time (approximate test duration)
-    let now = chrono::Utc::now();
-    let start_time = now - chrono::Duration::minutes(30);
-
-    let payload = serde_json::json!({
-        "branch": std::env::var("BENCHER_BRANCH").unwrap_or_else(|_| "main".to_string()),
-        "testbed": std::env::var("BENCHER_TESTBED").unwrap_or_else(|_| "localhost".to_string()),
-        "start_time": start_time.to_rfc3339(),
-        "end_time": now.to_rfc3339(),
-        "results": [metrics_json_str]
-    });
-
-    eprintln!(
-        "Sending to bencher.dev: {}",
-        serde_json::to_string_pretty(&payload).unwrap_or_default()
-    );
-
-    // Send to bencher.dev API using reqwest
-    let project = std::env::var("BENCHER_PROJECT").unwrap_or_else(|_| "pg-doorman".to_string());
-    let url = format!("https://api.bencher.dev/v0/projects/{}/reports", project);
-
-    let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_token))
-        .json(&payload)
-        .send()
-        .await;
-
-    match response {
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-
-            if status.is_success() {
-                // Check if response contains an error message from API
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                    if let Some(message) = json.get("message") {
-                        // API returned an error in JSON format
-                        eprintln!(
-                            "\x1b[1;31m✗ Failed to send results to bencher.dev: {}\x1b[0m",
-                            message
-                        );
-                        eprintln!("Response: {}", body);
-                    } else if json.get("uuid").is_some() || json.get("report").is_some() {
-                        // Success - response contains expected fields
-                        eprintln!("\x1b[1;32m✓ Successfully sent results to bencher.dev\x1b[0m");
-                        eprintln!("Response: {}", body);
-                    } else {
-                        // Unknown response format
-                        eprintln!("\x1b[1;33m⚠ Unexpected response from bencher.dev\x1b[0m");
-                        eprintln!("Response: {}", body);
-                    }
-                } else {
-                    // Could not parse response as JSON
-                    eprintln!("\x1b[1;33m⚠ Could not parse bencher.dev response as JSON\x1b[0m");
-                    eprintln!("Response: {}", body);
-                }
-            } else {
-                eprintln!(
-                    "\x1b[1;31m✗ Failed to send results to bencher.dev (HTTP {})\x1b[0m\nResponse: {}",
-                    status, body
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "\x1b[1;31m✗ Failed to send request to bencher.dev: {}\x1b[0m",
-                e
-            );
-        }
-    }
+    send_metrics_to_bencher(metrics, "normalized", None).await;
 }
 
 /// Send benchmark results for a specific test step to bencher.dev
@@ -715,177 +642,25 @@ pub async fn send_step_results_to_bencher(world: &mut DoormanWorld, test_suffix:
 
     let mut metrics = serde_json::Map::new();
 
-    // Compare pg_doorman vs pgbouncer
-    if pgbouncer_tps > 0.0 && doorman_tps > 0.0 {
-        let ratio = doorman_tps / pgbouncer_tps;
-        let metric_name = format!("pg_doorman_vs_pgbouncer_{}", test_suffix);
-
-        eprintln!(
-            "\x1b[1;36m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
-            metric_name, doorman_tps, pgbouncer_tps, ratio
-        );
-
-        let mut metric = serde_json::Map::new();
-        let mut throughput = serde_json::Map::new();
-        throughput.insert("value".to_string(), serde_json::json!(ratio));
-        metric.insert(
-            "throughput".to_string(),
-            serde_json::Value::Object(throughput),
-        );
-        metrics.insert(metric_name, serde_json::Value::Object(metric));
-    } else if doorman_tps > 0.0 && pgbouncer_tps == 0.0 {
-        let metric_name = format!("pg_doorman_vs_pgbouncer_{}", test_suffix);
-        eprintln!(
-            "\x1b[1;32m{}: pg_doorman={:.2}, pgbouncer=0 (pg_doorman wins)\x1b[0m",
-            metric_name, doorman_tps
-        );
-        let mut metric = serde_json::Map::new();
-        let mut throughput = serde_json::Map::new();
-        throughput.insert("value".to_string(), serde_json::json!(10.0));
-        metric.insert(
-            "throughput".to_string(),
-            serde_json::Value::Object(throughput),
-        );
-        metrics.insert(metric_name, serde_json::Value::Object(metric));
-    }
-
-    // Compare pg_doorman vs odyssey
-    if odyssey_tps > 0.0 && doorman_tps > 0.0 {
-        let ratio = doorman_tps / odyssey_tps;
-        let metric_name = format!("pg_doorman_vs_odyssey_{}", test_suffix);
-
-        eprintln!(
-            "\x1b[1;35m{}: {:.2} / {:.2} = {:.4}\x1b[0m",
-            metric_name, doorman_tps, odyssey_tps, ratio
-        );
-
-        let mut metric = serde_json::Map::new();
-        let mut throughput = serde_json::Map::new();
-        throughput.insert("value".to_string(), serde_json::json!(ratio));
-        metric.insert(
-            "throughput".to_string(),
-            serde_json::Value::Object(throughput),
-        );
-        metrics.insert(metric_name, serde_json::Value::Object(metric));
-    } else if doorman_tps > 0.0 && odyssey_tps == 0.0 {
-        let metric_name = format!("pg_doorman_vs_odyssey_{}", test_suffix);
-        eprintln!(
-            "\x1b[1;32m{}: pg_doorman={:.2}, odyssey=0 (pg_doorman wins)\x1b[0m",
-            metric_name, doorman_tps
-        );
-        let mut metric = serde_json::Map::new();
-        let mut throughput = serde_json::Map::new();
-        throughput.insert("value".to_string(), serde_json::json!(10.0));
-        metric.insert(
-            "throughput".to_string(),
-            serde_json::Value::Object(throughput),
-        );
-        metrics.insert(metric_name, serde_json::Value::Object(metric));
-    }
-
-    // Get API token from environment
-    let api_token = match std::env::var("BENCHER_API_TOKEN") {
-        Ok(token) if !token.trim().is_empty() => token.trim().to_string(),
-        _ => {
-            eprintln!(
-                "BENCHER_API_TOKEN not set, skipping bencher.dev upload for {}",
-                test_suffix
-            );
-            return;
-        }
-    };
-
-    if metrics.is_empty() {
-        eprintln!("No metrics to send for {}", test_suffix);
-        return;
-    }
-
-    // Build the JSON payload for bencher.dev
-    // API requires start_time and end_time fields, and endpoint is /reports not /runs
-    let metrics_json_str = serde_json::to_string(&metrics).expect("Failed to serialize metrics");
-
-    // Get current time for end_time, and 30 minutes ago for start_time (approximate test duration)
-    let now = chrono::Utc::now();
-    let start_time = now - chrono::Duration::minutes(30);
-
-    let payload = serde_json::json!({
-        "branch": std::env::var("BENCHER_BRANCH").unwrap_or_else(|_| "main".to_string()),
-        "testbed": std::env::var("BENCHER_TESTBED").unwrap_or_else(|_| "localhost".to_string()),
-        "start_time": start_time.to_rfc3339(),
-        "end_time": now.to_rfc3339(),
-        "results": [metrics_json_str]
-    });
-
-    eprintln!(
-        "Sending to bencher.dev: {}",
-        serde_json::to_string_pretty(&payload).unwrap_or_default()
+    let pgbouncer_metric = format!("pg_doorman_vs_pgbouncer_{}", test_suffix);
+    add_comparison_metric(
+        &mut metrics,
+        &pgbouncer_metric,
+        doorman_tps,
+        pgbouncer_tps,
+        "36",
     );
 
-    // Send to bencher.dev API using reqwest
-    let project = std::env::var("BENCHER_PROJECT").unwrap_or_else(|_| "pg-doorman".to_string());
-    let url = format!("https://api.bencher.dev/v0/projects/{}/reports", project);
+    let odyssey_metric = format!("pg_doorman_vs_odyssey_{}", test_suffix);
+    add_comparison_metric(
+        &mut metrics,
+        &odyssey_metric,
+        doorman_tps,
+        odyssey_tps,
+        "35",
+    );
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_token))
-        .json(&payload)
-        .send()
-        .await;
-
-    match response {
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-
-            if status.is_success() {
-                // Check if response contains an error message from API
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                    if let Some(message) = json.get("message") {
-                        // API returned an error in JSON format
-                        eprintln!(
-                            "\x1b[1;31m✗ Failed to send {} results to bencher.dev: {}\x1b[0m",
-                            test_suffix, message
-                        );
-                        eprintln!("Response: {}", body);
-                    } else if json.get("uuid").is_some() || json.get("report").is_some() {
-                        // Success - response contains expected fields
-                        eprintln!(
-                            "\x1b[1;32m✓ Successfully sent {} results to bencher.dev\x1b[0m",
-                            test_suffix
-                        );
-                        eprintln!("Response: {}", body);
-                    } else {
-                        // Unknown response format
-                        eprintln!(
-                            "\x1b[1;33m⚠ Unexpected response from bencher.dev for {}\x1b[0m",
-                            test_suffix
-                        );
-                        eprintln!("Response: {}", body);
-                    }
-                } else {
-                    // Could not parse response as JSON
-                    eprintln!(
-                        "\x1b[1;33m⚠ Could not parse bencher.dev response as JSON for {}\x1b[0m",
-                        test_suffix
-                    );
-                    eprintln!("Response: {}", body);
-                }
-            } else {
-                eprintln!(
-                    "\x1b[1;31m✗ Failed to send {} results to bencher.dev (HTTP {})\x1b[0m\nResponse: {}",
-                    test_suffix, status, body
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "\x1b[1;31m✗ Failed to send request to bencher.dev for {}: {}\x1b[0m",
-                test_suffix, e
-            );
-        }
-    }
+    send_metrics_to_bencher(metrics, &test_suffix, world.bench_start_time).await;
 }
 
 /// Print benchmark results summary
