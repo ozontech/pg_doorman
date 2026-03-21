@@ -54,33 +54,20 @@ Feature: Admin PAUSE, RESUME, RECONNECT commands
 
   @reconnect-rotates-connections
   Scenario: RECONNECT rotates all backend connections
-    # Establish a connection and get backend PID via Extended Protocol
     When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
-    And we send Bind "" to "" with params "" to session "s1"
-    And we send Execute "" to session "s1"
-    And we send Sync to session "s1"
-    Then we remember backend_pid from session "s1" as "pid_before"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "pid_before"
     # RECONNECT via admin — bumps epoch, drains idle
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
     And we execute "RECONNECT example_db" on admin session "admin1" and store response
     Then admin session "admin1" response should contain "RECONNECT"
-    # Query again — should get a new backend PID (old connection recycled due to epoch mismatch)
-    When we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
-    And we send Bind "" to "" with params "" to session "s1"
-    And we send Execute "" to session "s1"
-    And we send Sync to session "s1"
-    Then we verify backend_pid from session "s1" is different from "pid_before"
+    # Should get a new backend PID (old connection recycled due to epoch mismatch)
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "new_pid_reconnect"
+    Then named backend_pid "new_pid_reconnect" from session "s1" is different from "pid_before"
 
   @pause-reconnect-full-rotation
   Scenario: PAUSE + RECONNECT ensures full connection rotation
-    # Establish connection and get backend PID
     When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
-    And we send Bind "" to "" with params "" to session "s1"
-    And we send Execute "" to session "s1"
-    And we send Sync to session "s1"
-    Then we remember backend_pid from session "s1" as "old_pid"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "old_pid"
     # PAUSE — block new connections
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
     And we execute "PAUSE example_db" on admin session "admin1" and store response
@@ -92,11 +79,8 @@ Feature: Admin PAUSE, RESUME, RECONNECT commands
     When we execute "RESUME example_db" on admin session "admin1" and store response
     Then admin session "admin1" response should contain "RESUME"
     # New query should get a new backend PID
-    When we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
-    And we send Bind "" to "" with params "" to session "s1"
-    And we send Execute "" to session "s1"
-    And we send Sync to session "s1"
-    Then we verify backend_pid from session "s1" is different from "old_pid"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "new_pid_pause_reconnect"
+    Then named backend_pid "new_pid_pause_reconnect" from session "s1" is different from "old_pid"
 
   @pause-idempotent
   Scenario: PAUSE and RESUME are idempotent
@@ -179,20 +163,12 @@ Feature: Admin PAUSE, RESUME, RECONNECT commands
 
   @global-reconnect
   Scenario: Global RECONNECT without database argument rotates connections
-    # Establish a connection and get backend PID
     When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
-    And we send Bind "" to "" with params "" to session "s1"
-    And we send Execute "" to session "s1"
-    And we send Sync to session "s1"
-    Then we remember backend_pid from session "s1" as "pid_before"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "pid_before"
     # Global RECONNECT via admin
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
     And we execute "RECONNECT" on admin session "admin1" and store response
     Then admin session "admin1" response should contain "RECONNECT"
-    # Query again — should get a new backend PID
-    When we send Parse "" with query "SELECT pg_backend_pid()" to session "s1"
-    And we send Bind "" to "" with params "" to session "s1"
-    And we send Execute "" to session "s1"
-    And we send Sync to session "s1"
-    Then we verify backend_pid from session "s1" is different from "pid_before"
+    # Should get a new backend PID
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "new_pid_global_reconnect"
+    Then named backend_pid "new_pid_global_reconnect" from session "s1" is different from "pid_before"

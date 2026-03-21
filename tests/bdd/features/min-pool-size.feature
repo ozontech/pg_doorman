@@ -96,11 +96,7 @@ Feature: min_pool_size enforcement
       """
     # Create a session and make a query to establish at least 1 backend connection
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send Parse "" with query "SELECT pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
-    Then we remember backend_pid from session "one" as "first_pid"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "first_pid"
     # Wait for replenish to bring pool up to min_pool_size
     When we sleep for 2000 milliseconds
     When we create admin session "admin1" to pg_doorman as "admin" with password "admin"
@@ -111,8 +107,5 @@ Feature: min_pool_size enforcement
     And we execute "SHOW SERVERS" on admin session "admin1" and store row count
     Then admin session "admin1" row count should be greater than or equal to 2
     # Verify the backend was replaced (new PID after lifetime expiry)
-    When we send Parse "" with query "SELECT pg_backend_pid()" to session "one"
-    And we send Bind "" to "" with params "" to session "one"
-    And we send Execute "" to session "one"
-    And we send Sync to session "one"
-    Then we verify backend_pid from session "one" is different from "first_pid"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "new_pid_one"
+    Then named backend_pid "new_pid_one" from session "one" is different from "first_pid"

@@ -40,9 +40,8 @@ Feature: Pool-level timeout overrides (server_lifetime, idle_timeout)
     And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "first_pid"
     # Wait longer than pool server_lifetime (500ms) but much less than general (60s)
     When we sleep for 1500 milliseconds
-    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" without waiting
-    Then we read SimpleQuery response from session "one" within 5000ms
-    Then we verify backend_pid from session "one" is different from "first_pid"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "new_pid_one"
+    Then named backend_pid "new_pid_one" from session "one" is different from "first_pid"
 
   @pool-override-idle-timeout
   Scenario: Pool-level idle_timeout override closes idle connections
@@ -123,13 +122,11 @@ Feature: Pool-level timeout overrides (server_lifetime, idle_timeout)
     # Wait longer than Pool A lifetime (500ms) but less than Pool B (60s)
     When we sleep for 1500 milliseconds
     # Pool A should recycle — different PID
-    When we send SimpleQuery "SELECT pg_backend_pid()" to session "pool_a" without waiting
-    Then we read SimpleQuery response from session "pool_a" within 5000ms
-    Then we verify backend_pid from session "pool_a" is different from "pid_a"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "pool_a" and store backend_pid as "new_pid_pool_a"
+    Then named backend_pid "new_pid_pool_a" from session "pool_a" is different from "pid_a"
     # Pool B should keep the same PID — no recycle yet
-    When we send SimpleQuery "SELECT pg_backend_pid()" to session "pool_b" without waiting
-    Then we read SimpleQuery response from session "pool_b" within 5000ms
-    Then we verify backend_pid from session "pool_b" is same as "pid_b"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "pool_b" and store backend_pid as "check_pid_pool_b"
+    Then named backend_pid "check_pid_pool_b" from session "pool_b" is same as "pid_b"
 
   @general-server-lifetime-baseline
   Scenario: General server_lifetime works correctly (baseline)
@@ -156,9 +153,8 @@ Feature: Pool-level timeout overrides (server_lifetime, idle_timeout)
     When we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "first_pid"
     When we sleep for 1500 milliseconds
-    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" without waiting
-    Then we read SimpleQuery response from session "one" within 5000ms
-    Then we verify backend_pid from session "one" is different from "first_pid"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "new_pid_baseline"
+    Then named backend_pid "new_pid_baseline" from session "one" is different from "first_pid"
 
   @general-idle-timeout-baseline
   Scenario: General idle_timeout works correctly (baseline)

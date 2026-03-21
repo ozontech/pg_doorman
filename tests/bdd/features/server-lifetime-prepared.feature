@@ -44,9 +44,8 @@ Feature: Prepared statements work correctly after server_lifetime expires
     Then session "one" should receive DataRow with "30"
     # Wait for server_lifetime to expire and backend to change
     When we sleep for 2000 milliseconds
-    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" without waiting
-    Then we read SimpleQuery response from session "one" within 5000ms
-    Then we verify backend_pid from session "one" is different from "first_pid"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "new_pid_one"
+    Then named backend_pid "new_pid_one" from session "one" is different from "first_pid"
     # Prepared statement should still work on the new backend
     When we send Bind "" to "stmt1" with params "5, 15" to session "one"
     And we send Execute "" to session "one"

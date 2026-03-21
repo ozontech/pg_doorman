@@ -40,9 +40,8 @@ Feature: Pool improvements - server_lifetime, idle check, oldest-first retention
     # Wait for server_lifetime to expire
     When we sleep for 1000 milliseconds
     # Next transaction should get a new connection because old one exceeded lifetime
-    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" without waiting
-    Then we read SimpleQuery response from session "one" within 5000ms
-    Then we verify backend_pid from session "one" is different from "first_pid"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "new_pid_one"
+    Then named backend_pid "new_pid_one" from session "one" is different from "first_pid"
 
   @idle-check-timeout
   Scenario: Idle connections are checked before reuse when server_idle_check_timeout is set

@@ -139,6 +139,48 @@ pub async fn compare_named_backend_pids_different(
     );
 }
 
+#[then(regex = r#"^named backend_pid "([^"]+)" from session "([^"]+)" is same as "([^"]+)"$"#)]
+pub async fn compare_named_backend_pids_same(
+    world: &mut DoormanWorld,
+    pid_name1: String,
+    session_name: String,
+    pid_name2: String,
+) {
+    let pid1 = world
+        .named_backend_pids
+        .get(&(session_name.clone(), pid_name1.clone()))
+        .unwrap_or_else(|| {
+            panic!(
+                "Named backend PID '{}' for session '{}' not found",
+                pid_name1, session_name
+            )
+        });
+    let pid2 = world
+        .named_backend_pids
+        .get(&(session_name.clone(), pid_name2.clone()))
+        .unwrap_or_else(|| {
+            panic!(
+                "Named backend PID '{}' for session '{}' not found",
+                pid_name2, session_name
+            )
+        });
+
+    println!(
+        "Session '{}' backend_pid '{}': {}",
+        session_name, pid_name1, pid1
+    );
+    println!(
+        "Session '{}' backend_pid '{}': {}",
+        session_name, pid_name2, pid2
+    );
+
+    assert_eq!(
+        pid1, pid2,
+        "Backend PIDs should be the same: '{}' ({}) vs '{}' ({})",
+        pid_name1, pid1, pid_name2, pid2
+    );
+}
+
 #[then(regex = r#"^we remember backend_pid from session "([^"]+)" as "([^"]+)"$"#)]
 pub async fn remember_backend_pid_from_session(
     world: &mut DoormanWorld,
