@@ -104,6 +104,18 @@ pub(crate) fn parse_datarow_fields(data: &[u8]) -> Vec<String> {
     fields
 }
 
+/// Parse comma-separated params string into bind parameter format.
+pub(crate) fn parse_bind_params(params_str: &str) -> Vec<Option<Vec<u8>>> {
+    if params_str.is_empty() {
+        vec![]
+    } else {
+        params_str
+            .split(',')
+            .map(|s| Some(s.trim().as_bytes().to_vec()))
+            .collect()
+    }
+}
+
 /// Extract the stored admin response string from session_messages.
 pub(crate) fn get_admin_response(
     session_messages: &std::collections::HashMap<String, Vec<(char, Vec<u8>)>>,

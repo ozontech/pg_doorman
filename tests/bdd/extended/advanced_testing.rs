@@ -41,27 +41,8 @@ pub async fn send_query_and_verify_no_stale_data(
                 messages.push((msg_type, data));
             }
             'D' => {
-                // DataRow - extract content
-                if data.len() >= 2 {
-                    let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
-                    let mut pos = 2;
-                    for _ in 0..field_count {
-                        if pos + 4 <= data.len() {
-                            let field_len = i32::from_be_bytes([
-                                data[pos],
-                                data[pos + 1],
-                                data[pos + 2],
-                                data[pos + 3],
-                            ]);
-                            pos += 4;
-                            if field_len > 0 && pos + field_len as usize <= data.len() {
-                                let value =
-                                    String::from_utf8_lossy(&data[pos..pos + field_len as usize]);
-                                data_content.push_str(&value);
-                                pos += field_len as usize;
-                            }
-                        }
-                    }
+                for field in super::helpers::parse_datarow_fields(&data) {
+                    data_content.push_str(&field);
                 }
                 messages.push((msg_type, data));
             }

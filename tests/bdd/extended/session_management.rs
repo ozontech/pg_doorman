@@ -320,15 +320,7 @@ pub async fn send_bind_to_session(
 ) {
     let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
 
-    // Parse params - simple implementation for comma-separated values
-    let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
-        vec![]
-    } else {
-        params_str
-            .split(',')
-            .map(|s| Some(s.trim().as_bytes().to_vec()))
-            .collect()
-    };
+    let params = super::helpers::parse_bind_params(&params_str);
 
     conn.send_bind(&portal, &statement, params)
         .await

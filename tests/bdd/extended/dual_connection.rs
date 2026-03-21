@@ -271,15 +271,7 @@ pub async fn send_bind_to_both(
         .as_mut()
         .expect("Not connected to pg_doorman");
 
-    // Parse params - simple implementation for comma-separated values
-    let params: Vec<Option<Vec<u8>>> = if params_str.is_empty() {
-        vec![]
-    } else {
-        params_str
-            .split(',')
-            .map(|s| Some(s.trim().as_bytes().to_vec()))
-            .collect()
-    };
+    let params = super::helpers::parse_bind_params(&params_str);
 
     pg_conn
         .send_bind(&portal, &statement, params.clone())
@@ -353,11 +345,7 @@ pub async fn repeat_extended_protocol_to_both(
         .as_mut()
         .expect("Not connected to pg_doorman");
 
-    // Parse params - simple implementation for comma-separated values
-    let params: Vec<Option<Vec<u8>>> = params_str
-        .split(',')
-        .map(|s| Some(s.trim().as_bytes().to_vec()))
-        .collect();
+    let params = super::helpers::parse_bind_params(&params_str);
 
     let describe_char = describe_type.chars().next().expect("Empty describe type");
 
@@ -564,11 +552,7 @@ pub async fn repeat_simple_extended_protocol(
         .as_mut()
         .expect("Not connected to pg_doorman");
 
-    // Parse params - simple implementation for comma-separated values
-    let params: Vec<Option<Vec<u8>>> = params_str
-        .split(',')
-        .map(|s| Some(s.trim().as_bytes().to_vec()))
-        .collect();
+    let params = super::helpers::parse_bind_params(&params_str);
 
     // Send all messages N times
     for _ in 0..times {
@@ -629,11 +613,7 @@ pub async fn repeat_extended_protocol_with_close(
         .as_mut()
         .expect("Not connected to pg_doorman");
 
-    // Parse params - simple implementation for comma-separated values
-    let params: Vec<Option<Vec<u8>>> = params_str
-        .split(',')
-        .map(|s| Some(s.trim().as_bytes().to_vec()))
-        .collect();
+    let params = super::helpers::parse_bind_params(&params_str);
 
     let describe_char = describe_type.chars().next().expect("Empty describe type");
     let close_char = close_type.chars().next().expect("Empty close type");
