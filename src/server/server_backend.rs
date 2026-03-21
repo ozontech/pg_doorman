@@ -226,6 +226,25 @@ impl Server {
         self.bad = true;
     }
 
+    /// Returns a future that completes when the server socket becomes readable.
+    /// Between queries in a transaction, BufStream is empty (everything was read
+    /// up to ReadyForQuery), so readable on the underlying socket correctly
+    /// reflects new data from the server (e.g., FATAL after idle_in_transaction_session_timeout).
+    pub async fn server_readable(&self) {
+        let _ = self.stream.get_ref().readable().await;
+    }
+
+    /// Verify that server_readable() readiness is genuine, not spurious.
+    /// Returns true if the connection is alive (WouldBlock = no real data).
+    /// Returns false if the server sent data or closed the connection (dead).
+    pub fn check_server_alive(&self) -> bool {
+        let mut buf = [0u8; 1];
+        matches!(
+            self.stream.get_ref().try_read(&mut buf),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
+        )
+    }
+
     /// Server & client are out of sync, we must discard this connection.
     /// This happens with clients that misbehave.
     pub fn is_bad(&self) -> bool {

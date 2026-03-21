@@ -77,6 +77,25 @@ impl StreamInner {
             StreamInner::UnixSocket { stream } => stream.try_write(buf),
         }
     }
+
+    /// Waits until the server socket becomes readable (data or EOF/error).
+    /// Cancel-safe: no data is consumed, only readiness notification.
+    pub async fn readable(&self) -> std::io::Result<()> {
+        match self {
+            StreamInner::TCPPlain { stream } => stream.readable().await,
+            StreamInner::UnixSocket { stream } => stream.readable().await,
+        }
+    }
+
+    /// Non-blocking read attempt on the raw socket (bypasses BufStream).
+    /// Used to verify that `readable()` readiness is genuine, not spurious
+    /// from BufStream buffering. Returns WouldBlock if no data available.
+    pub fn try_read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            StreamInner::TCPPlain { stream } => stream.try_read(buf),
+            StreamInner::UnixSocket { stream } => stream.try_read(buf),
+        }
+    }
 }
 
 pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<StreamInner, Error> {
