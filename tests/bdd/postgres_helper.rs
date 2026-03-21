@@ -444,7 +444,36 @@ pub async fn start_postgres_with_options_and_hba(
     start_postgres_internal(world, &hba_content, &options).await;
 }
 
-/// Check that psql connection to pg_doorman succeeds
+fn build_psql_via_doorman(
+    port: u16,
+    user: &str,
+    database: &str,
+    query: &str,
+    password: Option<&str>,
+) -> Command {
+    let mut cmd = Command::new("psql");
+    cmd.args([
+        "-h",
+        "127.0.0.1",
+        "-p",
+        &port.to_string(),
+        "-U",
+        user,
+        "-d",
+        database,
+        "-c",
+        query,
+    ]);
+    cmd.env("PGSSLMODE", "disable");
+    if let Some(pw) = password {
+        cmd.env("PGPASSWORD", pw);
+    } else {
+        cmd.arg("-w");
+        cmd.env_remove("PGPASSWORD");
+    }
+    cmd
+}
+
 #[then(
     expr = "psql connection to pg_doorman as user {string} to database {string} with password {string} succeeds"
 )]
@@ -454,28 +483,13 @@ pub async fn psql_connection_succeeds(
     database: String,
     password: String,
 ) {
-    let doorman_port = world.doorman_port.expect("pg_doorman not started");
-
-    let status = Command::new("psql")
-        .arg("-h")
-        .arg("127.0.0.1")
-        .arg("-p")
-        .arg(doorman_port.to_string())
-        .arg("-U")
-        .arg(&user)
-        .arg("-d")
-        .arg(&database)
-        .arg("-c")
-        .arg("SELECT 1")
-        .env("PGPASSWORD", &password)
-        .env("PGSSLMODE", "disable")
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let status = build_psql_via_doorman(port, &user, &database, "SELECT 1", Some(&password))
         .status()
         .expect("Failed to run psql");
-
     assert!(status.success(), "psql connection to pg_doorman failed");
 }
 
-/// Check that psql connection to pg_doorman fails (authentication rejected)
 #[then(
     expr = "psql connection to pg_doorman as user {string} to database {string} with password {string} fails"
 )]
@@ -485,35 +499,20 @@ pub async fn psql_connection_fails(
     database: String,
     password: String,
 ) {
-    let doorman_port = world.doorman_port.expect("pg_doorman not started");
-
-    let status = Command::new("psql")
-        .arg("-h")
-        .arg("127.0.0.1")
-        .arg("-p")
-        .arg(doorman_port.to_string())
-        .arg("-U")
-        .arg(&user)
-        .arg("-d")
-        .arg(&database)
-        .arg("-c")
-        .arg("SELECT 1")
-        .env("PGPASSWORD", &password)
-        .env("PGSSLMODE", "disable")
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let status = build_psql_via_doorman(port, &user, &database, "SELECT 1", Some(&password))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .expect("Failed to run psql");
-
     assert!(
         !status.success(),
-        "psql connection to pg_doorman should have failed but succeeded (user: {}, database: {})",
+        "psql connection should have failed (user: {}, database: {})",
         user,
         database
     );
 }
 
-/// Check that psql connection to pg_doorman succeeds without password (trust mode)
 #[then(
     expr = "psql connection to pg_doorman as user {string} to database {string} without password succeeds"
 )]
@@ -522,34 +521,18 @@ pub async fn psql_connection_without_password_succeeds(
     user: String,
     database: String,
 ) {
-    let doorman_port = world.doorman_port.expect("pg_doorman not started");
-
-    let status = Command::new("psql")
-        .arg("-h")
-        .arg("127.0.0.1")
-        .arg("-p")
-        .arg(doorman_port.to_string())
-        .arg("-U")
-        .arg(&user)
-        .arg("-d")
-        .arg(&database)
-        .arg("-w")
-        .arg("-c")
-        .arg("SELECT 1")
-        .env("PGSSLMODE", "disable")
-        .env_remove("PGPASSWORD")
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let status = build_psql_via_doorman(port, &user, &database, "SELECT 1", None)
         .status()
         .expect("Failed to run psql");
-
     assert!(
         status.success(),
-        "psql connection without password to pg_doorman failed (user: {}, database: {})",
+        "psql without password failed (user: {}, database: {})",
         user,
         database
     );
 }
 
-/// Check that psql connection to pg_doorman fails without password
 #[then(
     expr = "psql connection to pg_doorman as user {string} to database {string} without password fails"
 )]
@@ -558,36 +541,20 @@ pub async fn psql_connection_without_password_fails(
     user: String,
     database: String,
 ) {
-    let doorman_port = world.doorman_port.expect("pg_doorman not started");
-
-    let status = Command::new("psql")
-        .arg("-h")
-        .arg("127.0.0.1")
-        .arg("-p")
-        .arg(doorman_port.to_string())
-        .arg("-U")
-        .arg(&user)
-        .arg("-d")
-        .arg(&database)
-        .arg("-w")
-        .arg("-c")
-        .arg("SELECT 1")
-        .env("PGSSLMODE", "disable")
-        .env_remove("PGPASSWORD")
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let status = build_psql_via_doorman(port, &user, &database, "SELECT 1", None)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .expect("Failed to run psql");
-
     assert!(
         !status.success(),
-        "psql connection without password to pg_doorman should have failed but succeeded (user: {}, database: {})",
+        "psql without password should have failed (user: {}, database: {})",
         user,
         database
     );
 }
 
-/// Run a SQL query via psql through pg_doorman and check that it fails (authentication rejected or query error)
 #[then(
     expr = "psql query {string} via pg_doorman as user {string} to database {string} with password {string} fails"
 )]
@@ -598,39 +565,22 @@ pub async fn psql_query_fails(
     database: String,
     password: String,
 ) {
-    let doorman_port = world.doorman_port.expect("pg_doorman not started");
-
-    let status = Command::new("psql")
-        .args([
-            "-h",
-            "127.0.0.1",
-            "-p",
-            &doorman_port.to_string(),
-            "-U",
-            &user,
-            "-d",
-            &database,
-            "-t",
-            "-A",
-            "-c",
-            &query,
-        ])
-        .env("PGPASSWORD", &password)
-        .env("PGSSLMODE", "disable")
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let mut cmd = build_psql_via_doorman(port, &user, &database, &query, Some(&password));
+    cmd.args(["-t", "-A"]);
+    let status = cmd
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .expect("Failed to run psql");
-
     assert!(
         !status.success(),
-        "psql query should have failed but succeeded (user: {}, database: {})",
+        "psql query should have failed (user: {}, database: {})",
         user,
         database
     );
 }
 
-/// Run a SQL query via psql through pg_doorman and check that the output contains the expected string
 #[then(
     expr = "psql query {string} via pg_doorman as user {string} to database {string} with password {string} returns {string}"
 )]
@@ -642,27 +592,10 @@ pub async fn psql_query_returns(
     password: String,
     expected: String,
 ) {
-    let doorman_port = world.doorman_port.expect("pg_doorman not started");
-
-    let output = Command::new("psql")
-        .args([
-            "-h",
-            "127.0.0.1",
-            "-p",
-            &doorman_port.to_string(),
-            "-U",
-            &user,
-            "-d",
-            &database,
-            "-t",
-            "-A",
-            "-c",
-            &query,
-        ])
-        .env("PGPASSWORD", &password)
-        .env("PGSSLMODE", "disable")
-        .output()
-        .expect("Failed to run psql");
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let mut cmd = build_psql_via_doorman(port, &user, &database, &query, Some(&password));
+    cmd.args(["-t", "-A"]);
+    let output = cmd.output().expect("Failed to run psql");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
