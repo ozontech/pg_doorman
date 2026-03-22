@@ -1035,22 +1035,20 @@ fields:
     cleanup_server_connections:
       config:
         en: |
-          Reset server connection state when returning to pool.
-          Runs: RESET ROLE, RESET ALL (if SET was used), DEALLOCATE ALL (if PREPARE was used),
-          CLOSE ALL (if cursors were opened), ROLLBACK (if in transaction).
-          Prevents session state leaking between clients in transaction mode.
+          Reset session state (SET, prepared statements, cursors) when returning a connection to pool.
+          ROLLBACK for open transactions is always executed regardless of this setting.
+          Prevents state leaking between clients in transaction mode.
         ru: |
-          Сбрасывать состояние серверного соединения при возврате в пул.
-          Выполняет: RESET ROLE, RESET ALL (если был SET), DEALLOCATE ALL (если был PREPARE),
-          CLOSE ALL (если были курсоры), ROLLBACK (если в транзакции).
-          Предотвращает утечку состояния сессии между клиентами в транзакционном режиме.
+          Сбрасывать состояние сессии (SET, prepared statements, курсоры) при возврате соединения в пул.
+          ROLLBACK для открытых транзакций выполняется всегда независимо от этой настройки.
+          Предотвращает утечку состояния между клиентами в транзакционном режиме.
       doc: |
-        When a server connection is returned to the pool, pg_doorman runs cleanup queries to restore it
-        to a clean state. The cleanup is conditional — only the needed statements are executed:
-        `RESET ROLE` (always), `RESET ALL` (if client used SET), `DEALLOCATE ALL` (if client used PREPARE),
-        `CLOSE ALL` (if client opened cursors), and `ROLLBACK` (if a transaction was in progress).
-        This prevents one client's session state from affecting the next client. Disable only if your
-        application never uses SET, prepared statements, or cursors and you want to save the cleanup roundtrip.
+        Controls whether pg_doorman resets session state when a connection is returned to the pool.
+        When enabled and the session was modified, pg_doorman sends: `RESET ROLE`, plus conditionally
+        `RESET ALL` (if SET was used), `DEALLOCATE ALL` (if PREPARE was used), `CLOSE ALL` (if cursors
+        were opened). Note: `ROLLBACK` for open transactions is always executed regardless of this setting.
+        Disable only if your application never uses SET, prepared statements, or cursors and you want
+        to save the cleanup roundtrip.
       default: "true"
 
     prepared_statements_cache_size:

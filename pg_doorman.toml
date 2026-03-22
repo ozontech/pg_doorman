@@ -435,10 +435,9 @@ pool_mode = "transaction"
 # Override global server_lifetime for this pool (in milliseconds).
 # server_lifetime = 300000
 
-# Reset server connection state when returning to pool.
-# Runs: RESET ROLE, RESET ALL (if SET was used), DEALLOCATE ALL (if PREPARE was used),
-# CLOSE ALL (if cursors were opened), ROLLBACK (if in transaction).
-# Prevents session state leaking between clients in transaction mode.
+# Reset session state (SET, prepared statements, cursors) when returning a connection to pool.
+# ROLLBACK for open transactions is always executed regardless of this setting.
+# Prevents state leaking between clients in transaction mode.
 # Default: true
 cleanup_server_connections = true
 
