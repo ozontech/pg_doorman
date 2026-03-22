@@ -1506,10 +1506,10 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "auth_query.user = \"doorman_auth\"");
             w.comment(fi, "auth_query.password = \"auth_password\"");
             w.comment(fi, "auth_query.database = \"postgres\"");
-            w.comment(fi, "auth_query.pool_size = 2");
+            w.comment(fi, "auth_query.workers = 2");
             w.comment(fi, "auth_query.server_user = \"app\"");
             w.comment(fi, "auth_query.server_password = \"secret\"");
-            w.comment(fi, "auth_query.default_pool_size = 40");
+            w.comment(fi, "auth_query.pool_size = 40");
             w.comment(fi, "auth_query.min_pool_size = 0");
             w.comment(fi, "auth_query.cache_ttl = 3600000");
             w.comment(fi, "auth_query.cache_failure_ttl = 30000");
@@ -1524,10 +1524,10 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "  user: \"doorman_auth\"");
             w.comment(fi, "  password: \"auth_password\"");
             w.comment(fi, "  database: \"postgres\"");
-            w.comment(fi, "  pool_size: 2");
+            w.comment(fi, "  workers: 2");
             w.comment(fi, "  server_user: \"app\"");
             w.comment(fi, "  server_password: \"secret\"");
-            w.comment(fi, "  default_pool_size: 40");
+            w.comment(fi, "  pool_size: 40");
             w.comment(fi, "  min_pool_size: 0");
             w.comment(fi, "  cache_ttl: \"1h\"");
             w.comment(fi, "  cache_failure_ttl: \"30s\"");
@@ -1969,10 +1969,10 @@ mod tests {
             "user",
             "password",
             "database",
-            "pool_size",
+            "workers",
             "server_user",
             "server_password",
-            "default_pool_size",
+            "pool_size",
             "min_pool_size",
             "cache_ttl",
             "cache_failure_ttl",

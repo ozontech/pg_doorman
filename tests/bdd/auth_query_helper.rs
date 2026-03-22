@@ -18,10 +18,10 @@ fn build_test_config(query: &str, pool_size: u32, database: Option<String>) -> A
         user: "postgres".to_string(),
         password: String::new(), // trust mode
         database,
-        pool_size,
+        workers: pool_size,
         server_user: None,
         server_password: None,
-        default_pool_size: 40,
+        pool_size: 40,
         min_pool_size: 0,
         cache_ttl: Duration::from_hours(1),
         cache_failure_ttl: Duration::from_secs(30),

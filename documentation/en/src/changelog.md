@@ -2,6 +2,10 @@
 
 ### 3.3.2 <small>Mar 1, 2026</small>
 
+**Breaking Changes:**
+
+- **`auth_query` config field renames**: Two fields in the `auth_query` section have been renamed for clarity. `auth_query.pool_size` (number of connections for running auth queries) is now `auth_query.workers`. `auth_query.default_pool_size` (data pool size for dynamic users) is now `auth_query.pool_size`, matching the same parameter name used in static pools. **Migration**: rename `pool_size` to `workers` and `default_pool_size` to `pool_size` in your `auth_query` config. If you don't update, the old `pool_size` value (typically 1-2) will be interpreted as the data pool size, drastically reducing connection capacity. The old `default_pool_size` key is silently ignored and defaults to 40.
+
 **Bug Fixes:**
 
 - **Session mode: keep server connections alive after SQL errors.** A query like `SELECT 1/0` returns an `ErrorResponse` from PostgreSQL but leaves the connection fully usable. Previously, `handle_error_response` called `mark_bad()` unconditionally in async mode, so the connection was destroyed at session end. Now `mark_bad` is skipped when the pool runs in session mode. Transaction mode still calls `mark_bad` because the connection returns to a shared pool where protocol desync is dangerous.

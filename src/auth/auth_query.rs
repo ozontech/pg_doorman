@@ -84,14 +84,14 @@ impl AuthQueryExecutor {
 
         let pg_config = Self::build_pg_config(config, server_host, server_port, &database);
 
-        let (tx, rx) = mpsc::channel(config.pool_size as usize);
+        let (tx, rx) = mpsc::channel(config.workers as usize);
 
-        for i in 0..config.pool_size {
+        for i in 0..config.workers {
             info!(
                 "[pool: {pool_name}] auth_query: opening executor connection {}/{} \
                  to {server_host}:{server_port}/{database} as '{}'",
                 i + 1,
-                config.pool_size,
+                config.workers,
                 config.user
             );
             let client = Self::connect(
@@ -111,8 +111,8 @@ impl AuthQueryExecutor {
 
         info!(
             "[pool: {pool_name}] auth_query executor ready: \
-             {}@{server_host}:{server_port}/{database} (pool_size={})",
-            config.user, config.pool_size
+             {}@{server_host}:{server_port}/{database} (workers={})",
+            config.user, config.workers
         );
 
         Ok(Self {
@@ -688,10 +688,10 @@ mod tests {
             user: String::new(),
             password: String::new(),
             database: None,
-            pool_size: 1,
+            workers: 1,
             server_user: None,
             server_password: None,
-            default_pool_size: 40,
+            pool_size: 40,
             min_pool_size: 0,
             cache_ttl: Duration::from_hours(1),
             cache_failure_ttl: Duration::from_secs(30),

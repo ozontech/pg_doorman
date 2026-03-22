@@ -36,20 +36,26 @@ backlog = 0
 # Connection Timeouts
 # --------------------------------------------------------------------------
 
-# Connection timeout to server.
+# Timeout for establishing a new connection to PostgreSQL. Similar to PgBouncer's server_connect_timeout.
 # Default: 3000 (3000 ms)
 connect_timeout = 3000
 
-# Maximum time to wait for a query to complete.
-# Analog of query_wait_timeout in PgBouncer.
+# How long a client waits for a server connection before getting an error.
+# Applies when all connections in the pool are busy.
+# Similar to PgBouncer's query_wait_timeout.
 # Default: 5000 (5000 ms)
 query_wait_timeout = 5000
 
-# Server idle timeout.
+# Close a server connection that has been idle longer than this.
+# Only applies to connections that served at least one client request.
+# Prewarmed connections that were never used are not affected (use server_lifetime for those).
+# Set to 0 to disable. Similar to PgBouncer's server_idle_timeout.
 # Default: 600000 (600000 ms)
 idle_timeout = 600000
 
-# Server lifetime. Only applied to idle connections.
+# Maximum age of a server connection. Closed when idle, not mid-transaction.
+# Applies to all connections including prewarmed ones that were never used.
+# Set to 0 to disable. Similar to PgBouncer's server_lifetime.
 # Default: 1200000 (1200000 ms)
 server_lifetime = 1200000
 
@@ -69,7 +75,7 @@ retain_connections_max = 3
 # Default: "60s"
 server_idle_check_timeout = 60000
 
-# Graceful shutdown timeout.
+# Time to wait for active transactions to finish during graceful shutdown.
 # Default: 10000 (10000 ms)
 shutdown_timeout = 10000
 
@@ -123,8 +129,8 @@ max_connections = 8192
 # Default: 4
 max_concurrent_creates = 4
 
-# Maximum memory usage for internal buffers.
-# If exceeded, clients receive an error.
+# Memory limit for in-flight query buffers across all connections.
+# When exceeded, new queries are rejected with an error until memory drops below the limit.
 # Default: 268435456 (268435456 bytes)
 max_memory_usage = 268435456
 
@@ -169,8 +175,8 @@ log_client_disconnections = true
 # Worker Settings
 # --------------------------------------------------------------------------
 
-# Number of worker threads for async client handling.
-# More workers = better performance, up to CPU count.
+# Tokio worker threads for handling client connections.
+# Set to CPU core count for best throughput. Exceeding core count gives no benefit.
 # Default: 4
 worker_threads = 4
 
@@ -202,23 +208,26 @@ worker_cpu_affinity_pinning = false
 # Pool Behavior
 # --------------------------------------------------------------------------
 
-# Server selection strategy in transaction pool mode.
-# false = LRU (Least Recently Used) - better performance
-# true = Round Robin
+# Server selection strategy in transaction mode.
+# false = LRU (reuse most recent connection) — better cache locality
+# true  = Round Robin (rotate across connections) — more even load
 # Default: false
 server_round_robin = false
 
-# Sync server parameters (SET commands, application_name) across backends.
-# Disabled by default due to performance impact.
-# Consider using pool-level application_name instead.
+# Track and replay a subset of session parameters on each new backend in transaction mode.
+# Tracked parameters: client_encoding, DateStyle, TimeZone, standard_conforming_strings, application_name.
+# Adds a SET roundtrip per checkout. Disabled by default.
+# If you only need application_name, use the pool-level application_name setting instead.
 # Default: false
 sync_server_parameters = false
 
-# Data responses larger than this value are transmitted in chunks.
+# DataRow messages larger than this threshold are streamed to the client in small chunks
+# instead of being buffered entirely in memory. Prevents memory spikes on large rows.
 # Default: 1048576 (1048576 bytes)
 message_size_to_be_stream = 1048576
 
-# Query that won't be sent to server (used for connection health checks).
+# Query intercepted by pg_doorman and answered locally (never reaches PostgreSQL).
+# Used by load balancers and monitoring to check if the pooler is alive.
 # Default: ";"
 pooler_check_query = ";"
 
@@ -411,9 +420,9 @@ server_port = 5432
 # Pool Settings
 # --------------------------------------------------------------------------
 
-# Pooling mode:
-# - "transaction" : Server released after each transaction (recommended)
-# - "session"     : Server released when client disconnects
+# Pooling mode (same as PgBouncer's pool_mode):
+# - "transaction" : backend released after each transaction (recommended)
+# - "session"     : backend held for the entire client session
 # Default: "transaction"
 pool_mode = "transaction"
 
@@ -426,7 +435,9 @@ pool_mode = "transaction"
 # Override global server_lifetime for this pool (in milliseconds).
 # server_lifetime = 300000
 
-# Clean up server connections (reset state) when returning to pool.
+# Reset session state (SET, prepared statements, cursors) when returning a connection to pool.
+# ROLLBACK for open transactions is always executed regardless of this setting.
+# Prevents state leaking between clients in transaction mode.
 # Default: true
 cleanup_server_connections = true
 
@@ -465,20 +476,21 @@ log_client_parameter_status_changes = false
 # Each user must have a unique username within the pool.
 
 [pools.exampledb.users.0]
-# Username for client authentication.
+# Username for client authentication. Clients connect with this name.
 username = "app_user"
 
-# Password for client authentication.
-# Supported formats:
+# Password hash or JWT key path for client authentication.
+# Formats:
 # - MD5: "md5" + md5(password + username)
 # - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
 # - JWT public key: "jwt-pkey-fpath:/path/to/public.pem"
 #
 # Generate MD5: echo -n "passwordusername" | md5sum
-# Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+# Copy from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
 password = "md5dd9a0f26a4302744db881776a09bbfad"
 
-# Maximum connections to PostgreSQL for this user.
+# Max backend connections to PostgreSQL for this user.
+# Similar to PgBouncer's default_pool_size but set per-user.
 # Default: 40
 pool_size = 40
 
@@ -529,10 +541,10 @@ pool_size = 40
 # auth_query.user = "doorman_auth"
 # auth_query.password = "auth_password"
 # auth_query.database = "postgres"
-# auth_query.pool_size = 2
+# auth_query.workers = 2
 # auth_query.server_user = "app"
 # auth_query.server_password = "secret"
-# auth_query.default_pool_size = 40
+# auth_query.pool_size = 40
 # auth_query.min_pool_size = 0
 # auth_query.cache_ttl = 3600000
 # auth_query.cache_failure_ttl = 30000

@@ -73,7 +73,7 @@ Feature: Pool lifecycle end-to-end (prewarm → scale up → shrink)
 
   @e2e-auth-query-lifecycle
   Scenario: Auth_query pool lifecycle: scale up under load → shrink to 0 after retain
-    # auth_query dynamic pool with default_pool_size=5, pool-level server_lifetime=1000ms.
+    # auth_query dynamic pool with pool_size=5, pool-level server_lifetime=1000ms.
     # min_pool_size is not set (defaults to 0), so no prewarm.
     # Phase 1: Open 5 concurrent transactions via auth_query user → pool scales to 5.
     # Phase 2: Release all, wait for lifetime+retain → pool shrinks to 0.
@@ -115,8 +115,8 @@ Feature: Pool lifecycle end-to-end (prewarm → scale up → shrink)
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            pool_size: 1
-            default_pool_size: 5
+            workers: 1
+            pool_size: 5
             cache_ttl: "1h"
             cache_failure_ttl: "30s"
             min_interval: "0s"
