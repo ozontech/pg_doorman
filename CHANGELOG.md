@@ -4,5 +4,4 @@
 
 ### Fixed
 
-- **Session mode: stop destroying healthy connections on SQL errors.**
-  In session mode, a PostgreSQL `ErrorResponse` during async operation (e.g. syntax error, constraint violation) no longer marks the server connection as bad. The connection stays in the pool and continues serving the client. Transaction mode behavior is unchanged — `mark_bad` is still called there because the connection may have desynchronized protocol state.
+- **Session mode: keep server connections alive after SQL errors.** A query like `SELECT 1/0` returns an `ErrorResponse` from PostgreSQL but leaves the connection fully usable. Previously, `handle_error_response` called `mark_bad()` unconditionally in async mode, so the connection was destroyed at session end. Now `mark_bad` is skipped when the pool runs in session mode. Transaction mode still calls `mark_bad` because the connection returns to a shared pool where protocol desync is dangerous.
