@@ -341,6 +341,14 @@ pub async fn send_execute_to_session(
         .expect("Failed to send Execute");
 }
 
+#[when(regex = r#"^we send Flush to session "([^"]+)"$"#)]
+#[then(regex = r#"^we send Flush to session "([^"]+)"$"#)]
+pub async fn send_flush_to_session(world: &mut DoormanWorld, session_name: String) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    conn.send_flush().await.expect("Failed to send Flush");
+}
+
 #[when(regex = r#"^we send Sync to session "([^"]+)"$"#)]
 #[then(regex = r#"^we send Sync to session "([^"]+)"$"#)]
 pub async fn send_sync_to_session(world: &mut DoormanWorld, session_name: String) {
