@@ -16,9 +16,11 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 **Natively multithreaded.** PgBouncer is single-threaded. Running multiple instances via `SO_REUSE_PORT` leads to unbalanced pools: clients connect evenly but disconnect unpredictably, leaving some instances overloaded while others sit idle. PgDoorman uses a single shared pool across all worker threads, ensuring correct connection distribution at any scale.
 
-**Full extended query protocol support.** Benchmarks show Odyssey is up to 61% slower with the extended query protocol in transaction mode. PgDoorman handles simple, extended, and prepared protocols equally well — including pipelined batches and async Flush flow that cause issues in other poolers.
+**Full extended query protocol support.** Benchmarks show Odyssey is up to 61% slower with the extended query protocol in transaction mode. Odyssey also has known crashes under query cancellation stress and segfaults on large packets. PgDoorman handles simple, extended, and prepared protocols equally well — including pipelined batches and async Flush flow that cause issues in other poolers.
 
-**Lazy server acquisition.** PgDoorman defers backend connection allocation until the first real query inside a transaction. A standalone `BEGIN` does not grab a server connection. If a client opens a transaction and disconnects without sending a query, no backend connection is used at all. PgBouncer and Odyssey allocate a server connection on `BEGIN`.
+**Built for operations.** `pg_doorman generate --host your-db` creates a config by introspecting PostgreSQL — no manual user/database enumeration. `pg_doorman -t` validates config before deploy (PgBouncer and Odyssey lack this). YAML config with human-readable durations (`"30s"`, `"5m"`, `"1h"`). Built-in Prometheus endpoint — no external exporter needed (PgBouncer requires a separate process; Odyssey's built-in metrics segfault when combined with standard logging).
+
+**Dead backend detection.** When a client holds a transaction open, pg_doorman probes the backend and returns an error immediately if the server is gone (failover, OOM kill). Other poolers rely on TCP keepalive, leaving clients hanging for minutes.
 
 ## Benchmarks
 
@@ -189,12 +191,6 @@ UPGRADE;
 ```
 
 See [admin commands documentation](https://ozontech.github.io/pg_doorman/tutorials/basic-usage.html) for details.
-
-## Stale Backend Detection
-
-When a client holds a transaction open but sends no queries, the backend connection can die silently (failover, OOM kill, network partition). With other poolers the client hangs until TCP keepalive fires — typically 2+ minutes.
-
-PgDoorman probes the backend when a client is idle in transaction. If the backend is gone, the client gets an error immediately. Controlled by `idle_client_in_transaction_timeout`.
 
 ## TLS / SSL
 
