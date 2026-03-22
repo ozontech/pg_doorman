@@ -2027,58 +2027,57 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <li><strong>Important</strong>: The values shown are <strong>relative performance ratios</strong>, not absolute TPS numbers. While absolute TPS values may vary depending on hardware and system load, the relative ratios between poolers should remain consistent when tests are run sequentially in a short timeframe (30 seconds each). This allows for fair comparison across different connection poolers under identical conditions</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
-<h3 id="332-mar-1-2026"><a class="header" href="#332-mar-1-2026">3.3.2 <small>Mar 1, 2026</small></a></h3>
-<p><strong>Breaking Changes:</strong></p>
-<ul>
-<li><strong><code>auth_query</code> config field renames</strong>: Two fields in the <code>auth_query</code> section have been renamed for clarity. <code>auth_query.pool_size</code> (number of connections for running auth queries) is now <code>auth_query.workers</code>. <code>auth_query.default_pool_size</code> (data pool size for dynamic users) is now <code>auth_query.pool_size</code>, matching the same parameter name used in static pools. <strong>Migration</strong>: rename <code>pool_size</code> to <code>workers</code> and <code>default_pool_size</code> to <code>pool_size</code> in your <code>auth_query</code> config. If you don't update, the old <code>pool_size</code> value (typically 1-2) will be interpreted as the data pool size, drastically reducing connection capacity. The old <code>default_pool_size</code> key is silently ignored and defaults to 40.</li>
-</ul>
-<p><strong>Bug Fixes:</strong></p>
+<h3 id="332-2026-03-01--the-one-with-pauseresume"><a class="header" href="#332-2026-03-01--the-one-with-pauseresume">3.3.2 <small>2026-03-01</small> — "The one with PAUSE/RESUME"</a></h3>
+<p><strong>Highlights</strong>: This release adds PAUSE, RESUME, and RECONNECT admin commands for zero-downtime PostgreSQL maintenance. Backend health monitoring now detects dead connections while a client holds an idle transaction. Nine bug fixes address connection lifetime defaults, idle timeout behavior, and retain cycle fairness.</p>
+<p><strong>Features:</strong></p>
 <ul>
 <li>
-<p><strong>Session mode: keep server connections alive after SQL errors.</strong> A query like <code>SELECT 1/0</code> returns an <code>ErrorResponse</code> from PostgreSQL but leaves the connection fully usable. Previously, <code>handle_error_response</code> called <code>mark_bad()</code> unconditionally in async mode, so the connection was destroyed at session end. Now <code>mark_bad</code> is skipped when the pool runs in session mode. Transaction mode still calls <code>mark_bad</code> because the connection returns to a shared pool where protocol desync is dangerous.</p>
+<p>Add PAUSE, RESUME, RECONNECT admin commands for runtime pool control. <code>PAUSE [db]</code> blocks new backend connections (active transactions finish). <code>RESUME [db]</code> lifts the pause. <code>RECONNECT [db]</code> rotates all connections — idle ones close immediately, active ones close on return. Use case: <code>PAUSE</code> → upgrade PostgreSQL → <code>RESUME</code>. (<a href="https://github.com/ozontech/pg_doorman/pull/141">#141</a> by @vadv)</p>
 </li>
 <li>
-<p><strong>Pool-level <code>server_lifetime</code> and <code>idle_timeout</code> overrides ignored</strong>: Pool-level overrides for <code>server_lifetime</code> and <code>idle_timeout</code> were silently ignored — the general (global) values were always used instead. Fixed in 6 places across 3 pool creation contexts (static pools, auth_query shared pools, dynamic pools). Now <code>pool.server_lifetime</code> and <code>pool.idle_timeout</code> correctly override the general settings when specified.</p>
+<p>Add stale backend detection during client idle-in-transaction. When a client holds a transaction open but sends no queries, pg_doorman probes the backend connection. If the backend is dead (failover, OOM kill, network partition), the client gets an error immediately instead of hanging for minutes waiting on TCP keepalive. (<a href="https://github.com/ozontech/pg_doorman/pull/144">#144</a> by @vadv)</p>
 </li>
 <li>
-<p><strong><code>idle_timeout</code> default was 83 hours instead of 10 minutes</strong>: The default <code>idle_timeout</code> was set to 300,000,000ms (83 hours), effectively disabling idle connection cleanup. Idle server connections could accumulate indefinitely. Changed default to 600,000ms (10 minutes).</p>
+<p>Add <code>pool_size</code> column to <code>SHOW POOLS</code> / <code>SHOW POOLS_EXTENDED</code> and new <code>pg_doorman_pool_size</code> Prometheus gauge. Compare active connections against configured capacity without checking the config file. (<a href="https://github.com/ozontech/pg_doorman/pull/149">#149</a> by @Fingolfin-Anekane)</p>
 </li>
 <li>
-<p><strong><code>retain_connections_max</code> quota exhaustion causing unlimited closure</strong>: When <code>retain_connections_max &gt; 0</code> and the global counter reached the limit, the remaining quota became <code>0</code> via <code>saturating_sub</code>. Since <code>0</code> means "unlimited" in <code>retain_oldest_first()</code>, pools processed after quota exhaustion lost ALL idle connections in a single retain cycle instead of none. With non-deterministic HashMap iteration order, this bug manifested as random pools losing all connections. Fixed by adding an early return when the quota is exhausted.</p>
-</li>
-<li>
-<p><strong><code>retain_connections_max</code> doc comment incorrectly stated default as <code>0</code> (unlimited)</strong>: The actual default is <code>3</code>.</p>
-</li>
-<li>
-<p><strong><code>server_lifetime</code> default changed from 5 minutes to 20 minutes</strong>: The previous default of 5 minutes was shorter than <code>idle_timeout</code> (10 minutes), which meant <code>idle_timeout</code> could never trigger — connections were always killed by <code>server_lifetime</code> first. Changed to 20 minutes so that <code>idle_timeout</code> (10 min) handles idle cleanup while <code>server_lifetime</code> (20 min) rotates long-lived connections. Note: <code>idle_timeout</code> only applies to connections that have been used at least once — prewarmed/replenished connections that were never checked out by a client are not subject to <code>idle_timeout</code> and will only be closed when <code>server_lifetime</code> expires.</p>
-</li>
-<li>
-<p><strong><code>idle_timeout = 0</code> did not disable idle timeout</strong>: Setting <code>idle_timeout</code> to <code>0</code> was supposed to disable idle connection cleanup (consistent with PgBouncer's <code>server_idle_timeout = 0</code> semantics and our own <code>server_lifetime = 0</code> behavior). Instead, it closed connections after ~1ms of being idle. Fixed by adding an <code>idle_timeout_ms &gt; 0</code> guard before the elapsed time check.</p>
-</li>
-<li>
-<p><strong><code>idle_timeout</code> had no jitter — synchronized mass closures</strong>: Unlike <code>server_lifetime</code> which applies ±20% per-connection jitter to prevent thundering herd, <code>idle_timeout</code> used a single pool-wide value. When many connections became idle simultaneously (e.g., after a traffic burst), they all expired at the exact same moment, causing mass closures in one retain cycle. Now <code>idle_timeout</code> applies the same ±20% per-connection jitter as <code>server_lifetime</code>.</p>
-</li>
-<li>
-<p><strong><code>retain_connections_max</code> unfair quota distribution across pools</strong>: The retain cycle iterated pools via HashMap, whose order is deterministic within a process (fixed RandomState seed). The same pool always got iterated first and consumed the entire <code>retain_connections_max</code> quota, starving other pools. Expired connections in starved pools were never cleaned up by retain — clients had to discover them via failed <code>recycle()</code> checks, adding latency. Fixed by shuffling pool iteration order each cycle.</p>
-</li>
-<li>
-<p><strong>Retain and replenish used separate pool snapshots</strong>: The retain and replenish phases each called <code>get_all_pools()</code> separately. If <code>POOLS</code> was atomically updated between them (config reload, dynamic pool GC), retain operated on one set of pools and replenish on another, potentially missing pools that need replenishment. Fixed by using a single snapshot for both phases.</p>
+<p>Add <code>auth_query.min_pool_size</code> for dynamic user pools in passthrough mode. Keeps a minimum number of backend connections per user, prewarmed on pool creation and replenished by the retain cycle. Pools with <code>min_pool_size &gt; 0</code> are never garbage-collected. Default <code>0</code>. (<a href="https://github.com/ozontech/pg_doorman/pull/147">#147</a> by @Fingolfin-Anekane)</p>
 </li>
 </ul>
-<p><strong>Testing:</strong></p>
+<p><strong>Changes:</strong></p>
 <ul>
-<li><strong>PHP PDO_PGSQL driver added to test infrastructure.</strong> PHP 8.4 with <code>pdo_pgsql</code> extension is now included in the Nix-based Docker test image. Two BDD scenarios verify basic connectivity (SELECT 1) and session mode behavior (SQL error does not change backend PID). Run with <code>make test-php</code> or <code>--tags @php</code>.</li>
+<li>
+<p>Rename <code>auth_query.pool_size</code> → <code>auth_query.workers</code> (executor connections) and <code>auth_query.default_pool_size</code> → <code>auth_query.pool_size</code> (data connections). Migration: rename <code>pool_size</code> to <code>workers</code> and <code>default_pool_size</code> to <code>pool_size</code> in your <code>auth_query</code> config. (<a href="https://github.com/ozontech/pg_doorman/pull/148">#148</a> by @Fingolfin-Anekane)</p>
+</li>
+<li>
+<p>Change <code>idle_timeout</code> default from 300,000,000ms (~83 hours) to 600,000ms (10 minutes). The old default effectively disabled idle cleanup. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a>)</p>
+</li>
+<li>
+<p>Change <code>server_lifetime</code> default from 5 minutes to 20 minutes. The old value was shorter than <code>idle_timeout</code>, preventing idle cleanup from ever triggering. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a>)</p>
+</li>
 </ul>
-<p><strong>New Features:</strong></p>
+<p><strong>Fixes:</strong></p>
 <ul>
 <li>
-<p><strong><code>pool_size</code> observability</strong>: New <code>pg_doorman_pool_size</code> Prometheus gauge exposes the configured maximum pool size per user/database. The <code>pool_size</code> column is also added to <code>SHOW POOLS</code> and <code>SHOW POOLS_EXTENDED</code> admin commands (after <code>sv_login</code>), allowing operators to compare current server connections against configured capacity directly from the admin console. Works for both static and dynamic (auth_query) pools.</p>
+<p>Fix session mode connections destroyed after ordinary SQL errors. A failed query (e.g. <code>SELECT 1/0</code>) marked the backend as bad, destroying a working connection at session end. (<a href="https://github.com/ozontech/pg_doorman/pull/152">#152</a> by @vadv)</p>
 </li>
 <li>
-<p><strong>PAUSE, RESUME, RECONNECT admin commands</strong>: New admin console commands for managing connection pools. <code>PAUSE [db]</code> blocks new backend connection acquisition (active transactions continue). <code>RESUME [db]</code> lifts the pause and unblocks waiting clients. <code>RECONNECT [db]</code> forces connection rotation by incrementing the pool epoch — idle connections are immediately closed and active connections are discarded when returned to the pool. Without arguments, all pools are affected; with a database name, only matching pools. Specifying a nonexistent database returns an error. Use <code>SHOW POOLS</code> to see the <code>paused</code> status column.</p>
+<p>Fix pool-level <code>server_lifetime</code> and <code>idle_timeout</code> overrides silently ignored — global values were always used. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a> by @vadv)</p>
 </li>
 <li>
-<p><strong><code>min_pool_size</code> for dynamic auth_query passthrough pools</strong>: New <code>auth_query.min_pool_size</code> setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after <code>server_lifetime</code> expiry. Pools with <code>min_pool_size &gt; 0</code> are never garbage-collected. Default is <code>0</code> (no prewarm — backward compatible). Note: total backend connections scale as <code>active_users × min_pool_size</code>.</p>
+<p>Fix <code>idle_timeout = 0</code> closing connections after ~1ms instead of disabling idle cleanup. Now matches PgBouncer's <code>server_idle_timeout = 0</code> semantics. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a>)</p>
+</li>
+<li>
+<p>Fix idle timeout having no jitter — all connections expired simultaneously after a traffic burst, causing mass closures. Now applies ±20% per-connection jitter. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a>)</p>
+</li>
+<li>
+<p>Fix <code>retain_connections_max</code> draining a random pool when quota was exhausted. A zero remainder was misinterpreted as "unlimited", closing all idle connections in one cycle. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a>)</p>
+</li>
+<li>
+<p>Fix unfair retain quota distribution — HashMap iteration gave the same pool priority every cycle, starving others. Fixed by shuffling iteration order. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a>)</p>
+</li>
+<li>
+<p>Fix retain and replenish using different pool snapshots when config reload happened between phases. (<a href="https://github.com/ozontech/pg_doorman/pull/139">#139</a>)</p>
 </li>
 </ul>
 <h3 id="331-feb-26-2026"><a class="header" href="#331-feb-26-2026">3.3.1 <small>Feb 26, 2026</small></a></h3>
