@@ -1284,18 +1284,16 @@ fields:
     pool_size:
       config:
         en: |
-          Max backend connections for dynamic user data traffic.
-          In passthrough mode: per-user limit. In dedicated mode (server_user is set): shared limit.
+          Max backend connections per data pool created by auth_query.
           Same meaning as users[].pool_size for static pools.
         ru: |
-          Максимум серверных соединений для данных динамических пользователей.
-          В passthrough-режиме: лимит на пользователя. В dedicated-режиме (server_user задан): общий лимит.
+          Максимум серверных соединений на один пул данных, создаваемый через auth_query.
           Аналог users[].pool_size для статических пулов.
       doc: |
-        Maximum number of backend connections for client data traffic created by auth_query.
-        In passthrough mode (no `server_user`), each dynamic user gets their own pool of this size.
-        In dedicated mode (`server_user` is set), all dynamic users share one pool of this size.
-        This is the same concept as `users[].pool_size` for statically defined users.
+        Maximum number of backend connections per data pool created by auth_query.
+        Same concept as `users[].pool_size` for statically defined users.
+        How many pools are created depends on the mode: `server_user` controls whether
+        all dynamic users share one pool or each gets their own.
       default: "40"
 
     min_pool_size:
