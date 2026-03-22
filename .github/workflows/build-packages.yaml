@@ -155,7 +155,7 @@ jobs:
         OPENSSL_STATIC: "1"
     steps:
       - name: Install dependencies
-        run: apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig perl make git
+        run: apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig perl make git file
       - name: Checkout Repository
         uses: actions/checkout@v4
       - name: Build static binary
