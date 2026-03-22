@@ -165,6 +165,9 @@
 <p><strong>Bug Fixes:</strong></p>
 <ul>
 <li>
+<p><strong>Session mode: keep server connections alive after SQL errors.</strong> A query like <code>SELECT 1/0</code> returns an <code>ErrorResponse</code> from PostgreSQL but leaves the connection fully usable. Previously, <code>handle_error_response</code> called <code>mark_bad()</code> unconditionally in async mode, so the connection was destroyed at session end. Now <code>mark_bad</code> is skipped when the pool runs in session mode. Transaction mode still calls <code>mark_bad</code> because the connection returns to a shared pool where protocol desync is dangerous.</p>
+</li>
+<li>
 <p><strong>Pool-level <code>server_lifetime</code> and <code>idle_timeout</code> overrides ignored</strong>: Pool-level overrides for <code>server_lifetime</code> and <code>idle_timeout</code> were silently ignored — the general (global) values were always used instead. Fixed in 6 places across 3 pool creation contexts (static pools, auth_query shared pools, dynamic pools). Now <code>pool.server_lifetime</code> and <code>pool.idle_timeout</code> correctly override the general settings when specified.</p>
 </li>
 <li>
