@@ -116,6 +116,9 @@
             # .NET SDK
             dotnet-sdk_10
 
+            # PHP with PDO PostgreSQL
+            (php84.withExtensions ({ enabled, all }: enabled ++ [ all.pdo_pgsql ]))
+
             # Java
             jdk21
             maven
@@ -303,6 +306,7 @@ EOF
               echo "  - Python: $(python3 --version)"
               echo "  - .NET: $(dotnet --version)"
               echo "  - Rust: $(rustc --version)"
+              echo "  - PHP: $(php --version | head -1)"
               echo "  - Java: $(java --version 2>&1 | head -1)"
               echo "  - Maven: $(mvn --version 2>&1 | head -1)"
               echo ""

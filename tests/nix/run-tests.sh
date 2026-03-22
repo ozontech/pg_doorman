@@ -192,6 +192,12 @@ test_dotnet() {
     run_in_container "cargo test --test bdd -- --tags @dotnet"
 }
 
+# Function to run PHP PDO client tests
+test_php() {
+    log_info "Running PHP PDO client BDD tests..."
+    run_in_container "cargo test --test bdd -- --tags @php"
+}
+
 # Function to open interactive shell
 open_shell() {
     log_info "Opening interactive shell in test environment..."
@@ -214,6 +220,7 @@ Commands:
     test-python          Run Python client BDD tests
     test-nodejs          Run Node.js client BDD tests
     test-dotnet          Run .NET client BDD tests
+    test-php             Run PHP PDO client BDD tests
 
     help                 Show this help message
 
@@ -273,6 +280,10 @@ case "${1:-help}" in
     test-dotnet)
         try_pull_image
         test_dotnet
+        ;;
+    test-php)
+        try_pull_image
+        test_php
         ;;
     help|--help|-h)
         usage

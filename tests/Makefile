@@ -1,4 +1,4 @@
-.PHONY: help local-build pull shell tests-build test-all test-bdd test-rust test-go test-python test-nodejs test-dotnet clean
+.PHONY: help local-build pull shell tests-build test-all test-bdd test-rust test-go test-python test-nodejs test-dotnet test-php clean
 
 REGISTRY ?= ghcr.io
 IMAGE_TAG ?= latest
@@ -66,12 +66,16 @@ test-nodejs: ## Run Node.js client tests
 test-dotnet: ## Run .NET client tests
 	@$(TESTS_DIR)nix/run-tests.sh test-dotnet
 
+test-php: ## Run PHP PDO client tests
+	@$(TESTS_DIR)nix/run-tests.sh test-php
+
 test-all: ## Run all language tests
 	@$(TESTS_DIR)nix/run-tests.sh test-go
 	@$(TESTS_DIR)nix/run-tests.sh test-rust
 	@$(TESTS_DIR)nix/run-tests.sh test-python
 	@$(TESTS_DIR)nix/run-tests.sh test-nodejs
 	@$(TESTS_DIR)nix/run-tests.sh test-dotnet
+	@$(TESTS_DIR)nix/run-tests.sh test-php
 
 clean: ## Remove cached Docker volumes
 	@echo "Removing cached Docker volumes..."

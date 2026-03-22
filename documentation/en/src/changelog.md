@@ -24,6 +24,10 @@
 
 - **Retain and replenish used separate pool snapshots**: The retain and replenish phases each called `get_all_pools()` separately. If `POOLS` was atomically updated between them (config reload, dynamic pool GC), retain operated on one set of pools and replenish on another, potentially missing pools that need replenishment. Fixed by using a single snapshot for both phases.
 
+**Testing:**
+
+- **PHP PDO_PGSQL driver added to test infrastructure.** PHP 8.4 with `pdo_pgsql` extension is now included in the Nix-based Docker test image. Two BDD scenarios verify basic connectivity (SELECT 1) and session mode behavior (SQL error does not change backend PID). Run with `make test-php` or `--tags @php`.
+
 **New Features:**
 
 - **`pool_size` observability**: New `pg_doorman_pool_size` Prometheus gauge exposes the configured maximum pool size per user/database. The `pool_size` column is also added to `SHOW POOLS` and `SHOW POOLS_EXTENDED` admin commands (after `sv_login`), allowing operators to compare current server connections against configured capacity directly from the admin console. Works for both static and dynamic (auth_query) pools.
