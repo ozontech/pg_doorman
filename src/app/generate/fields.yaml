@@ -997,18 +997,17 @@ fields:
     pool_mode:
       config:
         en: |
-          Pooling mode (same semantics as PgBouncer):
-          - "transaction" : backend released after each transaction (recommended for most workloads)
+          Pooling mode (same as PgBouncer's pool_mode):
+          - "transaction" : backend released after each transaction (recommended)
           - "session"     : backend held for the entire client session
         ru: |
-          Режим пулинга (аналогично PgBouncer):
+          Режим пулинга (аналог pool_mode в PgBouncer):
           - "transaction" : бэкенд освобождается после каждой транзакции (рекомендуется)
           - "session"     : бэкенд удерживается на всю клиентскую сессию
       doc: |
-        Controls when a backend connection is returned to the pool.
-        `transaction`: connection is released after each transaction completes. Multiple clients share backends, giving higher connection efficiency. SET commands, prepared statements, and advisory locks do not persist between transactions (use `cleanup_server_connections` and `sync_server_parameters` to control this).
-        `session`: connection is held for the entire client session. The client always talks to the same backend, so session-level state (temp tables, SET, LISTEN/NOTIFY) works as expected. Lower connection efficiency — each connected client occupies one backend.
-        Same semantics as PgBouncer's `pool_mode`.
+        When the backend connection is returned to the pool.
+        `transaction`: released after each transaction. `session`: held until client disconnects.
+        Same as PgBouncer's `pool_mode`.
       default: '"transaction"'
 
     connect_timeout:

@@ -420,8 +420,8 @@ server_port = 5432
 # Pool Settings
 # --------------------------------------------------------------------------
 
-# Pooling mode (same semantics as PgBouncer):
-# - "transaction" : backend released after each transaction (recommended for most workloads)
+# Pooling mode (same as PgBouncer's pool_mode):
+# - "transaction" : backend released after each transaction (recommended)
 # - "session"     : backend held for the entire client session
 # Default: "transaction"
 pool_mode = "transaction"
