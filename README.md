@@ -51,7 +51,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Human-readable durations & sizes | Yes | No | No |
 | Native `pg_hba.conf` format | Yes | Yes | Since 1.4 |
 | Auth query (dynamic users) | Yes | Yes | Yes |
-| Auth query passthrough (per-user backend identity) | Yes | No | No |
+| Auth query passthrough (per-user backend identity) | Yes | No | Yes |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
