@@ -41,7 +41,7 @@ Feature: Auth query SCRAM-SHA-256 — end-to-end authentication
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10
@@ -73,7 +73,7 @@ Feature: Auth query SCRAM-SHA-256 — end-to-end authentication
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10
@@ -105,7 +105,7 @@ Feature: Auth query SCRAM-SHA-256 — end-to-end authentication
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10

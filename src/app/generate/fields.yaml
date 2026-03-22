@@ -1185,7 +1185,7 @@ fields:
       doc: "Database for executor connections. If not specified, the pool name is used."
       default: "None (uses pool name)"
 
-    credential_lookup_pool_size:
+    workers:
       config:
         en: "Number of executor connections (for running auth queries, not data connections)."
         ru: "Количество соединений-исполнителей (для auth-запросов, не для данных)."

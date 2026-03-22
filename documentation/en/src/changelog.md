@@ -2,6 +2,10 @@
 
 ### 3.3.2 <small>Mar 1, 2026</small>
 
+**Breaking Changes:**
+
+- **`auth_query` config field renames**: Two fields in the `auth_query` section have been renamed for clarity. `auth_query.pool_size` (number of connections for running auth queries) is now `auth_query.workers`. `auth_query.default_pool_size` (data pool size for dynamic users) is now `auth_query.pool_size`, matching the same parameter name used in static pools. **Migration**: rename `pool_size` to `workers` and `default_pool_size` to `pool_size` in your `auth_query` config. If you don't update, the old `pool_size` value (typically 1-2) will be interpreted as the data pool size, drastically reducing connection capacity. The old `default_pool_size` key is silently ignored and defaults to 40.
+
 **Bug Fixes:**
 
 - **Pool-level `server_lifetime` and `idle_timeout` overrides ignored**: Pool-level overrides for `server_lifetime` and `idle_timeout` were silently ignored — the general (global) values were always used instead. Fixed in 6 places across 3 pool creation contexts (static pools, auth_query shared pools, dynamic pools). Now `pool.server_lifetime` and `pool.idle_timeout` correctly override the general settings when specified.
@@ -27,10 +31,6 @@
 - **PAUSE, RESUME, RECONNECT admin commands**: New admin console commands for managing connection pools. `PAUSE [db]` blocks new backend connection acquisition (active transactions continue). `RESUME [db]` lifts the pause and unblocks waiting clients. `RECONNECT [db]` forces connection rotation by incrementing the pool epoch — idle connections are immediately closed and active connections are discarded when returned to the pool. Without arguments, all pools are affected; with a database name, only matching pools. Specifying a nonexistent database returns an error. Use `SHOW POOLS` to see the `paused` status column.
 
 - **`min_pool_size` for dynamic auth_query passthrough pools**: New `auth_query.min_pool_size` setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after `server_lifetime` expiry. Pools with `min_pool_size > 0` are never garbage-collected. Default is `0` (no prewarm — backward compatible). Note: total backend connections scale as `active_users × min_pool_size`.
-
-**Breaking Changes:**
-
-- **`auth_query` config field renames**: Two fields in the `auth_query` section have been renamed for clarity. `auth_query.pool_size` (executor connection count) is now `auth_query.credential_lookup_pool_size`. `auth_query.default_pool_size` (data pool size for dynamic users) is now `auth_query.pool_size`. Existing configs must be updated — old field names are silently ignored and defaults will be used instead.
 
 ### 3.3.1 <small>Feb 26, 2026</small>
 

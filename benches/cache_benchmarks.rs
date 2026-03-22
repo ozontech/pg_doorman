@@ -21,7 +21,7 @@ fn bench_config() -> AuthQueryConfig {
         user: String::new(),
         password: String::new(),
         database: None,
-        credential_lookup_pool_size: 1,
+        workers: 1,
         server_user: None,
         server_password: None,
         pool_size: 40,

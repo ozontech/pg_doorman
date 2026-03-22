@@ -210,8 +210,8 @@ impl Pool {
                     "auth_query: server_password requires server_user to be set".into(),
                 ));
             }
-            if aq.credential_lookup_pool_size == 0 {
-                return Err(Error::BadConfig("auth_query.credential_lookup_pool_size must be > 0".into()));
+            if aq.workers == 0 {
+                return Err(Error::BadConfig("auth_query.workers must be > 0".into()));
             }
             if aq.min_pool_size > aq.pool_size {
                 return Err(Error::BadConfig(
@@ -265,8 +265,8 @@ pub struct AuthQueryConfig {
     pub database: Option<String>,
 
     /// Number of executor connections (default: 2).
-    #[serde(default = "AuthQueryConfig::default_credential_lookup_pool_size")]
-    pub credential_lookup_pool_size: u32,
+    #[serde(default = "AuthQueryConfig::default_workers")]
+    pub workers: u32,
 
     /// Backend user for data connections. If set, all dynamic users share
     /// one pool with this identity (dedicated mode). If not set, each dynamic
@@ -301,7 +301,7 @@ pub struct AuthQueryConfig {
 }
 
 impl AuthQueryConfig {
-    fn default_credential_lookup_pool_size() -> u32 {
+    fn default_workers() -> u32 {
         2
     }
     fn default_data_pool_size() -> u32 {

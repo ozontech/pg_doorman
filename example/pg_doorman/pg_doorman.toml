@@ -29,7 +29,7 @@ pool_mode = "transaction"
 query = "SELECT passwd FROM pg_shadow WHERE usename = $1"
 user = "postgres"
 password = ""
-credential_lookup_pool_size = 2
+workers = 2
 pool_size = 20
 cache_ttl = "5m"
 cache_failure_ttl = "30s"

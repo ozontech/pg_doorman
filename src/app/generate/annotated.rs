@@ -1506,7 +1506,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "auth_query.user = \"doorman_auth\"");
             w.comment(fi, "auth_query.password = \"auth_password\"");
             w.comment(fi, "auth_query.database = \"postgres\"");
-            w.comment(fi, "auth_query.credential_lookup_pool_size = 2");
+            w.comment(fi, "auth_query.workers = 2");
             w.comment(fi, "auth_query.server_user = \"app\"");
             w.comment(fi, "auth_query.server_password = \"secret\"");
             w.comment(fi, "auth_query.pool_size = 40");
@@ -1524,7 +1524,7 @@ fn write_auth_query_commented_example(w: &mut ConfigWriter) {
             w.comment(fi, "  user: \"doorman_auth\"");
             w.comment(fi, "  password: \"auth_password\"");
             w.comment(fi, "  database: \"postgres\"");
-            w.comment(fi, "  credential_lookup_pool_size: 2");
+            w.comment(fi, "  workers: 2");
             w.comment(fi, "  server_user: \"app\"");
             w.comment(fi, "  server_password: \"secret\"");
             w.comment(fi, "  pool_size: 40");
@@ -1969,7 +1969,7 @@ mod tests {
             "user",
             "password",
             "database",
-            "credential_lookup_pool_size",
+            "workers",
             "server_user",
             "server_password",
             "pool_size",

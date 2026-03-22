@@ -574,7 +574,7 @@ pools:
     #   user: "doorman_auth"
     #   password: "auth_password"
     #   database: "postgres"
-    #   credential_lookup_pool_size: 2
+    #   workers: 2
     #   server_user: "app"
     #   server_password: "secret"
     #   pool_size: 40

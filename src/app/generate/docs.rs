@@ -307,7 +307,7 @@ fn write_auth_query_section(out: &mut String) {
         "user",
         "password",
         "database",
-        "credential_lookup_pool_size",
+        "workers",
         "server_user",
         "server_password",
         "pool_size",

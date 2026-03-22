@@ -47,7 +47,7 @@ Feature: Auth query min_pool_size for dynamic passthrough pools
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             pool_size: 5
             min_pool_size: 2
             cache_ttl: "1h"
@@ -108,7 +108,7 @@ Feature: Auth query min_pool_size for dynamic passthrough pools
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             pool_size: 5
             min_pool_size: 2
             cache_ttl: "1h"

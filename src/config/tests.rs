@@ -839,7 +839,7 @@ pools:
       user: "pg_doorman_auth"
       password: "secret"
       database: "postgres"
-      credential_lookup_pool_size: 3
+      workers: 3
       server_user: "backend_user"
       server_password: "backend_pass"
       pool_size: 50
@@ -865,7 +865,7 @@ pools:
     assert_eq!(aq.user, "pg_doorman_auth");
     assert_eq!(aq.password, "secret");
     assert_eq!(aq.database, Some("postgres".to_string()));
-    assert_eq!(aq.credential_lookup_pool_size, 3);
+    assert_eq!(aq.workers, 3);
     assert_eq!(aq.server_user, Some("backend_user".to_string()));
     assert_eq!(aq.server_password, Some("backend_pass".to_string()));
     assert_eq!(aq.pool_size, 50);
@@ -911,7 +911,7 @@ pools:
     assert_eq!(aq.server_password, None);
     assert!(!aq.is_dedicated_mode());
     // Verify defaults
-    assert_eq!(aq.credential_lookup_pool_size, 2);
+    assert_eq!(aq.workers, 2);
     assert_eq!(aq.pool_size, 40);
     assert_eq!(aq.cache_ttl, Duration::from_hours(1));
     assert_eq!(aq.cache_failure_ttl, Duration::from_secs(30));
@@ -968,7 +968,7 @@ server_port = 5432
 query = "SELECT usename, passwd FROM pg_shadow WHERE usename = $1"
 user = "pg_doorman_auth"
 password = "secret"
-credential_lookup_pool_size = 2
+workers = 2
 pool_size = 40
 cache_ttl = 3600000
 cache_failure_ttl = 30000
@@ -1010,7 +1010,7 @@ async fn test_auth_query_validate_empty_query() {
         user: "pg_doorman_auth".to_string(),
         password: "secret".to_string(),
         database: None,
-        credential_lookup_pool_size: 2,
+        workers: 2,
         server_user: None,
         server_password: None,
         pool_size: 40,
@@ -1036,7 +1036,7 @@ async fn test_auth_query_validate_empty_user() {
         user: "".to_string(),
         password: "secret".to_string(),
         database: None,
-        credential_lookup_pool_size: 2,
+        workers: 2,
         server_user: None,
         server_password: None,
         pool_size: 40,
@@ -1062,7 +1062,7 @@ async fn test_auth_query_validate_server_password_without_server_user() {
         user: "pg_doorman_auth".to_string(),
         password: "secret".to_string(),
         database: None,
-        credential_lookup_pool_size: 2,
+        workers: 2,
         server_user: None,
         server_password: Some("orphan_password".to_string()),
         pool_size: 40,
@@ -1088,7 +1088,7 @@ async fn test_auth_query_validate_server_user_without_password_ok() {
         user: "pg_doorman_auth".to_string(),
         password: String::new(),
         database: None,
-        credential_lookup_pool_size: 2,
+        workers: 2,
         server_user: Some("backend_user".to_string()),
         server_password: None,
         pool_size: 40,
@@ -1111,7 +1111,7 @@ async fn test_auth_query_validate_pool_size_zero() {
         user: "pg_doorman_auth".to_string(),
         password: "secret".to_string(),
         database: None,
-        credential_lookup_pool_size: 0,
+        workers: 0,
         server_user: None,
         server_password: None,
         pool_size: 40,
@@ -1124,7 +1124,7 @@ async fn test_auth_query_validate_pool_size_zero() {
     let result = pool.validate().await;
     assert!(result.is_err());
     if let Err(Error::BadConfig(msg)) = result {
-        assert!(msg.contains("auth_query.credential_lookup_pool_size must be > 0"));
+        assert!(msg.contains("auth_query.workers must be > 0"));
     }
 }
 
@@ -1137,7 +1137,7 @@ async fn test_auth_query_validate_empty_password_ok() {
         user: "pg_doorman_auth".to_string(),
         password: String::new(),
         database: None,
-        credential_lookup_pool_size: 2,
+        workers: 2,
         server_user: None,
         server_password: None,
         pool_size: 40,
@@ -1160,7 +1160,7 @@ async fn test_auth_query_validate_min_pool_size_exceeds_pool_size() {
         user: "pg_doorman_auth".to_string(),
         password: "secret".to_string(),
         database: None,
-        credential_lookup_pool_size: 2,
+        workers: 2,
         server_user: None,
         server_password: None,
         pool_size: 5,

@@ -39,7 +39,7 @@ Feature: Auth query HBA integration — edge cases for HBA rules with auth_query
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10
@@ -83,7 +83,7 @@ Feature: Auth query HBA integration — edge cases for HBA rules with auth_query
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10
@@ -127,7 +127,7 @@ Feature: Auth query HBA integration — edge cases for HBA rules with auth_query
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10
@@ -171,7 +171,7 @@ Feature: Auth query HBA integration — edge cases for HBA rules with auth_query
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10
@@ -215,7 +215,7 @@ Feature: Auth query HBA integration — edge cases for HBA rules with auth_query
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             server_user: "postgres"
             server_password: ""
             pool_size: 10
@@ -260,7 +260,7 @@ Feature: Auth query HBA integration — edge cases for HBA rules with auth_query
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             pool_size: 5
             cache_ttl: "1h"
             cache_failure_ttl: "30s"
@@ -304,7 +304,7 @@ Feature: Auth query HBA integration — edge cases for HBA rules with auth_query
             query: "SELECT username, password FROM auth_users WHERE username = $1"
             user: "postgres"
             password: ""
-            credential_lookup_pool_size: 1
+            workers: 1
             pool_size: 5
             cache_ttl: "1h"
             cache_failure_ttl: "30s"
