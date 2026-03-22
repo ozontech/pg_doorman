@@ -185,16 +185,20 @@
 <p>Close server connections in this pool that have been opened for longer than this value, in milliseconds. Only applied to idle connections. If not specified, the global server_lifetime setting is used.</p>
 <p>Default: <code>None (uses global setting)</code>.</p>
 <h3 id="pool_mode"><a class="header" href="#pool_mode">pool_mode</a></h3>
-<ul>
-<li><code>session</code> — Server is released back to pool after client disconnects.</li>
-<li><code>transaction</code> — Server is released back to pool after transaction finishes.</li>
-</ul>
+<p>When the backend connection is returned to the pool.
+<code>transaction</code>: released after each transaction. <code>session</code>: held until client disconnects.
+Same as PgBouncer's <code>pool_mode</code>.</p>
 <p>Default: <code>"transaction"</code>.</p>
 <h3 id="log_client_parameter_status_changes"><a class="header" href="#log_client_parameter_status_changes">log_client_parameter_status_changes</a></h3>
 <p>Log information about any SET command in the log.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="cleanup_server_connections"><a class="header" href="#cleanup_server_connections">cleanup_server_connections</a></h3>
-<p>When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections.</p>
+<p>Controls whether pg_doorman resets session state when a connection is returned to the pool.
+When enabled and the session was modified, pg_doorman sends: <code>RESET ROLE</code>, plus conditionally
+<code>RESET ALL</code> (if SET was used), <code>DEALLOCATE ALL</code> (if PREPARE was used), <code>CLOSE ALL</code> (if cursors
+were opened). Note: <code>ROLLBACK</code> for open transactions is always executed regardless of this setting.
+Disable only if your application never uses SET, prepared statements, or cursors and you want
+to save the cleanup roundtrip.</p>
 <p>Default: <code>true</code>.</p>
 <h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
 <p>Override global scaling_warm_pool_ratio for this pool. If not specified, the global setting is used.</p>
@@ -260,8 +264,11 @@ password: "strong_password"
 <h3 id="database"><a class="header" href="#database">database</a></h3>
 <p>Database for executor connections. If not specified, the pool name is used.</p>
 <p>Default: <code>None (uses pool name)</code>.</p>
-<h3 id="pool_size"><a class="header" href="#pool_size">pool_size</a></h3>
-<p>Number of executor connections (connections used to run auth queries, not data connections).</p>
+<h3 id="workers"><a class="header" href="#workers">workers</a></h3>
+<p>Number of persistent connections to PostgreSQL dedicated to running the <code>auth_query</code> SQL.
+These connections are opened at startup and kept alive. They handle credential lookups only —
+client data traffic goes through separate data pool connections (<code>pool_size</code>).
+Increase if you see auth latency spikes under high connection rates.</p>
 <p>Default: <code>2</code>.</p>
 <h3 id="server_user"><a class="header" href="#server_user">server_user</a></h3>
 <p>Backend PostgreSQL user for data connections in dedicated mode. When set, all dynamically authenticated users share one connection pool that connects as this user. When not set, passthrough mode is used.</p>
@@ -269,8 +276,11 @@ password: "strong_password"
 <h3 id="server_password"><a class="header" href="#server_password">server_password</a></h3>
 <p>Plaintext password for the <code>server_user</code>. Only meaningful when <code>server_user</code> is set.</p>
 <p>Default: <code>None</code>.</p>
-<h3 id="default_pool_size"><a class="header" href="#default_pool_size">default_pool_size</a></h3>
-<p>Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode).</p>
+<h3 id="pool_size"><a class="header" href="#pool_size">pool_size</a></h3>
+<p>Maximum number of backend connections per data pool created by auth_query.
+Same concept as <code>users[].pool_size</code> for statically defined users.
+How many pools are created depends on the mode: <code>server_user</code> controls whether
+all dynamic users share one pool or each gets their own.</p>
 <p>Default: <code>40</code>.</p>
 <h3 id="min_pool_size"><a class="header" href="#min_pool_size">min_pool_size</a></h3>
 <p>Minimum number of backend connections to maintain per dynamic user pool in passthrough mode. Connections are prewarmed when the pool is first created and replenished by the retain cycle. Set to <code>0</code> to disable (default). Note: pools with <code>min_pool_size &gt; 0</code> are never garbage-collected, and total backend connections scale as <code>active_users × min_pool_size</code>.</p>
@@ -289,11 +299,10 @@ password: "strong_password"
 username = "exampledb-user-0" # A virtual user who can connect to this virtual database.
 </code></pre>
 <h3 id="username"><a class="header" href="#username">username</a></h3>
-<p>A virtual username who can connect to this virtual database (pool).</p>
+<p>The username that clients use to connect to this pool. Must be unique within the pool.</p>
 <h3 id="password-1"><a class="header" href="#password-1">password</a></h3>
-<p>The password for the virtual pool user.
-Password can be specified in <code>MD5</code>, <code>SCRAM-SHA-256</code>, or <code>JWT</code> format.
-Also, you can create a mirror list of users using secrets from the PostgreSQL instance: <code>select usename, passwd from pg_shadow</code>.</p>
+<p>Password verifier for client authentication. Supports MD5, SCRAM-SHA-256, and JWT formats.
+You can copy password hashes directly from PostgreSQL: <code>SELECT usename, passwd FROM pg_shadow</code>.</p>
 <h3 id="auth_pam_service"><a class="header" href="#auth_pam_service">auth_pam_service</a></h3>
 <p>The pam-service that is responsible for client authorization. In this case, pg_doorman will ignore the <code>password</code> value.</p>
 <h3 id="server_username"><a class="header" href="#server_username">server_username</a></h3>
@@ -318,7 +327,7 @@ Also, you can create a mirror list of users using secrets from the PostgreSQL in
 <p>When <code>server_password</code> is not set and the user is passthrough-eligible (no <code>server_username</code> or <code>server_username</code> equals <code>username</code>), PgDoorman uses passthrough authentication instead: the cryptographic material from the client's authentication is reused for the backend connection. This eliminates plaintext passwords from config files.</p>
 <p><code>server_password</code> requires <code>server_username</code> to be set.</p>
 <h3 id="pool_size-1"><a class="header" href="#pool_size-1">pool_size</a></h3>
-<p>The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user.</p>
+<p>Maximum number of backend connections to PostgreSQL for this user. In transaction mode, connections are shared across clients, so this is usually much less than the number of clients. Similar to PgBouncer's <code>default_pool_size</code>, but configured per-user rather than globally.</p>
 <p>Default: <code>40</code>.</p>
 <h3 id="min_pool_size-1"><a class="header" href="#min_pool_size-1">min_pool_size</a></h3>
 <p>The minimum number of connections to maintain in the pool for this user. Connections are prewarmed at startup (before the first retain cycle) and then maintained by periodic replenishment. If specified, it must be less than or equal to pool_size.</p>

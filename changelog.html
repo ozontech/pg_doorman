@@ -162,6 +162,10 @@
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <h3 id="332-mar-1-2026"><a class="header" href="#332-mar-1-2026">3.3.2 <small>Mar 1, 2026</small></a></h3>
+<p><strong>Breaking Changes:</strong></p>
+<ul>
+<li><strong><code>auth_query</code> config field renames</strong>: Two fields in the <code>auth_query</code> section have been renamed for clarity. <code>auth_query.pool_size</code> (number of connections for running auth queries) is now <code>auth_query.workers</code>. <code>auth_query.default_pool_size</code> (data pool size for dynamic users) is now <code>auth_query.pool_size</code>, matching the same parameter name used in static pools. <strong>Migration</strong>: rename <code>pool_size</code> to <code>workers</code> and <code>default_pool_size</code> to <code>pool_size</code> in your <code>auth_query</code> config. If you don't update, the old <code>pool_size</code> value (typically 1-2) will be interpreted as the data pool size, drastically reducing connection capacity. The old <code>default_pool_size</code> key is silently ignored and defaults to 40.</li>
+</ul>
 <p><strong>Bug Fixes:</strong></p>
 <ul>
 <li>

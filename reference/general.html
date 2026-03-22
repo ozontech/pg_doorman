@@ -341,11 +341,10 @@ Comment this out if you want to log to stdout.</p>
 <p>Log client disconnections for monitoring.</p>
 <p>Default: <code>true</code>.</p>
 <h3 id="worker_threads"><a class="header" href="#worker_threads">worker_threads</a></h3>
-<p>The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
-The more workers there are, the faster the system works, but only up to a certain limit (cpu count).</p>
-<p>This parameter also controls the number of shards in internal concurrent hash maps (DashMap).
-The shard count is calculated as <code>worker_threads * 4</code> rounded up to the nearest power of 2 (minimum 4 shards).
-This is important for Kubernetes deployments where CPU count detection may be incorrect, causing unnecessary overhead.</p>
+<p>Number of Tokio runtime worker threads (OS threads) for serving client connections.
+Performance scales linearly up to the number of CPU cores.
+Also determines the shard count for internal concurrent hash maps (<code>worker_threads * 4</code>, rounded to nearest power of 2, minimum 4).
+In Kubernetes, set this explicitly — automatic CPU detection may report the host's cores instead of the container's limit.</p>
 <p>Default: <code>4</code>.</p>
 <h3 id="worker_cpu_affinity_pinning"><a class="header" href="#worker_cpu_affinity_pinning">worker_cpu_affinity_pinning</a></h3>
 <p>Automatically assign workers to different CPUs (man 3 cpu_set).</p>
@@ -371,16 +370,24 @@ Sets the maximum number of threads for blocking operations.
 Modern tokio versions handle this well by default, so this parameter is optional.</p>
 <p>Default: <code>not set (uses tokio's default)</code>.</p>
 <h3 id="connect_timeout"><a class="header" href="#connect_timeout">connect_timeout</a></h3>
-<p>Connection timeout to server in milliseconds.</p>
+<p>Maximum time to wait when establishing a new connection to a PostgreSQL server. If the connection cannot be established within this period, the attempt is aborted. Similar to PgBouncer's <code>server_connect_timeout</code>.</p>
 <p>Default: <code>3000 (3 sec)</code>.</p>
 <h3 id="query_wait_timeout"><a class="header" href="#query_wait_timeout">query_wait_timeout</a></h3>
-<p>Maximum time to wait for a query to complete, in milliseconds.</p>
+<p>Maximum time a client query can wait for a server connection when the pool is fully utilized. If no server connection becomes available within this period, the client receives an error. Similar to PgBouncer's <code>query_wait_timeout</code>.</p>
 <p>Default: <code>5000 (5 sec)</code>.</p>
 <h3 id="idle_timeout"><a class="header" href="#idle_timeout">idle_timeout</a></h3>
-<p>Server idle timeout in milliseconds.</p>
+<p>Close a server connection that has been idle (not checked out by any client) longer than this value.
+Only applies to connections that have served at least one client request. Prewarmed or replenished
+connections that were never checked out are not subject to <code>idle_timeout</code> — they are only closed
+when <code>server_lifetime</code> expires. Each connection gets ±20% jitter to prevent synchronized mass closures.
+Set to <code>0</code> to disable. Similar to PgBouncer's <code>server_idle_timeout</code>.</p>
 <p>Default: <code>600000 (10 min)</code>.</p>
 <h3 id="server_lifetime"><a class="header" href="#server_lifetime">server_lifetime</a></h3>
-<p>Server lifetime in milliseconds.</p>
+<p>Maximum age of a server connection. When a connection exceeds this age and becomes idle,
+it is closed during the next retain cycle. Active transactions are not interrupted.
+Applies to all connections, including prewarmed ones that were never checked out by a client.
+Each connection gets ±20% jitter to prevent thundering herd. Set to <code>0</code> to disable.
+Similar to PgBouncer's <code>server_lifetime</code>.</p>
 <p>Default: <code>1200000 (20 min)</code>.</p>
 <h3 id="retain_connections_time"><a class="header" href="#retain_connections_time">retain_connections_time</a></h3>
 <p>Interval for checking and closing idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code>.
@@ -404,14 +411,18 @@ is discarded and a new one is obtained.</p>
 or PostgreSQL restarts).</p>
 <p>Default: <code>60s (60 seconds)</code>.</p>
 <h3 id="server_round_robin"><a class="header" href="#server_round_robin">server_round_robin</a></h3>
-<p>In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
-By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.</p>
+<p>Controls which idle server connection is picked for the next transaction.
+<code>false</code> (LRU): reuses the most recently returned connection. Keeps fewer connections hot, better for PostgreSQL shared buffer locality.
+<code>true</code> (Round Robin): rotates across all idle connections evenly.
+Similar to PgBouncer's <code>server_round_robin</code>.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="sync_server_parameters"><a class="header" href="#sync_server_parameters">sync_server_parameters</a></h3>
-<p>If enabled, we strive to restore the parameters (via query <code>SET</code>) that were set by the client (and application_name)
-in transaction mode in other server backends. By default, this is disabled (false) due to performance.
-If you need to know <code>application_name</code>, but don't want to experience performance issues due to constant server queries <code>SET</code>,
-you can consider creating a separate pool for each application and using the <code>application_name</code> parameter in the <code>pool</code> settings.</p>
+<p>In transaction mode, each transaction may land on a different backend. With <code>sync_server_parameters = true</code>,
+pg_doorman tracks changes to a fixed set of session parameters and replays them via SET on each new backend
+before executing the transaction. Tracked parameters: <code>client_encoding</code>, <code>DateStyle</code>, <code>TimeZone</code>,
+<code>standard_conforming_strings</code>, <code>application_name</code>. Other SET commands (e.g., <code>statement_timeout</code>, <code>work_mem</code>)
+are NOT tracked. This costs one extra roundtrip per checkout. If you only need <code>application_name</code> visibility
+in <code>pg_stat_activity</code>, use the pool-level <code>application_name</code> setting instead.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="tcp_so_linger"><a class="header" href="#tcp_so_linger">tcp_so_linger</a></h3>
 <p>By default, pg_doorman send <code>RST</code> instead of keeping the connection open for a long time.</p>
@@ -420,13 +431,13 @@ you can consider creating a separate pool for each application and using the <co
 <p>TCP_NODELAY to disable Nagle's algorithm for lower latency.</p>
 <p>Default: <code>true</code>.</p>
 <h3 id="tcp_keepalives_count"><a class="header" href="#tcp_keepalives_count">tcp_keepalives_count</a></h3>
-<p>Keepalive enabled by default and overwrite OS defaults.</p>
+<p>Number of unacknowledged TCP keepalive probes before the connection is considered dead and closed.</p>
 <p>Default: <code>5</code>.</p>
 <h3 id="tcp_keepalives_idle"><a class="header" href="#tcp_keepalives_idle">tcp_keepalives_idle</a></h3>
 <p>Keepalive enabled by default and overwrite OS defaults.</p>
 <p>Default: <code>5</code>.</p>
 <h3 id="tcp_keepalives_interval"><a class="header" href="#tcp_keepalives_interval">tcp_keepalives_interval</a></h3>
-<p>TCP keepalive interval in seconds.</p>
+<p>Interval in seconds between individual TCP keepalive probes after the initial idle period (<code>tcp_keepalives_idle</code>) has passed.</p>
 <p>Default: <code>5</code>.</p>
 <h3 id="tcp_user_timeout"><a class="header" href="#tcp_user_timeout">tcp_user_timeout</a></h3>
 <p>Sets the <code>TCP_USER_TIMEOUT</code> socket option for client connections (in seconds). This option specifies
@@ -466,9 +477,11 @@ query-to-server-name mapping.</p>
 <p>Set to <code>0</code> to disable the limit (unlimited cache size, relies on client calling <code>DEALLOCATE</code>).</p>
 <p>Default: <code>0 (unlimited)</code>.</p>
 <h3 id="message_size_to_be_stream"><a class="header" href="#message_size_to_be_stream">message_size_to_be_stream</a></h3>
-<p>Data responses from the server (message type 'D') greater than this value will be
-transmitted through the proxy in small chunks (1 MB).</p>
-<p>Default: <code>1048576</code>.</p>
+<p>When a PostgreSQL DataRow message exceeds this threshold, pg_doorman switches to streaming mode:
+data is forwarded to the client in 4 KB chunks instead of buffering the entire message.
+This prevents OOM on queries that return very large rows (e.g., tables with big <code>bytea</code>/<code>text</code> columns).
+The threshold itself defaults to 1 MB.</p>
+<p>Default: <code>1048576 (1 MB)</code>.</p>
 <h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
 <p>Warm pool ratio as a percentage (0-100). When the pool size is below this threshold
 of <code>max_size</code>, new connections are created immediately without backpressure.
@@ -487,12 +500,13 @@ overwhelming the PostgreSQL server. Set to <code>0</code> to disable (not recomm
 Accepts duration strings like <code>"10ms"</code>, <code>"1s"</code>, or plain numbers (milliseconds).</p>
 <p>Default: <code>"10ms"</code>.</p>
 <h3 id="max_memory_usage"><a class="header" href="#max_memory_usage">max_memory_usage</a></h3>
-<p>We calculate the total amount of memory used by the internal buffers for all current queries.
-If the limit is reached, the client will receive an error (256 MB).</p>
-<p>Default: <code>268435456</code>.</p>
+<p>Total memory budget for internal buffers holding in-flight query data across all client connections.
+When this limit is reached, pg_doorman rejects new queries with an error until existing queries complete
+and free their buffers. Protects the pooler process from OOM under heavy load or large result sets.</p>
+<p>Default: <code>268435456 (256 MB)</code>.</p>
 <h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout">shutdown_timeout</a></h3>
-<p>With a graceful shutdown, we wait for transactions to be completed within this time limit (10 seconds).</p>
-<p>Default: <code>10000</code>.</p>
+<p>During graceful shutdown (SIGTERM), pg_doorman waits up to this long for in-flight transactions to complete before forcibly closing connections.</p>
+<p>Default: <code>10000 (10 sec)</code>.</p>
 <h3 id="proxy_copy_data_timeout"><a class="header" href="#proxy_copy_data_timeout">proxy_copy_data_timeout</a></h3>
 <p>Maximum time to wait for data copy operations during proxying, in milliseconds.</p>
 <p>Default: <code>15000 (15 sec)</code>.</p>
@@ -563,8 +577,9 @@ hostnossl all      all    192.168.1.0/24  trust
 <li>For Talos/JWT/PAM flows configured at the pool/user level, <code>trust</code> still bypasses the client password prompt; however, those modes may be used when <code>trust</code> does not match.</li>
 </ul>
 <h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
-<p>This query will not be sent to the server if it is run as a SimpleQuery.
-It can be used to check the connection at the application level.</p>
+<p>When a client sends this exact query as a SimpleQuery, pg_doorman responds immediately
+without forwarding it to PostgreSQL. Useful for health checks from load balancers (HAProxy, pgbouncer-style <code>SELECT 1</code>)
+or application-level keepalive probes. The default <code>;</code> (empty statement) is the lightest possible check.</p>
 <p>Default: <code>";"</code>.</p>
 
                     </main>
