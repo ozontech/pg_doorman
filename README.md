@@ -12,11 +12,13 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 **Drop-in replacement. No app changes.** PgDoorman caches and remaps prepared statements transparently across server connections in transaction mode — just point your connection string at it and go. No `DISCARD ALL`, no `DEALLOCATE`, no driver hacks. PgBouncer added similar support in 1.21, but remains single-threaded; Odyssey added it in 1.3, but has known reliability issues in edge cases.
 
-**Battle-tested with real drivers.** Two years of production use with Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), Node.js. Protocol edge cases — pipelined batches, async Flush, Describe flow, cancel requests over TLS — are covered by comprehensive multi-language BDD tests.
+**Battle-tested with real drivers.** Two years of production use with Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), Node.js, PHP (PDO_PGSQL). Protocol edge cases — pipelined batches, async Flush, Describe flow, cancel requests over TLS — are covered by comprehensive multi-language BDD tests.
 
 **Natively multithreaded.** PgBouncer is single-threaded. Running multiple instances via `SO_REUSE_PORT` leads to unbalanced pools: clients connect evenly but disconnect unpredictably, leaving some instances overloaded while others sit idle. PgDoorman uses a single shared pool across all worker threads, ensuring correct connection distribution at any scale.
 
 **Full extended query protocol support.** Benchmarks show Odyssey is up to 61% slower with the extended query protocol in transaction mode. PgDoorman handles simple, extended, and prepared protocols equally well — including pipelined batches and async Flush flow that cause issues in other poolers.
+
+**Lazy server acquisition.** PgDoorman defers backend connection allocation until the first real query inside a transaction. A standalone `BEGIN` does not grab a server connection. If a client opens a transaction and disconnects without sending a query, no backend connection is used at all. PgBouncer and Odyssey allocate a server connection on `BEGIN`.
 
 ## Benchmarks
 
@@ -38,13 +40,16 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Multithreaded | Yes | No | Yes |
 | Prepared statements in transaction mode | Yes | Since 1.21 | Since 1.3 |
 | Full extended query protocol | Yes | Yes | Partial |
-| Zero-downtime binary upgrade | Yes | Yes | Yes |
 | Deferred `BEGIN` (lazy server acquire) | Yes | No | No |
+| Stale backend detection (idle-in-transaction) | Yes | No | No |
+| Zero-downtime binary upgrade | Yes | Yes | Yes |
+| Config test mode (`-t` / `--test-config`) | Yes | No | No |
 | Auto-config from PostgreSQL | Yes | No | No |
 | YAML / TOML config | Yes | No (INI) | No (own format) |
 | Human-readable durations & sizes | Yes | No | No |
 | Native `pg_hba.conf` format | Yes | Yes | Since 1.4 |
 | Auth query (dynamic users) | Yes | Yes | Yes |
+| Auth query passthrough (per-user backend identity) | Yes | No | No |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
@@ -178,7 +183,18 @@ RECONNECT;      -- all pools
 
 Full connection rotation pattern: `PAUSE → RECONNECT → RESUME`.
 
+```sql
+-- Trigger binary upgrade (zero downtime)
+UPGRADE;
+```
+
 See [admin commands documentation](https://ozontech.github.io/pg_doorman/tutorials/basic-usage.html) for details.
+
+## Stale Backend Detection
+
+When a client holds a transaction open but sends no queries, the backend connection can die silently (failover, OOM kill, network partition). With other poolers the client hangs until TCP keepalive fires — typically 2+ minutes.
+
+PgDoorman probes the backend when a client is idle in transaction. If the backend is gone, the client gets an error immediately. Controlled by `idle_client_in_transaction_timeout`.
 
 ## TLS / SSL
 
@@ -247,6 +263,8 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `pg_doorman_pools_avg_wait_time` | user, database | Avg client wait for server (ms)             |
 | `pg_doorman_pools_bytes` | direction, user, database | Bytes sent / received                       |
 | `pg_doorman_pool_prepared_cache_entries` | user, database | Prepared statement cache entries            |
+| `pg_doorman_auth_query_cache` | event, database | Auth query cache hits / misses              |
+| `pg_doorman_auth_query_dynamic_pools` | database | Active dynamic user pools                    |
 | `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
 | `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |
 
