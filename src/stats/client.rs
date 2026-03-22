@@ -52,6 +52,8 @@ pub struct ClientStats {
     connect_time: quanta::Instant,
     /// Whether the client is using TLS/SSL encryption
     use_tls: bool,
+    /// Whether kernel TLS (kTLS) is active for this connection (both TX and RX)
+    use_ktls: bool,
 
     /// Reporter instance used to register/unregister this client with the stats system
     reporter: Reporter,
@@ -116,6 +118,7 @@ impl Default for ClientStats {
             is_async_client: AtomicBool::new(false),
             reporter: get_reporter(),
             use_tls: false,
+            use_ktls: false,
         }
     }
 }
@@ -170,6 +173,8 @@ impl ClientStats {
     /// * `ipaddr` - IP address of the client
     /// * `connect_time` - Timestamp when the client connected
     /// * `use_tls` - Whether the client is using TLS/SSL encryption
+    /// * `use_ktls` - Whether kernel TLS (kTLS) is active for this connection
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client_id: i32,
         application_name: &str,
@@ -178,6 +183,7 @@ impl ClientStats {
         ipaddr: &str,
         connect_time: quanta::Instant,
         use_tls: bool,
+        use_ktls: bool,
     ) -> Self {
         Self {
             client_id,
@@ -187,6 +193,7 @@ impl ClientStats {
             pool_name: pool_name.to_string(),
             ipaddr: ipaddr.to_string(),
             use_tls,
+            use_ktls,
             ..Default::default()
         }
     }
@@ -362,6 +369,12 @@ impl ClientStats {
         self.use_tls
     }
 
+    /// Returns whether kernel TLS (kTLS) is active for this connection.
+    #[inline(always)]
+    pub fn ktls(&self) -> bool {
+        self.use_ktls
+    }
+
     /// Returns the PostgreSQL username used for the connection.
     #[inline(always)]
     pub fn username(&self) -> String {
@@ -461,6 +474,7 @@ mod tests {
             "127.0.0.1", // ipaddr
             now,         // connect_time
             true,        // use_tls
+            false,       // use_ktls
         );
 
         // Check client metadata
@@ -471,6 +485,7 @@ mod tests {
         assert_eq!(stats.ipaddr(), "127.0.0.1");
         assert_eq!(stats.connect_time(), now);
         assert!(stats.tls());
+        assert!(!stats.ktls());
 
         // Check that other fields are initialized to default values
         assert_eq!(stats.total_wait_time.load(Ordering::Relaxed), 0);
@@ -494,6 +509,7 @@ mod tests {
             "test_pool",
             "127.0.0.1",
             now,
+            false,
             false,
         );
 
@@ -621,6 +637,7 @@ mod tests {
             "127.0.0.1", // ipaddr
             now,         // connect_time
             true,        // use_tls
+            false,       // use_ktls
         );
 
         // Test accessor methods

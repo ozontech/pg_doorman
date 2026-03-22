@@ -333,6 +333,14 @@ general:
   # Default: 0
   tls_rate_limit_per_second: 0
 
+  # Kernel TLS (kTLS) offloading mode.
+  # off  — disabled (default)
+  # try  — enabled opportunistically, falls back to userspace silently
+  # Requires OpenSSL 3.0+ and Linux kernel with tls module loaded (modprobe tls).
+  # Not all cipher suites support kTLS — only AES-GCM-128/256 and ChaCha20-Poly1305.
+  # Default: off
+  ktls: "off"
+
   # --------------------------------------------------------------------------
   # TLS Settings (Server-facing)
   # --------------------------------------------------------------------------

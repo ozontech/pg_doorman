@@ -38,7 +38,7 @@ mod tests;
 pub use address::{Address, BackendAuthMethod, PoolMode};
 pub use byte_size::ByteSize;
 pub use duration::Duration;
-pub use general::General;
+pub use general::{General, KtlsMode};
 pub use include::{GeneralWithInclude, Include, ServerConfig};
 pub use pool::{AuthQueryConfig, Pool};
 pub use prometheus::Prometheus;

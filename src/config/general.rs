@@ -3,11 +3,39 @@
 use bytes::{BufMut, BytesMut};
 use ipnet::IpNet;
 use serde_derive::{Deserialize, Serialize};
+use std::fmt;
 use std::mem;
 
 use super::tls;
 use super::{ByteSize, Duration, Include};
 use crate::auth::hba::PgHba;
+
+/// Kernel TLS (kTLS) offloading mode.
+/// When enabled, after TLS handshake OpenSSL pushes symmetric encryption keys
+/// to the Linux kernel, which handles encryption/decryption transparently.
+/// Requires OpenSSL 3.0+ and Linux kernel with `tls` module loaded (`modprobe tls`).
+#[derive(Default, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum KtlsMode {
+    /// kTLS disabled (default).
+    #[default]
+    Off,
+    /// kTLS enabled opportunistically. OpenSSL will attempt to push symmetric keys
+    /// to the kernel after handshake. If the kernel TLS module is not loaded or the
+    /// negotiated cipher is not supported by kTLS, falls back to userspace silently.
+    /// Not all cipher suites support kTLS — AES-GCM-128/256 and ChaCha20-Poly1305 do,
+    /// others don't. Per-connection kTLS status is tracked and exposed via metrics.
+    Try,
+}
+
+impl fmt::Display for KtlsMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KtlsMode::Off => write!(f, "off"),
+            KtlsMode::Try => write!(f, "try"),
+        }
+    }
+}
 
 /// General configuration.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -152,6 +180,11 @@ pub struct General {
     pub tls_mode: Option<String>,
     #[serde(default = "General::default_tls_rate_limit_per_second")]
     pub tls_rate_limit_per_second: usize,
+
+    /// Kernel TLS (kTLS) offloading mode: off, on, or try.
+    /// Requires OpenSSL 3.0+ and Linux kernel with `tls` module loaded.
+    #[serde(default)]
+    pub ktls: KtlsMode,
 
     #[serde(default)] // false
     pub server_tls: bool,
@@ -424,6 +457,7 @@ impl Default for General {
             tls_ca_cert: None,
             tls_mode: None,
             tls_rate_limit_per_second: Self::default_tls_rate_limit_per_second(),
+            ktls: KtlsMode::Off,
             server_tls: false,
             verify_server_certificate: false,
             admin_username: String::from("admin"),

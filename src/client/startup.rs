@@ -1,5 +1,5 @@
 use bytes::{Buf, BufMut, BytesMut};
-use log::error;
+use log::{error, info, warn};
 use std::ffi::CStr;
 use std::str;
 use std::sync::atomic::Ordering;
@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 use crate::auth::authenticate;
 use crate::auth::hba::CheckResult;
 use crate::auth::talos::{extract_talos_token, talos_role_to_string};
-use crate::config::{check_hba, get_config};
+use crate::config::{check_hba, get_config, KtlsMode};
 use crate::errors::{ClientIdentifier, Error};
 use crate::messages::constants::*;
 use crate::messages::{
@@ -119,6 +119,34 @@ pub async fn startup_tls(
         }
     };
 
+    // Detect kTLS status after handshake
+    #[cfg(target_os = "linux")]
+    let use_ktls = {
+        let ktls_tx = stream.get_ref().is_ktls_send_active();
+        let ktls_rx = stream.get_ref().is_ktls_recv_active();
+        let cipher = stream
+            .get_ref()
+            .negotiated_cipher()
+            .unwrap_or_else(|| "unknown".to_string());
+        let tls_version = stream.get_ref().protocol_version().unwrap_or("unknown");
+        if ktls_tx && ktls_rx {
+            info!("kTLS active for {} ({}, cipher: {})", addr, tls_version, cipher);
+        } else if ktls_tx || ktls_rx {
+            warn!(
+                "kTLS partially active for {} ({}, cipher: {}): TX={}, RX={} (expected both)",
+                addr, tls_version, cipher, ktls_tx, ktls_rx
+            );
+        } else if matches!(get_config().general.ktls, KtlsMode::Try) {
+            warn!(
+                "kTLS not activated for {} ({}, cipher: {}) — check: openssl built with enable-ktls, kernel tls module loaded, cipher supports kTLS",
+                addr, tls_version, cipher
+            );
+        }
+        ktls_tx && ktls_rx
+    };
+    #[cfg(not(target_os = "linux"))]
+    let use_ktls = false;
+
     // TLS negotiation successful.
     // Continue with regular startup using encrypted connection.
     match get_startup::<tokio_native_tls::TlsStream<TcpStream>>(&mut stream).await {
@@ -135,6 +163,7 @@ pub async fn startup_tls(
                 client_server_map,
                 admin_only,
                 true,
+                use_ktls,
             )
             .await
         }
@@ -170,6 +199,7 @@ where
         client_server_map: ClientServerMap,
         admin_only: bool,
         use_tls: bool,
+        use_ktls: bool,
     ) -> Result<Client<S, T>, Error> {
         let parameters = parse_startup(bytes)?;
 
@@ -352,6 +382,7 @@ where
             addr.to_string().as_str(),
             crate::utils::clock::now(),
             use_tls,
+            use_ktls,
         ));
 
         let config = get_config();

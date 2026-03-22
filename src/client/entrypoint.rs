@@ -138,6 +138,7 @@ pub async fn client_entrypoint(
                             client_server_map,
                             admin_only,
                             false,
+                            false,
                         )
                         .await
                         {
@@ -191,6 +192,7 @@ pub async fn client_entrypoint(
                 bytes,
                 client_server_map,
                 admin_only,
+                false,
                 false,
             )
             .await

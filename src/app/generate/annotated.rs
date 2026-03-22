@@ -897,6 +897,10 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     );
     w.blank();
 
+    write_field_comment(w, fi, "general", "ktls");
+    w.kv(fi, "ktls", &w.str_val(&g.ktls.to_string()));
+    w.blank();
+
     // --- TLS Settings (Server-facing) ---
     w.separator(fi, f.section_title("tls_server").get(w.russian));
     w.blank();

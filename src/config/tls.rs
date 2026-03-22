@@ -98,6 +98,7 @@ pub fn build_acceptor(
     key: &Path,
     ca_path: Option<impl AsRef<Path>>,
     mode: Option<String>,
+    enable_ktls: bool,
 ) -> Result<tokio_native_tls::TlsAcceptor, Error> {
     // Load identity from certificate and key
     let identity = load_identity(cert, key).map_err(|err| {
@@ -124,6 +125,9 @@ pub fn build_acceptor(
     // Set protocol versions
     builder.min_protocol_version(Some(Protocol::Tlsv12)); // Upgraded from Tlsv10 for better security
     builder.max_protocol_version(None);
+
+    // Enable kTLS if requested
+    builder.enable_ktls(enable_ktls);
 
     // Configure client certificate verification
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
@@ -244,6 +248,7 @@ mod tests {
                 &key_path,
                 Some(&ca_path),
                 Some("require".to_string()),
+                false,
             );
             assert!(
                 result.is_ok(),
@@ -257,6 +262,7 @@ mod tests {
                 &key_path,
                 None::<&Path>,
                 Some("require".to_string()),
+                false,
             );
             assert!(
                 result.is_ok(),
@@ -265,7 +271,7 @@ mod tests {
             );
 
             // Test without mode
-            let result = build_acceptor(&cert_path, &key_path, Some(&ca_path), None);
+            let result = build_acceptor(&cert_path, &key_path, Some(&ca_path), None, false);
             assert!(
                 result.is_ok(),
                 "Failed to build acceptor without mode: {:?}",

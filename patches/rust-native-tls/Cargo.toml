@@ -32,6 +32,7 @@ log = "0.4.5"
 openssl = "0.10.69"
 openssl-sys = "0.9.81"
 openssl-probe = "0.1"
+foreign-types-shared = "0.1"
 
 [dev-dependencies]
 tempfile = "3.0"

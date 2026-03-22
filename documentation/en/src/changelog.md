@@ -1,5 +1,11 @@
 # Changelog
 
+### 3.3.3 <small>Mar 22, 2026</small>
+
+**New Features:**
+
+- **Kernel TLS (kTLS) offloading**: New `general.ktls` config option with two modes: `off` (default) and `try` (opportunistic). When enabled, pg_doorman sets `SSL_OP_ENABLE_KTLS` on the OpenSSL context — after the TLS handshake, OpenSSL pushes symmetric encryption keys to the Linux kernel for transparent encrypt/decrypt, reducing CPU usage and enabling zero-copy `sendfile()`. Not all cipher suites support kTLS (only AES-GCM-128/256 and ChaCha20-Poly1305), hence no `on` mode — the `try` mode enables kTLS opportunistically and falls back to userspace silently. kTLS activation status is detected per-connection via `BIO_CTRL_GET_KTLS_SEND`/`BIO_CTRL_GET_KTLS_RECV` FFI calls and propagated to `ClientStats` for monitoring. System support (kernel `tls` module + OpenSSL 3.0+) is validated at startup.
+
 ### 3.3.2 <small>Mar 1, 2026</small>
 
 **Breaking Changes:**

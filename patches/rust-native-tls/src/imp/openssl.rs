@@ -1,3 +1,4 @@
+extern crate foreign_types_shared;
 extern crate openssl;
 extern crate openssl_probe;
 
@@ -392,6 +393,16 @@ impl TlsAcceptor {
         }
         supported_protocols(builder.min_protocol, builder.max_protocol, &mut acceptor)?;
 
+        if builder.enable_ktls {
+            // SSL_OP_ENABLE_KTLS = 1 << 3 = 0x8 (OpenSSL 3.0+)
+            // Tells OpenSSL to attempt pushing symmetric keys to the kernel
+            // after handshake completes. If the kernel TLS module is not loaded
+            // or the cipher is unsupported, OpenSSL silently falls back to
+            // userspace encryption — no error is raised.
+            let ktls_option = ssl::SslOptions::from_bits_retain(0x8);
+            acceptor.set_options(ktls_option);
+        }
+
         Ok(TlsAcceptor(acceptor.build()))
     }
 
@@ -440,6 +451,17 @@ impl<S: io::Read + io::Write> TlsStream<S> {
             .map(|alpn| alpn.to_vec()))
     }
 
+    pub fn negotiated_cipher(&self) -> Option<String> {
+        self.0
+            .ssl()
+            .current_cipher()
+            .map(|c| c.name().to_string())
+    }
+
+    pub fn protocol_version(&self) -> Option<&'static str> {
+        self.0.ssl().version_str().into()
+    }
+
     pub fn tls_server_end_point(&self) -> Result<Option<Vec<u8>>, Error> {
         let cert = if self.0.ssl().is_server() {
             self.0.ssl().certificate().map(|x| x.to_owned())
@@ -469,6 +491,36 @@ impl<S: io::Read + io::Write> TlsStream<S> {
         let digest = cert.digest(md)?;
 
         Ok(Some(digest.to_vec()))
+    }
+
+    /// Check if kTLS is active for the send (TX) direction.
+    /// Uses BIO_CTRL_GET_KTLS_SEND (73) on the write BIO.
+    pub fn is_ktls_send_active(&self) -> bool {
+        use self::foreign_types_shared::ForeignTypeRef;
+        unsafe {
+            let ssl_ptr = self.0.ssl().as_ptr();
+            let wbio = openssl_sys::SSL_get_wbio(ssl_ptr);
+            if wbio.is_null() {
+                return false;
+            }
+            // BIO_CTRL_GET_KTLS_SEND = 73
+            openssl_sys::BIO_ctrl(wbio, 73, 0, std::ptr::null_mut()) > 0
+        }
+    }
+
+    /// Check if kTLS is active for the receive (RX) direction.
+    /// Uses BIO_CTRL_GET_KTLS_RECV (76) on the read BIO.
+    pub fn is_ktls_recv_active(&self) -> bool {
+        use self::foreign_types_shared::ForeignTypeRef;
+        unsafe {
+            let ssl_ptr = self.0.ssl().as_ptr();
+            let rbio = openssl_sys::SSL_get_rbio(ssl_ptr);
+            if rbio.is_null() {
+                return false;
+            }
+            // BIO_CTRL_GET_KTLS_RECV = 76
+            openssl_sys::BIO_ctrl(rbio, 76, 0, std::ptr::null_mut()) > 0
+        }
     }
 
     pub fn shutdown(&mut self) -> io::Result<()> {

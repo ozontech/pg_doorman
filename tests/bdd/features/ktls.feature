@@ -1,0 +1,66 @@
+@ktls
+Feature: Kernel TLS (kTLS) offloading
+
+  Scenario: Connection with kTLS mode "try" succeeds
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all             all                                     trust
+      host    all             all             127.0.0.1/32            trust
+      host    all             all             ::1/128                 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And self-signed SSL certificates are generated
+    And pg_doorman started with config:
+      """
+      general:
+        host: "127.0.0.1"
+        port: ${DOORMAN_PORT}
+        connect_timeout: 5000
+        admin_username: "admin"
+        admin_password: "admin"
+        tls_private_key: "${DOORMAN_SSL_KEY}"
+        tls_certificate: "${DOORMAN_SSL_CERT}"
+        ktls: "try"
+      pools:
+        postgres:
+          server_host: "127.0.0.1"
+          server_port: ${PG_PORT}
+          pool_mode: "transaction"
+          users:
+            - username: "postgres"
+              password: "md53175bce1d3201d16594cebf9d7eb3f9d"
+              pool_size: 10
+      """
+    Then psql connection to pg_doorman as user "postgres" to database "postgres" with password "postgres" succeeds
+
+  Scenario: Connection with kTLS mode "off" succeeds (no kTLS)
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all             all                                     trust
+      host    all             all             127.0.0.1/32            trust
+      host    all             all             ::1/128                 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And self-signed SSL certificates are generated
+    And pg_doorman started with config:
+      """
+      general:
+        host: "127.0.0.1"
+        port: ${DOORMAN_PORT}
+        connect_timeout: 5000
+        admin_username: "admin"
+        admin_password: "admin"
+        tls_private_key: "${DOORMAN_SSL_KEY}"
+        tls_certificate: "${DOORMAN_SSL_CERT}"
+        ktls: "off"
+      pools:
+        postgres:
+          server_host: "127.0.0.1"
+          server_port: ${PG_PORT}
+          pool_mode: "transaction"
+          users:
+            - username: "postgres"
+              password: "md53175bce1d3201d16594cebf9d7eb3f9d"
+              pool_size: 10
+      """
+    Then psql connection to pg_doorman as user "postgres" to database "postgres" with password "postgres" succeeds

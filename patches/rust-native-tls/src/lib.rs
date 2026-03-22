@@ -523,7 +523,10 @@ pub struct TlsAcceptorBuilder {
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
     client_cert_verification: TlsClientCertificateVerification,
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
-    client_cert_verification_ca_cert: Option<Certificate>
+    client_cert_verification_ca_cert: Option<Certificate>,
+    /// Enable kernel TLS (kTLS) offloading for symmetric encryption.
+    /// Requires OpenSSL 3.0+ and Linux kernel with TLS module loaded.
+    pub enable_ktls: bool,
 }
 
 impl TlsAcceptorBuilder {
@@ -564,6 +567,15 @@ impl TlsAcceptorBuilder {
     /// Defaults to `TlsClientCertificateVerification::DoNotRequestCertificate`.
     pub fn client_cert_verification(&mut self, client_cert_verification: TlsClientCertificateVerification) -> &mut TlsAcceptorBuilder {
         self.client_cert_verification = client_cert_verification;
+        self
+    }
+
+    /// Enable or disable kernel TLS (kTLS) offloading.
+    /// When enabled, OpenSSL will attempt to push symmetric encryption keys
+    /// to the Linux kernel after handshake, allowing the kernel to handle
+    /// encryption/decryption transparently.
+    pub fn enable_ktls(&mut self, enable: bool) -> &mut TlsAcceptorBuilder {
+        self.enable_ktls = enable;
         self
     }
 
@@ -635,6 +647,7 @@ impl TlsAcceptor {
             client_cert_verification: TlsClientCertificateVerification::DoNotRequestCertificate,
             #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
             client_cert_verification_ca_cert: None,
+            enable_ktls: false,
         }
     }
 
@@ -700,6 +713,30 @@ impl<S: io::Read + io::Write> TlsStream<S> {
     #[cfg_attr(docsrs, doc(cfg(feature = "alpn")))]
     pub fn negotiated_alpn(&self) -> Result<Option<Vec<u8>>> {
         Ok(self.0.negotiated_alpn()?)
+    }
+
+    /// Returns the name of the negotiated TLS cipher suite (e.g. "TLS_AES_256_GCM_SHA384").
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    pub fn negotiated_cipher(&self) -> Option<String> {
+        self.0.negotiated_cipher()
+    }
+
+    /// Returns the negotiated TLS protocol version (e.g. "TLSv1.3").
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    pub fn protocol_version(&self) -> Option<&'static str> {
+        self.0.protocol_version()
+    }
+
+    /// Returns true if kTLS is active for the send (TX) direction.
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    pub fn is_ktls_send_active(&self) -> bool {
+        self.0.is_ktls_send_active()
+    }
+
+    /// Returns true if kTLS is active for the receive (RX) direction.
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    pub fn is_ktls_recv_active(&self) -> bool {
+        self.0.is_ktls_recv_active()
     }
 
     /// Shuts down the TLS session.

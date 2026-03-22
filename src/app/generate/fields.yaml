@@ -865,6 +865,30 @@ fields:
         In some cases, this is necessary in order to launch an application that opens many connections at startup (the so-called "hot start").
       default: "0"
 
+    ktls:
+      config:
+        en: |
+          Kernel TLS (kTLS) offloading mode.
+          off  — disabled (default)
+          try  — enabled opportunistically, falls back to userspace silently
+          Requires OpenSSL 3.0+ and Linux kernel with tls module loaded (modprobe tls).
+          Not all cipher suites support kTLS — only AES-GCM-128/256 and ChaCha20-Poly1305.
+        ru: |
+          Режим выгрузки шифрования в ядро (kTLS).
+          off  — отключено (по умолчанию)
+          try  — включено опционально, тихий fallback на userspace
+          Требуется OpenSSL 3.0+ и ядро Linux с модулем tls (modprobe tls).
+          Не все cipher suites поддерживают kTLS — только AES-GCM-128/256 и ChaCha20-Poly1305.
+      doc: |
+        Kernel TLS (kTLS) offloading mode. When enabled, after the TLS handshake
+        OpenSSL pushes symmetric encryption keys to the Linux kernel, which then
+        handles encryption and decryption transparently. This reduces CPU usage
+        and enables zero-copy sendfile for TLS connections.
+        Requires OpenSSL 3.0+ and Linux kernel with the `tls` module loaded (`modprobe tls`).
+        Not all cipher suites support kTLS — only AES-GCM-128/256 and ChaCha20-Poly1305 are supported.
+        Possible values: `off` (default), `try` (opportunistic).
+      default: "off"
+
     server_tls:
       config:
         en: "Enable TLS for connections to PostgreSQL servers."

@@ -1617,6 +1617,7 @@ dependencies = [
 name = "native-tls"
 version = "0.2.14"
 dependencies = [
+ "foreign-types-shared",
  "libc",
  "log",
  "openssl",
@@ -1879,7 +1880,7 @@ checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
 name = "pg_doorman"
-version = "3.3.2"
+version = "3.3.3"
 dependencies = [
  "ahash",
  "arc-swap",
