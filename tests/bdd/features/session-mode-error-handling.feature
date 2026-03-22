@@ -161,6 +161,180 @@ Feature: Session mode does not destroy connections on SQL errors
     When we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "after_errors"
     Then named backend_pid "after_errors" from session "s1" is same as "original"
 
+  @session-error-in-transaction
+  Scenario: Session mode — error inside BEGIN block, ROLLBACK recovers, connection survives
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      prepared_statements = true
+      prepared_statements_cache_size = 10000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "session"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "before"
+    # Open explicit transaction
+    And we send SimpleQuery "BEGIN" to session "s1"
+    # Trigger async error inside the transaction — puts txn into 'E' (aborted) state
+    And we send Parse "" with query "SELECT 1/0" to session "s1"
+    And we send Bind "" to "" with params "" to session "s1"
+    And we send Execute "" to session "s1"
+    And we send Flush to session "s1"
+    And we send Sync to session "s1"
+    Then session "s1" should receive error containing "division by zero"
+    # Recover: ROLLBACK the aborted transaction
+    When we send SimpleQuery "ROLLBACK" to session "s1"
+    # Connection must be alive with the same backend
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "after"
+    Then named backend_pid "after" from session "s1" is same as "before"
+    # Verify the connection actually works — can start a new transaction
+    When we send SimpleQuery "BEGIN" to session "s1"
+    And we send SimpleQuery "SELECT 1" to session "s1"
+    And we send SimpleQuery "COMMIT" to session "s1"
+
+  @session-error-simple-query
+  Scenario: Session mode — SimpleQuery error does not use async mode, connection unaffected
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      prepared_statements = true
+      prepared_statements_cache_size = 10000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "session"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "before"
+    # SimpleQuery uses simple protocol — async_mode is never set, so mark_bad is never called
+    # regardless of pool mode. This is a baseline regression test.
+    And we send SimpleQuery "SELEC not_valid" to session "s1" expecting error
+    Then session "s1" should receive error containing "syntax"
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "after"
+    Then named backend_pid "after" from session "s1" is same as "before"
+
+  @session-error-async-transition
+  Scenario: Session mode — successful async operation followed by failed async operation
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      prepared_statements = true
+      prepared_statements_cache_size = 10000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "session"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "before"
+    # Successful async operation: Parse+Flush → ParseComplete, then Bind+Execute+Sync → results
+    And we send Parse "" with query "SELECT 1" to session "s1"
+    And we send Flush to session "s1"
+    And we send Bind "" to "" with params "" to session "s1"
+    And we send Execute "" to session "s1"
+    And we send Sync to session "s1"
+    Then session "s1" should receive DataRow with "1"
+    # Failed async operation immediately after — tests state transition from success to error
+    When we send Parse "" with query "bad syntax" to session "s1"
+    And we send Flush to session "s1"
+    And we send Sync to session "s1"
+    Then session "s1" should receive error containing "syntax"
+    # Another successful async operation — tests recovery after error
+    When we send Parse "" with query "SELECT 2" to session "s1"
+    And we send Flush to session "s1"
+    And we send Bind "" to "" with params "" to session "s1"
+    And we send Execute "" to session "s1"
+    And we send Sync to session "s1"
+    Then session "s1" should receive DataRow with "2"
+    # Backend PID unchanged through all transitions
+    When we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "after"
+    Then named backend_pid "after" from session "s1" is same as "before"
+
+  @session-error-cleanup-on-checkin
+  Scenario: Session mode — SET state is cleaned up via RESET ALL when session ends after error
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      prepared_statements = true
+      prepared_statements_cache_size = 10000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "session"
+      cleanup_server_connections = true
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    # Session 1: alter session state, trigger async error, verify state persists, then close
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid
+    And we send SimpleQuery "SET statement_timeout = '5s'" to session "s1"
+    # Verify SET took effect
+    And we send SimpleQuery "SHOW statement_timeout" to session "s1" and store response
+    Then session "s1" should receive DataRow with "5s"
+    # Async error — should NOT mark bad, but cleanup_state.needs_cleanup_prepare is set
+    When we send Parse "" with query "bad syntax" to session "s1"
+    And we send Flush to session "s1"
+    And we send Sync to session "s1"
+    # SET still active within the session after error
+    When we send SimpleQuery "SHOW statement_timeout" to session "s1" and store response
+    Then session "s1" should receive DataRow with "5s"
+    # Close session — checkin_cleanup should run RESET ALL (because bad=false, recycle accepts)
+    When we close session "s1"
+    And we sleep 500ms
+    # Session 2: same backend connection, but state must be clean
+    When we create session "s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s2" and store backend_pid
+    # Connection reused (same PID) — proves bad=false, recycle accepted
+    Then backend_pid from session "s1" should equal backend_pid from session "s2"
+    # State is clean — proves RESET ALL was executed during checkin
+    When we send SimpleQuery "SHOW statement_timeout" to session "s2" and store response
+    Then session "s2" should receive DataRow with "0"
+
   @session-error-txmode-control
   Scenario: Transaction mode — Parse error via Flush destroys connection (control test)
     Given pg_doorman started with config:

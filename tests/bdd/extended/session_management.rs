@@ -203,6 +203,29 @@ pub async fn read_simple_query_response_within_timeout(
     world.session_messages.insert(session_name, messages);
 }
 
+#[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and store response$"#)]
+#[then(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" and store response$"#)]
+pub async fn send_simple_query_and_store_response(
+    world: &mut DoormanWorld,
+    query: String,
+    session_name: String,
+) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    let messages = conn
+        .read_all_messages_until_ready()
+        .await
+        .expect("Failed to read messages");
+
+    world
+        .session_messages
+        .insert(session_name.clone(), messages);
+}
+
 #[when(regex = r#"^we send SimpleQuery "([^"]+)" to session "([^"]+)" expecting error$"#)]
 pub async fn send_simple_query_to_session_expecting_error(
     world: &mut DoormanWorld,
