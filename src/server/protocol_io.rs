@@ -298,7 +298,9 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
     if server.is_async() {
         server.data_available = false;
         server.cleanup_state.needs_cleanup();
-        server.mark_bad("PostgreSQL error in asynchronous operation mode");
+        if !server.session_mode {
+            server.mark_bad("PostgreSQL error in asynchronous operation mode");
+        }
     }
 }
 

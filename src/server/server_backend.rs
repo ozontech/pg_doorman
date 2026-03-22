@@ -124,6 +124,11 @@ pub struct Server {
     /// Used to track Parse messages that haven't been confirmed yet.
     pub(crate) registering_prepared_statement: VecDeque<String>,
 
+    /// Session mode flag: true when the pool operates in session mode.
+    /// In session mode, PostgreSQL ErrorResponse in async mode does not mark connection as bad,
+    /// because the connection remains valid and the client can continue using it.
+    pub(crate) session_mode: bool,
+
     /// Maximum message size (in bytes) before switching to streaming mode for large DataRow messages.
     /// Messages larger than this threshold are streamed directly to avoid excessive memory usage.
     /// A value of 0 disables streaming.
@@ -595,6 +600,7 @@ impl Server {
         log_client_parameter_status_changes: bool,
         prepared_statement_cache_size: usize,
         application_name: String,
+        session_mode: bool,
     ) -> Result<Server, Error> {
         let config = get_config();
 
@@ -789,6 +795,7 @@ impl Server {
                             )),
                         },
                         registering_prepared_statement: VecDeque::new(),
+                        session_mode,
                         max_message_size: config.general.message_size_to_be_stream.as_bytes()
                             as i32,
                     };
