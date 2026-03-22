@@ -195,6 +195,10 @@
 <p><strong>Retain and replenish used separate pool snapshots</strong>: The retain and replenish phases each called <code>get_all_pools()</code> separately. If <code>POOLS</code> was atomically updated between them (config reload, dynamic pool GC), retain operated on one set of pools and replenish on another, potentially missing pools that need replenishment. Fixed by using a single snapshot for both phases.</p>
 </li>
 </ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li><strong>PHP PDO_PGSQL driver added to test infrastructure.</strong> PHP 8.4 with <code>pdo_pgsql</code> extension is now included in the Nix-based Docker test image. Two BDD scenarios verify basic connectivity (SELECT 1) and session mode behavior (SQL error does not change backend PID). Run with <code>make test-php</code> or <code>--tags @php</code>.</li>
+</ul>
 <p><strong>New Features:</strong></p>
 <ul>
 <li>
