@@ -351,6 +351,8 @@ impl ConnectionPool {
                     .clone()
                     .unwrap_or_else(|| "pg_doorman".to_string());
 
+                let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
+
                 let manager = ServerPool::new(
                     address.clone(),
                     user.clone(),
@@ -369,6 +371,7 @@ impl ConnectionPool {
                         .unwrap_or(config.general.idle_timeout.as_millis()),
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
+                    pool_mode == PoolMode::Session,
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -400,7 +403,7 @@ impl ConnectionPool {
                         ServerParameters::new(),
                     )),
                     settings: PoolSettings {
-                        pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
+                        pool_mode,
                         user: user.clone(),
                         db: pool_name.clone(),
                         idle_timeout_ms: pool_config
@@ -503,6 +506,8 @@ impl ConnectionPool {
                             .clone()
                             .unwrap_or_else(|| "pg_doorman".to_string());
 
+                        let pool_mode = shared_user.pool_mode.unwrap_or(pool_config.pool_mode);
+
                         let manager = ServerPool::new(
                             address.clone(),
                             shared_user.clone(),
@@ -521,6 +526,7 @@ impl ConnectionPool {
                                 .unwrap_or(config.general.idle_timeout.as_millis()),
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
+                            pool_mode == PoolMode::Session,
                         );
 
                         let queue_strategy = match config.general.server_round_robin {
@@ -555,7 +561,7 @@ impl ConnectionPool {
                                 ServerParameters::new(),
                             )),
                             settings: PoolSettings {
-                                pool_mode: shared_user.pool_mode.unwrap_or(pool_config.pool_mode),
+                                pool_mode,
                                 user: shared_user,
                                 db: pool_name.clone(),
                                 idle_timeout_ms: pool_config
@@ -772,6 +778,9 @@ pub struct ServerPool {
     /// Connect timeout for alive checks.
     connect_timeout: Duration,
 
+    /// Session mode flag passed to created Server connections.
+    session_mode: bool,
+
     /// Combined pool state: bit 32 = paused, bits 0-31 = reconnect epoch (u32).
     pool_state: AtomicU64,
 
@@ -819,6 +828,7 @@ impl ServerPool {
         idle_timeout_ms: u64,
         idle_check_timeout_ms: u64,
         connect_timeout: Duration,
+        session_mode: bool,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -837,6 +847,7 @@ impl ServerPool {
             connect_timeout,
             pool_state: AtomicU64::new(0),
             resume_notify: Notify::new(),
+            session_mode,
         }
     }
 
@@ -873,6 +884,7 @@ impl ServerPool {
             self.log_client_parameter_status_changes,
             self.prepared_statement_cache_size,
             self.application_name.clone(),
+            self.session_mode,
         )
         .await
         {
@@ -1111,6 +1123,8 @@ pub fn create_dynamic_pool(
         .clone()
         .unwrap_or_else(|| "pg_doorman".to_string());
 
+    let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
+
     let manager = ServerPool::new(
         address.clone(),
         user.clone(),
@@ -1129,6 +1143,7 @@ pub fn create_dynamic_pool(
             .unwrap_or(config.general.idle_timeout.as_millis()),
         config.general.server_idle_check_timeout.as_millis(),
         config.general.connect_timeout.as_std(),
+        pool_mode == PoolMode::Session,
     );
 
     let queue_strategy = match config.general.server_round_robin {
@@ -1155,7 +1170,7 @@ pub fn create_dynamic_pool(
         config_hash: 0, // dynamic pools don't participate in hash-based reload
         original_server_parameters: Arc::new(tokio::sync::Mutex::new(ServerParameters::new())),
         settings: PoolSettings {
-            pool_mode: user.pool_mode.unwrap_or(pool_config.pool_mode),
+            pool_mode,
             user,
             db: pool_name.to_string(),
             idle_timeout_ms: pool_config
