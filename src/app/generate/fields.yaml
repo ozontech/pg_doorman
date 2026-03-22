@@ -283,34 +283,60 @@ fields:
 
     connect_timeout:
       config:
-        en: "Connection timeout to server."
-        ru: "Таймаут подключения к серверу."
-      doc: "Connection timeout to server in milliseconds."
+        en: "Timeout for establishing a new connection to PostgreSQL. Similar to PgBouncer's server_connect_timeout."
+        ru: "Таймаут установки нового соединения с PostgreSQL. Аналог server_connect_timeout в PgBouncer."
+      doc: "Maximum time to wait when establishing a new connection to a PostgreSQL server. If the connection cannot be established within this period, the attempt is aborted. Similar to PgBouncer's `server_connect_timeout`."
       default: "3000 (3 sec)"
 
     query_wait_timeout:
       config:
         en: |
-          Maximum time to wait for a query to complete.
-          Analog of query_wait_timeout in PgBouncer.
+          How long a client waits for a server connection before getting an error.
+          Applies when all connections in the pool are busy.
+          Similar to PgBouncer's query_wait_timeout.
         ru: |
-          Максимальное время ожидания выполнения запроса.
+          Как долго клиент ждёт серверное соединение, прежде чем получит ошибку.
+          Срабатывает, когда все соединения в пуле заняты.
           Аналог query_wait_timeout в PgBouncer.
-      doc: "Maximum time to wait for a query to complete, in milliseconds."
+      doc: "Maximum time a client query can wait for a server connection when the pool is fully utilized. If no server connection becomes available within this period, the client receives an error. Similar to PgBouncer's `query_wait_timeout`."
       default: "5000 (5 sec)"
 
     idle_timeout:
       config:
-        en: "Server idle timeout."
-        ru: "Таймаут простоя серверного соединения."
-      doc: "Server idle timeout in milliseconds."
+        en: |
+          Close a server connection that has been idle longer than this.
+          Only applies to connections that served at least one client request.
+          Prewarmed connections that were never used are not affected (use server_lifetime for those).
+          Set to 0 to disable. Similar to PgBouncer's server_idle_timeout.
+        ru: |
+          Закрывать серверное соединение, простаивающее дольше этого значения.
+          Действует только на соединения, обслужившие хотя бы один запрос.
+          Prewarm-соединения, которые ни разу не использовались, не затрагиваются (для них — server_lifetime).
+          0 — отключено. Аналог server_idle_timeout в PgBouncer.
+      doc: |
+        Close a server connection that has been idle (not checked out by any client) longer than this value.
+        Only applies to connections that have served at least one client request. Prewarmed or replenished
+        connections that were never checked out are not subject to `idle_timeout` — they are only closed
+        when `server_lifetime` expires. Each connection gets ±20% jitter to prevent synchronized mass closures.
+        Set to `0` to disable. Similar to PgBouncer's `server_idle_timeout`.
       default: "600000 (10 min)"
 
     server_lifetime:
       config:
-        en: "Server lifetime. Only applied to idle connections."
-        ru: "Время жизни серверного соединения. Применяется только к простаивающим соединениям."
-      doc: "Server lifetime in milliseconds."
+        en: |
+          Maximum age of a server connection. Closed when idle, not mid-transaction.
+          Applies to all connections including prewarmed ones that were never used.
+          Set to 0 to disable. Similar to PgBouncer's server_lifetime.
+        ru: |
+          Максимальный возраст серверного соединения. Закрывается в момент простоя, не посреди транзакции.
+          Действует на все соединения, включая prewarm-соединения, которые ни разу не использовались.
+          0 — отключено. Аналог server_lifetime в PgBouncer.
+      doc: |
+        Maximum age of a server connection. When a connection exceeds this age and becomes idle,
+        it is closed during the next retain cycle. Active transactions are not interrupted.
+        Applies to all connections, including prewarmed ones that were never checked out by a client.
+        Each connection gets ±20% jitter to prevent thundering herd. Set to `0` to disable.
+        Similar to PgBouncer's `server_lifetime`.
       default: "1200000 (20 min)"
 
     retain_connections_time:
@@ -366,10 +392,10 @@ fields:
 
     shutdown_timeout:
       config:
-        en: "Graceful shutdown timeout."
-        ru: "Таймаут корректного завершения работы."
-      doc: "With a graceful shutdown, we wait for transactions to be completed within this time limit (10 seconds)."
-      default: "10000"
+        en: "Time to wait for active transactions to finish during graceful shutdown."
+        ru: "Время ожидания завершения активных транзакций при корректном завершении работы."
+      doc: "During graceful shutdown (SIGTERM), pg_doorman waits up to this long for in-flight transactions to complete before forcibly closing connections."
+      default: "10000 (10 sec)"
 
     proxy_copy_data_timeout:
       config:
@@ -391,16 +417,16 @@ fields:
 
     tcp_keepalives_interval:
       config:
-        en: ""
-        ru: ""
-      doc: "TCP keepalive interval in seconds."
+        en: "Interval between TCP keepalive probes (seconds)."
+        ru: "Интервал между TCP keepalive пробами (секунды)."
+      doc: "Interval in seconds between individual TCP keepalive probes after the initial idle period (`tcp_keepalives_idle`) has passed."
       default: "5"
 
     tcp_keepalives_count:
       config:
-        en: ""
-        ru: ""
-      doc: "Keepalive enabled by default and overwrite OS defaults."
+        en: "Number of failed TCP keepalive probes before closing the connection."
+        ru: "Количество неудачных TCP keepalive проб перед закрытием соединения."
+      doc: "Number of unacknowledged TCP keepalive probes before the connection is considered dead and closed."
       default: "5"
 
     tcp_so_linger:
@@ -531,15 +557,16 @@ fields:
     max_memory_usage:
       config:
         en: |
-          Maximum memory usage for internal buffers.
-          If exceeded, clients receive an error.
+          Memory limit for in-flight query buffers across all connections.
+          When exceeded, new queries are rejected with an error until memory drops below the limit.
         ru: |
-          Максимальное использование памяти для внутренних буферов.
-          При превышении клиенты получат ошибку.
+          Лимит памяти для буферов активных запросов по всем соединениям.
+          При превышении новые запросы отклоняются с ошибкой, пока память не снизится.
       doc: |
-        We calculate the total amount of memory used by the internal buffers for all current queries.
-        If the limit is reached, the client will receive an error (256 MB).
-      default: "268435456"
+        Total memory budget for internal buffers holding in-flight query data across all client connections.
+        When this limit is reached, pg_doorman rejects new queries with an error until existing queries complete
+        and free their buffers. Protects the pooler process from OOM under heavy load or large result sets.
+      default: "268435456 (256 MB)"
 
     log_client_connections:
       config:
@@ -571,18 +598,16 @@ fields:
     worker_threads:
       config:
         en: |
-          Number of worker threads for async client handling.
-          More workers = better performance, up to CPU count.
+          Tokio worker threads for handling client connections.
+          Set to CPU core count for best throughput. Exceeding core count gives no benefit.
         ru: |
-          Количество рабочих потоков для асинхронной обработки клиентов.
-          Больше воркеров = выше производительность, но не больше числа CPU.
+          Tokio worker-потоки для обслуживания клиентских соединений.
+          Для лучшей пропускной способности установите равным числу CPU-ядер. Больше ядер — бессмысленно.
       doc: |
-        The number of worker processes (posix threads) that async serve clients, which affects the performance of pg_doorman.
-        The more workers there are, the faster the system works, but only up to a certain limit (cpu count).
-
-        This parameter also controls the number of shards in internal concurrent hash maps (DashMap).
-        The shard count is calculated as `worker_threads * 4` rounded up to the nearest power of 2 (minimum 4 shards).
-        This is important for Kubernetes deployments where CPU count detection may be incorrect, causing unnecessary overhead.
+        Number of Tokio runtime worker threads (OS threads) for serving client connections.
+        Performance scales linearly up to the number of CPU cores.
+        Also determines the shard count for internal concurrent hash maps (`worker_threads * 4`, rounded to nearest power of 2, minimum 4).
+        In Kubernetes, set this explicitly — automatic CPU detection may report the host's cores instead of the container's limit.
       default: "4"
 
     worker_cpu_affinity_pinning:
@@ -646,51 +671,68 @@ fields:
     server_round_robin:
       config:
         en: |
-          Server selection strategy in transaction pool mode.
-          false = LRU (Least Recently Used) - better performance
-          true = Round Robin
+          Server selection strategy in transaction mode.
+          false = LRU (reuse most recent connection) — better cache locality
+          true  = Round Robin (rotate across connections) — more even load
         ru: |
-          Стратегия выбора сервера в режиме пула транзакций.
-          false = LRU (наименее недавно использованный) — лучшая производительность
-          true = Round Robin
+          Стратегия выбора серверного соединения в транзакционном режиме.
+          false = LRU (повторное использование последнего) — лучше кеш-локальность
+          true  = Round Robin (ротация по соединениям) — равномернее нагрузка
       doc: |
-        In transactional pool mode, we can choose whether the last free server backend will be used or the next one will be selected.
-        By default, the LRU (Least Recently Used) method is used, which has a positive impact on performance.
+        Controls which idle server connection is picked for the next transaction.
+        `false` (LRU): reuses the most recently returned connection. Keeps fewer connections hot, better for PostgreSQL shared buffer locality.
+        `true` (Round Robin): rotates across all idle connections evenly.
+        Similar to PgBouncer's `server_round_robin`.
       default: "false"
 
     sync_server_parameters:
       config:
         en: |
-          Sync server parameters (SET commands, application_name) across backends.
-          Disabled by default due to performance impact.
-          Consider using pool-level application_name instead.
+          Track and replay a subset of session parameters on each new backend in transaction mode.
+          Tracked parameters: client_encoding, DateStyle, TimeZone, standard_conforming_strings, application_name.
+          Adds a SET roundtrip per checkout. Disabled by default.
+          If you only need application_name, use the pool-level application_name setting instead.
         ru: |
-          Синхронизировать серверные параметры (SET, application_name) между бэкендами.
-          Отключено по умолчанию из-за влияния на производительность.
-          Рекомендуется использовать application_name на уровне пула.
+          Отслеживать и воспроизводить подмножество параметров сессии на каждом новом бэкенде в транзакционном режиме.
+          Отслеживаемые параметры: client_encoding, DateStyle, TimeZone, standard_conforming_strings, application_name.
+          Добавляет SET-запрос при каждом checkout. Отключено по умолчанию.
+          Если нужен только application_name, используйте настройку application_name на уровне пула.
       doc: |
-        If enabled, we strive to restore the parameters (via query `SET`) that were set by the client (and application_name)
-        in transaction mode in other server backends. By default, this is disabled (false) due to performance.
-        If you need to know `application_name`, but don't want to experience performance issues due to constant server queries `SET`,
-        you can consider creating a separate pool for each application and using the `application_name` parameter in the `pool` settings.
+        In transaction mode, each transaction may land on a different backend. With `sync_server_parameters = true`,
+        pg_doorman tracks changes to a fixed set of session parameters and replays them via SET on each new backend
+        before executing the transaction. Tracked parameters: `client_encoding`, `DateStyle`, `TimeZone`,
+        `standard_conforming_strings`, `application_name`. Other SET commands (e.g., `statement_timeout`, `work_mem`)
+        are NOT tracked. This costs one extra roundtrip per checkout. If you only need `application_name` visibility
+        in `pg_stat_activity`, use the pool-level `application_name` setting instead.
       default: "false"
 
     message_size_to_be_stream:
       config:
-        en: "Data responses larger than this value are transmitted in chunks."
-        ru: "Ответы данных больше этого значения передаются частями (потоково)."
+        en: |
+          DataRow messages larger than this threshold are streamed to the client in small chunks
+          instead of being buffered entirely in memory. Prevents memory spikes on large rows.
+        ru: |
+          DataRow-сообщения, превышающие этот порог, передаются клиенту потоково малыми частями
+          вместо полной буферизации в памяти. Предотвращает пики памяти на больших строках.
       doc: |
-        Data responses from the server (message type 'D') greater than this value will be
-        transmitted through the proxy in small chunks (1 MB).
-      default: "1048576"
+        When a PostgreSQL DataRow message exceeds this threshold, pg_doorman switches to streaming mode:
+        data is forwarded to the client in 4 KB chunks instead of buffering the entire message.
+        This prevents OOM on queries that return very large rows (e.g., tables with big `bytea`/`text` columns).
+        The threshold itself defaults to 1 MB.
+      default: "1048576 (1 MB)"
 
     pooler_check_query:
       config:
-        en: "Query that won't be sent to server (used for connection health checks)."
-        ru: "Запрос, который не отправляется на сервер (для проверки живости соединения)."
+        en: |
+          Query intercepted by pg_doorman and answered locally (never reaches PostgreSQL).
+          Used by load balancers and monitoring to check if the pooler is alive.
+        ru: |
+          Запрос, перехватываемый pg_doorman и отвечаемый локально (не доходит до PostgreSQL).
+          Используется балансировщиками и мониторингом для проверки живости пулера.
       doc: |
-        This query will not be sent to the server if it is run as a SimpleQuery.
-        It can be used to check the connection at the application level.
+        When a client sends this exact query as a SimpleQuery, pg_doorman responds immediately
+        without forwarding it to PostgreSQL. Useful for health checks from load balancers (HAProxy, pgbouncer-style `SELECT 1`)
+        or application-level keepalive probes. The default `;` (empty statement) is the lightest possible check.
       default: '";"'
 
     prepared_statements:
@@ -955,16 +997,18 @@ fields:
     pool_mode:
       config:
         en: |
-          Pooling mode:
-          - "transaction" : Server released after each transaction (recommended)
-          - "session"     : Server released when client disconnects
+          Pooling mode (same semantics as PgBouncer):
+          - "transaction" : backend released after each transaction (recommended for most workloads)
+          - "session"     : backend held for the entire client session
         ru: |
-          Режим пулинга:
-          - "transaction" : Сервер освобождается после каждой транзакции (рекомендуется)
-          - "session"     : Сервер освобождается при отключении клиента
+          Режим пулинга (аналогично PgBouncer):
+          - "transaction" : бэкенд освобождается после каждой транзакции (рекомендуется)
+          - "session"     : бэкенд удерживается на всю клиентскую сессию
       doc: |
-        * `session` — Server is released back to pool after client disconnects.
-        * `transaction` — Server is released back to pool after transaction finishes.
+        Controls when a backend connection is returned to the pool.
+        `transaction`: connection is released after each transaction completes. Multiple clients share backends, giving higher connection efficiency. SET commands, prepared statements, and advisory locks do not persist between transactions (use `cleanup_server_connections` and `sync_server_parameters` to control this).
+        `session`: connection is held for the entire client session. The client always talks to the same backend, so session-level state (temp tables, SET, LISTEN/NOTIFY) works as expected. Lower connection efficiency — each connected client occupies one backend.
+        Same semantics as PgBouncer's `pool_mode`.
       default: '"transaction"'
 
     connect_timeout:
@@ -990,9 +1034,23 @@ fields:
 
     cleanup_server_connections:
       config:
-        en: "Clean up server connections (reset state) when returning to pool."
-        ru: "Очищать серверные соединения (сброс состояния) при возврате в пул."
-      doc: "When enabled, the pool will automatically clean up server connections that are no longer needed. This helps manage resources efficiently by closing idle connections."
+        en: |
+          Reset server connection state when returning to pool.
+          Runs: RESET ROLE, RESET ALL (if SET was used), DEALLOCATE ALL (if PREPARE was used),
+          CLOSE ALL (if cursors were opened), ROLLBACK (if in transaction).
+          Prevents session state leaking between clients in transaction mode.
+        ru: |
+          Сбрасывать состояние серверного соединения при возврате в пул.
+          Выполняет: RESET ROLE, RESET ALL (если был SET), DEALLOCATE ALL (если был PREPARE),
+          CLOSE ALL (если были курсоры), ROLLBACK (если в транзакции).
+          Предотвращает утечку состояния сессии между клиентами в транзакционном режиме.
+      doc: |
+        When a server connection is returned to the pool, pg_doorman runs cleanup queries to restore it
+        to a clean state. The cleanup is conditional — only the needed statements are executed:
+        `RESET ROLE` (always), `RESET ALL` (if client used SET), `DEALLOCATE ALL` (if client used PREPARE),
+        `CLOSE ALL` (if client opened cursors), and `ROLLBACK` (if a transaction was in progress).
+        This prevents one client's session state from affecting the next client. Disable only if your
+        application never uses SET, prepared statements, or cursors and you want to save the cleanup roundtrip.
       default: "true"
 
     prepared_statements_cache_size:
@@ -1039,40 +1097,43 @@ fields:
   user:
     username:
       config:
-        en: "Username for client authentication."
-        ru: "Имя пользователя для аутентификации клиента."
-      doc: "A virtual username who can connect to this virtual database (pool)."
+        en: "Username for client authentication. Clients connect with this name."
+        ru: "Имя пользователя для аутентификации. Клиенты подключаются с этим именем."
+      doc: "The username that clients use to connect to this pool. Must be unique within the pool."
 
     password:
       config:
         en: |
-          Password for client authentication.
-          Supported formats:
+          Password hash or JWT key path for client authentication.
+          Formats:
           - MD5: "md5" + md5(password + username)
           - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
           - JWT public key: "jwt-pkey-fpath:/path/to/public.pem"
 
           Generate MD5: echo -n "passwordusername" | md5sum
-          Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+          Copy from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
         ru: |
-          Пароль для аутентификации клиента.
-          Поддерживаемые форматы:
+          Хеш пароля или путь к JWT-ключу для аутентификации клиента.
+          Форматы:
           - MD5: "md5" + md5(пароль + имя_пользователя)
           - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
           - JWT: "jwt-pkey-fpath:/path/to/public.pem"
 
           Сгенерировать MD5: echo -n "парольимяпользователя" | md5sum
-          Получить из PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+          Скопировать из PostgreSQL: SELECT usename, passwd FROM pg_shadow;
       doc: |
-        The password for the virtual pool user.
-        Password can be specified in `MD5`, `SCRAM-SHA-256`, or `JWT` format.
-        Also, you can create a mirror list of users using secrets from the PostgreSQL instance: `select usename, passwd from pg_shadow`.
+        Password verifier for client authentication. Supports MD5, SCRAM-SHA-256, and JWT formats.
+        You can copy password hashes directly from PostgreSQL: `SELECT usename, passwd FROM pg_shadow`.
 
     pool_size:
       config:
-        en: "Maximum connections to PostgreSQL for this user."
-        ru: "Максимальное количество соединений с PostgreSQL для этого пользователя."
-      doc: "The maximum number of simultaneous connections to the PostgreSQL server available for this pool and user."
+        en: |
+          Max backend connections to PostgreSQL for this user.
+          Similar to PgBouncer's default_pool_size but set per-user.
+        ru: |
+          Максимум серверных соединений с PostgreSQL для этого пользователя.
+          Аналог default_pool_size в PgBouncer, но задаётся для каждого пользователя.
+      doc: "Maximum number of backend connections to PostgreSQL for this user. In transaction mode, connections are shared across clients, so this is usually much less than the number of clients. Similar to PgBouncer's `default_pool_size`, but configured per-user rather than globally."
       default: "40"
 
     min_pool_size:
@@ -1187,9 +1248,17 @@ fields:
 
     workers:
       config:
-        en: "Number of executor connections (for running auth queries, not data connections)."
-        ru: "Количество соединений-исполнителей (для auth-запросов, не для данных)."
-      doc: "Number of executor connections (connections used to run auth queries, not data connections)."
+        en: |
+          How many persistent connections to PostgreSQL are used for running auth queries.
+          These connections only execute the auth_query SQL, not client data traffic.
+        ru: |
+          Сколько постоянных соединений с PostgreSQL используется для выполнения auth-запросов.
+          Эти соединения выполняют только auth_query SQL, а не клиентский трафик данных.
+      doc: |
+        Number of persistent connections to PostgreSQL dedicated to running the `auth_query` SQL.
+        These connections are opened at startup and kept alive. They handle credential lookups only —
+        client data traffic goes through separate data pool connections (`pool_size`).
+        Increase if you see auth latency spikes under high connection rates.
       default: "2"
 
     server_user:
@@ -1214,9 +1283,19 @@ fields:
 
     pool_size:
       config:
-        en: "Pool size for dynamic user data connections."
-        ru: "Размер пула для соединений данных динамических пользователей."
-      doc: "Pool size for dynamic user data connections (per-user in passthrough mode, shared in dedicated mode)."
+        en: |
+          Max backend connections for dynamic user data traffic.
+          In passthrough mode: per-user limit. In dedicated mode (server_user is set): shared limit.
+          Same meaning as users[].pool_size for static pools.
+        ru: |
+          Максимум серверных соединений для данных динамических пользователей.
+          В passthrough-режиме: лимит на пользователя. В dedicated-режиме (server_user задан): общий лимит.
+          Аналог users[].pool_size для статических пулов.
+      doc: |
+        Maximum number of backend connections for client data traffic created by auth_query.
+        In passthrough mode (no `server_user`), each dynamic user gets their own pool of this size.
+        In dedicated mode (`server_user` is set), all dynamic users share one pool of this size.
+        This is the same concept as `users[].pool_size` for statically defined users.
       default: "40"
 
     min_pool_size:

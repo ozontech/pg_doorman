@@ -64,23 +64,29 @@ general:
   # Connection Timeouts
   # --------------------------------------------------------------------------
 
-  # Connection timeout to server.
+  # Timeout for establishing a new connection to PostgreSQL. Similar to PgBouncer's server_connect_timeout.
   # Supports human-readable format: "3s", "3000ms", or 3000 (milliseconds)
   # Default: "3s" (3000 ms)
   connect_timeout: "3s"
 
-  # Maximum time to wait for a query to complete.
-  # Analog of query_wait_timeout in PgBouncer.
+  # How long a client waits for a server connection before getting an error.
+  # Applies when all connections in the pool are busy.
+  # Similar to PgBouncer's query_wait_timeout.
   # Supports human-readable format: "5s", "5000ms", or 5000 (milliseconds)
   # Default: "5s" (5000 ms)
   query_wait_timeout: "5s"
 
-  # Server idle timeout.
+  # Close a server connection that has been idle longer than this.
+  # Only applies to connections that served at least one client request.
+  # Prewarmed connections that were never used are not affected (use server_lifetime for those).
+  # Set to 0 to disable. Similar to PgBouncer's server_idle_timeout.
   # Supports human-readable format: "10m", "600000ms", or 600000 (milliseconds)
   # Default: "10m" (600000 ms)
   idle_timeout: "10m"
 
-  # Server lifetime. Only applied to idle connections.
+  # Maximum age of a server connection. Closed when idle, not mid-transaction.
+  # Applies to all connections including prewarmed ones that were never used.
+  # Set to 0 to disable. Similar to PgBouncer's server_lifetime.
   # Supports human-readable format: "20m", "1200000ms", or 1200000 (milliseconds)
   # Default: "20m" (1200000 ms)
   server_lifetime: "20m"
@@ -103,7 +109,7 @@ general:
   # Default: "60s"
   server_idle_check_timeout: "60s"
 
-  # Graceful shutdown timeout.
+  # Time to wait for active transactions to finish during graceful shutdown.
   # Supports human-readable format: "10s", "10000ms", or 10000 (milliseconds)
   # Default: "10s" (10000 ms)
   shutdown_timeout: "10s"
@@ -160,8 +166,8 @@ general:
   # Default: 4
   max_concurrent_creates: 4
 
-  # Maximum memory usage for internal buffers.
-  # If exceeded, clients receive an error.
+  # Memory limit for in-flight query buffers across all connections.
+  # When exceeded, new queries are rejected with an error until memory drops below the limit.
   # Supports human-readable format: "256MB", "256M", or 268435456 (bytes)
   # Default: "256MB" (268435456 bytes)
   max_memory_usage: "256MB"
@@ -208,8 +214,8 @@ general:
   # Worker Settings
   # --------------------------------------------------------------------------
 
-  # Number of worker threads for async client handling.
-  # More workers = better performance, up to CPU count.
+  # Tokio worker threads for handling client connections.
+  # Set to CPU core count for best throughput. Exceeding core count gives no benefit.
   # Default: 4
   worker_threads: 4
 
@@ -242,24 +248,27 @@ general:
   # Pool Behavior
   # --------------------------------------------------------------------------
 
-  # Server selection strategy in transaction pool mode.
-  # false = LRU (Least Recently Used) - better performance
-  # true = Round Robin
+  # Server selection strategy in transaction mode.
+  # false = LRU (reuse most recent connection) — better cache locality
+  # true  = Round Robin (rotate across connections) — more even load
   # Default: false
   server_round_robin: false
 
-  # Sync server parameters (SET commands, application_name) across backends.
-  # Disabled by default due to performance impact.
-  # Consider using pool-level application_name instead.
+  # Track and replay a subset of session parameters on each new backend in transaction mode.
+  # Tracked parameters: client_encoding, DateStyle, TimeZone, standard_conforming_strings, application_name.
+  # Adds a SET roundtrip per checkout. Disabled by default.
+  # If you only need application_name, use the pool-level application_name setting instead.
   # Default: false
   sync_server_parameters: false
 
-  # Data responses larger than this value are transmitted in chunks.
+  # DataRow messages larger than this threshold are streamed to the client in small chunks
+  # instead of being buffered entirely in memory. Prevents memory spikes on large rows.
   # Supports human-readable format: "1MB", "1M", or 1048576 (bytes)
   # Default: "1MB" (1048576 bytes)
   message_size_to_be_stream: "1MB"
 
-  # Query that won't be sent to server (used for connection health checks).
+  # Query intercepted by pg_doorman and answered locally (never reaches PostgreSQL).
+  # Used by load balancers and monitoring to check if the pooler is alive.
   # Default: ";"
   pooler_check_query: ";"
 
@@ -456,9 +465,9 @@ pools:
     # Pool Settings
     # --------------------------------------------------------------------------
 
-    # Pooling mode:
-    # - "transaction" : Server released after each transaction (recommended)
-    # - "session"     : Server released when client disconnects
+    # Pooling mode (same semantics as PgBouncer):
+    # - "transaction" : backend released after each transaction (recommended for most workloads)
+    # - "session"     : backend held for the entire client session
     # Default: "transaction"
     pool_mode: "transaction"
 
@@ -471,7 +480,10 @@ pools:
     # Override global server_lifetime for this pool (in milliseconds).
     # server_lifetime: 300000
 
-    # Clean up server connections (reset state) when returning to pool.
+    # Reset server connection state when returning to pool.
+    # Runs: RESET ROLE, RESET ALL (if SET was used), DEALLOCATE ALL (if PREPARE was used),
+    # CLOSE ALL (if cursors were opened), ROLLBACK (if in transaction).
+    # Prevents session state leaking between clients in transaction mode.
     # Default: true
     cleanup_server_connections: true
 
@@ -512,17 +524,18 @@ pools:
         # Username for client authentication.
       - username: "app_user"
 
-      # Password for client authentication.
-      # Supported formats:
+      # Password hash or JWT key path for client authentication.
+      # Formats:
       # - MD5: "md5" + md5(password + username)
       # - SCRAM-SHA-256: "SCRAM-SHA-256$iterations:salt$StoredKey:ServerKey"
       # - JWT public key: "jwt-pkey-fpath:/path/to/public.pem"
       #
       # Generate MD5: echo -n "passwordusername" | md5sum
-      # Get from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
+      # Copy from PostgreSQL: SELECT usename, passwd FROM pg_shadow;
         password: "md5dd9a0f26a4302744db881776a09bbfad"
 
-      # Maximum connections to PostgreSQL for this user.
+      # Max backend connections to PostgreSQL for this user.
+      # Similar to PgBouncer's default_pool_size but set per-user.
       # Default: 40
         pool_size: 40
 
