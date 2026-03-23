@@ -29,6 +29,16 @@
           ...
         }:
         let
+          # Static OpenSSL overlay — rebuilds OpenSSL with static libs (.a)
+          # for fully static glibc release builds
+          opensslStaticOverlay = final: prev: {
+            openssl-static = prev.openssl.overrideAttrs (old: {
+              pname = "openssl-static";
+              configureFlags = old.configureFlags ++ [ "no-shared" ];
+              # no-shared produces only .a files
+            });
+          };
+
           # Odyssey overlay to fix build issues
           # Use PostgreSQL 14 to avoid compatibility issues with newer PostgreSQL versions
           odysseyOverlay = final: prev: 
@@ -71,6 +81,7 @@
             overlays = [
               (import inputs.rust-overlay)
               odysseyOverlay
+              opensslStaticOverlay
             ];
             config = {
               allowUnfree = true;
@@ -134,6 +145,15 @@
             gnumake
             cmake
             git
+
+            # Static linking dependencies (for fully static glibc release builds).
+            # PG_DOORMAN_STATIC=1 cargo build --release produces a fully static binary.
+            glibc.static
+            zlib.static
+            openssl-static
+            stdenv.cc.cc.lib  # libgcc
+            perl
+            file
 
             # Additional build tools
             cacert
@@ -266,6 +286,8 @@ EOF
                 "OPENSSL_DIR=${pkgs.openssl.dev}"
                 "OPENSSL_LIB_DIR=${pkgs.openssl.out}/lib"
                 "OPENSSL_INCLUDE_DIR=${pkgs.openssl.dev}/include"
+                "OPENSSL_STATIC_LIB_DIR=${pkgs.openssl-static.out}/lib"
+                "OPENSSL_STATIC_INCLUDE_DIR=${pkgs.openssl-static.dev}/include"
                 "PATH=/root/.cargo/bin:/root/go/bin:/root/.npm-global/bin:${pkgs.lib.makeBinPath runtimePackages}:/bin:/usr/bin"
                 "LANG=C.UTF-8"
                 "LC_ALL=C.UTF-8"
