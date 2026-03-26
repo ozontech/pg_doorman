@@ -409,6 +409,19 @@ pub async fn abort_session_tcp_connection(world: &mut DoormanWorld, session_name
     conn.abort_connection().await;
 }
 
+#[when(regex = r#"^we abort TCP connection with RST for session "([^"]+)"$"#)]
+pub async fn abort_session_tcp_connection_with_rst(
+    world: &mut DoormanWorld,
+    session_name: String,
+) {
+    let conn = world
+        .named_sessions
+        .remove(&session_name)
+        .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+
+    conn.abort_connection_with_rst().await;
+}
+
 #[then(regex = r#"^session "([^"]+)" should receive DataRow with "([^"]+)"$"#)]
 pub async fn session_should_receive_datarow(
     world: &mut DoormanWorld,
