@@ -1,163 +1,101 @@
 # Pipeline disconnect: server connection corruption research
 
-## Overview
+## Proven bug
 
-Client sends a large query, kills TCP socket (RST) mid-transfer. Next client on the same
-server connection gets protocol violation. Four separate code paths contribute to the problem.
-
-## BUG-1: `handle_large_data_row` bypasses response reordering
-
-**Status: reproduced 100%**
-
-### Code trace
-
-When `message_size_to_be_stream` is low (e.g. 2048), DataRow messages larger than the threshold
-go through `handle_large_data_row` (protocol_io.rs:102-146). This function writes `server.buffer`
-directly to the client socket (line 116), bypassing `reorder_parse_complete_responses`
-(transaction.rs:976).
-
-Normal path:
+Client sends `SELECT $1` with ~4MB text parameter, kills TCP socket (RST) after reading
+first row. Next client on the same server connection gets:
 ```
-recv() → buffer messages → return buffer
-  → execute_server_roundtrip → reorder_parse_complete_responses → write to client
+Received backend message BindComplete while expecting ParseCompleteMessage. Please file a bug.
 ```
 
-Streaming path:
+Reproduces 100% at `message_size_to_be_stream` <= 64KB. Does NOT reproduce at default 1MB.
+
+## Root cause (verified with DEBUG logs)
+
+Two things happen together:
+
+### 1. Fast-release returns server to pool before pg_doorman detects client death
+
+With low `message_size_to_be_stream` (2-64KB), `handle_large_data_row` streams the 4MB
+DataRow directly to client. On localhost TCP buffers absorb the data — streaming succeeds.
+`recv()` returns Ok. Roundtrip loop reads remaining small messages (CommandComplete,
+ReadyForQuery). Fast-release triggers: server returned to pool.
+
+**Only after that**, pg_doorman tries to read the next message from client (transaction.rs:543).
+Client is dead → `UnexpectedEof`. Error goes through `process_error` → server already in pool.
+
+With default 1MB threshold, streaming takes longer (same 4MB DataRow, but different buffering).
+Client's RST is detected **during** streaming → `BrokenPipe` during `write_all_flush` →
+`mark_bad` → server NOT returned to pool.
+
+**Debug log proof:**
+- 2KB: `Error reading message code from socket - UnexpectedEof` (read from client, not write)
+- 1MB: `Error writing to socket: BrokenPipe` (write to client during streaming)
+
+### 2. `handle_large_data_row` writes `server.buffer` directly to client, bypassing response reordering
+
+`handle_large_data_row` (protocol_io.rs:112-116) writes `server.buffer` to client socket.
+This buffer may contain accumulated messages (BindComplete, RowDescription) that should go
+through `reorder_parse_complete_responses` (transaction.rs:976) to insert synthetic
+ParseComplete for cached/skipped Parse operations.
+
+When Client B connects to the same server connection (pool_size=1), pg_doorman's prepared
+statement cache has DOORMAN_0 from Client A. Client B's Parse is skipped → synthetic
+ParseComplete should be inserted. But `handle_large_data_row` sends BindComplete to client
+before reordering happens → protocol violation.
+
+**Debug log proof:**
 ```
-recv() → buffer messages → encounter large DataRow
-  → handle_large_data_row → write_all_flush(client, server.buffer) ← BYPASSES REORDER
-  → stream DataRow payload directly
-```
-
-If Parse was skipped (prepared statement cache hit), the buffer contains BindComplete without
-a synthetic ParseComplete. Client receives BindComplete when it expects ParseComplete.
-
-### Affected code
-
-- `src/server/protocol_io.rs:381-385` — recv calls handle_large_data_row
-- `src/server/protocol_io.rs:112-116` — handle_large_data_row writes buffer directly
-- `src/client/transaction.rs:970-977` — reorder_parse_complete_responses (never reached)
-
-### Reproduction
-
-Config: `message_size_to_be_stream = 2048`, `pool_size = 1`, `prepared_statements = true`
-Client: Npgsql with ~4MB text parameter, kill socket after reading first row.
-
----
-
-## BUG-2: Write error swallowed in non-async/non-copy mode
-
-**Status: needs test**
-
-### Code trace
-
-In `execute_server_roundtrip` (transaction.rs:1010-1024):
-
-```rust
-if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
-    server.wait_available().await;
-    if server.is_async() || server.in_copy_mode() {
-        server.mark_bad(...);
-        return Err(err_write);
-    }
-    // error swallowed, loop continues
-}
-```
-
-For non-async, non-copy connections: write error is logged, `wait_available()` drains some data,
-but the error is **not returned** and the server is **not marked bad**. The loop continues to
-the `is_data_available()` check (line 1029) and may break or continue.
-
-### Risk
-
-If `wait_available()` doesn't drain all pending data (server still processing, network latency),
-the connection returns to pool with partial response data in server's BufStream.
-
-### Affected code
-
-- `src/client/transaction.rs:1010-1024` — write error handling
-- `src/server/server_backend.rs:265-285` — wait_available relies on data_available flag
-
----
-
-## BUG-3: Async mode connections skip `checkin_cleanup`
-
-**Status: needs test**
-
-### Code trace
-
-At transaction end (transaction.rs:879-881):
-
-```rust
-} else if !server.is_async() {
-    server.checkin_cleanup().await?;
-}
+Parse skipped for `DOORMAN_0` (already on server), will insert ParseComplete later
+PROTOCOL WARNING: Server has pending operations from previous client: 1xParse,1xBind,1xDescribe
+Reordering responses: operations=4, skipped_parses=1  ← reordering runs, but TOO LATE
 ```
 
-When `server.is_async() == true`, `checkin_cleanup()` is skipped. The server returns to pool
-without checking:
-- `is_data_available()` — may have pending data
-- `buffer.is_empty()` — may have buffered messages
-- `in_transaction()` — may need ROLLBACK
-- `cleanup_state` — may need RESET ALL
+## Affected code
 
-Additionally, `async_mode` and `expected_responses` fields are not reset, potentially corrupting
-the next client's response counting.
+| File | Lines | What |
+|------|-------|------|
+| `src/server/protocol_io.rs` | 112-116 | `handle_large_data_row` writes buffer directly to client |
+| `src/server/protocol_io.rs` | 381-385 | `recv()` calls `handle_large_data_row` with accumulated buffer |
+| `src/client/transaction.rs` | 996-1006 | fast-release: server to pool before write to client |
+| `src/client/transaction.rs` | 891-895 | deferred write after server release |
+| `src/client/transaction.rs` | 543-545 | client read error after server already released |
+| `src/client/transaction.rs` | 970-977 | `reorder_parse_complete_responses` — runs too late |
 
-### Affected code
+## Sequence of events
 
-- `src/client/transaction.rs:879-881` — conditional cleanup
-- `src/server/server_backend.rs:332-404` — checkin_cleanup checks
-
----
-
-## BUG-4: Fast-release returns server before client write
-
-**Status: needs test**
-
-### Code trace
-
-Fast-release path (transaction.rs:996-1006):
-
-```rust
-if can_fast_release && !server.is_data_available() && ... {
-    self.client_last_messages_in_tx.put(&response[..]);
-    break;  // server released to pool here (Drop)
-}
+### Client A (first query, Parse NOT skipped)
+```
+1. Parse("", "SELECT $1") → DOORMAN_0, server cache miss → Parse sent to server
+2. Server responds: ParseComplete + BindComplete + RowDescription + DataRow(4MB) + ...
+3. recv() buffers ParseComplete, BindComplete, RowDescription
+4. DataRow > threshold → handle_large_data_row
+5. Streams 4MB to client → TCP buffer absorbs → Ok
+6. recv() reads CommandComplete, ReadyForQuery
+7. Fast-release → server to pool (CLEAN from PostgreSQL perspective)
+8. write_all_flush to client → Ok (still in TCP buffer)
+9. Client reads row, kills socket (RST)
+10. Next read from client → UnexpectedEof → process_error
+11. Server already in pool with DOORMAN_0 cached
 ```
 
-Server is released (line 889 via Drop of `Object<Server>`). Then:
-
-```rust
-// line 891-895: server already in pool
-if !self.client_last_messages_in_tx.is_empty() {
-    write_all_flush(&mut self.write, &self.client_last_messages_in_tx).await?;
-}
+### Client B (second query, Parse SKIPPED)
+```
+1. Parse("", "SELECT $1") → DOORMAN_0, server cache HIT → Parse SKIPPED
+2. pg_doorman sends: Bind(DOORMAN_0) + Describe + Execute + Sync (no Parse!)
+3. Server responds: BindComplete + RowDescription + DataRow(4MB) + ...
+4. recv() buffers BindComplete, RowDescription
+5. DataRow > threshold → handle_large_data_row
+6. Line 116: write_all_flush(client, [BindComplete + RowDescription + DataRow_header])
+7. Client receives BindComplete BEFORE synthetic ParseComplete
+8. Protocol violation: "BindComplete while expecting ParseCompleteMessage"
 ```
 
-If client is dead (RST), write fails, error propagates via `?`. Server is already in pool.
-From PostgreSQL's perspective the connection is clean (ReadyForQuery received). But pg_doorman's
-prepared statement cache state may be stale — the server has prepared statements that pg_doorman
-will try to skip Parse for on the next client.
+## Fix direction
 
-### Risk
+The core fix: `handle_large_data_row` must not write accumulated buffer directly to client.
+Instead, when buffer is non-empty, return it from `recv()` for processing through
+`reorder_parse_complete_responses`. Stream the large DataRow on the next `recv()` call.
 
-Theoretical: if the next client sends the same query, pg_doorman skips Parse (cache hit),
-sends Bind/Execute. Server responds with BindComplete. If pg_doorman's reorder logic has
-any issue with the new client's state vs the cached server state, protocol violation.
-
-### Affected code
-
-- `src/client/transaction.rs:996-1006` — fast release
-- `src/client/transaction.rs:891-895` — deferred write
-
----
-
-## Common factors
-
-All four bugs share a common theme: **the code assumes that if data was successfully read from
-the server, it will be successfully written to the client.** When the client dies mid-transfer,
-this assumption breaks and various invariants are violated.
-
-The streaming path (BUG-1) is the most severe because it bypasses the response reordering
-that inserts synthetic protocol messages for cached prepared statements.
+Secondary: when fast-release returns server to pool, and the subsequent client write fails,
+the server connection must be invalidated (mark_bad) retroactively.
