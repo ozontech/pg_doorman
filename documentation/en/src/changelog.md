@@ -4,6 +4,8 @@
 
 **Bug Fixes:**
 
+- **Log spam from missing `/proc/net/tcp6` when IPv6 disabled.** `get_socket_states_count` failed entirely if any of the three /proc files was absent, logging errors every 15 seconds and losing tcp/unix metrics that were available. Missing files are now skipped — counters stay at zero. Other I/O errors (permission denied) still propagate.
+
 - **Protocol violation when streaming large DataRow with cached prepared statements.** `handle_large_data_row` wrote accumulated protocol messages (BindComplete, RowDescription) directly to the client socket, bypassing `reorder_parse_complete_responses`. When Parse was skipped (prepared statement cache hit), the client received BindComplete without the synthetic ParseComplete — causing `Received backend message BindComplete while expecting ParseCompleteMessage` in Npgsql and similar drivers. Triggered when `message_size_to_be_stream` ≤ 64KB. Fixed by returning accumulated messages from `recv()` before entering the streaming path, so response reordering runs first. Same fix applied to `handle_large_copy_data`.
 
 ### 3.3.2 <small>Mar 1, 2026</small>
