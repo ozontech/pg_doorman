@@ -332,31 +332,22 @@ pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoE
     }
 
     // match inodes with tcp connections in /proc/<pid>/net/tcp
-    let tcp_path = format!("/proc/{pid}/net/tcp");
-    if Path::new(&tcp_path).exists() {
-        let mut file = File::open(&tcp_path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        fill_tcp(&content, &mut inodes, &mut result.tcp);
-    }
+    let mut file = File::open(format!("/proc/{pid}/net/tcp"))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    fill_tcp(&content, &mut inodes, &mut result.tcp);
 
     // match inodes with tcp connections in /proc/<pid>/net/tcp6
-    let tcp6_path = format!("/proc/{pid}/net/tcp6");
-    if Path::new(&tcp6_path).exists() {
-        let mut file = File::open(&tcp6_path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        fill_tcp(&content, &mut inodes, &mut result.tcp6);
-    }
+    let mut file = File::open(format!("/proc/{pid}/net/tcp6"))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    fill_tcp(&content, &mut inodes, &mut result.tcp6);
 
     // match inodes with unix sockets in /proc/<pid>/net/unix
-    let unix_path = format!("/proc/{pid}/net/unix");
-    if Path::new(&unix_path).exists() {
-        let mut file = File::open(&unix_path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        fill_unix(&content, &mut inodes, &mut result);
-    }
+    file = File::open(format!("/proc/{pid}/net/unix"))?;
+    content = String::new();
+    file.read_to_string(&mut content)?;
+    fill_unix(&content, &mut inodes, &mut result);
 
     result.unknown += u16::try_from(inodes.len())?;
     Ok(result)
