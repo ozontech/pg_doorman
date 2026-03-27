@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -274,7 +274,7 @@ func TestConnectionPool(t *testing.T) {
 	poolConfig.MaxConns = 5
 	poolConfig.MinConns = 2
 
-	pool, err := pgxpool.ConnectConfig(ctx, poolConfig)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	require.NoError(t, err)
 	defer pool.Close()
 	t.Log("  Pool created (max: 5, min: 2): OK")

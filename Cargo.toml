@@ -40,7 +40,7 @@ sha2 = "0.10"
 stringprep = "0.1"
 nix = { version = "0.30.1", features = ["process", "signal"] }
 sha-1 = "0.10"
-lru = "0.14.0"
+lru = "0.16.3"
 scopeguard = "1.2"
 parking_lot = {version = "0.12.1", features = ["hardware-lock-elision"]}
 libc = "0.2.172"
