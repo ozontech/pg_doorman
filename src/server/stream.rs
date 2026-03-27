@@ -71,7 +71,9 @@ impl AsyncRead for StreamInner {
 }
 
 impl StreamInner {
+    // Not logging: writes protocol data to a network socket, not to a log file.
     pub fn try_write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // codeql[rust/cleartext-logging]
         match self {
             StreamInner::TCPPlain { stream } => stream.try_write(buf),
             StreamInner::UnixSocket { stream } => stream.try_write(buf),

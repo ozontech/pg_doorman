@@ -51,7 +51,7 @@ impl ConnectionPool {
         count.fetch_add(closed, Ordering::Relaxed);
 
         if closed > 0 {
-            info!(
+            info!( // codeql[rust/cleartext-logging] username is a pool identifier, not a secret
                 "[pool: {}][user: {}] closed {} idle connection{} (base_idle_timeout: {}ms±20%, base_lifetime: {}ms±20%, oldest_first: {})",
                 self.address.pool_name,
                 self.address.username,

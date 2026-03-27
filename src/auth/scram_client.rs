@@ -67,7 +67,7 @@ impl ScramSha256 {
             password: password.to_string(),
             nonce: String::from(nonce),
             message,
-            salted_password: [0u8; 32],
+            salted_password: [0u8; 32], // codeql[rust/hard-coded-cryptographic-value] zero-init placeholder, overwritten by PBKDF2 in update()
             auth_message: String::new(),
             client_key: None,
         }
