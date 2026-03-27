@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-bytes = "1.10"
+bytes = "1.11"
 
 [dependencies.pg_doorman]
 path = ".."

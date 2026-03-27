@@ -12,6 +12,7 @@ jobs:
 
   verify-version:
     name: Verify tag version matches Cargo.toml
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -166,8 +167,8 @@ jobs:
         run: |
           file target/x86_64-unknown-linux-musl/release/pg_doorman
           file target/x86_64-unknown-linux-musl/release/patroni_proxy
-          file target/x86_64-unknown-linux-musl/release/pg_doorman | grep "statically linked"
-          file target/x86_64-unknown-linux-musl/release/patroni_proxy | grep "statically linked"
+          file target/x86_64-unknown-linux-musl/release/pg_doorman | grep -E "static(-pie)? linked"
+          file target/x86_64-unknown-linux-musl/release/patroni_proxy | grep -E "static(-pie)? linked"
       - name: Check versions
         run: |
           target/x86_64-unknown-linux-musl/release/pg_doorman --version
