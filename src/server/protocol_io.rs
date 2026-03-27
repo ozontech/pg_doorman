@@ -367,6 +367,24 @@ pub(crate) async fn recv<C>(
 where
     C: tokio::io::AsyncWrite + std::marker::Unpin,
 {
+    // Handle deferred large message from previous recv() call.
+    // When recv() encounters a large DataRow/CopyData but the buffer already has
+    // accumulated messages, it returns the buffer first (for response reordering)
+    // and saves the large message header here for the next call.
+    if let Some((code_u8, message_len)) = server.pending_large_message.take() {
+        match code_u8 as char {
+            'D' => {
+                return handle_large_data_row(server, &mut client_stream, code_u8, message_len)
+                    .await
+            }
+            'd' => {
+                return handle_large_copy_data(server, &mut client_stream, code_u8, message_len)
+                    .await
+            }
+            _ => unreachable!("pending_large_message should only contain 'D' or 'd'"),
+        }
+    }
+
     loop {
         server.stats.wait_reading();
 
@@ -382,6 +400,18 @@ where
             && message_len > server.max_message_size
             && code_u8 as char == 'D'
         {
+            // If buffer has accumulated messages (e.g. BindComplete, RowDescription),
+            // return them first so execute_server_roundtrip can run
+            // reorder_parse_complete_responses before we stream to client.
+            if !server.buffer.is_empty() {
+                server.pending_large_message = Some((code_u8, message_len));
+                server.data_available = true;
+                let result = server.buffer.clone();
+                server.buffer.clear();
+                server.stats.data_received(result.len());
+                server.last_activity = SystemTime::now();
+                return Ok(result);
+            }
             return handle_large_data_row(server, &mut client_stream, code_u8, message_len).await;
         }
 
@@ -390,6 +420,15 @@ where
             && message_len > server.max_message_size
             && code_u8 as char == 'd'
         {
+            if !server.buffer.is_empty() {
+                server.pending_large_message = Some((code_u8, message_len));
+                server.data_available = true;
+                let result = server.buffer.clone();
+                server.buffer.clear();
+                server.stats.data_received(result.len());
+                server.last_activity = SystemTime::now();
+                return Ok(result);
+            }
             return handle_large_copy_data(server, &mut client_stream, code_u8, message_len).await;
         }
 

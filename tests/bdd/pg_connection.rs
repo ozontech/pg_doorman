@@ -567,6 +567,17 @@ impl PgConnection {
         drop(self.stream);
     }
 
+    /// Send TCP RST instead of FIN. SO_LINGER with timeout=0 makes the kernel
+    /// send RST on close, which triggers BrokenPipe/ConnectionReset on the peer.
+    pub async fn abort_connection_with_rst(self) {
+        let std_stream = self.stream.into_std().unwrap();
+        let linger = socket2::SockRef::from(&std_stream);
+        linger
+            .set_linger(Some(std::time::Duration::from_secs(0)))
+            .expect("Failed to set SO_LINGER");
+        drop(std_stream);
+    }
+
     /// Read a limited number of bytes from the stream (for partial read tests)
     /// Returns the number of bytes actually read
     pub async fn read_limited_bytes(&mut self, max_bytes: usize) -> tokio::io::Result<usize> {

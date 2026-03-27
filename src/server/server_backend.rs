@@ -133,6 +133,10 @@ pub struct Server {
     /// Messages larger than this threshold are streamed directly to avoid excessive memory usage.
     /// A value of 0 disables streaming.
     pub(crate) max_message_size: i32,
+
+    /// Large message header saved when recv() needs to return accumulated buffer first.
+    /// The large DataRow/CopyData will be streamed on the next recv() call.
+    pub(crate) pending_large_message: Option<(u8, i32)>,
 }
 
 impl std::fmt::Display for Server {
@@ -330,6 +334,7 @@ impl Server {
     /// Perform any necessary cleanup before putting the server
     /// connection back in the pool
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
+        self.pending_large_message = None;
         if self.in_copy_mode() {
             warn!("Server {self} returned while still in copy-mode");
             self.mark_bad("returned in copy-mode");
@@ -798,6 +803,7 @@ impl Server {
                         session_mode,
                         max_message_size: config.general.message_size_to_be_stream.as_bytes()
                             as i32,
+                        pending_large_message: None,
                     };
                     server.stats.update_process_id(process_id);
 

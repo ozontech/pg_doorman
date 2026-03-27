@@ -308,6 +308,18 @@ impl From<std::num::TryFromIntError> for SocketInfoErr {
     }
 }
 
+fn read_proc_file(path: &str) -> Result<Option<String>, SocketInfoErr> {
+    match File::open(path) {
+        Ok(mut file) => {
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            Ok(Some(content))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(SocketInfoErr::Io(e)),
+    }
+}
+
 pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoErr> {
     let mut result: SocketStateCount = SocketStateCount {
         ..Default::default()
@@ -331,23 +343,15 @@ pub fn get_socket_states_count(pid: u32) -> Result<SocketStateCount, SocketInfoE
         inodes.insert(inode);
     }
 
-    // match inodes with tcp connections in /proc/<pid>/net/tcp
-    let mut file = File::open(format!("/proc/{pid}/net/tcp"))?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-    fill_tcp(&content, &mut inodes, &mut result.tcp);
-
-    // match inodes with tcp connections in /proc/<pid>/net/tcp6
-    let mut file = File::open(format!("/proc/{pid}/net/tcp6"))?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-    fill_tcp(&content, &mut inodes, &mut result.tcp6);
-
-    // match inodes with unix sockets in /proc/<pid>/net/unix
-    file = File::open(format!("/proc/{pid}/net/unix"))?;
-    content = String::new();
-    file.read_to_string(&mut content)?;
-    fill_unix(&content, &mut inodes, &mut result);
+    if let Some(content) = read_proc_file(&format!("/proc/{pid}/net/tcp"))? {
+        fill_tcp(&content, &mut inodes, &mut result.tcp);
+    }
+    if let Some(content) = read_proc_file(&format!("/proc/{pid}/net/tcp6"))? {
+        fill_tcp(&content, &mut inodes, &mut result.tcp6);
+    }
+    if let Some(content) = read_proc_file(&format!("/proc/{pid}/net/unix"))? {
+        fill_unix(&content, &mut inodes, &mut result);
+    }
 
     result.unknown += u16::try_from(inodes.len())?;
     Ok(result)
