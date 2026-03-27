@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPgxV4Prepared(t *testing.T) {
 	ctx := context.Background()
-	db, err := pgxpool.Connect(ctx, os.Getenv("DATABASE_URL"))
+	db, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
 	assert.NoError(t, err)
 	_, err = db.Exec(ctx, "drop table if exists prepared_pgxv4_users")
 	assert.NoError(t, err)
