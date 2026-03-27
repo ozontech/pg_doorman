@@ -161,6 +161,16 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="333-mar-26-2026"><a class="header" href="#333-mar-26-2026">3.3.3 <small>Mar 26, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>
+<p><strong>Log spam from missing <code>/proc/net/tcp6</code> when IPv6 disabled.</strong> <code>get_socket_states_count</code> failed entirely if any of the three /proc files was absent, logging errors every 15 seconds and losing tcp/unix metrics that were available. Missing files are now skipped — counters stay at zero. Other I/O errors (permission denied) still propagate.</p>
+</li>
+<li>
+<p><strong>Protocol violation when streaming large DataRow with cached prepared statements.</strong> <code>handle_large_data_row</code> wrote accumulated protocol messages (BindComplete, RowDescription) directly to the client socket, bypassing <code>reorder_parse_complete_responses</code>. When Parse was skipped (prepared statement cache hit), the client received BindComplete without the synthetic ParseComplete — causing <code>Received backend message BindComplete while expecting ParseCompleteMessage</code> in Npgsql and similar drivers. Triggered when <code>message_size_to_be_stream</code> ≤ 64KB. Fixed by returning accumulated messages from <code>recv()</code> before entering the streaming path, so response reordering runs first. Same fix applied to <code>handle_large_copy_data</code>.</p>
+</li>
+</ul>
 <h3 id="332-mar-1-2026"><a class="header" href="#332-mar-1-2026">3.3.2 <small>Mar 1, 2026</small></a></h3>
 <p><strong>Breaking Changes:</strong></p>
 <ul>
