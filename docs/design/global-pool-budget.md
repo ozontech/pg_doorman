@@ -1,645 +1,415 @@
-# Global Pool Budget: Weighted Fair Connection Allocation for auth_query
+# Global Pool Budget: Weighted Connection Allocation for auth_query
 
 ## Problem
 
-Currently, each auth_query user gets an isolated pool with `pool_size` connections to PostgreSQL.
-There is **no global limit** on total server connections across all dynamic users.
+Each auth_query user gets an isolated pool with no global limit on total server connections.
 If PostgreSQL has `max_connections = 100` and 10 users each get `pool_size = 40`,
-the pooler can theoretically open 400 connections — far exceeding what PostgreSQL allows.
+the pooler can attempt 400 connections. No existing PostgreSQL pooler (PgBouncer, Odyssey,
+PgCat, Supavisor) solves this with weighted allocation.
 
-Additionally, not all users are equal: a production backend service must have higher priority
-than an analytics job. Today there is no mechanism to express this — all users compete equally,
-and a single noisy neighbor can exhaust the entire connection budget.
+## Parameters
 
-**No existing PostgreSQL connection pooler solves this.** PgBouncer, Odyssey, PgCat, and Supavisor
-all use hard-partitioned per-user pools with no cross-pool coordination, no weighted allocation,
-and no priority-based eviction. ProxySQL (MySQL) is the only proxy with QoS-like features
-(delay-based throttling), but it does not implement fair queuing.
+```
+Global:
+  P                  — max_db_connections (hard limit on total PG connections)
+  min_lifetime       — min_connection_lifetime (default: 30s)
+                       connection cannot be evicted before this age
 
-## Goals
+Per user:
+  guaranteed         — guaranteed_pool_size (always available, opens immediately)
+  weight             — priority when competing for above-guarantee connections
+  max                — max_pool_size (per-user hard cap)
 
-1. **Global server connection budget** — total connections to PostgreSQL never exceed a configured limit
-2. **Weighted fair allocation** — users with higher weight get proportionally more connections under contention
-3. **Guaranteed minimum** — each user can reserve a minimum number of connections that are never taken away
-4. **Zero eviction** — never cancel active queries, never forcibly close active connections
-5. **No starvation** — lowest-priority user keeps their guaranteed minimum
-6. **30-second convergence** — adapts to load changes within 30 seconds
+Invariant: sum(guaranteed for all configured users) <= P
+```
 
-## Non-goals
+## State
 
-- Eviction of active connections (cancelling running queries, closing active connections)
-- Changing PostgreSQL authentication model
-- Preemption of any kind
+```
+Per user U:
+  held[U]            — server connections currently assigned to U
+  waiting[U]         — queued requests from U waiting for a connection
 
-## Background Research
+Per server connection C:
+  C.user             — which user owns this connection
+  C.created_at       — when the PG backend was created (fork timestamp)
 
-### How Other Systems Solve Resource Allocation Under Contention
+Derived:
+  total_held         = sum(held[U] for all users)
+  above_guarantee[U] = max(0, held[U] - guaranteed[U])
+```
 
-| System | Mechanism | Key Insight |
-|--------|-----------|-------------|
-| Linux cgroups v2 | `memory.min` / `memory.high` / `memory.max` — three-tier limits with proportional reclaim | Protected reserve + soft pressure + hard cap |
-| Kubernetes | QoS classes (Guaranteed/Burstable/BestEffort) + soft/hard eviction thresholds + PriorityClass | Graduated eviction with grace periods |
-| VMware balloon driver | Asks guest OS to voluntarily release memory instead of forcibly taking it | Cooperative eviction — let the "owner" release resources naturally |
-| TCP AIMD | Additive Increase, Multiplicative Decrease | Proven convergence to fair share |
-| HikariCP | SynchronousQueue handoff — returning thread directly gives connection to waiting thread | Skip the pool, hand off directly |
+## Formulas
 
-### PostgreSQL Connection Cost (Why Eviction Is Unacceptable)
+**Waiter priority** (who gets the next available connection):
 
-| Metric | Value |
-|--------|-------|
-| New connection (localhost, Unix socket) | 2–70 ms |
-| New connection (TCP + TLS) | 6–150 ms |
-| Idle connection memory (huge_pages=on) | ~1.2 MiB private |
-| Catalog cache (fresh) | 512 KB |
-| Catalog cache (after heavy use) | can grow to hundreds of MB |
-| Postmaster max acceptance rate | ~1,400 conn/sec before saturation |
+```
+priority(U) = (is_guaranteed(U), weight[U], waiting[U])
+              compared lexicographically, descending
 
-Eviction (close + reopen) costs 2–150 ms per connection and triggers fork() in PostgreSQL.
-Simultaneous eviction of N connections creates a fork storm that degrades all users.
-This design avoids eviction. Rebalancing relies on natural transaction lifecycle instead.
+where is_guaranteed(U) = (held[U] < guaranteed[U])
+```
 
-Sources:
-- Andres Freund, "Measuring the Memory Overhead of a Postgres Connection" (2020)
-- Andres Freund / Citus, "Analyzing the Limits of Connection Scalability in Postgres" (2020)
-- Recall.ai, "Postgres Postmaster Does Not Scale" (2024)
+Guaranteed requests always win. Among above-guarantee waiters: highest weight wins.
+Equal weight: most pending requests wins.
 
-### Existing Pooler Comparison
+**Eviction eligibility** (can connection C be evicted for requester R?):
 
-| Feature | PgBouncer | Odyssey | PgCat | Supavisor | RDS Proxy |
-|---------|-----------|---------|-------|-----------|-----------|
-| Global server conn limit | `max_db_connections` (per-DB only) | No | No | Per-tenant | % of max_conn |
-| Per-user pool sizing | pool_size per (db,user) | pool_size per route | pool_size per user | Per-tenant only | No |
-| Priority / Weight / QoS | **No** | **No** | **No** | **No** | **No** |
-| Queue discipline | FIFO (no priority) | FIFO | FIFO | N/A (reject) | Opaque |
+```
+evictable(C, R) =
+    held[C.user] > guaranteed[C.user]          // C is above guarantee
+    AND now() - C.created_at >= min_lifetime   // C is old enough
+    AND (is_guaranteed(R)                       // R is guaranteed (beats everything)
+         OR weight[C.user] < weight[R])         // OR R has higher weight
+```
 
-No PostgreSQL pooler implements weighted fair queuing or priority-based scheduling.
+**Eviction order** (which connection to evict first):
+
+```
+eviction_score(C) = (weight[C.user] ASC, age(C) DESC)
+```
+
+Evict from the lowest-weight user first. Among equal weight: evict the oldest connection.
 
 ---
 
 ## Algorithm
 
-### Core Idea
+Three events drive the system:
 
-In transaction pooling mode, connections are held only for the duration of a transaction.
-When a transaction completes, the connection returns to the pool. The scheduler decides
-who gets the next available connection. No connections are forcibly taken away.
-
-Same principle as Linux CFS: processes yield the CPU when their time slice ends,
-and the scheduler picks who runs next. No preemption needed for fairness.
-
-### Parameters
+### Event 1: REQUEST — User U needs a connection
 
 ```
-Global:
-  P              — total pool size (fixed, global budget)
-
-Per user (from config or user_defaults):
-  w_i            — weight (relative priority, default: 100)
-  m_i            — min guaranteed connections (default: 0)
-  M_i            — max allowed connections (default: P)
-
-Invariant: sum(m_i for all configured users) <= P
+                          REQUEST(U)
+                              │
+                 ┌────────────┴────────────┐
+                 │ held[U] < guaranteed[U]? │
+                 └────────────┬────────────┘
+                      yes     │      no
+                      ▼       │      ▼
+               ┌──────────┐   │  ┌──────────────────┐
+               │ IMMEDIATE │   │  │ held[U] < max[U]? │
+               │ (see      │   │  └────────┬─────────┘
+               │  below)   │   │    yes    │     no
+               └──────────┘   │    ▼       │     ▼
+                              │ ENQUEUE(U) │  ERROR
+                              │ SCHEDULE() │  "user at max"
+                              │            │
+                              └────────────┘
 ```
 
-### Runtime State
+**IMMEDIATE (guaranteed request):**
 
 ```
-Per user i:
-  held_i         — connections currently checked out (executing transactions)
-  waiting_i      — requests queued waiting for a connection
-  demand_i       — held_i + waiting_i (total desired connections)
-
-Global:
-  total_held     — sum(held_i) across all users
-  idle_count     — P - total_held (connections available in pool)
-  quota_i        — current fair share allocation for user i (recalculated dynamically)
+┌──────────────────┐    yes    ┌───────────────┐
+│ idle available?  ├──────────►│ GRANT(U, idle)│
+└────────┬─────────┘           └───────────────┘
+         │ no
+         ▼
+┌──────────────────┐    yes    ┌───────────────┐
+│ total_held < P?  ├──────────►│ CREATE(U)     │
+└────────┬─────────┘           └───────────────┘
+         │ no
+         ▼
+┌──────────────────┐  found    ┌───────────────┐
+│ FIND_EVICTABLE() ├──────────►│ EVICT(victim) │
+│ (weight = ∞)     │           │ CREATE(U)     │
+└────────┬─────────┘           └───────────────┘
+         │ not found (all too young)
+         ▼
+┌──────────────────────────────┐
+│ ENQUEUE(U) — wait until      │
+│ a connection ages past       │
+│ min_lifetime, then retry     │
+└──────────────────────────────┘
 ```
 
-### Algorithm 1: Quota Calculation (Water-Filling)
-
-Triggered when: a user's demand changes (new request, disconnect), or periodically (every 1 second).
+### Event 2: RETURN — User U finishes a transaction
 
 ```
-fn calculate_quotas(users, P):
-    active = [u for u in users if u.demand > 0]
-    if active is empty:
-        set all quotas to 0
-        return
+                     RETURN(U, connection)
+                              │
+                              ▼
+                      held[U] -= 1
+                              │
+                              ▼
+                         SCHEDULE()
+```
 
-    // Phase 1: everyone starts at their guaranteed minimum
-    for u in active:
-        quota[u] = u.min
+The returned connection goes to the idle pool. SCHEDULE() decides who gets it.
 
-    remaining = P - sum(quota[u] for u in active)
+### Event 3: SCHEDULE — Assign available connections to waiters
 
-    // Phase 2: distribute remaining by weight (water-filling)
-    // Repeat until stable — users hitting max or demand cap free surplus for others
-    unsatisfied = set(active)
-    loop:
-        if remaining <= 0 or unsatisfied is empty:
-            break
+```
+                         SCHEDULE()
+                              │
+                 ┌────────────┴────────────┐
+                 │ any waiters?            │
+                 └────────────┬────────────┘
+                       no     │     yes
+                       ▼      │      ▼
+                    (done)    │  best = SELECT_BEST_WAITER()
+                              │      │
+                 ┌────────────┴──────┴──────────┐
+                 │                               │
+                 ▼                               ▼
+       ┌─────────────────┐            ┌─────────────────┐
+       │ idle available   │            │ total_held < P   │
+       │ OR total_held<P? │            │ (but no idle)?   │
+       └────────┬────────┘            └────────┬────────┘
+           yes  │                          yes │
+                ▼                              ▼
+       ┌─────────────────┐            ┌─────────────────┐
+       │ GRANT(best)     │            │ CREATE(best)    │
+       └─────────────────┘            └─────────────────┘
 
-        total_weight = sum(u.weight for u in unsatisfied)
-        any_capped = false
+       If total_held = P and no idle:
+       ┌─────────────────┐  found     ┌─────────────────┐
+       │ FIND_EVICTABLE  ├───────────►│ EVICT(victim)   │
+       │ (weight = best)  │           │ CREATE(best)    │
+       └────────┬────────┘            └─────────────────┘
+                │ not found
+                ▼
+       (best stays in queue, retry on next RETURN)
+```
 
-        for u in unsatisfied:
-            raw_share = remaining * (u.weight / total_weight)
-            effective_cap = min(u.max, u.demand)
+### Helper: SELECT_BEST_WAITER
 
-            if quota[u] + raw_share >= effective_cap:
-                added = effective_cap - quota[u]
-                quota[u] = effective_cap
-                remaining -= added
-                unsatisfied.remove(u)
-                any_capped = true
-                break  // restart loop with updated remaining
-
-        if not any_capped:
-            // No one is capped — distribute proportionally (fractional)
-            total_weight = sum(u.weight for u in unsatisfied)
-            for u in unsatisfied:
-                share = remaining * (u.weight / total_weight)
-                quota[u] += share
-            remaining = 0
-            break
-
-    // Phase 3: integer rounding (Largest Remainder Method)
-    // Connections are discrete — fractional quotas must be rounded to integers
-    // while preserving sum(quota) == P exactly.
-    floored = {u: floor(quota[u]) for u in active}
-    remainder = P - sum(floored.values())
-    fractions = sorted(
-        [(quota[u] - floor(quota[u]), u) for u in active],
-        descending
+```
+fn select_best_waiter():
+    // Guaranteed waiters first, then by weight, then by waiting count
+    return waiters.max_by(|W|
+        (held[W] < guaranteed[W],     // true > false (guaranteed first)
+         weight[W],                    // higher weight wins
+         waiting[W])                   // more pending wins (tie-breaker)
     )
-    for i in 0..remainder:
-        floored[fractions[i].user] += 1
-    quota = floored
 ```
 
-**Example**: P=50, three users all active with high demand:
-
-| User | weight | min | max | Step 1 (min) | Step 2 (water-fill) | Final quota |
-|------|--------|-----|-----|:----------:|:-------------------:|:-----------:|
-| service_api | 100 | 5 | 40 | 5 | +30.7 = 35.7 → capped 36 | **36** |
-| batch_worker | 30 | 2 | 20 | 2 | +9.2 = 11.2 → 11 | **11** |
-| analytics | 10 | 0 | 10 | 0 | +3.1 = 3.1 → 3 | **3** |
-| **Total** | | **7** | | 7 | | **50** |
-
-### Algorithm 2: On Connection Request
-
-When user U sends a query and needs a server connection:
+### Helper: FIND_EVICTABLE
 
 ```
-fn on_request(user_U):
-    // Case 1: idle connection available AND user is within quota
-    if idle_count > 0 AND held[U] < quota[U]:
-        grant_connection(U)
-        return
+fn find_evictable(requester_weight):
+    candidates = []
+    for each connection C assigned to any user:
+        if held[C.user] <= guaranteed[C.user]:   continue  // within guarantee: sacred
+        if age(C) < min_lifetime:                 continue  // too young: protected
+        if requester_weight != ∞                            // not a guaranteed request
+           AND weight[C.user] >= requester_weight: continue // same/higher weight: safe
+        candidates.push(C)
 
-    // Case 2: idle connection available BUT user is above quota
-    //         AND someone else is below quota
-    if idle_count > 0 AND held[U] >= quota[U]:
-        below_quota = [V for V in waiting_users if held[V] < quota[V], V != U]
-        if below_quota is not empty:
-            // U must wait — let underserved users take the idle connection first
-            enqueue(U, priority = scheduling_priority(U))
-            return
+    if candidates.is_empty(): return None
 
-        // No one else is underserved — grant to U (up to max)
-        if held[U] < max[U]:
-            grant_connection(U)
-            return
-
-    // Case 3: no idle connections
-    enqueue(U, priority = scheduling_priority(U))
-    wait(up to query_wait_timeout)
-    if timed_out:
-        return error "query_wait_timeout"
+    // Pick victim: lowest weight first, oldest connection first
+    return candidates.min_by(|C| (weight[C.user], -(age(C))))
 ```
-
-**Scheduling priority: Stride Scheduling (CFS-style)**
-
-The naive formula `deficit_ratio * weight` is broken: it normalizes by quota size,
-which causes low-quota users to systematically beat high-weight users.
-Example: analytics (w=10, quota=3, held=0) scores 10.0 while service_api (w=100, quota=36, held=35)
-scores 2.8. The weight-10 user beats the weight-100 user.
-
-Instead, use stride scheduling — the same algorithm as Linux CFS, WFQ, and cgroups v2 cpu.weight:
-
-```
-// State per user (initialized once):
-const STRIDE_BASE: u64 = 1_000_000;
-stride[U] = STRIDE_BASE / U.weight      // computed at config load
-pass[U] = 0                              // mutable, updated on each grant
-
-// On each connection grant to user U:
-pass[U] += stride[U]
-
-// On new user activation:
-pass[U] = min(pass[V] for V in active_users)   // fair start, no burst
-
-fn scheduling_priority(user_U):
-    if held[U] < min[U]:
-        return (TIER_0, pass[U])    // lowest pass wins
-
-    if held[U] < quota[U]:
-        return (TIER_1, pass[U])    // lowest pass wins
-
-    return (TIER_2, pass[U])        // lowest pass wins
-```
-
-Priority is compared lexicographically: TIER_0 > TIER_1 > TIER_2, then by pass ascending (lowest wins).
-Higher-weight users have smaller stride, so their pass grows slower, so they win more often.
-Over any window, grants are proportional to weights: weight 100 gets 10x more than weight 10.
-
-Stride values for our three users:
-```
-service_api:  stride = 1_000_000 / 100 = 10_000   (wins most often)
-batch_worker: stride = 1_000_000 / 30  = 33_333
-analytics:    stride = 1_000_000 / 10  = 100_000   (wins least often)
-```
-
-### Algorithm 3: On Connection Return
-
-When user U's transaction completes and the connection returns to the pool:
-
-```
-fn on_return(user_U, connection):
-    held[U] -= 1
-
-    // Find the best candidate from all waiting users
-    best = highest_priority_waiter()
-
-    if best is None:
-        // No one waiting — return connection to idle pool
-        recycle(connection)
-        return
-
-    if best.user == U:
-        // U itself is the most deserving waiter — recycle connection for U
-        grant_to(best, connection)
-        return
-
-    // A different user V has higher priority — redirect the connection
-
-    if dedicated_mode:
-        // Connection is fungible (same PG server_user) — hand off directly
-        // Cost: 0 (just RESET ROLE, already done on checkin)
-        grant_to(best, connection)
-
-    if passthrough_mode:
-        // Connection is NOT fungible (different PG users)
-        // Close U's connection, let V create a new one
-        // Cost: ~100ms (one close + one open, NOT a storm — happens one at a time)
-        close(connection)          // free the global slot
-        total_held -= 1
-        notify(best)               // V can now create a new PG connection
-```
-
-No other rebalancing mechanism exists. Connections flow from over-quota to under-quota
-users as transactions complete.
-
-### Algorithm 4: Hard Limit Enforcement (Prevent Guarantee Violations)
-
-To ensure user U can never occupy so many connections that another user's minimum becomes unsatisfiable:
-
-```
-fn hard_max(user_U, active_users):
-    other_mins = sum(V.min for V in active_users if V != U)
-    return min(U.max, P - other_mins)
-```
-
-Enforced at grant time:
-
-```
-fn grant_connection(user_U):
-    if held[U] >= hard_max(U, active_users):
-        enqueue(U)  // cannot grant — would violate others' guarantees
-        return
-    // ... proceed with grant
-```
-
-**Example**: P=50, service_api (min=5, max=40), batch_worker (min=2, max=20), analytics (min=0, max=10).
-- hard_max(service_api) = min(40, 50 - 2 - 0) = 40
-- hard_max(batch_worker) = min(20, 50 - 5 - 0) = 20
-- hard_max(analytics) = min(10, 50 - 5 - 2) = 10
-
-When only service_api is active:
-- hard_max(service_api) = min(40, 50 - 0 - 0) = 40 (can use up to 40)
-- The remaining 10 sit idle (service_api.max = 40)
-
-When batch_worker becomes active:
-- hard_max(service_api) = min(40, 50 - 2) = 40 (still 40, since batch_worker.min=2 is small)
-- batch_worker can grow to 20 as service_api's transactions return connections
-
-### Algorithm 5: Flap Protection (min_connection_lifetime)
-
-Without protection, connections can oscillate between users when load fluctuates:
-analytics drains 10→3 (costs 7 fork() in passthrough), load shifts, analytics regrows 3→10
-(another 7 fork()), repeat. Each cycle takes seconds but costs ~700ms of fork() overhead.
-
-**Solution**: once a connection is created for a user, it stays with that user for at least
-`min_connection_lifetime` (default: 30 seconds), regardless of quota changes.
-
-```
-fn on_return(user_U, connection):
-    held[U] -= 1
-
-    // Flap protection: if connection is young, always recycle to same user
-    if now() - connection.created_at < min_connection_lifetime:
-        if U.has_waiting_requests():
-            grant_to(U, connection)
-        else:
-            recycle(connection)   // idle in U's pool, but stays assigned to U
-        return
-
-    // Connection is past min_lifetime — normal scheduling applies
-    best = highest_priority_waiter()
-    // ... (same as Algorithm 3)
-```
-
-The parameter dampens oscillation without blocking legitimate redistribution.
-Connections older than 30s are freely redistributable; younger connections stay put.
-
-Analogues in other systems:
-- BGP route flap damping (RFC 2439): penalty + suppress threshold + half-life
-- Kubernetes HPA: 300s scale-down stabilization window
-- YARN: 10% deadband (`max_ignored_over_capacity`)
-- PgBouncer: 30s `server_check_delay` (implicit trust period)
-
-**Why 30 seconds**:
-- Matches PgBouncer's implicit trust period
-- ~2x typical PostgreSQL connection establishment time with TLS
-- Short enough that legitimate load shifts converge within one minute
-- Long enough to absorb transient spikes without churn
-
-### Algorithm 6: Reserve Pool (inspired by PgBouncer)
-
-PgBouncer has `reserve_pool_size` + `reserve_pool_timeout`: when a client waits longer than
-`reserve_pool_timeout`, PgBouncer opens additional connections beyond `pool_size` up to
-`pool_size + reserve_pool_size`. This graduated response handles bursts without rejecting users.
-
-We adopt the same concept for the global budget:
-
-```
-total_max_connections = 50     // normal budget (soft limit)
-reserve_pool_size = 5          // extra budget for pressure (default: 10% of total_max)
-reserve_pool_timeout = 5s      // wait time before tapping reserve
-
-// Hard limit: total_max + reserve_pool_size = 55
-```
-
-```
-fn on_wait_timeout(user_U, elapsed):
-    if elapsed >= reserve_pool_timeout
-       AND total_held < total_max + reserve_pool_size:
-        // Open a reserve connection for U
-        connection = create_connection(U)
-        connection.is_reserve = true
-        grant_to(U, connection)
-        return
-
-    if elapsed >= query_wait_timeout:
-        return error "query_wait_timeout"
-```
-
-Reserve connections are marked and have a shorter effective lifetime.
-When total_held drops below total_max, reserve connections are closed first:
-
-```
-fn on_return(user_U, connection):
-    // Close reserve connections when pressure subsides
-    if connection.is_reserve AND total_held > total_max:
-        close(connection)
-        return
-
-    // ... normal scheduling (Algorithm 3 + Algorithm 5)
-```
-
-This ensures:
-- Under normal load: only total_max connections are used
-- Under pressure: up to total_max + reserve_pool_size temporarily
-- Reserve connections are automatically cleaned up when pressure drops
 
 ---
 
-## Convergence Analysis
-
-### Model
-
-- User A holds H connections, quota is Q (H > Q, A is over-quota by H-Q)
-- Average transaction duration: T seconds
-- Each of A's connections completes and returns at average rate 1/T
-- Combined return rate for all A's connections: H/T per second
-
-### How Convergence Works
-
-When a connection is returned by over-quota user A, the scheduler gives it to under-quota user B
-instead of recycling it to A. This reduces A's held count by 1 per return.
-
-A's excess = H - Q connections need to "not be recycled".
-The first excess connection returns after ~T/H seconds (any of H connections can be the first).
-All excess connections return within ~T seconds (one full transaction cycle).
-
-### Convergence Time by Transaction Duration
-
-| Avg transaction duration | Convergence time | Scenario |
-|:------------------------:|:----------------:|----------|
-| 1 ms | < 50 ms | Simple key-value lookups |
-| 10 ms | < 100 ms | Typical OLTP |
-| 100 ms | < 500 ms | Complex OLTP with joins |
-| 1 s | ~1–2 s | Reports, aggregations |
-| 10 s | ~10–15 s | Heavy analytical queries |
-| 30 s | ~30 s | Long-running batch queries |
-
-**For the 30-second convergence target**: the system converges within 30 seconds
-as long as the average transaction duration is ≤ 30 seconds. For OLTP workloads
-(1–100 ms transactions), convergence is nearly instant.
-
-### What If Transactions Are Longer Than 30 Seconds?
-
-If all of user A's connections are running 60-second queries, the scheduler cannot
-rebalance until those queries complete. Active queries are never cancelled.
-Convergence happens within max(30 seconds, longest running transaction).
-
-For workloads with very long queries, operators should set appropriate `max_pool_size`
-to prevent a single user from occupying the entire pool for extended periods.
-
----
-
-## Worked Example: Three Users, Step by Step
+## Behavior Diagrams
 
 ### Setup
 
 ```
-P = 50 (total pool budget)
+P = 20 (max_db_connections)
+min_lifetime = 30s
 
-service_api:  weight=100, min=5, max=40
-batch_worker: weight=30,  min=2, max=20
-analytics:    weight=10,  min=0, max=10
-
-Avg transaction duration: 10ms (OLTP)
+service_api:  guaranteed=5, weight=100, max=15
+batch_worker: guaranteed=3, weight=50,  max=10
+analytics:    guaranteed=0, weight=10,  max=5
 ```
 
-### Phase 1: Only service_api Active
+### Scenario 1: Normal startup
 
 ```
-Quotas: service_api = min(5 + 45*100/100, 40) = 40
-State:  service_api: held=40, idle=10
+t=0s    All users start. Pool empty.
+
+        service_api requests 8 connections:
+          5 within guarantee → CREATE immediately (held=5)
+          3 above guarantee → ENQUEUE, SCHEDULE:
+            no other waiters → CREATE immediately (held=8)
+        total_held = 8
+
+        batch_worker requests 5 connections:
+          3 within guarantee → CREATE immediately (held=3)
+          2 above guarantee → ENQUEUE, SCHEDULE:
+            no other waiters → CREATE immediately (held=5)
+        total_held = 13
+
+        analytics requests 3 connections:
+          0 within guarantee (guaranteed=0)
+          3 above guarantee → ENQUEUE, SCHEDULE:
+            no other waiters → CREATE immediately (held=3)
+        total_held = 16
+
+        Final state:
+        ┌──────────────┬──────┬────────────┬───────────────┐
+        │ User         │ held │ guaranteed │ above-guarantee│
+        ├──────────────┼──────┼────────────┼───────────────┤
+        │ service_api  │    8 │          5 │             3 │
+        │ batch_worker │    5 │          3 │             2 │
+        │ analytics    │    3 │          0 │             3 │
+        ├──────────────┼──────┼────────────┼───────────────┤
+        │ total        │   16 │         8  │             8 │
+        └──────────────┴──────┴────────────┴───────────────┘
+        Pool: 16/20. 4 slots free.
 ```
 
-service_api uses 40 connections. 10 sit idle (service_api is at max).
-
-### Phase 2: batch_worker Comes Online (t=0)
-
-10 clients connect via auth_query as batch_worker.
+### Scenario 2: Pool fills up, weight competition
 
 ```
-Quota recalculation (both active):
-  reserved = 5 + 2 = 7, distributable = 43
-  service_api: 5 + 43*(100/130) = 5 + 33 = 38
-  batch_worker: 2 + 43*(30/130) = 2 + 10 = 12
+t=1s    service_api requests 4 more connections (wants 12 total).
+        All above guarantee. ENQUEUE, SCHEDULE:
+          total_held=16, P=20 → room → CREATE 4.
+          service_api: held=12. total_held=20. POOL FULL.
 
-State:  service_api: held=40, quota=38 (OVER by 2)
-        batch_worker: held=0, quota=12 (UNDER by 12)
-        idle=10
+t=1s    analytics requests 2 more connections (wants 5 total).
+        Above guarantee. ENQUEUE, SCHEDULE:
+          total_held=20 = P → pool full.
+          FIND_EVICTABLE(weight=10):
+            Scan above-guarantee connections:
+              service_api has 7 above-guarantee, weight=100 > 10 → NOT evictable
+              batch_worker has 2 above-guarantee, weight=50 > 10 → NOT evictable
+              analytics has 3 above-guarantee, weight=10 = 10 → NOT evictable (not <)
+            No victims found.
+          analytics stays in queue. Waits for natural returns.
+
+        State:
+        ┌──────────────┬──────┬─────────┬─────────┐
+        │ User         │ held │ waiting │ above-g │
+        ├──────────────┼──────┼─────────┼─────────┤
+        │ service_api  │   12 │       0 │       7 │
+        │ batch_worker │    5 │       0 │       2 │
+        │ analytics    │    3 │       2 │       3 │
+        └──────────────┴──────┴─────────┴─────────┘
+        Pool: 20/20. analytics waiting.
 ```
 
-**t=0 ms**: batch_worker requests 12 connections.
-- 10 idle connections available. batch_worker.held < quota. Grant 10 immediately.
-- batch_worker: held=10, waiting=2. idle=0.
-
-**t≈10 ms**: service_api returns a connection (transaction completes).
-- service_api: held=39 (above quota 38)
-- Highest-priority waiter: batch_worker (held=10, quota=12, TIER_1)
-- **Grant to batch_worker**, not back to service_api.
-- service_api: held=39, batch_worker: held=11
-
-**t≈20 ms**: service_api returns another connection.
-- service_api: held=38 (now AT quota)
-- Highest-priority waiter: batch_worker (held=11, quota=12, TIER_1)
-- **Grant to batch_worker.**
-- service_api: held=38, batch_worker: held=12
-
-**t≈20 ms onward**: Steady state reached.
-```
-service_api: held=38, quota=38  ✓
-batch_worker: held=12, quota=12 ✓
-Total: 50/50
-```
-
-**Convergence time: ~20 ms** (2 transaction completions).
-
-### Phase 3: analytics Comes Online (t=1s)
-
-3 clients connect as analytics.
+### Scenario 3: Transaction returns, weight decides
 
 ```
-Quota recalculation (all three active):
-  reserved = 5 + 2 + 0 = 7, distributable = 43
-  service_api: 5 + 43*(100/140) = 5 + 30.7 = 36 (rounded)
-  batch_worker: 2 + 43*(30/140) = 2 + 9.2 = 11
-  analytics: 0 + 43*(10/140) = 3.1 = 3
+t=1.01s batch_worker finishes a transaction. RETURN(batch_worker, conn).
+        batch_worker: held=4. total_held=19.
+        SCHEDULE():
+          Waiters: analytics (weight=10, waiting=2, above-guarantee)
+          No guaranteed waiters.
+          idle=1, total_held=19 < P=20.
+          → GRANT(analytics). analytics: held=4, waiting=1.
+          total_held=20.
 
-State: service_api: held=38, quota=36 (OVER by 2)
-       batch_worker: held=12, quota=11 (OVER by 1)
-       analytics: held=0, quota=3 (UNDER by 3)
-       idle=0
+        SCHEDULE() again for 2nd analytics waiter:
+          total_held=20 = P. Pool full.
+          FIND_EVICTABLE(weight=10): no victims (all same or higher weight).
+          analytics stays in queue.
+
+t=1.02s service_api finishes a transaction. RETURN(service_api, conn).
+        service_api: held=11. total_held=19.
+        SCHEDULE():
+          Waiters: analytics (weight=10, waiting=1, above-guarantee)
+          → GRANT(analytics). analytics: held=5=max. waiting=0.
+          total_held=20.
 ```
 
-**t=1.010 s**: batch_worker returns a connection.
-- batch_worker: held=11 (above quota 11? exactly at quota, no — 12-1=11 = quota)
-- Wait, batch_worker had 12, returns one, now 11 = quota.
-- Highest-priority waiter: analytics (TIER_1, deficit=3/3=1.0, score=10)
-- **Grant to analytics.** analytics: held=1.
-
-**t=1.020 s**: service_api returns a connection.
-- service_api: held=37 (above quota 36)
-- Highest-priority waiter: analytics (held=1, quota=3, TIER_1)
-- **Grant to analytics.** analytics: held=2.
-
-**t=1.030 s**: service_api returns another.
-- service_api: held=36 (now AT quota)
-- Highest-priority waiter: analytics (held=2, quota=3, TIER_1)
-- **Grant to analytics.** analytics: held=3.
-
-**t=1.030 s onward**: Steady state.
-```
-service_api:  held=36, quota=36 ✓
-batch_worker: held=11, quota=11 ✓
-analytics:    held=3,  quota=3  ✓
-Total: 50/50
-```
-
-**Convergence time: ~30 ms.**
-
-### Phase 4: analytics Disconnects (t=2s)
-
-All analytics clients disconnect. analytics demand drops to 0.
+### Scenario 4: High-weight user arrives, evicts low-weight
 
 ```
-Quota recalculation (service_api + batch_worker):
-  reserved = 5 + 2 = 7, distributable = 43
-  service_api: 38, batch_worker: 12
+t=35s   (All connections are now >30s old, past min_lifetime)
 
-State: analytics: held=3, demand=0 (connections still held, draining)
+        service_api requests 3 more connections (wants 15=max).
+        Above guarantee. ENQUEUE, SCHEDULE:
+          total_held=20 = P. Pool full.
+          FIND_EVICTABLE(weight=100):
+            analytics: 5 above-guarantee, weight=10 < 100, age=34s > 30s → EVICTABLE
+            batch_worker: 1 above-guarantee, weight=50 < 100, age=34s > 30s → EVICTABLE
+            Pick lowest weight first: analytics (weight=10).
+            Pick oldest connection: analytics conn from t=1.01s.
+          EVICT(analytics oldest conn). analytics: held=4.
+          CREATE(service_api). service_api: held=12.
+
+        SCHEDULE() for 2nd service_api request:
+          FIND_EVICTABLE(weight=100):
+            analytics: 4 above-guarantee, weight=10 → evictable
+          EVICT(analytics). analytics: held=3.
+          CREATE(service_api). service_api: held=13.
+
+        SCHEDULE() for 3rd service_api request:
+          FIND_EVICTABLE(weight=100):
+            analytics: 3 above-guarantee, weight=10 → evictable
+          EVICT(analytics). analytics: held=2.
+          CREATE(service_api). service_api: held=14.
+
+        State after evictions:
+        ┌──────────────┬──────┬─────────┬───────────────────┐
+        │ User         │ held │ above-g │ evicted from      │
+        ├──────────────┼──────┼─────────┼───────────────────┤
+        │ service_api  │   14 │       9 │                   │
+        │ batch_worker │    4 │       1 │                   │
+        │ analytics    │    2 │       2 │ 3 conns evicted   │
+        └──────────────┴──────┴─────────┴───────────────────┘
+
+        analytics lost 3 connections to service_api because:
+        weight(analytics)=10 < weight(service_api)=100
+        AND all connections were older than min_lifetime=30s.
 ```
 
-As analytics' 3 transactions complete, connections return. analytics.demand=0,
-so nobody enqueues for analytics. Returned connections go to the idle pool
-(or to service_api/batch_worker if they have waiting requests).
+### Scenario 5: Guaranteed request evicts from any weight
 
-Within ~10 ms, all 3 analytics connections return. System rebalances to:
 ```
-service_api:  held=38, quota=38 ✓
-batch_worker: held=12, quota=12 ✓
-analytics:    held=0            ✓
-Total: 50/50
+t=40s   New user "admin" configured with guaranteed=2, weight=1, max=2.
+        admin requests 2 connections. Both within guarantee.
+
+        IMMEDIATE: total_held=20=P. Pool full.
+        FIND_EVICTABLE(weight=∞):  // guaranteed request beats any weight
+          analytics: 2 above-guarantee, weight=10, age>30s → evictable
+          → EVICT(analytics). analytics: held=1. CREATE(admin).
+          → EVICT(analytics). analytics: held=0. CREATE(admin).
+
+        admin: held=2. Even though admin has weight=1 (lowest),
+        guaranteed requests evict above-guarantee connections regardless of weight.
+
+        ┌──────────────┬──────┬─────────┬──────────────────────┐
+        │ User         │ held │ above-g │ note                 │
+        ├──────────────┼──────┼─────────┼──────────────────────┤
+        │ service_api  │   14 │       9 │                      │
+        │ batch_worker │    4 │       1 │                      │
+        │ analytics    │    0 │       0 │ fully evicted         │
+        │ admin        │    2 │       0 │ guarantee honored     │
+        └──────────────┴──────┴─────────┴──────────────────────┘
 ```
 
-### Phase 5: Burst — service_api Under Pressure (t=3s)
+### Scenario 6: Flap protection (min_lifetime prevents oscillation)
 
-service_api gets a traffic spike: 100 clients all sending queries simultaneously.
-service_api.demand jumps to 100, but max=40 and quota=38.
+```
+t=40s   analytics has 0 connections. Requests 3.
+        Above guarantee (guaranteed=0). ENQUEUE.
+        SCHEDULE: total_held=20=P.
+        FIND_EVICTABLE(weight=10): no victims with lower weight.
+        analytics waits.
 
-The scheduler grants connections to service_api up to quota (38). The remaining 62 requests
-queue and wait for connections to return (transaction complete → immediate re-grant to service_api).
-With 38 connections cycling at 10 ms average, service_api processes ~3,800 transactions/sec
-despite having only 38 connections.
+t=40.01s service_api finishes a transaction. RETURN. held=13. total_held=19.
+        SCHEDULE: analytics waiting (weight=10).
+        total_held=19 < P → CREATE(analytics). analytics: held=1.
 
-batch_worker is unaffected — it keeps its 12 connections and continues processing normally.
+t=40.05s Two more service_api returns free slots.
+        analytics: held=3. All three connections are FRESH (age < 1s).
 
----
+t=45s   service_api requests 3 more connections.
+        FIND_EVICTABLE(weight=100):
+          analytics: 3 above-guarantee, weight=10 < 100
+          BUT age = 5s < min_lifetime = 30s → PROTECTED!
+          No evictable connections.
+        service_api stays in queue.
 
-## Dedicated vs Passthrough Mode
+        ╔══════════════════════════════════════════════════════╗
+        ║ Flap protection: analytics connections are too young ║
+        ║ to evict. service_api must wait for natural returns  ║
+        ║ or until analytics connections reach 30s age.        ║
+        ╚══════════════════════════════════════════════════════╝
 
-### Dedicated Mode (server_user)
-
-All connections are authenticated as the same PostgreSQL user. Connections are **fungible**.
-
-When the scheduler grants User A's returned connection to User B:
-- The connection is handed off directly (RESET ROLE already done on checkin)
-- Cost: 0 ms. No close, no open, no fork().
-
-### Passthrough Mode (each user authenticates as themselves)
-
-Connections are **NOT fungible** — User A's PG connection is authenticated as User A
-and cannot be used by User B.
-
-When User A is over-quota and User B is under-quota:
-1. User A's returned connection is closed instead of recycled
-2. User B creates a new PG connection using the freed global slot
-3. Cost: ~100 ms per rebalanced connection (one close + one open)
-
-One connection at a time, spread across the convergence period. Not a fork storm.
-
-| Property | Dedicated | Passthrough |
-|----------|-----------|-------------|
-| Rebalance cost per connection | 0 ms | ~100 ms |
-| Fork() calls during rebalance | 0 | 1 per migrated connection |
-| Connection warm cache preserved | Yes | No (new connection, cold cache) |
-| Convergence overhead | None | Minimal (spread over time) |
+t=70s   analytics connections are now 30s old. min_lifetime reached.
+        If service_api is still waiting:
+          FIND_EVICTABLE(weight=100): analytics now evictable.
+          Eviction proceeds.
+```
 
 ---
 
@@ -647,68 +417,48 @@ One connection at a time, spread across the convergence period. Not a fork storm
 
 ```toml
 [pools.mydb.auth_query]
-# Global connection budget for this database pool
-total_max_connections = 50
+# Hard limit on total server connections to PostgreSQL
+max_db_connections = 50
 
-# Reserve pool (PgBouncer-inspired): extra connections for burst handling
-reserve_pool_size = 5               # default: 10% of total_max
-reserve_pool_timeout = 5000         # ms before tapping reserve (default: 5s)
+# Flap protection: minimum age before a connection can be evicted
+min_connection_lifetime = 30000   # ms, default 30s
 
-# Flap protection: minimum time a connection stays with its user
-min_connection_lifetime = 30000     # ms (default: 30s)
-
-# Defaults for all auth_query users (override per user below)
+# Defaults for auth_query users
+default_guaranteed_pool_size = 0
 default_weight = 100
-default_min_pool_size = 0
-default_max_pool_size = 10
+default_max_pool_size = 5
 
-# Per-user overrides (matched by username from auth_query result)
+# Per-user overrides
 [pools.mydb.auth_query.user_overrides.service_api]
+guaranteed_pool_size = 5
 weight = 100
-min_pool_size = 5
 max_pool_size = 40
 
 [pools.mydb.auth_query.user_overrides.batch_worker]
-weight = 30
-min_pool_size = 2
+guaranteed_pool_size = 3
+weight = 50
 max_pool_size = 20
 
 [pools.mydb.auth_query.user_overrides.analytics]
+guaranteed_pool_size = 0
 weight = 10
-min_pool_size = 0
 max_pool_size = 10
 ```
 
-**Validation at config load:**
-1. `sum(min_pool_size for all configured users) <= total_max_connections`
-2. `each user: min_pool_size <= max_pool_size`
-3. `each user: max_pool_size <= total_max_connections`
-4. `total_max_connections > 0`
-5. `reserve_pool_size >= 0`
-6. `reserve_pool_timeout < query_wait_timeout`
-7. `min_connection_lifetime > 0`
-
-Users not listed in `user_overrides` get `default_*` values.
+**Validation:**
+1. `sum(guaranteed_pool_size for all configured users) <= max_db_connections`
+2. `each user: guaranteed_pool_size <= max_pool_size`
+3. `each user: max_pool_size <= max_db_connections`
+4. `min_connection_lifetime > 0`
 
 ---
 
-## Open Questions
+## Dedicated vs Passthrough
 
-1. **Dynamic users without overrides.** When a previously unknown user authenticates
-   via auth_query, they get default values. If many such users appear, the sum of their
-   defaults plus configured overrides must still fit within total_max_connections.
-   Option: enforce `default_max_pool_size` such that even worst-case user count fits.
-   Option: track active user count and adjust defaults dynamically.
+**Dedicated mode** (all users share one PG server_user): connections are fungible.
+EVICT = reassign to another user (RESET ROLE already done on checkin). Cost: 0 ms.
 
-2. **Should fair share be recalculated based on active users only?**
-   Current algorithm: yes — only users with demand > 0 participate in quota calculation.
-   This means a single active user can use up to their max (not total_max). When a second
-   user appears, quotas shift and the system rebalances.
+**Passthrough mode** (each user authenticates as themselves): connections are not fungible.
+EVICT = close old connection + open new one. Cost: ~100 ms (one fork in PostgreSQL).
 
-3. **Metrics and observability.** Need to expose per-user: held, quota, min, max, waiting,
-   grant rate, wait time p50/p99. Global: total_held, idle_count, rebalance events.
-
-4. **Integration with existing pool architecture.** The global budget sits above individual
-   user pools. In dedicated mode, it wraps the single shared pool. In passthrough mode,
-   it coordinates across per-user pools. The semaphore in PoolInner needs to be governed
-   by the global budget rather than acting independently.
+The algorithm is identical in both modes. Only the cost of eviction differs.
