@@ -209,24 +209,46 @@ fn on_request(user_U):
         return error "query_wait_timeout"
 ```
 
-**Приоритет планирования** (определяет порядок в очереди):
+**Приоритет планирования: Stride Scheduling (аналог Linux CFS)**
+
+Наивная формула `deficit_ratio * weight` сломана: она нормализует по размеру квоты,
+из-за чего пользователи с малой квотой систематически побеждают пользователей с большим весом.
+Пример: analytics (w=10, quota=3, held=0) получает score=10.0, а service_api (w=100, quota=36, held=35) — score=2.8.
+
+Замена — stride scheduling (тот же алгоритм что в Linux CFS, WFQ, cgroups v2 cpu.weight):
 
 ```
+// Состояние per-user (инициализируется один раз):
+const STRIDE_BASE: u64 = 1_000_000;
+stride[U] = STRIDE_BASE / U.weight      // вычисляется при загрузке конфига
+pass[U] = 0                              // растёт при каждой выдаче
+
+// При каждой выдаче коннекта пользователю U:
+pass[U] += stride[U]
+
+// При активации нового пользователя:
+pass[U] = min(pass[V] for V in active_users)   // честный старт без всплеска
+
 fn scheduling_priority(user_U):
     if held[U] < min[U]:
-        // Ниже гарантированного минимума — наивысшая срочность
-        return (TIER_0, U.weight, U.wait_time)
+        return (TIER_0, pass[U])    // наименьший pass побеждает
 
     if held[U] < quota[U]:
-        // Ниже fair share — пропорциональная срочность
-        deficit_ratio = (quota[U] - held[U]) / quota[U]   // 0.0 .. 1.0
-        return (TIER_1, deficit_ratio * U.weight, U.wait_time)
+        return (TIER_1, pass[U])    // наименьший pass побеждает
 
-    // На уровне или выше квоты — минимальная срочность
-    return (TIER_2, U.weight, U.wait_time)
+    return (TIER_2, pass[U])        // наименьший pass побеждает
 ```
 
-Приоритет сравнивается лексикографически: TIER_0 > TIER_1 > TIER_2, затем по score убыванию, затем по wait_time убыванию.
+Приоритет сравнивается лексикографически: TIER_0 > TIER_1 > TIER_2, затем по pass по возрастанию (наименьший побеждает).
+Пользователи с большим весом имеют меньший stride, их pass растёт медленнее — они побеждают чаще.
+За любой период выдачи пропорциональны весам: weight=100 получает в 10 раз больше чем weight=10.
+
+Stride-значения для наших трёх пользователей:
+```
+service_api:  stride = 1_000_000 / 100 = 10_000   (побеждает чаще всего)
+batch_worker: stride = 1_000_000 / 30  = 33_333
+analytics:    stride = 1_000_000 / 10  = 100_000   (побеждает реже всего)
+```
 
 ### Алгоритм 3: Возврат коннекта
 
@@ -300,6 +322,95 @@ fn grant_connection(user_U):
 Когда подключается batch_worker:
 - hard_max(service_api) = min(40, 50 - 2) = 40 (по-прежнему 40, batch_worker.min=2 мал)
 - batch_worker растёт до 20 по мере возврата коннектов service_api
+
+### Алгоритм 5: Защита от флапа (min_connection_lifetime)
+
+Без защиты коннекты могут осциллировать между пользователями при колебаниях нагрузки:
+analytics дренируется 10→3 (стоит 7 fork() в passthrough), нагрузка смещается,
+analytics снова растёт 3→10 (ещё 7 fork()), повторяется. Каждый цикл — ~700мс fork()-оверхеда.
+
+**Решение**: коннект, созданный для пользователя, остаётся с ним минимум
+`min_connection_lifetime` (default: 30 секунд) вне зависимости от изменений квоты.
+
+```
+fn on_return(user_U, connection):
+    held[U] -= 1
+
+    // Защита от флапа: молодой коннект всегда возвращается своему пользователю
+    if now() - connection.created_at < min_connection_lifetime:
+        if U.has_waiting_requests():
+            grant_to(U, connection)
+        else:
+            recycle(connection)   // idle в пуле U, но закреплён за U
+        return
+
+    // Коннект старше min_lifetime — обычное планирование
+    best = highest_priority_waiter()
+    // ... (как в Алгоритме 3)
+```
+
+Параметр гасит осцилляции, не блокируя перераспределение.
+Коннекты старше 30с свободно перераспределяются; молодые — остаются на месте.
+
+Аналоги в других системах:
+- BGP route flap damping (RFC 2439): penalty + suppress threshold + half-life
+- Kubernetes HPA: 300с stabilization window для scale-down
+- YARN: 10% deadband (`max_ignored_over_capacity`)
+- PgBouncer: 30с `server_check_delay` (неявный trust period)
+
+**Почему 30 секунд**:
+- Совпадает с implicit trust period PgBouncer
+- ~2x типичного времени установления коннекта PostgreSQL с TLS
+- Достаточно коротко для конвергенции при реальных сдвигах нагрузки (в пределах минуты)
+- Достаточно длинно для поглощения кратковременных пиков без churn
+
+### Алгоритм 6: Резервный пул (вдохновлено PgBouncer)
+
+В PgBouncer есть `reserve_pool_size` + `reserve_pool_timeout`: когда клиент ждёт дольше
+`reserve_pool_timeout`, PgBouncer открывает дополнительные коннекты сверх `pool_size`
+(до `pool_size + reserve_pool_size`). Градуированная реакция на давление без отказа.
+
+Тот же механизм для глобального бюджета:
+
+```
+total_max_connections = 50     // основной бюджет (мягкий лимит)
+reserve_pool_size = 5          // запас на давление (default: 10% от total_max)
+reserve_pool_timeout = 5s      // время ожидания перед использованием запаса
+
+// Жёсткий лимит: total_max + reserve_pool_size = 55
+```
+
+```
+fn on_wait_timeout(user_U, elapsed):
+    if elapsed >= reserve_pool_timeout
+       AND total_held < total_max + reserve_pool_size:
+        // Открываем резервный коннект для U
+        connection = create_connection(U)
+        connection.is_reserve = true
+        grant_to(U, connection)
+        return
+
+    if elapsed >= query_wait_timeout:
+        return error "query_wait_timeout"
+```
+
+Резервные коннекты помечаются и имеют укороченное время жизни.
+Когда total_held падает ниже total_max, резервные коннекты закрываются первыми:
+
+```
+fn on_return(user_U, connection):
+    // Закрываем резервные коннекты когда давление спало
+    if connection.is_reserve AND total_held > total_max:
+        close(connection)
+        return
+
+    // ... обычное планирование (Алгоритм 3 + Алгоритм 5)
+```
+
+Гарантии:
+- При обычной нагрузке: используется только total_max коннектов
+- При давлении: до total_max + reserve_pool_size временно
+- Резервные коннекты автоматически убираются когда давление спадает
 
 ---
 
@@ -525,6 +636,13 @@ batch_worker не затронут — сохраняет свои 12 конне
 # Глобальный бюджет коннектов для этого database pool
 total_max_connections = 50
 
+# Резервный пул (по аналогии с PgBouncer): доп. коннекты при давлении
+reserve_pool_size = 5               # default: 10% от total_max
+reserve_pool_timeout = 5000         # мс до использования резерва (default: 5с)
+
+# Защита от флапа: минимальное время жизни коннекта у пользователя
+min_connection_lifetime = 30000     # мс (default: 30с)
+
 # Значения по умолчанию для всех auth_query пользователей
 default_weight = 100
 default_min_pool_size = 0
@@ -552,6 +670,9 @@ max_pool_size = 10
 2. `для каждого пользователя: min_pool_size <= max_pool_size`
 3. `для каждого пользователя: max_pool_size <= total_max_connections`
 4. `total_max_connections > 0`
+5. `reserve_pool_size >= 0`
+6. `reserve_pool_timeout < query_wait_timeout`
+7. `min_connection_lifetime > 0`
 
 Пользователи, не перечисленные в `user_overrides`, получают значения `default_*`.
 

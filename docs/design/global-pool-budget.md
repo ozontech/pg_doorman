@@ -218,24 +218,47 @@ fn on_request(user_U):
         return error "query_wait_timeout"
 ```
 
-**Scheduling priority** (determines queue order):
+**Scheduling priority: Stride Scheduling (CFS-style)**
+
+The naive formula `deficit_ratio * weight` is broken: it normalizes by quota size,
+which causes low-quota users to systematically beat high-weight users.
+Example: analytics (w=10, quota=3, held=0) scores 10.0 while service_api (w=100, quota=36, held=35)
+scores 2.8. The weight-10 user beats the weight-100 user.
+
+Instead, use stride scheduling — the same algorithm as Linux CFS, WFQ, and cgroups v2 cpu.weight:
 
 ```
+// State per user (initialized once):
+const STRIDE_BASE: u64 = 1_000_000;
+stride[U] = STRIDE_BASE / U.weight      // computed at config load
+pass[U] = 0                              // mutable, updated on each grant
+
+// On each connection grant to user U:
+pass[U] += stride[U]
+
+// On new user activation:
+pass[U] = min(pass[V] for V in active_users)   // fair start, no burst
+
 fn scheduling_priority(user_U):
     if held[U] < min[U]:
-        // Below guaranteed minimum — highest urgency
-        return (TIER_0, U.weight, U.wait_time)
+        return (TIER_0, pass[U])    // lowest pass wins
 
     if held[U] < quota[U]:
-        // Below fair share — proportional urgency
-        deficit_ratio = (quota[U] - held[U]) / quota[U]   // 0.0 .. 1.0
-        return (TIER_1, deficit_ratio * U.weight, U.wait_time)
+        return (TIER_1, pass[U])    // lowest pass wins
 
-    // At or above quota — lowest urgency
-    return (TIER_2, U.weight, U.wait_time)
+    return (TIER_2, pass[U])        // lowest pass wins
 ```
 
-Priority is compared lexicographically: TIER_0 > TIER_1 > TIER_2, then by score descending, then by wait_time descending.
+Priority is compared lexicographically: TIER_0 > TIER_1 > TIER_2, then by pass ascending (lowest wins).
+Higher-weight users have smaller stride, so their pass grows slower, so they win more often.
+Over any window, grants are proportional to weights: weight 100 gets 10x more than weight 10.
+
+Stride values for our three users:
+```
+service_api:  stride = 1_000_000 / 100 = 10_000   (wins most often)
+batch_worker: stride = 1_000_000 / 30  = 33_333
+analytics:    stride = 1_000_000 / 10  = 100_000   (wins least often)
+```
 
 ### Algorithm 3: On Connection Return
 
@@ -309,6 +332,95 @@ When only service_api is active:
 When batch_worker becomes active:
 - hard_max(service_api) = min(40, 50 - 2) = 40 (still 40, since batch_worker.min=2 is small)
 - batch_worker can grow to 20 as service_api's transactions return connections
+
+### Algorithm 5: Flap Protection (min_connection_lifetime)
+
+Without protection, connections can oscillate between users when load fluctuates:
+analytics drains 10→3 (costs 7 fork() in passthrough), load shifts, analytics regrows 3→10
+(another 7 fork()), repeat. Each cycle takes seconds but costs ~700ms of fork() overhead.
+
+**Solution**: once a connection is created for a user, it stays with that user for at least
+`min_connection_lifetime` (default: 30 seconds), regardless of quota changes.
+
+```
+fn on_return(user_U, connection):
+    held[U] -= 1
+
+    // Flap protection: if connection is young, always recycle to same user
+    if now() - connection.created_at < min_connection_lifetime:
+        if U.has_waiting_requests():
+            grant_to(U, connection)
+        else:
+            recycle(connection)   // idle in U's pool, but stays assigned to U
+        return
+
+    // Connection is past min_lifetime — normal scheduling applies
+    best = highest_priority_waiter()
+    // ... (same as Algorithm 3)
+```
+
+The parameter dampens oscillation without blocking legitimate redistribution.
+Connections older than 30s are freely redistributable; younger connections stay put.
+
+Analogues in other systems:
+- BGP route flap damping (RFC 2439): penalty + suppress threshold + half-life
+- Kubernetes HPA: 300s scale-down stabilization window
+- YARN: 10% deadband (`max_ignored_over_capacity`)
+- PgBouncer: 30s `server_check_delay` (implicit trust period)
+
+**Why 30 seconds**:
+- Matches PgBouncer's implicit trust period
+- ~2x typical PostgreSQL connection establishment time with TLS
+- Short enough that legitimate load shifts converge within one minute
+- Long enough to absorb transient spikes without churn
+
+### Algorithm 6: Reserve Pool (inspired by PgBouncer)
+
+PgBouncer has `reserve_pool_size` + `reserve_pool_timeout`: when a client waits longer than
+`reserve_pool_timeout`, PgBouncer opens additional connections beyond `pool_size` up to
+`pool_size + reserve_pool_size`. This graduated response handles bursts without rejecting users.
+
+We adopt the same concept for the global budget:
+
+```
+total_max_connections = 50     // normal budget (soft limit)
+reserve_pool_size = 5          // extra budget for pressure (default: 10% of total_max)
+reserve_pool_timeout = 5s      // wait time before tapping reserve
+
+// Hard limit: total_max + reserve_pool_size = 55
+```
+
+```
+fn on_wait_timeout(user_U, elapsed):
+    if elapsed >= reserve_pool_timeout
+       AND total_held < total_max + reserve_pool_size:
+        // Open a reserve connection for U
+        connection = create_connection(U)
+        connection.is_reserve = true
+        grant_to(U, connection)
+        return
+
+    if elapsed >= query_wait_timeout:
+        return error "query_wait_timeout"
+```
+
+Reserve connections are marked and have a shorter effective lifetime.
+When total_held drops below total_max, reserve connections are closed first:
+
+```
+fn on_return(user_U, connection):
+    // Close reserve connections when pressure subsides
+    if connection.is_reserve AND total_held > total_max:
+        close(connection)
+        return
+
+    // ... normal scheduling (Algorithm 3 + Algorithm 5)
+```
+
+This ensures:
+- Under normal load: only total_max connections are used
+- Under pressure: up to total_max + reserve_pool_size temporarily
+- Reserve connections are automatically cleaned up when pressure drops
 
 ---
 
@@ -538,6 +650,13 @@ One connection at a time, spread across the convergence period. Not a fork storm
 # Global connection budget for this database pool
 total_max_connections = 50
 
+# Reserve pool (PgBouncer-inspired): extra connections for burst handling
+reserve_pool_size = 5               # default: 10% of total_max
+reserve_pool_timeout = 5000         # ms before tapping reserve (default: 5s)
+
+# Flap protection: minimum time a connection stays with its user
+min_connection_lifetime = 30000     # ms (default: 30s)
+
 # Defaults for all auth_query users (override per user below)
 default_weight = 100
 default_min_pool_size = 0
@@ -565,6 +684,9 @@ max_pool_size = 10
 2. `each user: min_pool_size <= max_pool_size`
 3. `each user: max_pool_size <= total_max_connections`
 4. `total_max_connections > 0`
+5. `reserve_pool_size >= 0`
+6. `reserve_pool_timeout < query_wait_timeout`
+7. `min_connection_lifetime > 0`
 
 Users not listed in `user_overrides` get `default_*` values.
 
