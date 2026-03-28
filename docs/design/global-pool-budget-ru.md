@@ -146,13 +146,26 @@ fn calculate_quotas(users, P):
                 break  // перезапуск цикла с обновлённым remaining
 
         if not any_capped:
-            // Никто не упёрся в лимит — распределяем пропорционально
+            // Никто не упёрся в лимит — распределяем пропорционально (дробно)
             total_weight = sum(u.weight for u in unsatisfied)
             for u in unsatisfied:
                 share = remaining * (u.weight / total_weight)
                 quota[u] += share
             remaining = 0
             break
+
+    // Фаза 3: целочисленное округление (метод наибольших остатков / Хэйра-Нимейера)
+    // Коннекты дискретны — дробные квоты нужно округлить до целых,
+    // сохраняя sum(quota) == P точно.
+    floored = {u: floor(quota[u]) for u in active}
+    remainder = P - sum(floored.values())
+    fractions = sorted(
+        [(quota[u] - floor(quota[u]), u) for u in active],
+        descending
+    )
+    for i in 0..remainder:
+        floored[fractions[i].user] += 1
+    quota = floored
 ```
 
 **Пример**: P=50, три пользователя активны с высоким demand:

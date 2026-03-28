@@ -155,13 +155,26 @@ fn calculate_quotas(users, P):
                 break  // restart loop with updated remaining
 
         if not any_capped:
-            // No one is capped — distribute proportionally and finish
+            // No one is capped — distribute proportionally (fractional)
             total_weight = sum(u.weight for u in unsatisfied)
             for u in unsatisfied:
                 share = remaining * (u.weight / total_weight)
                 quota[u] += share
             remaining = 0
             break
+
+    // Phase 3: integer rounding (Largest Remainder Method)
+    // Connections are discrete — fractional quotas must be rounded to integers
+    // while preserving sum(quota) == P exactly.
+    floored = {u: floor(quota[u]) for u in active}
+    remainder = P - sum(floored.values())
+    fractions = sorted(
+        [(quota[u] - floor(quota[u]), u) for u in active],
+        descending
+    )
+    for i in 0..remainder:
+        floored[fractions[i].user] += 1
+    quota = floored
 ```
 
 **Example**: P=50, three users all active with high demand:
