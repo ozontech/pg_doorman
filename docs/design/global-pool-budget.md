@@ -51,7 +51,7 @@ where is_guaranteed(U) = (held[U] < guaranteed[U])
 ```
 
 Guaranteed requests always win. Among above-guarantee waiters: highest weight wins.
-Equal weight: most pending requests wins.
+Equal weight: user with more queued requests wins (higher pressure).
 
 **Eviction eligibility** (can connection C be evicted for requester R?):
 
@@ -181,7 +181,7 @@ fn select_best_waiter():
     return waiters.max_by(|W|
         (held[W] < guaranteed[W],     // true > false (guaranteed first)
          weight[W],                    // higher weight wins
-         waiting[W])                   // more pending wins (tie-breaker)
+         waiting[W])                   // more queued requests wins (higher pressure)
     )
 ```
 
