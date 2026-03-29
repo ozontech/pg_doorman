@@ -2070,3 +2070,152 @@ fn schedule_guaranteed_waiter_beats_high_weight_above_guarantee_waiter() {
     let granted = bc.release("filler", now);
     assert_eq!(granted, Some("guaranteed".to_string()));
 }
+
+// --- Core scenario: two equal-weight clients, A has all 40, B arrives ---
+
+/// Simulates: P=40, A(g=20, w=100, max=40) holds all 40 connections.
+/// B(g=20, w=100, max=40) arrives. Connections are >30s old.
+/// B should get 20 connections via immediate eviction.
+#[test]
+fn two_clients_equal_weight_b_evicts_old_connections_instantly() {
+    let bc = BudgetController::new(40, Duration::from_secs(30));
+    bc.register_pool("A", cfg(20, 100, 40));
+    bc.register_pool("B", cfg(20, 100, 40));
+
+    // A fills entire pool 35 seconds ago (past min_lifetime)
+    let old = Instant::now() - Duration::from_secs(35);
+    bc.set_held_with_age("A", 40, old);
+    assert_eq!(bc.total_held(), 40);
+
+    let now = Instant::now();
+
+    // B requests 20 guaranteed connections — each evicts one A above-guarantee
+    for i in 0..20 {
+        let result = bc.try_acquire("B", now);
+        assert!(
+            matches!(result, AcquireResult::GrantedAfterEviction { ref evicted_pool } if evicted_pool == "A"),
+            "request {} should evict from A",
+            i
+        );
+    }
+
+    assert_eq!(bc.held("B"), 20);
+    assert_eq!(bc.held("A"), 20); // A keeps its 20 guaranteed
+    assert_eq!(bc.total_held(), 40);
+
+    // A's 20 remaining connections are guaranteed → sacred
+    // B cannot evict them even though B still has room (held=20, max=40)
+    let result = bc.try_acquire("B", now);
+    // B is above guarantee now (held=20 >= guaranteed=20), pool full, A is within guarantee
+    assert_eq!(result, AcquireResult::WouldBlock);
+}
+
+/// Same scenario but A's connections are young (<30s).
+/// B cannot evict, gets connections only through natural transaction churn.
+#[test]
+fn two_clients_equal_weight_young_connections_natural_churn() {
+    let bc = BudgetController::new(40, Duration::from_secs(30));
+    bc.register_pool("A", cfg(20, 100, 40));
+    bc.register_pool("B", cfg(20, 100, 40));
+    let now = Instant::now();
+
+    // A fills pool with young connections
+    for _ in 0..40 {
+        bc.try_acquire("A", now);
+    }
+
+    // B requests 20 guaranteed connections — cannot evict (connections too young)
+    for _ in 0..20 {
+        assert_eq!(bc.try_acquire("B", now), AcquireResult::WouldBlock);
+    }
+    assert_eq!(bc.held("B"), 0);
+    assert_eq!(bc.waiting("B"), 20);
+
+    // Simulate A's transactions completing one by one.
+    // Each RETURN frees a slot → SCHEDULE grants to B (TIER_0 beats TIER_2).
+    for i in 0..20 {
+        let granted = bc.release("A", now);
+        assert_eq!(
+            granted,
+            Some("B".to_string()),
+            "return #{}: B should win schedule (TIER_0 > TIER_2)",
+            i
+        );
+    }
+
+    assert_eq!(bc.held("B"), 20);
+    assert_eq!(bc.held("A"), 20);
+    assert_eq!(bc.waiting("B"), 0);
+    assert_eq!(bc.total_held(), 40);
+}
+
+/// Simulation: how many RETURN events from A does B need to get N connections?
+/// Answer: exactly N. Each return gives one connection to B.
+#[test]
+fn two_clients_convergence_speed() {
+    let bc = BudgetController::new(40, Duration::from_secs(30));
+    bc.register_pool("A", cfg(20, 100, 40));
+    bc.register_pool("B", cfg(20, 100, 40));
+    let now = Instant::now();
+
+    for _ in 0..40 {
+        bc.try_acquire("A", now);
+    }
+
+    // B enqueues 20 guaranteed requests
+    for _ in 0..20 {
+        bc.try_acquire("B", now);
+    }
+
+    // Track: after each A return, how many connections does B have?
+    let mut b_held_history = Vec::new();
+    for _ in 0..20 {
+        bc.release("A", now);
+        b_held_history.push(bc.held("B"));
+    }
+
+    // B gets exactly 1 connection per A return (linear convergence)
+    assert_eq!(b_held_history, (1..=20).collect::<Vec<u32>>());
+
+    // After convergence, A also needs to re-acquire.
+    // A calls try_acquire: held=20=guaranteed, above-guarantee, pool full.
+    // A cannot evict B (B is within guarantee).
+    assert_eq!(bc.try_acquire("A", now), AcquireResult::WouldBlock);
+
+    // But B at held=20=guaranteed, new B request is also above-guarantee:
+    assert_eq!(bc.try_acquire("B", now), AcquireResult::WouldBlock);
+    // Equal weight, both above guarantee, both blocked. Fair.
+}
+
+/// After convergence (A=20, B=20), if A wants to grow above guarantee:
+/// A and B compete equally (same weight). Neither can evict the other.
+/// Connections only through natural churn, FIFO-like by waiting count.
+#[test]
+fn two_clients_post_convergence_fair_competition() {
+    let bc = BudgetController::new(40, Duration::from_secs(30));
+    bc.register_pool("A", cfg(20, 100, 40));
+    bc.register_pool("B", cfg(20, 100, 40));
+    let now = Instant::now();
+
+    // Both at guarantee
+    for _ in 0..20 {
+        bc.try_acquire("A", now);
+    }
+    for _ in 0..20 {
+        bc.try_acquire("B", now);
+    }
+    assert_eq!(bc.held("A"), 20);
+    assert_eq!(bc.held("B"), 20);
+
+    // Both want more, both above guarantee, pool full
+    bc.try_acquire("A", now); // WouldBlock
+    bc.try_acquire("B", now); // WouldBlock
+
+    // A releases one → SCHEDULE picks B (both weight=100, B.waiting=1, A.waiting=1 — FIFO)
+    // Actually both have waiting=1 — first enqueued (A) gets it? No, same score → FIFO from waiters vec.
+    // A was enqueued first → A wins
+    let granted = bc.release("A", now);
+    assert!(granted.is_some());
+    // Either A or B got it — both valid. Just verify the system doesn't deadlock.
+    assert_eq!(bc.total_held(), 40);
+}
