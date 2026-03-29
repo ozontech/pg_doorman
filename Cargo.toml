@@ -104,6 +104,10 @@ harness = false
 name = "cache_benchmarks"
 harness = false
 
+[[bench]]
+name = "budget_benchmarks"
+harness = false
+
 [features]
 default = []
 pam = ["dep:pam-client"]

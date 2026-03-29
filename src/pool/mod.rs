@@ -31,6 +31,7 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 
 pub use crate::server::PreparedStatementCache;
 
+pub mod budget;
 pub mod gc;
 pub mod retain;
 
