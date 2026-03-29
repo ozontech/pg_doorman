@@ -1,4 +1,6 @@
+use crate::messages::DataType;
 use parking_lot::Mutex;
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -544,6 +546,98 @@ impl BudgetController {
             .pools
             .get(pool)
             .map_or(0, |p| p.held.saturating_sub(p.config.guaranteed))
+    }
+
+    // --- SHOW BUDGET (global summary) ---
+
+    /// Column definitions for SHOW BUDGET.
+    pub fn show_budget_header() -> Vec<(&'static str, DataType)> {
+        vec![
+            ("max_connections", DataType::Numeric),
+            ("total_held", DataType::Numeric),
+            ("total_waiting", DataType::Numeric),
+            ("pools_registered", DataType::Numeric),
+            ("min_lifetime_ms", DataType::Numeric),
+            ("grants_guaranteed", DataType::Numeric),
+            ("grants_above", DataType::Numeric),
+            ("grants_after_eviction", DataType::Numeric),
+            ("evictions", DataType::Numeric),
+            ("evictions_blocked", DataType::Numeric),
+            ("denied_user_max", DataType::Numeric),
+            ("denied_timeout", DataType::Numeric),
+            ("would_block", DataType::Numeric),
+            ("releases", DataType::Numeric),
+            ("resets", DataType::Numeric),
+            ("reconciliations", DataType::Numeric),
+        ]
+    }
+
+    /// Single row for SHOW BUDGET.
+    pub fn show_budget_row(&self) -> Vec<String> {
+        let state = self.state.lock();
+        let total_waiting: u32 = state.pools.values().map(|p| p.waiting).sum();
+        let pools_count = state.pools.len();
+        let m = &self.metrics;
+        vec![
+            self.max_connections.to_string(),
+            state.total_held.to_string(),
+            total_waiting.to_string(),
+            pools_count.to_string(),
+            self.min_lifetime.as_millis().to_string(),
+            m.grants_guaranteed.load(Ordering::Relaxed).to_string(),
+            m.grants_above.load(Ordering::Relaxed).to_string(),
+            m.grants_after_eviction.load(Ordering::Relaxed).to_string(),
+            m.evictions.load(Ordering::Relaxed).to_string(),
+            m.evictions_blocked.load(Ordering::Relaxed).to_string(),
+            m.denied_user_max.load(Ordering::Relaxed).to_string(),
+            m.denied_timeout.load(Ordering::Relaxed).to_string(),
+            m.would_block.load(Ordering::Relaxed).to_string(),
+            m.releases.load(Ordering::Relaxed).to_string(),
+            m.resets.load(Ordering::Relaxed).to_string(),
+            m.reconciliations.load(Ordering::Relaxed).to_string(),
+        ]
+    }
+
+    // --- SHOW BUDGET_POOLS (per-pool breakdown) ---
+
+    /// Column definitions for SHOW BUDGET_POOLS.
+    pub fn show_budget_pools_header() -> Vec<(&'static str, DataType)> {
+        vec![
+            ("pool", DataType::Text),
+            ("guaranteed", DataType::Numeric),
+            ("weight", DataType::Numeric),
+            ("max_pool_size", DataType::Numeric),
+            ("held", DataType::Numeric),
+            ("above_guarantee", DataType::Numeric),
+            ("waiting", DataType::Numeric),
+            ("is_waiter", DataType::Text),
+        ]
+    }
+
+    /// Rows for SHOW BUDGET_POOLS. One row per registered pool, sorted by pool name.
+    pub fn show_budget_pools_rows(&self) -> Vec<Vec<Cow<'static, str>>> {
+        let state = self.state.lock();
+        let mut names: Vec<&String> = state.pools.keys().collect();
+        names.sort();
+
+        names
+            .iter()
+            .map(|name| {
+                let ps = &state.pools[*name];
+                let above = ps.held.saturating_sub(ps.config.guaranteed);
+                let is_waiter = state.waiters.contains(name);
+                vec![
+                    Cow::Owned((*name).clone()),
+                    Cow::Owned(ps.config.guaranteed.to_string()),
+                    Cow::Owned(ps.config.weight.to_string()),
+                    Cow::Owned(ps.config.max_pool_size.to_string()),
+                    Cow::Owned(ps.held.to_string()),
+                    Cow::Owned(above.to_string()),
+                    Cow::Owned(ps.waiting.to_string()),
+                    Cow::Borrowed(if is_waiter { "1" } else { "0" }),
+                ]
+            })
+            .collect()
     }
 
     /// Inject connections with specific ages (for testing eviction scenarios).
@@ -1294,5 +1388,100 @@ mod tests {
 
         bc.try_acquire("high", now);
         assert!(bc.metrics().evictions_blocked.load(Ordering::Relaxed) >= 1);
+    }
+
+    // --- SHOW BUDGET / SHOW BUDGET_POOLS ---
+
+    #[test]
+    fn show_budget_row_reflects_state() {
+        let bc = BudgetController::new(20, Duration::from_secs(30));
+        bc.register_pool("svc", cfg(5, 100, 15));
+        bc.register_pool("batch", cfg(3, 50, 10));
+        let now = Instant::now();
+
+        for _ in 0..8 {
+            bc.try_acquire("svc", now);
+        }
+        for _ in 0..5 {
+            bc.try_acquire("batch", now);
+        }
+
+        let row = bc.show_budget_row();
+        assert_eq!(row[0], "20"); // max_connections
+        assert_eq!(row[1], "13"); // total_held
+        assert_eq!(row[2], "0"); // total_waiting
+        assert_eq!(row[3], "2"); // pools_registered
+        assert_eq!(row[4], "30000"); // min_lifetime_ms
+    }
+
+    #[test]
+    fn show_budget_pools_rows_sorted_and_complete() {
+        let bc = BudgetController::new(20, Duration::from_secs(30));
+        bc.register_pool("svc", cfg(5, 100, 15));
+        bc.register_pool("analytics", cfg(0, 10, 5));
+        let now = Instant::now();
+
+        for _ in 0..8 {
+            bc.try_acquire("svc", now);
+        }
+        for _ in 0..3 {
+            bc.try_acquire("analytics", now);
+        }
+
+        let rows = bc.show_budget_pools_rows();
+        assert_eq!(rows.len(), 2);
+
+        // Sorted by name: analytics first
+        assert_eq!(rows[0][0], "analytics");
+        assert_eq!(rows[0][1], "0"); // guaranteed
+        assert_eq!(rows[0][2], "10"); // weight
+        assert_eq!(rows[0][3], "5"); // max
+        assert_eq!(rows[0][4], "3"); // held
+        assert_eq!(rows[0][5], "3"); // above_guarantee
+        assert_eq!(rows[0][6], "0"); // waiting
+        assert_eq!(rows[0][7], "0"); // is_waiter
+
+        assert_eq!(rows[1][0], "svc");
+        assert_eq!(rows[1][4], "8"); // held
+        assert_eq!(rows[1][5], "3"); // above_guarantee (8-5)
+    }
+
+    #[test]
+    fn show_budget_pools_shows_waiters() {
+        let bc = BudgetController::new(5, Duration::from_secs(30));
+        bc.register_pool("holder", cfg(0, 100, 5));
+        bc.register_pool("waiter", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        for _ in 0..5 {
+            bc.try_acquire("holder", now);
+        }
+        bc.try_acquire("waiter", now); // WouldBlock
+        bc.try_acquire("waiter", now); // WouldBlock
+
+        let rows = bc.show_budget_pools_rows();
+        let waiter_row = rows.iter().find(|r| r[0] == "waiter").unwrap();
+        assert_eq!(waiter_row[6], "2"); // waiting=2
+        assert_eq!(waiter_row[7], "1"); // is_waiter=true
+    }
+
+    #[test]
+    fn show_budget_header_matches_row_length() {
+        let header = BudgetController::show_budget_header();
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("test", cfg(0, 100, 5));
+        let row = bc.show_budget_row();
+        assert_eq!(header.len(), row.len());
+    }
+
+    #[test]
+    fn show_budget_pools_header_matches_row_length() {
+        let header = BudgetController::show_budget_pools_header();
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("test", cfg(0, 100, 5));
+        let now = Instant::now();
+        bc.try_acquire("test", now);
+        let rows = bc.show_budget_pools_rows();
+        assert_eq!(header.len(), rows[0].len());
     }
 }
