@@ -402,6 +402,180 @@ max_pool_size = 10
 3. `для каждого: max_pool_size <= max_db_connections`
 4. `min_connection_lifetime > 0`
 
+**Рекомендация:** `sum(guaranteed) <= P * 0.8`. Оставлять минимум 20% бюджета
+для конкуренции сверх гарантии. При `sum(guaranteed) = P` пользователи с `guaranteed=0`
+не получат коннектов никогда.
+
+---
+
+## Граничные случаи (Edge Cases)
+
+### Кто кого может вытеснить (только above-guarantee)
+
+```
+Запрашивающий →      service_api  batch_worker  analytics
+Жертва ↓               (w=100)      (w=50)       (w=10)
+──────────────────────────────────────────────────────────
+service_api (w=100)      —            ❌           ❌
+batch_worker (w=50)      ✅            —           ❌
+analytics (w=10)         ✅            ✅            —
+──────────────────────────────────────────────────────────
+✅ = может вытеснить (weight жертвы < weight запрашивающего AND age >= min_lifetime)
+❌ = не может (weight жертвы >= weight запрашивающего)
+
+Гарантированные запросы (held < guaranteed) вытесняют ЛЮБОЙ above-guarantee
+коннект вне зависимости от веса (трактуются как weight = ∞).
+```
+
+### EC-1: Новый пользователь с guaranteed=0, пул полон, равный вес
+
+```
+Состояние: total_held=20=P. Все коннекты принадлежат пользователям с weight=100.
+
+new_app (guaranteed=0, weight=100, max=5) запрашивает коннект.
+  FIND_EVICTABLE(weight=100):
+    Все above-guarantee коннекты имеют weight=100. 100 < 100? НЕТ.
+    Жертв нет.
+
+  new_app встаёт в очередь. Получит коннект при следующем RETURN.
+  SELECT_BEST_WAITER: new_app (weight=100, waiting=1) конкурирует
+  с возвращающим пользователем (если у того тоже есть ожидающие запросы).
+  Тай-брейк: количество ожидающих запросов.
+```
+
+### EC-2: Новый пользователь с guaranteed=0, пул полон, вес ниже всех
+
+```
+new_app (guaranteed=0, weight=5) запрашивает коннект.
+  Пул полон. FIND_EVICTABLE(weight=5): ни у кого weight < 5.
+  new_app встаёт в очередь.
+
+  При RETURN от любого пользователя:
+    SELECT_BEST_WAITER среди всех ожидающих.
+    Если service_api (weight=100) тоже ждёт → service_api побеждает.
+    new_app получит коннект только когда НИ ОДИН пользователь с бо́льшим весом не ждёт.
+```
+
+### EC-3: Новый пользователь с guaranteed=2, пул полон
+
+```
+Состояние: total_held=20=P.
+  service_api: held=12 (7 сверх гарантии), weight=100
+  batch_worker: held=5 (2 сверх гарантии), weight=50
+  analytics: held=3 (3 сверх гарантии), weight=10
+
+new_service (guaranteed=2, weight=80) запрашивает первый коннект.
+  held=0 < guaranteed=2 → НЕМЕДЛЕННО.
+  Пул полон → FIND_EVICTABLE(weight=∞):
+    Все 12 above-guarantee коннектов — кандидаты.
+    Наименьший вес первым: analytics (weight=10).
+    age >= min_lifetime? Если ДА → EVICT(analytics). CREATE(new_service).
+    Если НЕТ (все коннекты < 30с) → new_service ждёт.
+
+  После второго EVICT: new_service held=2 = guaranteed. Гарантия выполнена.
+```
+
+### EC-4: Все коннекты в гарантии, нет above-guarantee для вытеснения
+
+```
+P=8. service_api(guaranteed=5, held=5). batch_worker(guaranteed=3, held=3).
+total_held=8=P. Все в гарантии.
+
+analytics(guaranteed=0, weight=10) запрашивает коннект.
+  Пул полон. FIND_EVICTABLE: above-guarantee коннектов нет.
+  analytics встаёт в очередь.
+
+  При RETURN(service_api): service_api held=4 < guaranteed=5.
+    SELECT_BEST_WAITER:
+      service_api: is_guaranteed=true (held=4 < guaranteed=5)
+      analytics: is_guaranteed=false (held=0, но guaranteed=0)
+    service_api побеждает (гарантированный > сверх гарантии).
+    Коннект возвращается service_api.
+
+  ⚠ analytics НИКОГДА не получит коннект в этой конфигурации.
+  Корректное поведение: sum(guaranteed)=8=P, места нет.
+```
+
+### EC-5: Много динамических пользователей с guaranteed=0
+
+```
+P=20, 50 пользователей через auth_query, все: guaranteed=0, weight=100, max=5.
+
+Первые 4 получают по 5 коннектов = 20. ПУЛ ПОЛОН.
+Пользователи 5-50 встают в очередь.
+
+При каждом RETURN: SELECT_BEST_WAITER среди 46 ожидающих.
+  Все weight=100, guaranteed=false.
+  Тай-брейк: количество ожидающих запросов.
+
+При avg transaction=10мс и 20 коннектах:
+  ~2000 возвратов/с → ~2000 выдач/с ожидающим.
+  Все 50 пользователей делят 20 коннектов в round-robin.
+  Эффективно: 0.4 коннекта на пользователя в среднем.
+```
+
+### EC-6: Динамические пользователи переполняют бюджет гарантий
+
+```
+default_guaranteed_pool_size = 1, P = 20
+Статические: сумма guaranteed = 8
+Динамические: 15 подключаются → 15 × 1 = 15
+Итого guaranteed: 8 + 15 = 23 > P = 20. ИНВАРИАНТ НАРУШЕН.
+
+Решение: runtime-проверка при подключении каждого динамического пользователя:
+
+  fn can_grant_guarantee(new_user):
+      current = sum(guaranteed[U] for U in active_users)
+      return current + new_user.default_guaranteed <= P
+
+  Если false: пользователь получает guaranteed=0 (без гарантии, конкурирует по весу).
+```
+
+### EC-7: min_lifetime=0 (защита отключена)
+
+```
+t=0.0с  analytics получает 5 коннектов
+t=0.1с  service_api запрашивает → вытесняет analytics (weight 100 > 10)
+t=0.2с  service_api снижает нагрузку → analytics получает коннекты обратно
+t=0.3с  service_api снова запрашивает → вытесняет
+...
+Каждый цикл: ~100мс, один fork() в PostgreSQL.
+10 циклов/с × fork() = деградация postmaster.
+
+⚠ min_lifetime=0 вызывает флап коннектов. Не рекомендуется.
+  Минимум: 5с. По умолчанию: 30с.
+```
+
+### EC-8: Гарантированный пользователь вытесняет above-guarantee
+
+```
+service_api: guaranteed=5, held=12 (7 сверх гарантии).
+Все 7 above-guarantee коннектов старше 45с (прошли min_lifetime).
+
+batch_worker запрашивает 5 коннектов (в гарантии: held=0 < guaranteed=3).
+  НЕМЕДЛЕННО: FIND_EVICTABLE(weight=∞):
+    service_api: 7 above-guarantee, age=45с > 30с → все evictable
+    EVICT 3 (для guaranteed batch_worker). Потом ещё 2 above-guarantee.
+    service_api: held=7 (2 сверх гарантии).
+    batch_worker: held=5 (2 сверх гарантии).
+
+  Гарантированные 5 коннектов service_api нетронуты.
+  Вытеснены только above-guarantee.
+```
+
+### Сводная таблица
+
+| # | Ситуация | Результат | Примечание |
+|---|----------|-----------|------------|
+| EC-1 | guaranteed=0, пул полон, равный вес | Ждёт RETURN | Тай-брейк по кол-ву ожидающих |
+| EC-2 | guaranteed=0, пул полон, наименьший вес | Ждёт бесконечно | Получит, когда нет ожидающих с бо́льшим весом |
+| EC-3 | guaranteed>0, пул полон | Вытесняет lowest-weight above-g | weight=∞ для guaranteed |
+| EC-4 | sum(guaranteed)=P, нет above-g | Не получит коннект | Настроить sum(g) ≤ 80% P |
+| EC-5 | 50 динамических, guaranteed=0 | Round-robin на P коннектах | Ожидаемое поведение |
+| EC-6 | Динамические переполняют бюджет | Runtime-проверка, деградация до g=0 | Предотвращает нарушение инварианта |
+| EC-7 | min_lifetime=0 | Флап/fork storm | Не рекомендуется, минимум 5с |
+| EC-8 | Guaranteed вытесняет above-g | Только above-g затронуты | Guaranteed коннекты священны |
+
 ---
 
 ## Dedicated vs Passthrough

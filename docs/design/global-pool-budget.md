@@ -451,6 +451,180 @@ max_pool_size = 10
 3. `each user: max_pool_size <= max_db_connections`
 4. `min_connection_lifetime > 0`
 
+**Recommendation:** `sum(guaranteed) <= P * 0.8`. Reserve at least 20% of the budget
+for above-guarantee competition. If `sum(guaranteed) = P`, users with `guaranteed=0`
+can never get connections.
+
+---
+
+## Edge Cases
+
+### Who can evict whom (above-guarantee only)
+
+```
+Requester →          service_api  batch_worker  analytics
+Victim ↓               (w=100)      (w=50)       (w=10)
+──────────────────────────────────────────────────────────
+service_api (w=100)      —            ❌           ❌
+batch_worker (w=50)      ✅            —           ❌
+analytics (w=10)         ✅            ✅            —
+──────────────────────────────────────────────────────────
+✅ = can evict (victim weight < requester weight AND age >= min_lifetime)
+❌ = cannot (victim weight >= requester weight)
+
+Guaranteed requests (held < guaranteed) evict ANY above-guarantee
+connection regardless of weight (treated as weight = ∞).
+```
+
+### EC-1: New user with guaranteed=0, pool full, equal weight
+
+```
+State: total_held=20=P. All connections belong to users with weight=100.
+
+new_app (guaranteed=0, weight=100, max=5) requests a connection.
+  FIND_EVICTABLE(weight=100):
+    All above-guarantee connections have weight=100. 100 < 100? NO.
+    No victims.
+
+  new_app enters queue. Gets a connection on the next RETURN.
+  SELECT_BEST_WAITER: new_app (weight=100, waiting=1) competes with
+  the returning user (if they also have waiting requests).
+  Tie-breaker: waiting count.
+```
+
+### EC-2: New user with guaranteed=0, pool full, lower weight than all
+
+```
+new_app (guaranteed=0, weight=5) requests a connection.
+  Pool full. FIND_EVICTABLE(weight=5): no one has weight < 5.
+  new_app enters queue.
+
+  On RETURN from any user:
+    SELECT_BEST_WAITER among all waiters.
+    If service_api (weight=100) is also waiting → service_api wins.
+    new_app gets a connection only when NO higher-weight user is waiting.
+```
+
+### EC-3: New user with guaranteed=2, pool full
+
+```
+State: total_held=20=P.
+  service_api: held=12 (7 above-guarantee), weight=100
+  batch_worker: held=5 (2 above-guarantee), weight=50
+  analytics: held=3 (3 above-guarantee), weight=10
+
+new_service (guaranteed=2, weight=80) requests first connection.
+  held=0 < guaranteed=2 → IMMEDIATE.
+  Pool full → FIND_EVICTABLE(weight=∞):
+    All 12 above-guarantee connections are candidates.
+    Lowest weight first: analytics (weight=10).
+    Age >= min_lifetime? If YES → EVICT(analytics). CREATE(new_service).
+    If NO (all connections < 30s old) → new_service waits.
+
+  After second EVICT: new_service has guaranteed=2, held=2. Guarantee met.
+```
+
+### EC-4: All connections within guarantee, no above-guarantee to evict
+
+```
+P=8. service_api(guaranteed=5, held=5). batch_worker(guaranteed=3, held=3).
+total_held=8=P. All within guarantee.
+
+analytics(guaranteed=0, weight=10) requests a connection.
+  Pool full. FIND_EVICTABLE: no above-guarantee connections exist.
+  analytics enters queue.
+
+  On RETURN(service_api): service_api held=4 < guaranteed=5.
+    SELECT_BEST_WAITER:
+      service_api: is_guaranteed=true (held=4 < guaranteed=5)
+      analytics: is_guaranteed=false (held=0, but guaranteed=0)
+    service_api wins (guaranteed > above-guarantee).
+    Connection returns to service_api.
+
+  ⚠ analytics NEVER gets a connection in this configuration.
+  This is correct behavior: sum(guaranteed)=8=P leaves no room.
+```
+
+### EC-5: Many dynamic users with default guaranteed=0
+
+```
+P=20, 50 users via auth_query, all: guaranteed=0, weight=100, max=5.
+
+First 4 users get 5 connections each = 20. POOL FULL.
+Users 5-50 enter queue.
+
+On each RETURN: SELECT_BEST_WAITER among all 46 waiters.
+  All weight=100, all guaranteed=false.
+  Tie-breaker: waiting count. User with most pending requests wins.
+
+With avg transaction=10ms and 20 connections:
+  ~2000 returns/sec → ~2000 grants/sec to waiters.
+  All 50 users share 20 connections in round-robin fashion.
+  Effective: 0.4 connections per user on average.
+```
+
+### EC-6: Dynamic users overflow guaranteed budget
+
+```
+default_guaranteed_pool_size = 1, P = 20
+Static users: guaranteed sum = 8
+Dynamic users: 15 connect → 15 × 1 = 15
+Total guaranteed: 8 + 15 = 23 > P = 20. INVARIANT VIOLATED.
+
+Solution: runtime check on each new dynamic user:
+
+  fn can_grant_guarantee(new_user):
+      current = sum(guaranteed[U] for U in active_users)
+      return current + new_user.default_guaranteed <= P
+
+  If false: new_user gets guaranteed=0 (no guarantee, competes by weight).
+```
+
+### EC-7: min_lifetime=0 (disabled protection)
+
+```
+t=0.0s  analytics gets 5 connections
+t=0.1s  service_api requests → evicts analytics (weight 100 > 10)
+t=0.2s  service_api load drops → analytics gets connections back
+t=0.3s  service_api requests again → evicts analytics again
+...
+Each cycle: ~100ms, one fork() in PostgreSQL.
+10 cycles/sec × fork() = postmaster degradation.
+
+⚠ min_lifetime=0 causes connection flapping. Not recommended.
+  Minimum recommended: 5s. Default: 30s.
+```
+
+### EC-8: Guaranteed user temporarily over-guaranteed, then load shifts
+
+```
+service_api: guaranteed=5, held=12 (7 above-guarantee).
+All 7 above-guarantee connections are 45s old (past min_lifetime).
+
+batch_worker requests 5 connections (within guarantee: held=0 < guaranteed=3).
+  IMMEDIATE: FIND_EVICTABLE(weight=∞):
+    service_api: 7 above-guarantee, age=45s > 30s → all evictable
+    EVICT 3 (for batch_worker guaranteed). Then 2 more above-guarantee.
+    service_api: held=7 (2 above-guarantee).
+    batch_worker: held=5 (2 above-guarantee).
+
+  service_api keeps its 5 guaranteed connections untouched.
+  Only above-guarantee connections were evicted.
+```
+
+### Summary table
+
+| # | Situation | Outcome | Notes |
+|---|-----------|---------|-------|
+| EC-1 | guaranteed=0, pool full, equal weight | Waits for RETURN | Tie-break by waiting count |
+| EC-2 | guaranteed=0, pool full, lowest weight | Waits indefinitely | Gets conn only when no higher-weight waiter |
+| EC-3 | guaranteed>0, pool full | Evicts lowest-weight above-guarantee | weight=∞ for guaranteed |
+| EC-4 | sum(guaranteed)=P, no above-guarantee | Never gets connection | Configure sum(g) ≤ 80% P |
+| EC-5 | 50 dynamic users, guaranteed=0 | Round-robin on P connections | Expected behavior |
+| EC-6 | Dynamic users overflow guarantee budget | Runtime check, degrade to guaranteed=0 | Prevents invariant violation |
+| EC-7 | min_lifetime=0 | Flap/fork storm | Not recommended, minimum 5s |
+| EC-8 | Guaranteed evicts above-guarantee | Only above-guarantee affected | Guaranteed connections sacred |
+
 ---
 
 ## Dedicated vs Passthrough
