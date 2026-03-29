@@ -782,41 +782,25 @@ After timeout, return error instead of waiting forever.
 
 ---
 
-## Multi-Instance Deployment
+## Calculating max_db_connections
 
-The budget controller is **per-instance** (shared-nothing). Each pg_doorman
-instance has its own independent budget. There is no cross-instance coordination.
-
-### Calculating max_db_connections
+pg_doorman is deployed as a single instance in front of PostgreSQL
+(not as a sidecar per application pod).
 
 ```
-P_per_instance = (PG_max_connections
-                  - superuser_reserved_connections
-                  - replication_slots
-                  - monitoring_agents
-                  - direct_dba_connections)
-                 / number_of_pooler_instances
+P = PG_max_connections
+    - superuser_reserved_connections   (default 3)
+    - replication_slots                (streaming + logical)
+    - monitoring_connections           (Zabbix, pg_exporter, etc.)
+    - DBA_reserve                      (pgAdmin, psql)
 ```
 
 Example: PG max_connections=200, superuser_reserved=3, replication=2,
-monitoring=2, DBA=3, 2 pg_doorman instances:
+monitoring=2, DBA=3:
 
 ```
-P = (200 - 3 - 2 - 2 - 3) / 2 = 95 per instance
+P = 200 - 3 - 2 - 2 - 3 = 190
 ```
-
-### Instance failure
-
-If one of N instances goes down, surviving instances are limited to
-their configured P, NOT P × N. Available PG capacity is underutilized
-until the failed instance recovers.
-
-Workaround: set P slightly higher than the calculated value and accept
-that during normal operation, N instances × P may exceed PG capacity.
-PG will reject excess connections with `FATAL: too many connections`.
-The pool layer handles this via CREATE failure (Contract 3).
-
-Recommended: `P = calculated_value * 1.2` (20% headroom for failover).
 
 ### Startup validation
 

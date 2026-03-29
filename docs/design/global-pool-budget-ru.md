@@ -733,40 +733,25 @@ Waiters в очереди batch_worker зависают без timeout'а.
 
 ---
 
-## Multi-Instance деплой
+## Расчёт max_db_connections
 
-Budget controller работает **per-instance** (shared-nothing). Каждый инстанс
-pg_doorman имеет независимый бюджет. Координации между инстансами нет.
-
-### Расчёт max_db_connections
+pg_doorman разворачивается как единственный инстанс перед PostgreSQL
+(не как sidecar рядом с каждым подом приложения).
 
 ```
-P_per_instance = (PG_max_connections
-                  - superuser_reserved_connections
-                  - replication_slots
-                  - monitoring_agents
-                  - direct_dba_connections)
-                 / количество_инстансов_pooler
+P = PG_max_connections
+    - superuser_reserved_connections   (default 3)
+    - replication_slots                (streaming + logical)
+    - monitoring_connections           (Zabbix, pg_exporter и т.д.)
+    - DBA_reserve                      (pgAdmin, psql)
 ```
 
 Пример: PG max_connections=200, superuser_reserved=3, replication=2,
-monitoring=2, DBA=3, 2 инстанса pg_doorman:
+monitoring=2, DBA=3:
 
 ```
-P = (200 - 3 - 2 - 2 - 3) / 2 = 95 на инстанс
+P = 200 - 3 - 2 - 2 - 3 = 190
 ```
-
-### Отказ инстанса
-
-При падении одного из N инстансов выжившие ограничены своим P,
-а НЕ P × N. Доступная ёмкость PG недоиспользуется.
-
-Обходной путь: задать P чуть выше расчётного и принять, что
-при нормальной работе N × P может превысить PG capacity.
-PG отклонит лишние коннекты (`FATAL: too many connections`).
-Pool layer обработает через CREATE failure (Контракт 3).
-
-Рекомендация: `P = расчётное_значение × 1.2` (20% запас для failover).
 
 ### Валидация при старте
 
