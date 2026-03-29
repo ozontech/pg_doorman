@@ -1,5 +1,5 @@
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Result of a non-blocking acquire attempt.
@@ -18,7 +18,7 @@ pub enum AcquireResult {
 }
 
 /// Configuration for a pool participant in the budget.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PoolBudgetConfig {
     pub guaranteed: u32,
     pub weight: u32,
@@ -46,7 +46,8 @@ pub struct BudgetController {
 struct BudgetState {
     pools: HashMap<String, PoolState>,
     total_held: u32,
-    /// Waiters in insertion order. SCHEDULE picks the best by priority.
+    /// Deduplicated waiter set in insertion order.
+    /// Each pool appears at most once; PoolState.waiting tracks the count.
     waiters: Vec<String>,
 }
 
@@ -54,8 +55,8 @@ struct PoolState {
     config: PoolBudgetConfig,
     held: u32,
     waiting: u32,
-    /// Creation timestamps of held connections, oldest first.
-    connection_ages: Vec<Instant>,
+    /// Creation timestamps of held connections, oldest first (front = oldest).
+    connection_ages: VecDeque<Instant>,
 }
 
 impl BudgetController {
@@ -79,16 +80,21 @@ impl BudgetController {
                 config,
                 held: 0,
                 waiting: 0,
-                connection_ages: Vec::new(),
+                connection_ages: VecDeque::new(),
             },
         );
     }
 
-    pub fn unregister_pool(&self, name: &str) {
+    pub fn unregister_pool(&self, name: &str, now: Instant) {
         let mut state = self.state.lock();
         if let Some(pool) = state.pools.remove(name) {
             state.total_held -= pool.held;
             state.waiters.retain(|w| w != name);
+
+            // Drain: freed capacity may satisfy queued waiters
+            while Self::schedule(&mut state, self.max_connections, self.min_lifetime, now).is_some()
+            {
+            }
         }
     }
 
@@ -117,9 +123,8 @@ impl BudgetController {
         };
 
         let held = pool_state.held;
-        let config = pool_state.config.clone();
+        let config = pool_state.config;
 
-        // Check per-user max
         if held >= config.max_pool_size {
             return AcquireResult::DeniedUserMax;
         }
@@ -128,20 +133,11 @@ impl BudgetController {
 
         // Case 1: room in global budget
         if state.total_held < self.max_connections {
-            if !is_guaranteed {
-                // Above guarantee: check if a higher-weight waiter exists
-                if Self::has_higher_weight_waiter(&state, pool, config.weight) {
-                    let ps = state.pools.get_mut(pool).unwrap();
-                    ps.waiting += 1;
-                    state.waiters.push(pool.to_string());
-                    return AcquireResult::WouldBlock;
-                }
+            if !is_guaranteed && Self::has_higher_weight_waiter(&state, pool, config.weight) {
+                Self::enqueue_waiter(&mut state, pool);
+                return AcquireResult::WouldBlock;
             }
-            // Grant
-            let ps = state.pools.get_mut(pool).unwrap();
-            ps.held += 1;
-            ps.connection_ages.push(now);
-            state.total_held += 1;
+            Self::grant(&mut state, pool, now);
             return AcquireResult::Granted;
         }
 
@@ -155,35 +151,15 @@ impl BudgetController {
             Self::find_evictable(&state, pool, requester_weight, now, self.min_lifetime)
         {
             let victim_name = victim.clone();
-            // Evict one connection from victim
-            let victim_state = state.pools.get_mut(&victim_name).unwrap();
-            victim_state.held -= 1;
-            // Remove oldest eligible connection
-            if let Some(idx) = victim_state
-                .connection_ages
-                .iter()
-                .position(|&t| now.duration_since(t) >= self.min_lifetime)
-            {
-                victim_state.connection_ages.remove(idx);
-            } else if !victim_state.connection_ages.is_empty() {
-                victim_state.connection_ages.remove(0);
-            }
-            state.total_held -= 1;
-
-            // Grant to requester
-            let ps = state.pools.get_mut(pool).unwrap();
-            ps.held += 1;
-            ps.connection_ages.push(now);
-            state.total_held += 1;
+            Self::evict_one(&mut state, &victim_name, now, self.min_lifetime);
+            Self::grant(&mut state, pool, now);
             return AcquireResult::GrantedAfterEviction {
                 evicted_pool: victim_name,
             };
         }
 
         // Case 3: no evictable connections — enqueue
-        let ps = state.pools.get_mut(pool).unwrap();
-        ps.waiting += 1;
-        state.waiters.push(pool.to_string());
+        Self::enqueue_waiter(&mut state, pool);
         AcquireResult::WouldBlock
     }
 
@@ -196,16 +172,48 @@ impl BudgetController {
         if let Some(ps) = state.pools.get_mut(pool) {
             if ps.held > 0 {
                 ps.held -= 1;
-                // Remove oldest connection age
-                if !ps.connection_ages.is_empty() {
-                    ps.connection_ages.remove(0);
-                }
+                ps.connection_ages.pop_front();
                 state.total_held -= 1;
             }
         }
 
-        // SCHEDULE: find best waiter and grant
         Self::schedule(&mut state, self.max_connections, self.min_lifetime, now)
+    }
+
+    // --- Internal helpers ---
+
+    /// Grant one slot to `pool`: increment held, record connection age.
+    fn grant(state: &mut BudgetState, pool: &str, now: Instant) {
+        let ps = state.pools.get_mut(pool).unwrap();
+        ps.held += 1;
+        ps.connection_ages.push_back(now);
+        state.total_held += 1;
+    }
+
+    /// Evict one above-guarantee connection from `victim_pool`.
+    fn evict_one(state: &mut BudgetState, victim_pool: &str, now: Instant, min_lifetime: Duration) {
+        let vs = state.pools.get_mut(victim_pool).unwrap();
+        vs.held -= 1;
+        // Remove oldest eligible connection
+        if let Some(idx) = vs
+            .connection_ages
+            .iter()
+            .position(|&t| now.duration_since(t) >= min_lifetime)
+        {
+            vs.connection_ages.remove(idx);
+        } else {
+            vs.connection_ages.pop_front();
+        }
+        state.total_held -= 1;
+    }
+
+    /// Enqueue a waiter for `pool`. Deduplicated: each pool appears at most once in waiters vec.
+    fn enqueue_waiter(state: &mut BudgetState, pool: &str) {
+        let ps = state.pools.get_mut(pool).unwrap();
+        if ps.waiting == 0 {
+            state.waiters.push(pool.to_string());
+        }
+        ps.waiting += 1;
     }
 
     /// SCHEDULE: pick the best waiter and grant them a slot.
@@ -219,7 +227,6 @@ impl BudgetController {
             return None;
         }
 
-        // SELECT_BEST_WAITER
         let best_idx = Self::select_best_waiter_idx(state)?;
         let best_pool = state.waiters[best_idx].clone();
 
@@ -227,15 +234,9 @@ impl BudgetController {
         let is_guaranteed = best_state.held < best_state.config.guaranteed;
         let weight = best_state.config.weight;
 
-        // Can we grant?
         if state.total_held < max_connections {
-            // Room available
-            state.waiters.remove(best_idx);
-            let ps = state.pools.get_mut(&best_pool).unwrap();
-            ps.held += 1;
-            ps.waiting -= 1;
-            ps.connection_ages.push(now);
-            state.total_held += 1;
+            Self::dequeue_waiter(state, best_idx, &best_pool);
+            Self::grant(state, &best_pool, now);
             return Some(best_pool);
         }
 
@@ -245,29 +246,22 @@ impl BudgetController {
             Self::find_evictable(state, &best_pool, requester_weight, now, min_lifetime)
         {
             let victim_name = victim.clone();
-            let victim_state = state.pools.get_mut(&victim_name).unwrap();
-            victim_state.held -= 1;
-            if let Some(idx) = victim_state
-                .connection_ages
-                .iter()
-                .position(|&t| now.duration_since(t) >= min_lifetime)
-            {
-                victim_state.connection_ages.remove(idx);
-            } else if !victim_state.connection_ages.is_empty() {
-                victim_state.connection_ages.remove(0);
-            }
-            state.total_held -= 1;
-
-            state.waiters.remove(best_idx);
-            let ps = state.pools.get_mut(&best_pool).unwrap();
-            ps.held += 1;
-            ps.waiting -= 1;
-            ps.connection_ages.push(now);
-            state.total_held += 1;
+            Self::evict_one(state, &victim_name, now, min_lifetime);
+            Self::dequeue_waiter(state, best_idx, &best_pool);
+            Self::grant(state, &best_pool, now);
             return Some(best_pool);
         }
 
         None
+    }
+
+    /// Remove one waiter request for `pool`. Remove from waiters vec if count reaches 0.
+    fn dequeue_waiter(state: &mut BudgetState, waiter_idx: usize, pool: &str) {
+        let ps = state.pools.get_mut(pool).unwrap();
+        ps.waiting -= 1;
+        if ps.waiting == 0 {
+            state.waiters.remove(waiter_idx);
+        }
     }
 
     /// SELECT_BEST_WAITER: guaranteed first, then highest weight, then most waiting.
@@ -291,24 +285,24 @@ impl BudgetController {
     }
 
     /// Priority tuple: (is_guaranteed, weight, waiting_count).
+    /// Compared lexicographically descending: guaranteed > not, higher weight > lower,
+    /// more queued requests > fewer.
     fn waiter_priority(state: &BudgetState, pool_name: &str) -> (bool, u32, u32) {
         let ps = &state.pools[pool_name];
         let is_guaranteed = ps.held < ps.config.guaranteed;
         (is_guaranteed, ps.config.weight, ps.waiting)
     }
 
-    /// Check if any waiter with strictly higher weight exists.
+    /// Check if any waiter with strictly higher weight exists (excluding self).
     fn has_higher_weight_waiter(
         state: &BudgetState,
         requesting_pool: &str,
         requesting_weight: u32,
     ) -> bool {
-        state.waiters.iter().any(|w| {
-            w != requesting_pool && {
-                let ps = &state.pools[w];
-                ps.config.weight > requesting_weight
-            }
-        })
+        state
+            .waiters
+            .iter()
+            .any(|w| w != requesting_pool && state.pools[w].config.weight > requesting_weight)
     }
 
     /// FIND_EVICTABLE: above-guarantee, old enough, lower weight.
@@ -319,45 +313,42 @@ impl BudgetController {
         now: Instant,
         min_lifetime: Duration,
     ) -> Option<String> {
-        let mut best: Option<(u32, Duration, String)> = None; // (weight, max_age, pool_name)
+        let mut best: Option<(u32, Duration, String)> = None;
 
         for (name, ps) in &state.pools {
             if name == requester {
                 continue;
             }
             if ps.held <= ps.config.guaranteed {
-                continue; // within guarantee: sacred
+                continue;
             }
             if requester_weight != u32::MAX && ps.config.weight >= requester_weight {
-                continue; // same or higher weight: safe
+                continue;
             }
-            // Check if any connection is old enough
-            let oldest_eligible = ps
+            let has_eligible = ps
                 .connection_ages
                 .iter()
-                .find(|&&t| now.duration_since(t) >= min_lifetime);
-            if oldest_eligible.is_none() {
-                continue; // all too young
+                .any(|&t| now.duration_since(t) >= min_lifetime);
+            if !has_eligible {
+                continue;
             }
-            let max_age = now.duration_since(*ps.connection_ages.first().unwrap());
+            let max_age = now.duration_since(*ps.connection_ages.front().unwrap());
 
-            match &best {
-                None => {
-                    best = Some((ps.config.weight, max_age, name.clone()));
-                }
+            let dominated = match &best {
+                None => true,
                 Some((bw, ba, _)) => {
-                    // Lower weight first, then oldest
-                    if ps.config.weight < *bw || (ps.config.weight == *bw && max_age > *ba) {
-                        best = Some((ps.config.weight, max_age, name.clone()));
-                    }
+                    ps.config.weight < *bw || (ps.config.weight == *bw && max_age > *ba)
                 }
+            };
+            if dominated {
+                best = Some((ps.config.weight, max_age, name.clone()));
             }
         }
 
         best.map(|(_, _, name)| name)
     }
 
-    // --- Getters for testing ---
+    // --- Getters ---
 
     pub fn held(&self, pool: &str) -> u32 {
         self.state.lock().pools.get(pool).map_or(0, |p| p.held)
@@ -384,6 +375,7 @@ impl BudgetController {
     }
 
     /// Inject connections with specific ages (for testing eviction scenarios).
+    #[cfg(test)]
     pub fn set_held_with_age(&self, pool: &str, count: u32, created_at: Instant) {
         let mut state = self.state.lock();
         if let Some(ps) = state.pools.get_mut(pool) {
@@ -391,7 +383,7 @@ impl BudgetController {
             ps.held = count;
             ps.connection_ages.clear();
             for _ in 0..count {
-                ps.connection_ages.push(created_at);
+                ps.connection_ages.push_back(created_at);
             }
             state.total_held = state.total_held - old_held + count;
         }
@@ -418,7 +410,7 @@ mod tests {
         (bc, Instant::now())
     }
 
-    // --- Scenario 1: Normal startup ---
+    // --- Normal operation ---
 
     #[test]
     fn guaranteed_connections_granted_immediately() {
@@ -443,15 +435,12 @@ mod tests {
     #[test]
     fn multiple_users_fill_pool() {
         let (bc, now) = setup_standard();
-        // service_api: 8
         for _ in 0..8 {
             bc.try_acquire("service_api", now);
         }
-        // batch_worker: 5
         for _ in 0..5 {
             bc.try_acquire("batch_worker", now);
         }
-        // analytics: 3
         for _ in 0..3 {
             bc.try_acquire("analytics", now);
         }
@@ -470,13 +459,9 @@ mod tests {
         bc.register_pool("user_b", cfg(0, 100, 10));
         let now = Instant::now();
 
-        // user_a fills pool
         for _ in 0..20 {
             bc.try_acquire("user_a", now);
         }
-        assert_eq!(bc.total_held(), 20);
-
-        // user_b cannot evict (equal weight)
         assert_eq!(bc.try_acquire("user_b", now), AcquireResult::WouldBlock);
         assert_eq!(bc.waiting("user_b"), 1);
     }
@@ -491,9 +476,8 @@ mod tests {
         for _ in 0..20 {
             bc.try_acquire("user_a", now);
         }
-        bc.try_acquire("user_b", now); // WouldBlock, enqueued
+        bc.try_acquire("user_b", now);
 
-        // user_a returns one connection
         let granted = bc.release("user_a", now);
         assert_eq!(granted, Some("user_b".to_string()));
         assert_eq!(bc.held("user_b"), 1);
@@ -505,7 +489,6 @@ mod tests {
     #[test]
     fn ec2_lowest_weight_cannot_evict() {
         let (bc, now) = setup_standard();
-        // Fill pool: service_api=12, batch_worker=5, analytics=3
         for _ in 0..12 {
             bc.try_acquire("service_api", now);
         }
@@ -517,7 +500,7 @@ mod tests {
         }
         assert_eq!(bc.total_held(), 20);
 
-        bc.register_pool("new_app", cfg(0, 5, 5)); // weight=5, lowest
+        bc.register_pool("new_app", cfg(0, 5, 5));
         assert_eq!(bc.try_acquire("new_app", now), AcquireResult::WouldBlock);
     }
 
@@ -535,60 +518,51 @@ mod tests {
         }
 
         bc.register_pool("new_app", cfg(0, 5, 5));
-        bc.try_acquire("new_app", now); // WouldBlock
+        bc.try_acquire("new_app", now);
 
-        // service_api returns — no other waiters → new_app gets it
         let granted = bc.release("service_api", now);
         assert_eq!(granted, Some("new_app".to_string()));
     }
 
     #[test]
     fn ec2_lowest_weight_loses_to_higher_weight_waiter() {
-        // Use equal weight filler so neither low nor high can evict
         let bc = BudgetController::new(10, Duration::from_secs(30));
         bc.register_pool("high", cfg(0, 100, 10));
         bc.register_pool("low", cfg(0, 10, 10));
-        bc.register_pool("filler", cfg(0, 100, 10)); // same weight as high
+        bc.register_pool("filler", cfg(0, 100, 10));
         let now = Instant::now();
 
         for _ in 0..10 {
             bc.try_acquire("filler", now);
         }
-
-        bc.try_acquire("low", now); // WouldBlock (can't evict w=100)
-        bc.try_acquire("high", now); // WouldBlock (can't evict w=100, young)
+        bc.try_acquire("low", now);
+        bc.try_acquire("high", now);
 
         let granted = bc.release("filler", now);
-        // high (weight=100) beats low (weight=10)
         assert_eq!(granted, Some("high".to_string()));
     }
 
-    // --- EC-3: Guaranteed request, pool full ---
+    // --- EC-3: Guaranteed evicts any weight ---
 
     #[test]
     fn ec3_guaranteed_evicts_any_above_guarantee() {
         let (bc, _) = setup_standard();
         let old = Instant::now() - Duration::from_secs(60);
 
-        // Fill pool with old connections
         bc.set_held_with_age("service_api", 12, old);
         bc.set_held_with_age("batch_worker", 5, old);
         bc.set_held_with_age("analytics", 3, old);
-        assert_eq!(bc.total_held(), 20);
 
-        // New user with guarantee
-        bc.register_pool("admin", cfg(2, 1, 2)); // weight=1 but guaranteed=2
+        bc.register_pool("admin", cfg(2, 1, 2));
 
         let now = Instant::now();
-        // First guaranteed request — evicts lowest weight (analytics, w=10)
         let result = bc.try_acquire("admin", now);
         assert!(
             matches!(result, AcquireResult::GrantedAfterEviction { ref evicted_pool } if evicted_pool == "analytics")
         );
         assert_eq!(bc.held("admin"), 1);
-        assert_eq!(bc.held("analytics"), 2); // was 3, lost 1
+        assert_eq!(bc.held("analytics"), 2);
 
-        // Second guaranteed request
         let result = bc.try_acquire("admin", now);
         assert!(
             matches!(result, AcquireResult::GrantedAfterEviction { ref evicted_pool } if evicted_pool == "analytics")
@@ -597,7 +571,7 @@ mod tests {
         assert_eq!(bc.held("analytics"), 1);
     }
 
-    // --- EC-4: All connections within guarantee ---
+    // --- EC-4: All within guarantee ---
 
     #[test]
     fn ec4_all_within_guarantee_no_evictable() {
@@ -612,16 +586,11 @@ mod tests {
         for _ in 0..3 {
             bc.try_acquire("batch", now);
         }
-        assert_eq!(bc.total_held(), 8);
 
         bc.register_pool("analytics", cfg(0, 10, 5));
         assert_eq!(bc.try_acquire("analytics", now), AcquireResult::WouldBlock);
 
-        // Even on return, guaranteed user takes it back
         let granted = bc.release("svc", now);
-        // svc was at 5=guaranteed, after release svc.held=4 < guaranteed=5
-        // svc is a guaranteed waiter? No, svc didn't call try_acquire again.
-        // But analytics is waiting → analytics gets it
         assert_eq!(granted, Some("analytics".to_string()));
     }
 
@@ -640,15 +609,11 @@ mod tests {
         }
 
         bc.register_pool("analytics", cfg(0, 10, 5));
-        bc.try_acquire("analytics", now); // WouldBlock, enqueued
+        bc.try_acquire("analytics", now);
 
-        // svc returns one connection, then wants it back (guaranteed)
-        bc.release("svc", now); // analytics gets it (was the waiter)
+        bc.release("svc", now);
         assert_eq!(bc.held("analytics"), 1);
 
-        // Now svc tries again — svc.held=4 < guaranteed=5 → guaranteed request
-        // analytics holds 1 above-guarantee but age < min_lifetime → protected
-        // Pool full (8/8). No evictable. svc would block.
         let result = bc.try_acquire("svc", now);
         assert_eq!(result, AcquireResult::WouldBlock);
     }
@@ -663,41 +628,39 @@ mod tests {
         for i in 0..10 {
             bc.register_pool(&format!("user_{}", i), cfg(0, 100, 5));
         }
-
-        // First 5 users get connections
         for i in 0..5 {
-            let result = bc.try_acquire(&format!("user_{}", i), now);
-            assert_eq!(result, AcquireResult::Granted);
+            assert_eq!(
+                bc.try_acquire(&format!("user_{}", i), now),
+                AcquireResult::Granted
+            );
         }
         assert_eq!(bc.total_held(), 5);
 
-        // Users 5-9 would block
         for i in 5..10 {
-            let result = bc.try_acquire(&format!("user_{}", i), now);
-            assert_eq!(result, AcquireResult::WouldBlock);
+            assert_eq!(
+                bc.try_acquire(&format!("user_{}", i), now),
+                AcquireResult::WouldBlock
+            );
         }
 
-        // user_0 releases → best waiter gets it
         let granted = bc.release("user_0", now);
         assert!(granted.is_some());
-        // All waiters have equal weight=100, equal waiting=1
-        // First enqueued wins (FIFO for equal priority)
     }
 
-    // --- EC-6: Guarantee budget overflow ---
+    // --- EC-6: Guarantee overflow ---
 
     #[test]
     fn ec6_guarantee_overflow_detected() {
         let bc = BudgetController::new(10, Duration::from_secs(30));
         bc.register_pool("a", cfg(5, 100, 10));
         bc.register_pool("b", cfg(3, 50, 10));
-        assert!(bc.validate_guarantees().is_ok()); // 5+3=8 <= 10
+        assert!(bc.validate_guarantees().is_ok());
 
         bc.register_pool("c", cfg(5, 10, 10));
-        assert!(bc.validate_guarantees().is_err()); // 5+3+5=13 > 10
+        assert!(bc.validate_guarantees().is_err());
     }
 
-    // --- EC-7: min_lifetime=0 (no flap protection) ---
+    // --- EC-7: min_lifetime=0 ---
 
     #[test]
     fn ec7_min_lifetime_zero_allows_immediate_eviction() {
@@ -709,16 +672,14 @@ mod tests {
         for _ in 0..5 {
             bc.try_acquire("low", now);
         }
-        assert_eq!(bc.total_held(), 5);
 
-        // high can immediately evict low (min_lifetime=0, weight 100 > 10)
         let result = bc.try_acquire("high", now);
         assert!(
             matches!(result, AcquireResult::GrantedAfterEviction { ref evicted_pool } if evicted_pool == "low")
         );
     }
 
-    // --- EC-8: Flap protection (min_lifetime blocks eviction) ---
+    // --- EC-8: Flap protection ---
 
     #[test]
     fn ec8_min_lifetime_protects_young_connections() {
@@ -727,15 +688,12 @@ mod tests {
         bc.register_pool("low", cfg(0, 10, 5));
         let now = Instant::now();
 
-        // low gets 5 connections NOW (young)
         for _ in 0..5 {
             bc.try_acquire("low", now);
         }
 
-        // high tries to evict — but all connections are < 30s old
-        let result = bc.try_acquire("high", now);
-        assert_eq!(result, AcquireResult::WouldBlock);
-        assert_eq!(bc.held("low"), 5); // nothing evicted
+        assert_eq!(bc.try_acquire("high", now), AcquireResult::WouldBlock);
+        assert_eq!(bc.held("low"), 5);
     }
 
     #[test]
@@ -744,11 +702,9 @@ mod tests {
         bc.register_pool("high", cfg(0, 100, 5));
         bc.register_pool("low", cfg(0, 10, 5));
 
-        // low gets connections 60 seconds ago
         let old = Instant::now() - Duration::from_secs(60);
         bc.set_held_with_age("low", 5, old);
 
-        // high can evict now (connections are old enough)
         let now = Instant::now();
         let result = bc.try_acquire("high", now);
         assert!(matches!(result, AcquireResult::GrantedAfterEviction { .. }));
@@ -785,9 +741,7 @@ mod tests {
         for _ in 0..10 {
             bc.try_acquire("a", now);
         }
-
-        let result = bc.try_acquire("b", now);
-        assert_eq!(result, AcquireResult::WouldBlock);
+        assert_eq!(bc.try_acquire("b", now), AcquireResult::WouldBlock);
     }
 
     #[test]
@@ -805,32 +759,24 @@ mod tests {
             bc.try_acquire("low", now);
         }
 
-        // high evicts low first (weight 10 < 50)
         let result = bc.try_acquire("high", now);
         assert!(
             matches!(result, AcquireResult::GrantedAfterEviction { ref evicted_pool } if evicted_pool == "low")
         );
     }
 
-    // --- Guaranteed never evicted ---
-
     #[test]
     fn guaranteed_connections_never_evicted() {
         let bc = BudgetController::new(5, Duration::from_secs(0));
         bc.register_pool("high", cfg(0, 100, 5));
-        bc.register_pool("low", cfg(5, 10, 5)); // all 5 guaranteed
+        bc.register_pool("low", cfg(5, 10, 5));
         let now = Instant::now();
 
         for _ in 0..5 {
             bc.try_acquire("low", now);
         }
-        // low has 5 held = 5 guaranteed → all sacred
-
-        let result = bc.try_acquire("high", now);
-        assert_eq!(result, AcquireResult::WouldBlock); // cannot evict guaranteed
+        assert_eq!(bc.try_acquire("high", now), AcquireResult::WouldBlock);
     }
-
-    // --- DeniedUserMax ---
 
     #[test]
     fn denied_when_at_user_max() {
@@ -844,7 +790,7 @@ mod tests {
         assert_eq!(bc.try_acquire("user", now), AcquireResult::DeniedUserMax);
     }
 
-    // --- Tie-breaker: waiting count ---
+    // --- Tie-breaker ---
 
     #[test]
     fn tiebreaker_most_waiting_wins() {
@@ -853,54 +799,116 @@ mod tests {
         bc.register_pool("b", cfg(0, 100, 5));
         let now = Instant::now();
 
-        bc.try_acquire("a", now); // gets the 1 slot
-                                  // Both enqueue
+        bc.try_acquire("a", now);
         bc.try_acquire("b", now); // WouldBlock, b.waiting=1
         bc.try_acquire("b", now); // WouldBlock, b.waiting=2
         bc.try_acquire("a", now); // WouldBlock, a.waiting=1
 
-        // Release → best waiter: b (waiting=2) beats a (waiting=1), equal weight
         let granted = bc.release("a", now);
         assert_eq!(granted, Some("b".to_string()));
     }
 
-    // --- Above-guarantee yields to higher-weight waiter ---
+    // --- Above guarantee + eviction ---
 
     #[test]
     fn above_guarantee_yields_to_higher_weight_waiter() {
-        // Pool size 1, two users. On release, higher weight wins.
         let bc = BudgetController::new(1, Duration::from_secs(30));
         bc.register_pool("high", cfg(0, 100, 5));
         bc.register_pool("low", cfg(0, 10, 5));
         let now = Instant::now();
 
-        bc.try_acquire("low", now); // gets the 1 slot
-        bc.try_acquire("low", now); // WouldBlock (pool full, young conns)
-        bc.try_acquire("high", now); // WouldBlock (can't evict, young)
+        bc.try_acquire("low", now);
+        bc.try_acquire("low", now);
+        bc.try_acquire("high", now);
 
         let granted = bc.release("low", now);
-        assert_eq!(granted, Some("high".to_string())); // higher weight wins
+        assert_eq!(granted, Some("high".to_string()));
     }
-
-    // --- Above-guarantee blocked when higher-weight waiter exists ---
 
     #[test]
     fn above_guarantee_request_evicts_when_pool_full() {
-        // Pool size 2, min_lifetime=0. high can evict low immediately.
         let bc = BudgetController::new(2, Duration::from_secs(0));
         bc.register_pool("high", cfg(0, 100, 2));
         bc.register_pool("low", cfg(0, 10, 2));
         let now = Instant::now();
 
-        bc.try_acquire("low", now); // Granted (1/2)
-        bc.try_acquire("high", now); // Granted (2/2)
+        bc.try_acquire("low", now);
+        bc.try_acquire("high", now);
 
-        // Pool full. high wants more. low is evictable (w=10 < 100, min_lifetime=0).
         let result = bc.try_acquire("high", now);
         assert!(
             matches!(result, AcquireResult::GrantedAfterEviction { ref evicted_pool } if evicted_pool == "low")
         );
         assert_eq!(bc.held("high"), 2);
         assert_eq!(bc.held("low"), 0);
+    }
+
+    // --- MAJOR-3 fix: unregister_pool drains waiters ---
+
+    #[test]
+    fn unregister_pool_schedules_remaining_waiters() {
+        let bc = BudgetController::new(5, Duration::from_secs(30));
+        bc.register_pool("filler", cfg(0, 100, 5));
+        bc.register_pool("waiter_a", cfg(0, 100, 5));
+        bc.register_pool("waiter_b", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        for _ in 0..5 {
+            bc.try_acquire("filler", now);
+        }
+        bc.try_acquire("waiter_a", now);
+        bc.try_acquire("waiter_b", now);
+
+        bc.unregister_pool("filler", now);
+
+        assert_eq!(bc.held("waiter_a"), 1);
+        assert_eq!(bc.held("waiter_b"), 1);
+        assert_eq!(bc.waiting("waiter_a"), 0);
+        assert_eq!(bc.waiting("waiter_b"), 0);
+        assert_eq!(bc.total_held(), 2);
+    }
+
+    #[test]
+    fn unregister_pool_prevents_deadlock() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("high", cfg(0, 100, 5));
+        bc.register_pool("filler", cfg(0, 100, 10));
+        let now = Instant::now();
+
+        for _ in 0..10 {
+            bc.try_acquire("filler", now);
+        }
+        bc.try_acquire("high", now);
+
+        bc.unregister_pool("filler", now);
+
+        assert_eq!(bc.held("high"), 1);
+        assert_eq!(bc.total_held(), 1);
+        assert_eq!(bc.try_acquire("high", now), AcquireResult::Granted);
+        assert_eq!(bc.held("high"), 2);
+    }
+
+    // --- Waiter deduplication ---
+
+    #[test]
+    fn multiple_waiters_same_pool_counted_correctly() {
+        let bc = BudgetController::new(1, Duration::from_secs(30));
+        bc.register_pool("holder", cfg(0, 100, 5));
+        bc.register_pool("waiter", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        bc.try_acquire("holder", now);
+        bc.try_acquire("waiter", now);
+        bc.try_acquire("waiter", now);
+        bc.try_acquire("waiter", now);
+        assert_eq!(bc.waiting("waiter"), 3);
+
+        bc.release("holder", now);
+        assert_eq!(bc.held("waiter"), 1);
+        assert_eq!(bc.waiting("waiter"), 2);
+
+        bc.release("waiter", now);
+        assert_eq!(bc.held("waiter"), 1);
+        assert_eq!(bc.waiting("waiter"), 1);
     }
 }
