@@ -587,3 +587,284 @@ EVICT = переназначение другому пользователю (RE
 EVICT = закрытие старого коннекта + открытие нового. Стоимость: ~100 мс (один fork в PostgreSQL).
 
 Алгоритм идентичен в обоих режимах. Различается только стоимость вытеснения.
+
+---
+
+## Контракты интеграции
+
+Требования для подключения BudgetController к pool layer.
+Нарушение любого контракта приводит к дрифту held-счётчиков и потере бюджетной ёмкости.
+
+### Контракт 1: Обнаружение мёртвых коннектов (CRITICAL)
+
+При гибели серверного коннекта по ЛЮБОЙ причине ОБЯЗАН вызываться `release()`:
+
+```
+Причина                                Как pooler обнаруживает
+───────────────────────────────────────────────────────────────
+DBA выполнил pg_terminate_backend()     Проверка при recycle (следующий checkout)
+PG убил по idle_in_transaction_         TCP read возвращает ошибку
+  session_timeout / statement_timeout
+TCP keepalive timeout                   ОС сообщает connection reset
+PG restart / Patroni failover           Все коннекты падают одновременно
+OOM-killed pod приложения               TCP FIN или RST (с задержкой)
+```
+
+Без вызова `release()` held[U] остаётся завышенным.
+Фантомные слоты накапливаются до рестарта pooler'а.
+
+**Реализация**: в каждом месте `pool/inner.rs`, где `slots.size` уменьшается
+(failed recycle, retain removal, connection close), вызывать `budget.release()`.
+
+### Контракт 2: Восстановление после failover (CRITICAL)
+
+После failover PostgreSQL (Patroni promote, PG crash+restart) все серверные
+коннекты мертвы одновременно. Budget controller нуждается в массовом сбросе:
+
+```
+fn reset_all(&self, now: Instant)
+    // held=0 для всех пулов, очистить connection_ages, total_held=0
+    // Прогнать drain для waiters (schedule сколько позволяет бюджет)
+```
+
+Вызывается pool layer'ом при обнаружении смены адреса сервера
+или при провале всех health check'ов для server target.
+
+Без этого: `total_held = P` после failover, никто не может подключиться.
+
+### Контракт 3: Откат при неудаче CREATE (CRITICAL)
+
+`try_acquire()` инкрементирует `held[U]` немедленно. Если реальное создание
+PG-коннекта провалилось (max_connections, auth failure, network error),
+вызывающий ОБЯЗАН вызвать `release()` для отката accounting'а.
+
+Рекомендуемый паттерн — RAII guard:
+
+```rust
+let guard = budget.try_acquire(pool, now)?;  // инкрементирует held
+match server_pool.create().await {
+    Ok(conn) => {
+        guard.confirm();  // held остаётся инкрементированным
+        Ok(conn)
+    }
+    Err(e) => {
+        drop(guard);      // held декрементируется автоматически
+        Err(e)
+    }
+}
+```
+
+### Контракт 4: Периодическая сверка
+
+Даже при соблюдении контрактов 1-3 дрифт счётчиков возможен
+(race conditions, баги, edge cases). Фоновая задача сверяет
+`held[U]` с реальным количеством живых коннектов:
+
+```
+каждые 60 секунд:
+    для каждого пула U:
+        actual = pool.slots.size  // реальные коннекты в пуле
+        budget_held = budget.held(U)
+        если budget_held != actual:
+            log_warn("budget drift: pool={U} budget={budget_held} actual={actual}")
+            budget.reconcile(U, actual)
+```
+
+`reconcile()` корректирует `held[U]` и `total_held`, затем вызывает
+`schedule()` для обслуживания waiters, которые теперь могут получить слоты.
+
+---
+
+## Режимы отказа
+
+### FM-1: Failover PostgreSQL (Patroni/Stolon)
+
+```
+t=0     Primary падает. Все TCP-коннекты разорваны.
+t=1-30с Реплика промоутится. Новый primary принимает подключения.
+
+БЕЗ reset_all():
+  Budget: total_held=P. Все запросы → WouldBlock.
+  Pool layer обнаруживает мёртвые коннекты при recycle (idle_timeout).
+  Время восстановления: до idle_timeout (минуты). ПОЛНЫЙ OUTAGE.
+
+С reset_all():
+  Pool layer обнаруживает failover (смена DNS, connection refused).
+  Вызывает budget.reset_all(). total_held=0.
+  Все пулы переподключаются. Budget выдаёт до P коннектов.
+  Время восстановления: ~1-5 секунд (fork time × параллельные создания).
+```
+
+### FM-2: Connection storm после рестарта
+
+```
+pg_doorman перезапускается (crash, rolling update). Budget state потерян.
+total_held=0. 200 клиентов переподключаются одновременно.
+Все try_acquire → Granted (до P).
+P одновременных fork() к PG.
+
+Защита:
+  Существующий max_concurrent_creates (default 4 per pool) ограничивает параллельность.
+  С budget controller'ом должен стать ГЛОБАЛЬНЫМ (не per-pool):
+  max 10-20 параллельных создания суммарно по всем пулам.
+```
+
+### FM-3: Network partition
+
+```
+pg_doorman ↔ PG сеть разорвана. Budget позволяет новые acquire (total_held < P).
+Pool layer пытается CREATE → TCP timeout (30с). Клиент ждёт 30с → timeout.
+Budget held[U] инкрементирован при acquire.
+CREATE проваливается → вызывается release() (Контракт 3) → held[U] декрементирован.
+
+С RAII guard: безопасно. Без: held-счётчик завышен навсегда.
+```
+
+### FM-4: Long-running транзакции блокируют waiters
+
+```
+batch_worker запускает 20-минутный pg_dump. Держит 3 guaranteed коннекта.
+Ни одного RETURN за 20 минут.
+Waiters в очереди batch_worker зависают без timeout'а.
+
+Защита: параметр max_wait_timeout (default: query_wait_timeout).
+По истечении — ошибка вместо бесконечного ожидания.
+```
+
+---
+
+## Multi-Instance деплой
+
+Budget controller работает **per-instance** (shared-nothing). Каждый инстанс
+pg_doorman имеет независимый бюджет. Координации между инстансами нет.
+
+### Расчёт max_db_connections
+
+```
+P_per_instance = (PG_max_connections
+                  - superuser_reserved_connections
+                  - replication_slots
+                  - monitoring_agents
+                  - direct_dba_connections)
+                 / количество_инстансов_pooler
+```
+
+Пример: PG max_connections=200, superuser_reserved=3, replication=2,
+monitoring=2, DBA=3, 2 инстанса pg_doorman:
+
+```
+P = (200 - 3 - 2 - 2 - 3) / 2 = 95 на инстанс
+```
+
+### Отказ инстанса
+
+При падении одного из N инстансов выжившие ограничены своим P,
+а НЕ P × N. Доступная ёмкость PG недоиспользуется.
+
+Обходной путь: задать P чуть выше расчётного и принять, что
+при нормальной работе N × P может превысить PG capacity.
+PG отклонит лишние коннекты (`FATAL: too many connections`).
+Pool layer обработает через CREATE failure (Контракт 3).
+
+Рекомендация: `P = расчётное_значение × 1.2` (20% запас для failover).
+
+### Валидация при старте
+
+При первом подключении к PG pooler должен проверить:
+
+```sql
+SELECT current_setting('max_connections')::int
+     - current_setting('superuser_reserved_connections')::int AS available
+```
+
+Если `P > available`, логировать предупреждение.
+
+---
+
+## Применимость
+
+### Где алгоритм подходит
+
+- **Transaction pooling** с пользователями разного приоритета (API + batch + analytics)
+- **P = 20-200**, 5-30 пулов (статические или динамические через auth_query)
+- **Oversubscribed среды** где sum(desired) > max_connections
+- **Multi-tenant SaaS** с per-tenant auth_query пулами
+
+### Где алгоритм НЕ подходит
+
+| Сценарий | Почему | Альтернатива |
+|----------|--------|--------------|
+| Session-mode pooling | Eviction убивает сессию клиента | Per-user pool_size |
+| Все пользователи равны | Weight не добавляет ценности | Глобальный семафор |
+| P < 5 | Overhead конфигурации | Фиксированные per-user лимиты |
+| P > 500 | Риск Mutex contention | Партиционирование по сервису/БД |
+| Один сервис, один пользователь | Нет контенции | Простой pool_size |
+
+### Риск: budget controller ухудшает ситуацию
+
+Контроллер может деградировать производительность по сравнению с независимыми пулами:
+
+1. **min_lifetime deadlock**: пул полон, все коннекты молодые, guaranteed пользователь
+   заблокирован до min_lifetime. Без контроллера PG принял бы коннект напрямую.
+
+2. **Eviction cascades**: high-weight пользователь вызывает 10 вытеснений подряд.
+   В passthrough — 10 close+open, деградация postmaster.
+
+3. **Priority inversion**: high-weight пользователь заполнил пул, возвращает медленно.
+   Low-weight с guaranteed=0 голодает. Без контроллера мог бы подключиться к PG напрямую.
+
+**Митигация**: контроллер opt-in (выключен по умолчанию).
+
+---
+
+## Observability
+
+### Обязательные Prometheus метрики
+
+```
+pg_doorman_budget_total_held{server}                                 gauge
+pg_doorman_budget_held{server, pool}                                 gauge
+pg_doorman_budget_waiting{server, pool}                              gauge
+pg_doorman_budget_above_guarantee{server, pool}                      gauge
+pg_doorman_budget_max_connections{server}                             gauge (config)
+pg_doorman_budget_guaranteed{server, pool}                           gauge (config)
+pg_doorman_budget_weight{server, pool}                               gauge (config)
+pg_doorman_budget_evictions_total{server, victim_pool, requester}    counter
+pg_doorman_budget_eviction_blocked_total{server, pool}               counter
+pg_doorman_budget_acquire_denied_total{server, pool, reason}         counter
+```
+
+### Рекомендуемые алерты
+
+| Алерт | Условие | Severity |
+|-------|---------|----------|
+| BudgetSaturated | total_held == max_connections более 2 мин | warning |
+| BudgetWaitersStuck | waiting{pool} > 0 более 30с | warning |
+| BudgetEvictionStorm | rate(evictions_total) > 5/с более 1 мин | warning |
+| BudgetDrift | held{pool} != реальный размер пула более 60с | critical |
+
+### Рекомендации по конфигурации
+
+```
+max_db_connections:
+  Формула: (PG max_connections - reserves) / кол-во инстансов
+  Типично: 50-100 на инстанс
+
+min_connection_lifetime:
+  Default: 30с
+  Высокий churn: 10-15с
+  Стабильная нагрузка: 60с
+  Никогда: 0 (вызывает флап)
+
+guaranteed_pool_size:
+  Формула: ceil(p80_active_transactions × 0.8)
+  Мониторинг: guaranteed = 2, max = 2
+  Default для динамических: 0
+
+weight:
+  Critical API:     100
+  Background jobs:   70
+  Batch/ETL:         30
+  Analytics:          10
+  Monitoring:         50 (c guaranteed=2)
+```

@@ -636,3 +636,291 @@ EVICT = reassign to another user (RESET ROLE already done on checkin). Cost: 0 m
 EVICT = close old connection + open new one. Cost: ~100 ms (one fork in PostgreSQL).
 
 The algorithm is identical in both modes. Only the cost of eviction differs.
+
+---
+
+## Integration Contracts
+
+Requirements for wiring BudgetController into the pool layer.
+Violating any of these contracts causes held counter drift and budget capacity loss.
+
+### Contract 1: Dead connection detection (CRITICAL)
+
+When a server connection dies for ANY reason, `release()` MUST be called:
+
+```
+Trigger                              How pooler detects it
+─────────────────────────────────────────────────────────────
+DBA runs pg_terminate_backend()      Recycle check fails (next checkout)
+PG kills via idle_in_transaction_    TCP read returns error
+  session_timeout / statement_timeout
+TCP keepalive timeout                OS reports connection reset
+PG restart / Patroni failover        All connections fail simultaneously
+OOM-killed application pod           TCP FIN or RST (eventually)
+```
+
+If `release()` is not called, `held[U]` stays inflated.
+Phantom slots accumulate until pooler restart.
+
+**Implementation**: wherever `slots.size` is decremented in `pool/inner.rs`
+(failed recycle, retain removal, connection close), call `budget.release()`.
+
+### Contract 2: Failover recovery (CRITICAL)
+
+After PostgreSQL failover (Patroni promote, PG crash+restart), all server
+connections are dead simultaneously. The budget controller needs a bulk reset:
+
+```
+fn reset_all(&self, now: Instant)
+    // Set held=0 for all pools, clear connection_ages, total_held=0
+    // Drain waiters (schedule as many as pool allows)
+```
+
+Called by the pool layer when it detects that the server address changed
+or all health checks failed for a server target.
+
+Without this, `total_held = P` after failover, and nobody can connect.
+
+### Contract 3: CREATE failure rollback (CRITICAL)
+
+`try_acquire()` increments `held[U]` immediately. If the actual PG connection
+creation fails (max_connections reached, auth failure, network error),
+the caller MUST call `release()` to undo the accounting.
+
+Recommended pattern — RAII guard:
+
+```rust
+let guard = budget.try_acquire(pool, now)?;  // increments held
+match server_pool.create().await {
+    Ok(conn) => {
+        guard.confirm();  // held stays incremented
+        Ok(conn)
+    }
+    Err(e) => {
+        drop(guard);      // held decremented automatically
+        Err(e)
+    }
+}
+```
+
+### Contract 4: Periodic reconciliation
+
+Even with contracts 1-3, counter drift can accumulate over time
+(race conditions, bugs, edge cases). A background task should
+periodically compare `held[U]` with actual live connection count:
+
+```
+every 60 seconds:
+    for each pool U:
+        actual = pool.slots.size  // real connections in this pool
+        budget_held = budget.held(U)
+        if budget_held != actual:
+            log_warn("budget drift: pool={U} budget={budget_held} actual={actual}")
+            budget.reconcile(U, actual)
+```
+
+`reconcile()` adjusts `held[U]` and `total_held` to match reality,
+then calls `schedule()` to drain any waiters that can now be served.
+
+---
+
+## Failure Modes
+
+### FM-1: PostgreSQL failover (Patroni/Stolon)
+
+```
+t=0     Primary crashes. All TCP connections broken.
+t=1-30s Replica promoted. New primary accepting connections.
+
+WITHOUT reset_all():
+  Budget: total_held=P. All requests → WouldBlock.
+  Pool layer detects dead connections on next recycle (idle_timeout).
+  Recovery time: up to idle_timeout (minutes). FULL OUTAGE.
+
+WITH reset_all():
+  Pool layer detects failover (DNS change, connection refused).
+  Calls budget.reset_all(). total_held=0.
+  All pools reconnect. Budget grants up to P connections.
+  Recovery time: ~1-5 seconds (PG fork time × concurrent creates).
+```
+
+### FM-2: Connection storm after restart
+
+```
+pg_doorman restarts (crash, rolling update). Budget state lost.
+total_held=0. 200 clients reconnect simultaneously.
+All try_acquire → Granted (up to P).
+P simultaneous fork() calls to PG.
+
+Mitigation:
+  Existing max_concurrent_creates (default 4 per pool) limits fork parallelism.
+  With budget controller, this should become GLOBAL (not per-pool):
+  max 10-20 concurrent creates total across all pools.
+```
+
+### FM-3: Network partition
+
+```
+pg_doorman ↔ PG network breaks. Budget allows new acquires (total_held < P).
+Pool layer tries CREATE → TCP timeout (30s). Client waits 30s → timeout.
+Budget held[U] was incremented on acquire.
+CREATE fails → release() called (Contract 3) → held[U] decremented.
+
+With RAII guard: safe. Without: held counter inflated permanently.
+```
+
+### FM-4: Long-running transactions blocking waiters
+
+```
+batch_worker runs 20-minute pg_dump. Holds 3 guaranteed connections.
+No RETURN events for 20 minutes.
+Waiters for batch_worker's pool queue indefinitely.
+
+Mitigation: add max_wait_timeout parameter (default: query_wait_timeout).
+After timeout, return error instead of waiting forever.
+```
+
+---
+
+## Multi-Instance Deployment
+
+The budget controller is **per-instance** (shared-nothing). Each pg_doorman
+instance has its own independent budget. There is no cross-instance coordination.
+
+### Calculating max_db_connections
+
+```
+P_per_instance = (PG_max_connections
+                  - superuser_reserved_connections
+                  - replication_slots
+                  - monitoring_agents
+                  - direct_dba_connections)
+                 / number_of_pooler_instances
+```
+
+Example: PG max_connections=200, superuser_reserved=3, replication=2,
+monitoring=2, DBA=3, 2 pg_doorman instances:
+
+```
+P = (200 - 3 - 2 - 2 - 3) / 2 = 95 per instance
+```
+
+### Instance failure
+
+If one of N instances goes down, surviving instances are limited to
+their configured P, NOT P × N. Available PG capacity is underutilized
+until the failed instance recovers.
+
+Workaround: set P slightly higher than the calculated value and accept
+that during normal operation, N instances × P may exceed PG capacity.
+PG will reject excess connections with `FATAL: too many connections`.
+The pool layer handles this via CREATE failure (Contract 3).
+
+Recommended: `P = calculated_value * 1.2` (20% headroom for failover).
+
+### Startup validation
+
+On first connection to PG, the pooler should check:
+
+```sql
+SELECT current_setting('max_connections')::int
+     - current_setting('superuser_reserved_connections')::int AS available
+```
+
+If `P > available`, log a warning:
+"max_db_connections ({P}) exceeds PG available connections ({available}).
+ Connections will be rejected by PostgreSQL when budget is saturated."
+
+---
+
+## Applicability
+
+### Where the algorithm fits well
+
+- **Transaction pooling** with mixed-priority users (API + batch + analytics)
+- **P = 20-200**, 5-30 pools (static or dynamic via auth_query)
+- **Oversubscribed environments** where sum(desired) > max_connections
+- **Multi-tenant SaaS** with per-tenant auth_query pools
+
+### Where the algorithm does NOT fit
+
+| Scenario | Why | Alternative |
+|----------|-----|-------------|
+| Session-mode pooling | Eviction kills client sessions | Per-user pool_size |
+| All users equal priority | Weight adds no value | Global semaphore |
+| P < 5 | Configuration overhead | Fixed per-user limits |
+| P > 500 | Mutex contention risk | Partition by service/database |
+| Single service, single user | No contention to manage | Simple pool_size |
+
+### Risk: budget controller makes things worse
+
+The controller can degrade performance compared to independent pools when:
+
+1. **min_lifetime deadlock**: pool full, all connections young, guaranteed user
+   blocked for up to min_lifetime seconds. Without the controller, PG would
+   accept the connection directly (until max_connections).
+
+2. **Eviction cascades**: high-weight user triggers 10 evictions in succession.
+   In passthrough mode, 10 close+open cycles degrade postmaster. Independent
+   pools would never evict each other.
+
+3. **Priority inversion**: high-weight user fills pool, returns slowly.
+   Low-weight user with guaranteed=0 starves. Without the controller,
+   the low-weight user could connect directly to PG.
+
+**Mitigation**: the controller is opt-in (disabled by default). Operators
+who enable it accept these trade-offs for the benefit of global budget control.
+
+---
+
+## Observability
+
+### Required Prometheus metrics
+
+```
+pg_doorman_budget_total_held{server}                                 gauge
+pg_doorman_budget_held{server, pool}                                 gauge
+pg_doorman_budget_waiting{server, pool}                              gauge
+pg_doorman_budget_above_guarantee{server, pool}                      gauge
+pg_doorman_budget_max_connections{server}                             gauge (config)
+pg_doorman_budget_guaranteed{server, pool}                           gauge (config)
+pg_doorman_budget_weight{server, pool}                               gauge (config)
+pg_doorman_budget_evictions_total{server, victim_pool, requester}    counter
+pg_doorman_budget_eviction_blocked_total{server, pool}               counter
+pg_doorman_budget_acquire_denied_total{server, pool, reason}         counter
+```
+
+### Recommended alerts
+
+| Alert | Condition | Severity |
+|-------|-----------|----------|
+| BudgetSaturated | total_held == max_connections for > 2 min | warning |
+| BudgetWaitersStuck | waiting{pool} > 0 for > 30s | warning |
+| BudgetEvictionStorm | rate(evictions_total) > 5/s for > 1 min | warning |
+| BudgetDrift | held{pool} != actual pool size for > 60s | critical |
+
+### Configuration recommendations
+
+```
+max_db_connections:
+  Formula: (PG max_connections - reserves) / instance_count
+  Typical: 50-100 per instance
+
+min_connection_lifetime:
+  Default: 30s
+  High churn: 10-15s
+  Stable load: 60s
+  Never: 0 (causes flap)
+
+guaranteed_pool_size:
+  Formula: ceil(p80_active_transactions * 0.8)
+  Monitoring: guaranteed = 2, max = 2
+  Default for dynamic users: 0
+
+weight:
+  Critical API:     100
+  Background jobs:   70
+  Batch/ETL:         30
+  Analytics:          10
+  Monitoring:         50 (with guaranteed=2)
+```
