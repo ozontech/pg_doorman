@@ -2,7 +2,7 @@ use crate::messages::DataType;
 use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Result of a non-blocking acquire attempt.
@@ -81,10 +81,35 @@ impl BudgetMetrics {
 /// - Only by a requester with strictly higher weight (or guaranteed request = weight ∞)
 /// - Only if the connection is older than min_connection_lifetime
 pub struct BudgetController {
-    max_connections: u32,
+    max_connections: AtomicU32,
     min_lifetime: Duration,
     state: Mutex<BudgetState>,
     metrics: BudgetMetrics,
+}
+
+/// RAII guard returned by `try_acquire_guard`.
+/// Automatically calls `release()` on drop unless `confirm()` is called.
+/// Use this to protect against CREATE failure leaving phantom held slots.
+pub struct AcquireGuard<'a> {
+    controller: &'a BudgetController,
+    pool: String,
+    confirmed: bool,
+    now: Instant,
+}
+
+impl<'a> AcquireGuard<'a> {
+    /// Mark the connection as successfully created. The held slot stays.
+    pub fn confirm(mut self) {
+        self.confirmed = true;
+    }
+}
+
+impl Drop for AcquireGuard<'_> {
+    fn drop(&mut self) {
+        if !self.confirmed {
+            self.controller.release(&self.pool, self.now);
+        }
+    }
 }
 
 struct BudgetState {
@@ -106,7 +131,7 @@ struct PoolState {
 impl BudgetController {
     pub fn new(max_connections: u32, min_lifetime: Duration) -> Self {
         Self {
-            max_connections,
+            max_connections: AtomicU32::new(max_connections),
             min_lifetime,
             state: Mutex::new(BudgetState {
                 pools: HashMap::new(),
@@ -137,9 +162,14 @@ impl BudgetController {
             state.waiters.retain(|w| w != name);
 
             // Drain: freed capacity may satisfy queued waiters
-            while Self::schedule(&mut state, self.max_connections, self.min_lifetime, now).is_some()
-            {
-            }
+            while Self::schedule(
+                &mut state,
+                self.max_connections.load(Ordering::Relaxed),
+                self.min_lifetime,
+                now,
+            )
+            .is_some()
+            {}
         }
     }
 
@@ -147,11 +177,9 @@ impl BudgetController {
     pub fn validate_guarantees(&self) -> Result<(), String> {
         let state = self.state.lock();
         let sum: u32 = state.pools.values().map(|p| p.config.guaranteed).sum();
-        if sum > self.max_connections {
-            return Err(format!(
-                "sum(guaranteed)={} > max_connections={}",
-                sum, self.max_connections
-            ));
+        let max = self.max_connections.load(Ordering::Relaxed);
+        if sum > max {
+            return Err(format!("sum(guaranteed)={} > max_connections={}", sum, max));
         }
         Ok(())
     }
@@ -180,7 +208,8 @@ impl BudgetController {
 
         let is_guaranteed = held < config.guaranteed;
 
-        if state.total_held < self.max_connections {
+        let max_conn = self.max_connections.load(Ordering::Relaxed);
+        if state.total_held < max_conn {
             if !is_guaranteed && Self::has_higher_weight_waiter(&state, pool, config.weight) {
                 Self::enqueue_waiter(&mut state, pool);
                 self.metrics.would_block.fetch_add(1, Ordering::Relaxed);
@@ -242,7 +271,12 @@ impl BudgetController {
             }
         }
 
-        Self::schedule(&mut state, self.max_connections, self.min_lifetime, now)
+        Self::schedule(
+            &mut state,
+            self.max_connections.load(Ordering::Relaxed),
+            self.min_lifetime,
+            now,
+        )
     }
 
     /// Bulk reset after PostgreSQL failover (Contract 2).
@@ -260,7 +294,14 @@ impl BudgetController {
 
         self.metrics.resets.fetch_add(1, Ordering::Relaxed);
 
-        while Self::schedule(&mut state, self.max_connections, self.min_lifetime, now).is_some() {}
+        while Self::schedule(
+            &mut state,
+            self.max_connections.load(Ordering::Relaxed),
+            self.min_lifetime,
+            now,
+        )
+        .is_some()
+        {}
     }
 
     /// Adjust held counter for a single pool to match reality (Contract 4).
@@ -284,7 +325,10 @@ impl BudgetController {
         let diff = actual_held as i64 - budget_held as i64;
         state.total_held = (state.total_held as i64 + diff) as u32;
 
-        let ps = state.pools.get_mut(pool).unwrap();
+        let ps = state
+            .pools
+            .get_mut(pool)
+            .expect("BUG: reconcile called for unregistered pool");
         ps.held = actual_held;
         ps.connection_ages.clear();
         for _ in 0..actual_held {
@@ -292,9 +336,14 @@ impl BudgetController {
         }
 
         if diff < 0 {
-            while Self::schedule(&mut state, self.max_connections, self.min_lifetime, now).is_some()
-            {
-            }
+            while Self::schedule(
+                &mut state,
+                self.max_connections.load(Ordering::Relaxed),
+                self.min_lifetime,
+                now,
+            )
+            .is_some()
+            {}
         }
     }
 
@@ -330,7 +379,10 @@ impl BudgetController {
 
     /// Grant one slot to `pool`: increment held, record connection age.
     fn grant(state: &mut BudgetState, pool: &str, now: Instant) {
-        let ps = state.pools.get_mut(pool).unwrap();
+        let ps = state
+            .pools
+            .get_mut(pool)
+            .expect("BUG: grant called for unregistered pool");
         ps.held += 1;
         ps.connection_ages.push_back(now);
         state.total_held += 1;
@@ -338,7 +390,10 @@ impl BudgetController {
 
     /// Evict one above-guarantee connection from `victim_pool`.
     fn evict_one(state: &mut BudgetState, victim_pool: &str, now: Instant, min_lifetime: Duration) {
-        let vs = state.pools.get_mut(victim_pool).unwrap();
+        let vs = state
+            .pools
+            .get_mut(victim_pool)
+            .expect("BUG: evict_one called for unregistered pool");
         vs.held -= 1;
         // Remove oldest eligible connection
         if let Some(idx) = vs
@@ -355,7 +410,10 @@ impl BudgetController {
 
     /// Enqueue a waiter for `pool`. Deduplicated: each pool appears at most once in waiters vec.
     fn enqueue_waiter(state: &mut BudgetState, pool: &str) {
-        let ps = state.pools.get_mut(pool).unwrap();
+        let ps = state
+            .pools
+            .get_mut(pool)
+            .expect("BUG: enqueue_waiter called for unregistered pool");
         if ps.waiting == 0 {
             state.waiters.push(pool.to_string());
         }
@@ -376,7 +434,10 @@ impl BudgetController {
         let best_idx = Self::select_best_waiter_idx(state)?;
         let best_pool = state.waiters[best_idx].clone();
 
-        let best_state = state.pools.get(&best_pool).unwrap();
+        let best_state = state
+            .pools
+            .get(&best_pool)
+            .expect("BUG: waiter references unregistered pool");
         let is_guaranteed = best_state.held < best_state.config.guaranteed;
         let weight = best_state.config.weight;
 
@@ -403,7 +464,10 @@ impl BudgetController {
 
     /// Remove one waiter request for `pool`. Remove from waiters vec if count reaches 0.
     fn dequeue_waiter(state: &mut BudgetState, waiter_idx: usize, pool: &str) {
-        let ps = state.pools.get_mut(pool).unwrap();
+        let ps = state
+            .pools
+            .get_mut(pool)
+            .expect("BUG: dequeue_waiter called for unregistered pool");
         ps.waiting -= 1;
         if ps.waiting == 0 {
             state.waiters.remove(waiter_idx);
@@ -537,7 +601,36 @@ impl BudgetController {
     }
 
     pub fn max_connections(&self) -> u32 {
-        self.max_connections
+        self.max_connections.load(Ordering::Relaxed)
+    }
+
+    /// Change the global budget at runtime (for maintenance windows).
+    /// If increased, drains waiters. If decreased, no eviction — excess
+    /// connections are naturally reclaimed as transactions complete.
+    pub fn set_max_connections(&self, new_max: u32, now: Instant) {
+        let old = self.max_connections.swap(new_max, Ordering::Relaxed);
+        if new_max > old {
+            // More room → drain waiters
+            let mut state = self.state.lock();
+            while Self::schedule(&mut state, new_max, self.min_lifetime, now).is_some() {}
+        }
+    }
+
+    /// Acquire with RAII guard (Contract 3).
+    /// Returns Some(guard) on Granted/GrantedAfterEviction, None otherwise.
+    /// If the guard is dropped without calling `confirm()`, the slot is released.
+    pub fn try_acquire_guard(&self, pool: &str, now: Instant) -> Option<AcquireGuard<'_>> {
+        match self.try_acquire(pool, now) {
+            AcquireResult::Granted | AcquireResult::GrantedAfterEviction { .. } => {
+                Some(AcquireGuard {
+                    controller: self,
+                    pool: pool.to_string(),
+                    confirmed: false,
+                    now,
+                })
+            }
+            _ => None,
+        }
     }
 
     pub fn above_guarantee(&self, pool: &str) -> u32 {
@@ -579,7 +672,7 @@ impl BudgetController {
         let pools_count = state.pools.len();
         let m = &self.metrics;
         vec![
-            self.max_connections.to_string(),
+            self.max_connections.load(Ordering::Relaxed).to_string(),
             state.total_held.to_string(),
             total_waiting.to_string(),
             pools_count.to_string(),
@@ -1483,5 +1576,93 @@ mod tests {
         bc.try_acquire("test", now);
         let rows = bc.show_budget_pools_rows();
         assert_eq!(header.len(), rows[0].len());
+    }
+
+    // --- DBA-1: RAII guard for CREATE failure rollback (Contract 3) ---
+
+    #[test]
+    fn acquire_guard_auto_releases_on_drop() {
+        let bc = BudgetController::new(5, Duration::from_secs(30));
+        bc.register_pool("svc", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        // Simulate: acquire succeeds, but CREATE fails → guard drops
+        {
+            let guard = bc.try_acquire_guard("svc", now);
+            assert!(guard.is_some());
+            assert_eq!(bc.held("svc"), 1);
+            assert_eq!(bc.total_held(), 1);
+            // guard drops here without confirm() → release
+        }
+        assert_eq!(bc.held("svc"), 0);
+        assert_eq!(bc.total_held(), 0);
+    }
+
+    #[test]
+    fn acquire_guard_confirm_keeps_slot() {
+        let bc = BudgetController::new(5, Duration::from_secs(30));
+        bc.register_pool("svc", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        {
+            let guard = bc.try_acquire_guard("svc", now);
+            assert!(guard.is_some());
+            guard.unwrap().confirm(); // CREATE succeeded, keep the slot
+        }
+        assert_eq!(bc.held("svc"), 1); // slot kept
+        assert_eq!(bc.total_held(), 1);
+    }
+
+    #[test]
+    fn acquire_guard_denied_returns_none() {
+        let bc = BudgetController::new(1, Duration::from_secs(30));
+        bc.register_pool("svc", cfg(0, 100, 1));
+        let now = Instant::now();
+
+        bc.try_acquire("svc", now); // takes the 1 slot
+        let guard = bc.try_acquire_guard("svc", now); // DeniedUserMax
+        assert!(guard.is_none());
+        assert_eq!(bc.held("svc"), 1); // unchanged
+    }
+
+    // --- DBA-2: set_max_connections for maintenance windows ---
+
+    #[test]
+    fn set_max_connections_shrinks_budget() {
+        let bc = BudgetController::new(10, Duration::from_secs(0));
+        bc.register_pool("svc", cfg(0, 100, 10));
+        let now = Instant::now();
+
+        for _ in 0..8 {
+            bc.try_acquire("svc", now);
+        }
+        assert_eq!(bc.total_held(), 8);
+
+        // DBA lowers PG max_connections during maintenance
+        bc.set_max_connections(5, now);
+        assert_eq!(bc.max_connections(), 5);
+
+        // New acquires should be denied (8 > 5, pool over budget)
+        assert_eq!(bc.try_acquire("svc", now), AcquireResult::WouldBlock);
+    }
+
+    #[test]
+    fn set_max_connections_grows_budget_serves_waiters() {
+        let bc = BudgetController::new(2, Duration::from_secs(30));
+        bc.register_pool("a", cfg(0, 100, 5));
+        bc.register_pool("b", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        bc.try_acquire("a", now);
+        bc.try_acquire("b", now);
+        // Pool full (2/2). a wants more.
+        bc.try_acquire("a", now); // WouldBlock
+        assert_eq!(bc.waiting("a"), 1);
+
+        // DBA grows budget
+        bc.set_max_connections(5, now);
+        // Waiter should be served immediately
+        assert_eq!(bc.held("a"), 2);
+        assert_eq!(bc.waiting("a"), 0);
     }
 }
