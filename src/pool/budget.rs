@@ -1,5 +1,6 @@
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Result of a non-blocking acquire attempt.
@@ -25,6 +26,46 @@ pub struct PoolBudgetConfig {
     pub max_pool_size: u32,
 }
 
+/// Atomic counters for budget observability.
+///
+/// All counters use relaxed ordering — they are monotonic
+/// and do not synchronize other state. The Prometheus layer
+/// reads them periodically; exact inter-counter consistency
+/// is not required.
+pub struct BudgetMetrics {
+    pub grants_guaranteed: AtomicU64,
+    pub grants_above: AtomicU64,
+    pub grants_after_eviction: AtomicU64,
+    pub denied_user_max: AtomicU64,
+    pub denied_unknown: AtomicU64,
+    pub would_block: AtomicU64,
+    pub evictions: AtomicU64,
+    pub evictions_blocked: AtomicU64,
+    pub releases: AtomicU64,
+    pub resets: AtomicU64,
+    pub reconciliations: AtomicU64,
+    pub denied_timeout: AtomicU64,
+}
+
+impl BudgetMetrics {
+    fn new() -> Self {
+        Self {
+            grants_guaranteed: AtomicU64::new(0),
+            grants_above: AtomicU64::new(0),
+            grants_after_eviction: AtomicU64::new(0),
+            denied_user_max: AtomicU64::new(0),
+            denied_unknown: AtomicU64::new(0),
+            would_block: AtomicU64::new(0),
+            evictions: AtomicU64::new(0),
+            evictions_blocked: AtomicU64::new(0),
+            releases: AtomicU64::new(0),
+            resets: AtomicU64::new(0),
+            reconciliations: AtomicU64::new(0),
+            denied_timeout: AtomicU64::new(0),
+        }
+    }
+}
+
 /// Instance-level budget controller for server connections.
 ///
 /// Controls the total number of server connections to a PostgreSQL
@@ -41,6 +82,7 @@ pub struct BudgetController {
     max_connections: u32,
     min_lifetime: Duration,
     state: Mutex<BudgetState>,
+    metrics: BudgetMetrics,
 }
 
 struct BudgetState {
@@ -69,6 +111,7 @@ impl BudgetController {
                 total_held: 0,
                 waiters: Vec::new(),
             }),
+            metrics: BudgetMetrics::new(),
         }
     }
 
@@ -119,47 +162,66 @@ impl BudgetController {
 
         let pool_state = match state.pools.get(pool) {
             Some(p) => p,
-            None => return AcquireResult::DeniedUnknownPool,
+            None => {
+                self.metrics.denied_unknown.fetch_add(1, Ordering::Relaxed);
+                return AcquireResult::DeniedUnknownPool;
+            }
         };
 
         let held = pool_state.held;
         let config = pool_state.config;
 
         if held >= config.max_pool_size {
+            self.metrics.denied_user_max.fetch_add(1, Ordering::Relaxed);
             return AcquireResult::DeniedUserMax;
         }
 
         let is_guaranteed = held < config.guaranteed;
 
-        // Case 1: room in global budget
         if state.total_held < self.max_connections {
             if !is_guaranteed && Self::has_higher_weight_waiter(&state, pool, config.weight) {
                 Self::enqueue_waiter(&mut state, pool);
+                self.metrics.would_block.fetch_add(1, Ordering::Relaxed);
                 return AcquireResult::WouldBlock;
             }
             Self::grant(&mut state, pool, now);
+            if is_guaranteed {
+                self.metrics
+                    .grants_guaranteed
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.metrics.grants_above.fetch_add(1, Ordering::Relaxed);
+            }
             return AcquireResult::Granted;
         }
 
-        // Case 2: global budget full — try eviction
         let requester_weight = if is_guaranteed {
             u32::MAX
         } else {
             config.weight
         };
-        if let Some(victim) =
-            Self::find_evictable(&state, pool, requester_weight, now, self.min_lifetime)
-        {
+        if let Some(victim) = Self::find_evictable_with_metrics(
+            &state,
+            pool,
+            requester_weight,
+            now,
+            self.min_lifetime,
+            Some(&self.metrics),
+        ) {
             let victim_name = victim.clone();
             Self::evict_one(&mut state, &victim_name, now, self.min_lifetime);
+            self.metrics.evictions.fetch_add(1, Ordering::Relaxed);
             Self::grant(&mut state, pool, now);
+            self.metrics
+                .grants_after_eviction
+                .fetch_add(1, Ordering::Relaxed);
             return AcquireResult::GrantedAfterEviction {
                 evicted_pool: victim_name,
             };
         }
 
-        // Case 3: no evictable connections — enqueue
         Self::enqueue_waiter(&mut state, pool);
+        self.metrics.would_block.fetch_add(1, Ordering::Relaxed);
         AcquireResult::WouldBlock
     }
 
@@ -174,10 +236,92 @@ impl BudgetController {
                 ps.held -= 1;
                 ps.connection_ages.pop_front();
                 state.total_held -= 1;
+                self.metrics.releases.fetch_add(1, Ordering::Relaxed);
             }
         }
 
         Self::schedule(&mut state, self.max_connections, self.min_lifetime, now)
+    }
+
+    /// Bulk reset after PostgreSQL failover (Contract 2).
+    ///
+    /// All server connections are assumed dead. Clears held counters
+    /// for every pool and drains the waiter queue via schedule().
+    pub fn reset_all(&self, now: Instant) {
+        let mut state = self.state.lock();
+
+        for ps in state.pools.values_mut() {
+            ps.held = 0;
+            ps.connection_ages.clear();
+        }
+        state.total_held = 0;
+
+        self.metrics.resets.fetch_add(1, Ordering::Relaxed);
+
+        while Self::schedule(&mut state, self.max_connections, self.min_lifetime, now).is_some() {}
+    }
+
+    /// Adjust held counter for a single pool to match reality (Contract 4).
+    ///
+    /// Called periodically by the integration layer to fix counter drift.
+    /// If held decreased, schedule() drains waiters that can now be served.
+    pub fn reconcile(&self, pool: &str, actual_held: u32, now: Instant) {
+        let mut state = self.state.lock();
+
+        let budget_held = match state.pools.get(pool) {
+            Some(ps) => ps.held,
+            None => return,
+        };
+
+        if budget_held == actual_held {
+            return;
+        }
+
+        self.metrics.reconciliations.fetch_add(1, Ordering::Relaxed);
+
+        let diff = actual_held as i64 - budget_held as i64;
+        state.total_held = (state.total_held as i64 + diff) as u32;
+
+        let ps = state.pools.get_mut(pool).unwrap();
+        ps.held = actual_held;
+        ps.connection_ages.clear();
+        for _ in 0..actual_held {
+            ps.connection_ages.push_back(now);
+        }
+
+        if diff < 0 {
+            while Self::schedule(&mut state, self.max_connections, self.min_lifetime, now).is_some()
+            {
+            }
+        }
+    }
+
+    /// Cancel a pending wait for `pool` (FM-4 timeout support).
+    ///
+    /// The caller wraps `try_acquire` in `tokio::time::timeout` and
+    /// calls this on expiration to clean up the waiter accounting.
+    pub fn cancel_wait(&self, pool: &str) {
+        let mut state = self.state.lock();
+
+        let Some(ps) = state.pools.get_mut(pool) else {
+            return;
+        };
+
+        if ps.waiting == 0 {
+            return;
+        }
+
+        ps.waiting -= 1;
+        self.metrics.denied_timeout.fetch_add(1, Ordering::Relaxed);
+
+        if ps.waiting == 0 {
+            state.waiters.retain(|w| w != pool);
+        }
+    }
+
+    /// Read-only access to atomic metrics counters.
+    pub fn metrics(&self) -> &BudgetMetrics {
+        &self.metrics
     }
 
     // --- Internal helpers ---
@@ -313,6 +457,24 @@ impl BudgetController {
         now: Instant,
         min_lifetime: Duration,
     ) -> Option<String> {
+        Self::find_evictable_with_metrics(
+            state,
+            requester,
+            requester_weight,
+            now,
+            min_lifetime,
+            None,
+        )
+    }
+
+    fn find_evictable_with_metrics(
+        state: &BudgetState,
+        requester: &str,
+        requester_weight: u32,
+        now: Instant,
+        min_lifetime: Duration,
+        metrics: Option<&BudgetMetrics>,
+    ) -> Option<String> {
         let mut best: Option<(u32, Duration, String)> = None;
 
         for (name, ps) in &state.pools {
@@ -325,11 +487,21 @@ impl BudgetController {
             if requester_weight != u32::MAX && ps.config.weight >= requester_weight {
                 continue;
             }
-            let has_eligible = ps
-                .connection_ages
-                .iter()
-                .any(|&t| now.duration_since(t) >= min_lifetime);
+            let mut has_eligible = false;
+            let mut has_weight_match = false;
+            for &t in &ps.connection_ages {
+                if now.duration_since(t) >= min_lifetime {
+                    has_eligible = true;
+                    break;
+                }
+                has_weight_match = true;
+            }
             if !has_eligible {
+                if has_weight_match {
+                    if let Some(m) = metrics {
+                        m.evictions_blocked.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 continue;
             }
             let max_age = now.duration_since(*ps.connection_ages.front().unwrap());
@@ -910,5 +1082,217 @@ mod tests {
         bc.release("waiter", now);
         assert_eq!(bc.held("waiter"), 1);
         assert_eq!(bc.waiting("waiter"), 1);
+    }
+
+    #[test]
+    fn reset_all_clears_state_and_schedules_waiters() {
+        let bc = BudgetController::new(5, Duration::from_secs(30));
+        bc.register_pool("a", cfg(0, 100, 5));
+        bc.register_pool("b", cfg(0, 100, 5));
+        bc.register_pool("c", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        for _ in 0..5 {
+            bc.try_acquire("a", now);
+        }
+        assert_eq!(bc.total_held(), 5);
+        bc.try_acquire("b", now);
+        bc.try_acquire("c", now);
+        assert_eq!(bc.waiting("b"), 1);
+        assert_eq!(bc.waiting("c"), 1);
+
+        bc.reset_all(now);
+
+        assert_eq!(bc.held("a"), 0);
+        assert_eq!(bc.total_held(), 2);
+        assert_eq!(bc.held("b"), 1);
+        assert_eq!(bc.held("c"), 1);
+        assert_eq!(bc.waiting("b"), 0);
+        assert_eq!(bc.waiting("c"), 0);
+        assert_eq!(bc.metrics().resets.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn reset_all_with_no_waiters() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("a", cfg(0, 100, 10));
+        let now = Instant::now();
+
+        for _ in 0..10 {
+            bc.try_acquire("a", now);
+        }
+        assert_eq!(bc.total_held(), 10);
+
+        bc.reset_all(now);
+
+        assert_eq!(bc.held("a"), 0);
+        assert_eq!(bc.total_held(), 0);
+    }
+
+    #[test]
+    fn reconcile_fixes_drift_and_schedules_waiters() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("drifted", cfg(0, 100, 15));
+        bc.register_pool("waiter", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        bc.set_held_with_age("drifted", 10, now);
+        bc.try_acquire("waiter", now);
+        assert_eq!(bc.waiting("waiter"), 1);
+
+        bc.reconcile("drifted", 3, now);
+
+        assert_eq!(bc.held("drifted"), 3);
+        assert_eq!(bc.total_held(), 4);
+        assert_eq!(bc.held("waiter"), 1);
+        assert_eq!(bc.waiting("waiter"), 0);
+        assert_eq!(bc.metrics().reconciliations.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn reconcile_no_op_when_counters_match() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("pool", cfg(0, 100, 10));
+        let now = Instant::now();
+
+        for _ in 0..5 {
+            bc.try_acquire("pool", now);
+        }
+
+        bc.reconcile("pool", 5, now);
+
+        assert_eq!(bc.held("pool"), 5);
+        assert_eq!(bc.metrics().reconciliations.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn reconcile_upward_drift() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("pool", cfg(0, 100, 10));
+        let now = Instant::now();
+
+        for _ in 0..3 {
+            bc.try_acquire("pool", now);
+        }
+        assert_eq!(bc.held("pool"), 3);
+
+        bc.reconcile("pool", 7, now);
+
+        assert_eq!(bc.held("pool"), 7);
+        assert_eq!(bc.total_held(), 7);
+    }
+
+    #[test]
+    fn reconcile_unknown_pool_is_no_op() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        let now = Instant::now();
+
+        bc.reconcile("nonexistent", 5, now);
+
+        assert_eq!(bc.total_held(), 0);
+        assert_eq!(bc.metrics().reconciliations.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancel_wait_decrements_waiting() {
+        let bc = BudgetController::new(1, Duration::from_secs(30));
+        bc.register_pool("holder", cfg(0, 100, 5));
+        bc.register_pool("waiter", cfg(0, 100, 5));
+        let now = Instant::now();
+
+        bc.try_acquire("holder", now);
+        bc.try_acquire("waiter", now);
+        bc.try_acquire("waiter", now);
+        bc.try_acquire("waiter", now);
+        assert_eq!(bc.waiting("waiter"), 3);
+
+        bc.cancel_wait("waiter");
+        assert_eq!(bc.waiting("waiter"), 2);
+        assert_eq!(bc.metrics().denied_timeout.load(Ordering::Relaxed), 1);
+
+        bc.cancel_wait("waiter");
+        assert_eq!(bc.waiting("waiter"), 1);
+
+        bc.cancel_wait("waiter");
+        assert_eq!(bc.waiting("waiter"), 0);
+    }
+
+    #[test]
+    fn cancel_wait_on_unknown_pool_is_no_op() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.cancel_wait("nonexistent");
+        assert_eq!(bc.metrics().denied_timeout.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cancel_wait_on_pool_with_zero_waiting_is_no_op() {
+        let bc = BudgetController::new(10, Duration::from_secs(30));
+        bc.register_pool("pool", cfg(0, 100, 10));
+
+        bc.cancel_wait("pool");
+        assert_eq!(bc.waiting("pool"), 0);
+        assert_eq!(bc.metrics().denied_timeout.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn metrics_track_all_acquire_outcomes() {
+        let bc = BudgetController::new(2, Duration::from_secs(0));
+        bc.register_pool("high", cfg(1, 100, 2));
+        bc.register_pool("low", cfg(0, 10, 2));
+        let now = Instant::now();
+
+        bc.try_acquire("high", now);
+        assert_eq!(bc.metrics().grants_guaranteed.load(Ordering::Relaxed), 1);
+
+        bc.try_acquire("high", now);
+        assert_eq!(bc.metrics().grants_above.load(Ordering::Relaxed), 1);
+
+        let result = bc.try_acquire("low", now);
+        assert_eq!(result, AcquireResult::WouldBlock);
+        assert_eq!(bc.metrics().would_block.load(Ordering::Relaxed), 1);
+
+        bc.try_acquire("nonexistent", now);
+        assert_eq!(bc.metrics().denied_unknown.load(Ordering::Relaxed), 1);
+
+        bc.register_pool("maxed", cfg(0, 100, 0));
+        bc.try_acquire("maxed", now);
+        assert_eq!(bc.metrics().denied_user_max.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn metrics_track_eviction_and_release() {
+        let bc = BudgetController::new(5, Duration::from_secs(0));
+        bc.register_pool("high", cfg(0, 100, 5));
+        bc.register_pool("low", cfg(0, 10, 5));
+        let now = Instant::now();
+
+        for _ in 0..5 {
+            bc.try_acquire("low", now);
+        }
+
+        bc.try_acquire("high", now);
+        assert_eq!(bc.metrics().evictions.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            bc.metrics().grants_after_eviction.load(Ordering::Relaxed),
+            1
+        );
+
+        bc.release("high", now);
+        assert_eq!(bc.metrics().releases.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn metrics_track_evictions_blocked_by_min_lifetime() {
+        let bc = BudgetController::new(5, Duration::from_secs(30));
+        bc.register_pool("high", cfg(0, 100, 5));
+        bc.register_pool("low", cfg(0, 10, 5));
+        let now = Instant::now();
+
+        for _ in 0..5 {
+            bc.try_acquire("low", now);
+        }
+
+        bc.try_acquire("high", now);
+        assert!(bc.metrics().evictions_blocked.load(Ordering::Relaxed) >= 1);
     }
 }
