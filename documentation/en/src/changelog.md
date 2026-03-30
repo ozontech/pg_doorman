@@ -1,5 +1,11 @@
 # Changelog
 
+### 3.3.4 <small>Mar 30, 2026</small>
+
+**Bug Fixes:**
+
+- **Prepared statement cache desync after client disconnect.** When a client sent Parse but disconnected before Sync/Flush, pg_doorman registered the statement in the server-side LRU cache but never sent the actual Parse to PostgreSQL (it was still in the client buffer, which was dropped on disconnect). The next client that got the same server connection and used the same query saw the stale cache entry, skipped sending Parse, and received `prepared statement "DOORMAN_X" does not exist` (error 26000) from PostgreSQL. Fixed by tracking a `has_pending_cache_entries` flag on the server connection: set when a statement is added to the cache without immediate Parse confirmation, cleared after successful buffer flush. If the client disconnects before flushing, `checkin_cleanup` detects the flag and triggers `DEALLOCATE ALL` to re-synchronize the cache. Zero overhead on the normal path (one boolean check per checkin).
+
 ### 3.3.3 <small>Mar 26, 2026</small>
 
 **Bug Fixes:**
