@@ -161,6 +161,11 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="334-mar-30-2026"><a class="header" href="#334-mar-30-2026">3.3.4 <small>Mar 30, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Prepared statement cache desync after client disconnect.</strong> When a client sent Parse but disconnected before Sync/Flush, pg_doorman registered the statement in the server-side LRU cache but never sent the actual Parse to PostgreSQL (it was still in the client buffer, which was dropped on disconnect). The next client that got the same server connection and used the same query saw the stale cache entry, skipped sending Parse, and received <code>prepared statement "DOORMAN_X" does not exist</code> (error 26000) from PostgreSQL. Fixed by tracking a <code>has_pending_cache_entries</code> flag on the server connection: set when a statement is added to the cache without immediate Parse confirmation, cleared after successful buffer flush. If the client disconnects before flushing, <code>checkin_cleanup</code> detects the flag and triggers <code>DEALLOCATE ALL</code> to re-synchronize the cache. Zero overhead on the normal path (one boolean check per checkin).</li>
+</ul>
 <h3 id="333-mar-26-2026"><a class="header" href="#333-mar-26-2026">3.3.3 <small>Mar 26, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
 <ul>

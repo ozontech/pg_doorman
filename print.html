@@ -162,7 +162,7 @@
 <p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
 It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
 Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.3.3</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.3.4</a></p>
 <h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
 <p>Run PgDoorman instantly using Docker:</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
@@ -2027,6 +2027,11 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <li><strong>Important</strong>: The values shown are <strong>relative performance ratios</strong>, not absolute TPS numbers. While absolute TPS values may vary depending on hardware and system load, the relative ratios between poolers should remain consistent when tests are run sequentially in a short timeframe (30 seconds each). This allows for fair comparison across different connection poolers under identical conditions</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="334-mar-30-2026"><a class="header" href="#334-mar-30-2026">3.3.4 <small>Mar 30, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Prepared statement cache desync after client disconnect.</strong> When a client sent Parse but disconnected before Sync/Flush, pg_doorman registered the statement in the server-side LRU cache but never sent the actual Parse to PostgreSQL (it was still in the client buffer, which was dropped on disconnect). The next client that got the same server connection and used the same query saw the stale cache entry, skipped sending Parse, and received <code>prepared statement "DOORMAN_X" does not exist</code> (error 26000) from PostgreSQL. Fixed by tracking a <code>has_pending_cache_entries</code> flag on the server connection: set when a statement is added to the cache without immediate Parse confirmation, cleared after successful buffer flush. If the client disconnects before flushing, <code>checkin_cleanup</code> detects the flag and triggers <code>DEALLOCATE ALL</code> to re-synchronize the cache. Zero overhead on the normal path (one boolean check per checkin).</li>
+</ul>
 <h3 id="333-mar-26-2026"><a class="header" href="#333-mar-26-2026">3.3.3 <small>Mar 26, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
 <ul>
