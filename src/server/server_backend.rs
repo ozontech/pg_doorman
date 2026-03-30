@@ -124,6 +124,13 @@ pub struct Server {
     /// Used to track Parse messages that haven't been confirmed yet.
     pub(crate) registering_prepared_statement: VecDeque<String>,
 
+    /// True when prepared statements were added to the LRU cache via
+    /// register_prepared_statement(should_send_parse_to_server=false) but
+    /// the client buffer has not yet been flushed to PostgreSQL (Sync/Flush
+    /// not received). If the client disconnects before flushing, checkin_cleanup
+    /// uses this flag to trigger DEALLOCATE ALL and clear the stale cache.
+    pub(crate) has_pending_cache_entries: bool,
+
     /// Session mode flag: true when the pool operates in session mode.
     /// In session mode, PostgreSQL ErrorResponse in async mode does not mark connection as bad,
     /// because the connection remains valid and the client can continue using it.
@@ -368,6 +375,14 @@ impl Server {
             self.small_simple_query("ROLLBACK").await?;
         }
 
+        // If the client added prepared statements to the cache but disconnected
+        // before Sync/Flush, the cache contains entries that were never sent to
+        // PostgreSQL. Force DEALLOCATE ALL to re-synchronize.
+        if self.has_pending_cache_entries {
+            self.cleanup_state.needs_cleanup_prepare = true;
+            self.has_pending_cache_entries = false;
+        }
+
         // Client disconnected but it performed session-altering operations such as
         // SET statement_timeout to 1 or create a prepared statement. We clear that
         // to avoid leaking state between clients. For performance reasons we only
@@ -483,6 +498,14 @@ impl Server {
                 // Use server_name instead of parse.name for async clients
                 let parse_bytes = parse.to_bytes_with_name(server_name)?;
                 bytes.extend_from_slice(&parse_bytes);
+            }
+
+            // Track that we added to cache without sending Parse to PostgreSQL.
+            // The actual Parse is deferred in the client buffer until Sync/Flush.
+            // If the client disconnects before flushing, checkin_cleanup will
+            // detect this flag and trigger DEALLOCATE ALL to fix the desync.
+            if !should_send_parse_to_server {
+                self.has_pending_cache_entries = true;
             }
 
             // If we evict something, we need to close it on the server
@@ -800,6 +823,7 @@ impl Server {
                             )),
                         },
                         registering_prepared_statement: VecDeque::new(),
+                        has_pending_cache_entries: false,
                         session_mode,
                         max_message_size: config.general.message_size_to_be_stream.as_bytes()
                             as i32,

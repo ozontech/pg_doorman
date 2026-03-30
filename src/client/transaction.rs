@@ -444,6 +444,11 @@ where
 
         self.execute_server_roundtrip(None, server).await?;
 
+        // Buffer was flushed to PostgreSQL — all deferred Parse messages
+        // have reached the server. Clear the pending flag so checkin_cleanup
+        // won't trigger unnecessary DEALLOCATE ALL.
+        server.has_pending_cache_entries = false;
+
         self.stats.query();
         server.stats.query(
             query_start_at.elapsed().as_micros() as u64,
