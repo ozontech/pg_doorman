@@ -444,6 +444,11 @@ where
 
         self.execute_server_roundtrip(None, server).await?;
 
+        // Batch is complete — send deferred eviction Close messages.
+        // These statements were evicted from the LRU during this batch but
+        // kept alive on PostgreSQL so that Binds in the buffer could succeed.
+        server.send_deferred_eviction_closes().await?;
+
         // Buffer was flushed to PostgreSQL — all deferred Parse messages
         // have reached the server. Clear the pending flag so checkin_cleanup
         // won't trigger unnecessary DEALLOCATE ALL.
