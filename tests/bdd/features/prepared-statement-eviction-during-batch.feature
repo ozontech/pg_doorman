@@ -64,24 +64,21 @@ Feature: Server-side LRU eviction during batch breaks already-buffered Bind
     And we sleep 100ms
 
     # Step 2: New session sends batch where Parse(C) evicts A from server LRU
-    # while Bind(A) is already in the client buffer
+    # while Bind(A) is already in the client buffer.
     #
-    # Server LRU = [A, B] (A is LRU because has() uses contains() — no promotion)
     # Parse(A) → server has A → skip (no Parse bytes in buffer)
-    # Bind(A) → ensure_on_server → has(A)=true → skip → Bind(A) in buffer
-    # Parse(C) → new → register → add_to_cache(C) → evicts A → Close(A) sent!
-    # Bind(C) → Bind(C) in buffer
-    # Sync → flush: Bind(A) hits PostgreSQL where A no longer exists → ERROR
+    # Bind(A) + Execute → added to buffer, unnamed portal used then consumed
+    # Parse(C) → new → register → add_to_cache(C) → eviction triggered
+    # Bind(C) + Execute → added to buffer
+    # Sync → flush all. Bind(A) must succeed — A must still exist on PostgreSQL.
     When we create session "test" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Parse "a" with query "select $1::int" to session "test"
     And we send Bind "" to "a" with params "42" to session "test"
+    And we send Execute "" to session "test"
     And we send Parse "c" with query "select $1::int + 1" to session "test"
     And we send Bind "" to "c" with params "99" to session "test"
     And we send Execute "" to session "test"
-    And we send Execute "" to session "test"
     And we send Sync to session "test"
-    # This SHOULD work — both statements should execute correctly.
-    # Currently fails because eviction Close(A) is sent out-of-band.
     Then session "test" should receive DataRow with "42"
 
   Scenario: Same bug with three statements filling cache progressively
