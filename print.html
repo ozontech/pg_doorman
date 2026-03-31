@@ -162,7 +162,7 @@
 <p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
 It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
 Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.3.4</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.3.5</a></p>
 <h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
 <p>Run PgDoorman instantly using Docker:</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
@@ -2027,6 +2027,11 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <li><strong>Important</strong>: The values shown are <strong>relative performance ratios</strong>, not absolute TPS numbers. While absolute TPS values may vary depending on hardware and system load, the relative ratios between poolers should remain consistent when tests are run sequentially in a short timeframe (30 seconds each). This allows for fair comparison across different connection poolers under identical conditions</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="335-mar-31-2026"><a class="header" href="#335-mar-31-2026">3.3.5 <small>Mar 31, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Prepared statement eviction during batch breaks buffered Bind.</strong> When a client sent a batch like <code>Parse(A), Bind(A), Parse(C), Sync</code> and <code>Parse(C)</code> triggered server-side LRU eviction of statement A, the <code>Close(A)</code> was sent to PostgreSQL immediately (out-of-band), deleting A before the client buffer was flushed. <code>Bind(A)</code> then failed with <code>prepared statement "DOORMAN_X" does not exist</code> (error 26000). Two fixes: (1) <code>has_prepared_statement()</code> now promotes entries in the LRU on access (<code>get()</code> instead of <code>contains()</code>), so actively-used statements resist eviction. (2) Eviction <code>Close</code> is deferred until after the batch completes — the statement stays alive on PostgreSQL while Binds in the buffer are processed, then <code>Close</code> is sent as post-batch cleanup. If the client disconnects before <code>Sync</code>, <code>checkin_cleanup</code> detects the pending deferred closes and triggers <code>DEALLOCATE ALL</code>.</li>
+</ul>
 <h3 id="334-mar-30-2026"><a class="header" href="#334-mar-30-2026">3.3.4 <small>Mar 30, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
 <ul>
