@@ -1,5 +1,11 @@
 # Changelog
 
+### 3.3.5 <small>Mar 31, 2026</small>
+
+**Bug Fixes:**
+
+- **Prepared statement eviction during batch breaks buffered Bind.** When a client sent a batch like `Parse(A), Bind(A), Parse(C), Sync` and `Parse(C)` triggered server-side LRU eviction of statement A, the `Close(A)` was sent to PostgreSQL immediately (out-of-band), deleting A before the client buffer was flushed. `Bind(A)` then failed with `prepared statement "DOORMAN_X" does not exist` (error 26000). Two fixes: (1) `has_prepared_statement()` now promotes entries in the LRU on access (`get()` instead of `contains()`), so actively-used statements resist eviction. (2) Eviction `Close` is deferred until after the batch completes — the statement stays alive on PostgreSQL while Binds in the buffer are processed, then `Close` is sent as post-batch cleanup. If the client disconnects before `Sync`, `checkin_cleanup` detects the pending deferred closes and triggers `DEALLOCATE ALL`.
+
 ### 3.3.4 <small>Mar 30, 2026</small>
 
 **Bug Fixes:**
