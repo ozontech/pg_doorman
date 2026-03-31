@@ -1,4 +1,4 @@
-@rust @prepared-cache @bug
+@rust @rust-3 @prepared-cache @bug
 Feature: Server-side LRU eviction during batch breaks already-buffered Bind
 
   When a client sends a batch like Parse(A), Bind(A), Parse(C), Bind(C), Sync:
