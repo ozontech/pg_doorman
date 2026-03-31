@@ -131,6 +131,12 @@ pub struct Server {
     /// uses this flag to trigger DEALLOCATE ALL and clear the stale cache.
     pub(crate) has_pending_cache_entries: bool,
 
+    /// Statements evicted from the server LRU during the current batch but
+    /// whose Close has NOT yet been sent to PostgreSQL. The statements still
+    /// exist on PostgreSQL — Close is deferred until Sync/Flush completes so
+    /// that any Bind referencing them in the client buffer succeeds first.
+    pub(crate) deferred_eviction_closes: Vec<String>,
+
     /// Session mode flag: true when the pool operates in session mode.
     /// In session mode, PostgreSQL ErrorResponse in async mode does not mark connection as bad,
     /// because the connection remains valid and the client can continue using it.
@@ -383,6 +389,14 @@ impl Server {
             self.has_pending_cache_entries = false;
         }
 
+        // If eviction Closes were deferred but never sent (client disconnected
+        // before Sync), the LRU and PostgreSQL are out of sync. DEALLOCATE ALL
+        // cleans up both the deferred entries and any other stale state.
+        if !self.deferred_eviction_closes.is_empty() {
+            self.cleanup_state.needs_cleanup_prepare = true;
+            self.deferred_eviction_closes.clear();
+        }
+
         // Client disconnected but it performed session-altering operations such as
         // SET statement_timeout to 1 or create a prepared statement. We clear that
         // to avoid leaking state between clients. For performance reasons we only
@@ -508,12 +522,13 @@ impl Server {
                 self.has_pending_cache_entries = true;
             }
 
-            // If we evict something, we need to close it on the server
-            // We do this by adding it to the messages we're sending to the server before the sync
+            // If we evict something, defer the Close until after the current batch
+            // completes (Sync/Flush). The evicted statement still exists on PostgreSQL,
+            // so any Bind referencing it in the client buffer will succeed.
+            // send_deferred_eviction_closes() sends the Close after Sync.
             if let Some(evicted_name) = self.add_prepared_statement_to_cache(server_name) {
                 self.remove_prepared_statement_from_cache(&evicted_name);
-                let close_bytes: BytesMut = Close::new(&evicted_name).try_into()?;
-                bytes.extend_from_slice(&close_bytes);
+                self.deferred_eviction_closes.push(evicted_name);
             };
 
             // If we have a parse or close we need to send to the server, send them and sync
@@ -573,10 +588,54 @@ impl Server {
     }
 
     /// Determines if the server already has a prepared statement with the given name.
-    /// Updates the prepared statement cache hit/miss counters.
+    /// Checks both the LRU cache and the deferred eviction list (statements evicted
+    /// from LRU but not yet Closed on PostgreSQL — they still exist there).
     #[inline]
     pub fn has_prepared_statement(&mut self, name: &str) -> bool {
-        prepared_statements::has(&self.prepared_statement_cache, &self.stats, name)
+        if self.deferred_eviction_closes.iter().any(|n| n == name) {
+            self.stats.prepared_cache_hit();
+            return true;
+        }
+        prepared_statements::has(&mut self.prepared_statement_cache, &self.stats, name)
+    }
+
+    /// Send Close+Sync for all deferred eviction entries and consume responses.
+    /// Called after the client batch is flushed (Sync/Flush) so that Binds
+    /// referencing evicted statements have already been processed by PostgreSQL.
+    pub async fn send_deferred_eviction_closes(&mut self) -> Result<(), Error> {
+        if self.deferred_eviction_closes.is_empty() {
+            return Ok(());
+        }
+
+        let mut bytes = BytesMut::new();
+        for name in self.deferred_eviction_closes.drain(..) {
+            let close_bytes: BytesMut = Close::new(&name).try_into()?;
+            bytes.extend_from_slice(&close_bytes);
+        }
+        bytes.extend_from_slice(&sync());
+
+        let was_async = self.is_async();
+        let saved_expected = self.expected_responses();
+        if was_async {
+            self.set_async_mode(false);
+        }
+
+        self.send_and_flush(&bytes).await?;
+
+        let mut noop = tokio::io::sink();
+        loop {
+            self.recv(&mut noop, None).await?;
+            if !self.is_data_available() {
+                break;
+            }
+        }
+
+        if was_async {
+            self.set_async_mode(true);
+            self.set_expected_responses(saved_expected);
+        }
+
+        Ok(())
     }
 
     pub async fn sync_parameters(&mut self, parameters: &ServerParameters) -> Result<(), Error> {
@@ -824,6 +883,7 @@ impl Server {
                         },
                         registering_prepared_statement: VecDeque::new(),
                         has_pending_cache_entries: false,
+                        deferred_eviction_closes: Vec::new(),
                         session_mode,
                         max_message_size: config.general.message_size_to_be_stream.as_bytes()
                             as i32,

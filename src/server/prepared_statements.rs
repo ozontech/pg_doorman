@@ -41,7 +41,7 @@ pub(crate) fn remove_from_cache(
 }
 
 pub(crate) fn has(
-    prepared_statement_cache: &Option<LruCache<String, ()>>,
+    prepared_statement_cache: &mut Option<LruCache<String, ()>>,
     stats: &Arc<ServerStats>,
     name: &str,
 ) -> bool {
@@ -49,7 +49,10 @@ pub(crate) fn has(
         Some(cache) => cache,
         None => return false,
     };
-    let exists = cache.contains(name);
+    // Use get() instead of contains() to promote the entry in the LRU.
+    // contains() leaves the entry at its old position, so actively-checked
+    // statements could be evicted by a subsequent add_to_cache() call.
+    let exists = cache.get(name).is_some();
     if exists {
         stats.prepared_cache_hit();
     } else {
@@ -67,55 +70,41 @@ mod tests {
         Arc::new(ServerStats::default())
     }
 
-    /// Demonstrates the core bug: `has()` uses `contains()` which does NOT
-    /// promote entries in the LRU, so an actively-checked statement can still
-    /// be the eviction victim when a new statement is added.
-    ///
-    /// Sequence:
-    /// 1. Add A, B to cache (size=2)          → LRU order: [A, B]
-    /// 2. has(A)  — does NOT promote A         → LRU order: [A, B]  (unchanged!)
-    /// 3. add_to_cache(C) — evicts LRU entry   → evicts A!
-    ///
-    /// If has() promoted A, the order after step 2 would be [B, A],
-    /// and step 3 would evict B instead.
+    /// After fix: has() now uses get() which DOES promote entries.
+    /// Checking a statement moves it to MRU, protecting it from eviction.
     #[test]
-    fn test_has_does_not_promote_in_lru() {
+    fn test_has_promotes_in_lru() {
         let stats = make_stats();
         let mut cache = Some(LruCache::new(NonZeroUsize::new(2).unwrap()));
 
-        // Fill cache: A then B
+        // Fill cache: A then B → LRU order: [A, B]
         assert!(add_to_cache(&mut cache, &stats, "DOORMAN_1").is_none());
         assert!(add_to_cache(&mut cache, &stats, "DOORMAN_2").is_none());
 
-        // Check A exists — but this does NOT promote A in LRU
-        assert!(has(&cache, &stats, "DOORMAN_1"));
+        // has(A) now promotes A → LRU order: [B, A]
+        assert!(has(&mut cache, &stats, "DOORMAN_1"));
 
-        // Add C — should evict A (the LRU entry) because has() didn't promote it
+        // Add C → evicts B (LRU), NOT A
         let evicted = add_to_cache(&mut cache, &stats, "DOORMAN_3");
         assert_eq!(
             evicted,
-            Some("DOORMAN_1".to_string()),
-            "BUG CONFIRMED: has() does not promote, so the 'recently checked' A is evicted"
+            Some("DOORMAN_2".to_string()),
+            "has() promotes A, so B (not A) is evicted"
         );
     }
 
-    /// In lru 0.16, push() DOES promote existing entries (unlike some older versions).
-    /// Re-adding the same key via push() moves it to the MRU position.
-    /// This means add_to_cache() promotes, but has() (contains()) does NOT.
+    /// push() in lru 0.16 also promotes existing entries.
     #[test]
     fn test_push_promotes_existing_in_lru_016() {
         let stats = make_stats();
         let mut cache = Some(LruCache::new(NonZeroUsize::new(2).unwrap()));
 
-        // Fill cache: A then B → LRU order: [A, B]
         add_to_cache(&mut cache, &stats, "DOORMAN_1");
         add_to_cache(&mut cache, &stats, "DOORMAN_2");
 
-        // Re-add A via push — in lru 0.16 this DOES promote A
-        // LRU order becomes: [B, A]
+        // Re-add A via push → promotes A → LRU order: [B, A]
         add_to_cache(&mut cache, &stats, "DOORMAN_1");
 
-        // Add C — evicts B (now the LRU entry), not A
         let evicted = add_to_cache(&mut cache, &stats, "DOORMAN_3");
         assert_eq!(
             evicted,
@@ -124,39 +113,26 @@ mod tests {
         );
     }
 
-    /// Simulates the exact batch processing bug scenario:
-    /// Server LRU has [A, B]. Client batch: Parse(A), Bind(A), Parse(C).
-    /// Parse(A) → has(A)=true → skip. Bind(A) → has(A)=true → skip.
-    /// Parse(C) → add_to_cache(C) → evicts A → Close(A) sent → A deleted.
-    /// But Bind(A) is still in client buffer → "prepared statement does not exist".
+    /// After fix: the batch scenario works because has() promotes A.
+    /// Parse(A) → has(A) promotes → Bind(A) → has(A) promotes →
+    /// Parse(C) → add_to_cache(C) → evicts B (not A).
     #[test]
-    fn test_batch_eviction_scenario() {
+    fn test_batch_eviction_scenario_fixed() {
         let stats = make_stats();
         let mut cache = Some(LruCache::new(NonZeroUsize::new(2).unwrap()));
 
-        // Setup: server has A and B (like after a previous transaction)
-        add_to_cache(&mut cache, &stats, "DOORMAN_1"); // statement A
-        add_to_cache(&mut cache, &stats, "DOORMAN_2"); // statement B
+        add_to_cache(&mut cache, &stats, "DOORMAN_1"); // A
+        add_to_cache(&mut cache, &stats, "DOORMAN_2"); // B
 
-        // Client sends Parse(A) → has_prepared_statement("DOORMAN_1")
-        assert!(has(&cache, &stats, "DOORMAN_1"), "A should exist");
+        // Parse(A) + Bind(A): has() promotes A
+        assert!(has(&mut cache, &stats, "DOORMAN_1"));
+        assert!(has(&mut cache, &stats, "DOORMAN_1"));
 
-        // Client sends Bind(A) → ensure_on_server → has_prepared_statement("DOORMAN_1")
-        assert!(has(&cache, &stats, "DOORMAN_1"), "A should still exist");
-        // Bind(A) is now in the client buffer
-
-        // Client sends Parse(C) → not on server → register → add_to_cache
+        // Parse(C): evicts B (LRU), not A
         let evicted = add_to_cache(&mut cache, &stats, "DOORMAN_3");
+        assert_eq!(evicted, Some("DOORMAN_2".to_string()));
 
-        // A is evicted — Close(A) would be sent to PostgreSQL
-        assert_eq!(evicted, Some("DOORMAN_1".to_string()));
-
-        // After eviction: A no longer exists on the server
-        assert!(!has(&cache, &stats, "DOORMAN_1"), "A was evicted");
-        assert!(has(&cache, &stats, "DOORMAN_3"), "C should exist");
-
-        // But Bind(A) is still in the client buffer!
-        // When Sync flushes the buffer, PostgreSQL will reject Bind(DOORMAN_1)
-        // with "prepared statement DOORMAN_1 does not exist"
+        // A still exists — Bind(A) in buffer will succeed
+        assert!(has(&mut cache, &stats, "DOORMAN_1"));
     }
 }
