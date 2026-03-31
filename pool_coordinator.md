@@ -2,27 +2,27 @@
 
 ## Problem
 
-pg_doorman сегодня создаёт изолированный пул для каждой пары (database, user). Каждый пул ограничен `pool_size`, но пулы не знают друг о друге. Если у БД `max_connections = 100`, а у двух юзеров `pool_size = 60`, они совместно могут открыть 120 соединений и убить PostgreSQL. Контроля на уровне БД нет.
+pg_doorman creates an isolated pool per (database, user) pair. Each pool is capped by `pool_size`, but pools are unaware of each other. If a database has `max_connections = 100` and two users each set `pool_size = 60`, they can collectively open 120 connections and overwhelm PostgreSQL. There is no database-level control.
 
-pgbouncer решает это через `max_db_connections` + `reserve_pool_size`, но у него нет:
-- гарантированного минимума на юзера
-- eviction чужих idle-соединений при нехватке
-- защиты свежих соединений от мгновенного eviction
-- приоритетного распределения reserve по нуждаемости
+pgbouncer addresses this with `max_db_connections` + `reserve_pool_size`, but lacks:
+- guaranteed minimum connections per user
+- eviction of other users' idle connections under pressure
+- protection of freshly created connections from immediate eviction
+- priority-based reserve distribution
 
 ## Solution: Pool Coordinator
 
-Один `PoolCoordinator` на database. Координирует соединения всех юзеров к одной БД.
+One `PoolCoordinator` per database. Coordinates connections across all users of that database.
 
-### Ключевые гарантии
+### Guarantees
 
-| Гарантия | Описание |
-|----------|----------|
-| **Hard limit** | Суммарное число соединений к БД не превышает `max_db_connections` |
-| **Guaranteed minimum** | Каждый юзер получает минимум `min_pool_size` соединений, даже при полной загрузке |
-| **Eviction with protection** | Если юзеру нужно соединение, а лимит исчерпан — забираем idle у других, но только если те выше своего `min_pool_size` и соединение старше `min_connection_lifetime` |
-| **Reserve as last resort** | Если eviction не помог в течение `reserve_pool_timeout` — берём из резерва (сверх лимита) |
-| **Priority by need** | При конкуренции за reserve выигрывает юзер с наибольшей нуждой |
+| Guarantee | Description |
+|-----------|-------------|
+| **Hard limit** | Total connections to the database never exceed `max_db_connections` |
+| **Guaranteed minimum** | Each user receives at least `min_pool_size` connections, even under full load |
+| **Eviction with protection** | When a user needs a connection and the limit is reached, idle connections are taken from other users — only from those above their `min_pool_size`, and only connections older than `min_connection_lifetime` |
+| **Reserve as last resort** | If eviction fails within `reserve_pool_timeout`, a connection is taken from the reserve (beyond the limit) |
+| **Priority by need** | When multiple users compete for reserve, the one with the greatest need wins |
 
 ## Configuration
 
@@ -61,11 +61,11 @@ pool_size = 5
 min_pool_size = 0       # no guarantee, can be fully evicted
 ```
 
-Когда `max_db_connections = 0` (default) — координатор не создаётся, поведение как сейчас.
+When `max_db_connections = 0` (default), no coordinator is created and pools behave as before.
 
 ## Behavior Scenarios
 
-### Scenario 1: Normal operation — all fits within limit
+### Scenario 1: Normal operation
 
 ```
 max_db_connections = 100
@@ -74,9 +74,9 @@ analytics:   15 active (pool_size=80, min=3)
 Total:       55 / 100
 ```
 
-Все запросы обслуживаются мгновенно. Координатор не вмешивается.
+All requests served immediately. The coordinator does not intervene.
 
-### Scenario 2: Limit reached — eviction helps
+### Scenario 2: Limit reached — eviction frees a slot
 
 ```
 max_db_connections = 100
@@ -85,27 +85,27 @@ analytics:   40 active, 20 idle (pool_size=80, min=3)
 Total:       100 / 100
 ```
 
-Новый клиент `migration` (min=0) хочет соединение:
+A new `migration` client (min=0) needs a connection:
 
-1. `db_semaphore.try_acquire()` → нет permits (100/100)
-2. **Eviction**: `analytics` имеет surplus = 40-3 = 37 выше min. Берём самое старое idle-соединение (age > 5s)
-3. Idle-соединение analytics закрывается → permit освобождается → migration получает соединение
-4. Total: 100/100, но migration теперь подключён
+1. `db_semaphore.try_acquire()` fails (100/100)
+2. **Eviction**: `analytics` has surplus = 40 − 3 = 37 above min. Oldest idle connection (age > 5s) is closed.
+3. Permit freed. `migration` gets a connection.
+4. Total stays 100/100, but `migration` is now connected.
 
-### Scenario 3: Eviction blocked — all below minimum or all fresh
+### Scenario 3: Eviction blocked — all at minimum or all connections too fresh
 
 ```
 max_db_connections = 20
-app_service: 10 active (min=10) — ровно на минимуме
+app_service: 10 active (min=10) — exactly at minimum
 analytics:    8 active (min=3), 2 idle (age=2s < min_lifetime=5s)
 migration:    0 active, wants 1
 Total:        20 / 20
 ```
 
-1. Eviction attempt: app_service surplus=0 (at min), skip. analytics surplus=7, но idle connections age < 5s → too fresh, skip
-2. **Wait**: migration ждёт на `connection_returned` notify (до `reserve_pool_timeout=3s`)
-3. Если за 3 секунды кто-то вернёт соединение → migration получает его
-4. Если нет → **reserve**
+1. Eviction scan: `app_service` surplus=0 (at min), skip. `analytics` surplus=7, but idle connections younger than 5s — skip.
+2. **Wait**: `migration` blocks on `connection_returned` notify for up to `reserve_pool_timeout` (3s).
+3. If someone returns a connection within 3s, `migration` gets it.
+4. Otherwise → reserve.
 
 ### Scenario 4: Reserve used
 
@@ -115,10 +115,10 @@ Total:        20 / 20
 reserve_pool_size = 10, reserve_in_use = 0
 ```
 
-1. `reserve_pool_timeout` expired
-2. migration отправляет `ReserveRequest { score: (0, 1) }` в priority queue
-3. Arbiter видит 1 pending request, reserve доступен → grant
-4. migration получает соединение сверх лимита: total = 21 / 100+10
+1. `reserve_pool_timeout` expired.
+2. `migration` submits `ReserveRequest { score: (0, 1) }` to the priority queue.
+3. Arbiter grants it — reserve available.
+4. `migration` gets a connection beyond the limit: total = 21 / 100+10.
 5. **WARN log**: `[pool_coordinator: mydb] reserve connection used (1/10) for user 'migration'`
 
 ### Scenario 5: Multiple users compete for reserve
@@ -137,7 +137,7 @@ Both hit `reserve_pool_timeout`. Scoring:
 | app_service | 0 (30 > min 10) | 8 | (0, 8) |
 | analytics | 0 (20 > min 3) | 2 | (0, 2) |
 
-**app_service wins** — 8 ожидающих > 2. Получает reserve первым.
+**app_service wins** — 8 waiting > 2.
 
 ### Scenario 6: User below minimum gets absolute priority
 
@@ -148,7 +148,7 @@ analytics:   0 active, 3 waiting (min=3) — below minimum!
 Total: 50/50
 ```
 
-Eviction: app_service surplus = 50-10 = 40. Evict 1 oldest idle... но все active (нет idle). Wait timeout.
+Eviction: `app_service` surplus = 40, but no idle connections. Wait expires.
 
 Reserve scoring:
 
@@ -157,7 +157,7 @@ Reserve scoring:
 | analytics | **1** (0 < min 3) | 3 | **(1, 3)** |
 | app_service | 0 (50 > min 10) | ... | (0, ...) |
 
-**analytics получает reserve** — deficit_priority=1 даёт абсолютный приоритет.
+**analytics wins** — `deficit_priority=1` gives absolute priority over users above their minimum.
 
 ### Scenario 7: Reserve exhausted
 
@@ -167,9 +167,9 @@ reserve_pool_size = 5, reserve_in_use = 5
 All pools full, no idle, reserve full
 ```
 
-Новый запрос → eviction fails → wait timeout → reserve full → **PoolError::DbLimitExhausted**
+New request → eviction fails → wait expires → reserve full → **PoolError::DbLimitExhausted**
 
-Клиент получает ошибку: `All server connections to database 'mydb' are in use (max=50, reserve=5/5)`
+Client receives: `All server connections to database 'mydb' are in use (max=50, reserve=5/5)`
 
 ## Architecture
 
@@ -248,28 +248,24 @@ Client needs connection
 ### Data Model
 
 ```rust
-// One per database, shared across user pools
 pub struct PoolCoordinator {
     db_semaphore: Semaphore,           // max_db_connections permits
     reserve_semaphore: Semaphore,      // reserve_pool_size permits
     total_connections: AtomicUsize,
     reserve_in_use: AtomicUsize,
-    connection_returned: Notify,       // wake waiters
-    reserve_tx: mpsc::Sender<ReserveRequest>,  // to arbiter
+    connection_returned: Notify,
+    reserve_tx: mpsc::Sender<ReserveRequest>,
     config: CoordinatorConfig,
-    // counters
     evictions_total: AtomicU64,
     reserve_acquisitions_total: AtomicU64,
 }
 
-// RAII — lives as long as the server connection
 pub struct CoordinatorPermit {
     coordinator: Arc<PoolCoordinator>,
     is_reserve: bool,
 }
-// Drop → returns permit to correct semaphore, notifies waiters
+// Drop returns permit to the correct semaphore and notifies waiters.
 
-// Stored inside ObjectInner alongside Server and Metrics
 struct ObjectInner {
     obj: Server,
     metrics: Metrics,
@@ -295,12 +291,10 @@ async fn reserve_arbiter(
     let mut pending: BinaryHeap<ReserveRequest> = BinaryHeap::new();
 
     loop {
-        // Collect new requests
         while let Ok(req) = rx.try_recv() {
             pending.push(req);
         }
 
-        // Grant to highest-scoring request if reserve available
         while let Some(top) = pending.peek() {
             if coordinator.reserve_semaphore.try_acquire().is_ok() {
                 let req = pending.pop().unwrap();
@@ -312,7 +306,6 @@ async fn reserve_arbiter(
             }
         }
 
-        // Clean up cancelled requests (oneshot dropped by caller on timeout)
         pending.retain(|req| !req.response.is_closed());
 
         tokio::select! {
@@ -331,7 +324,6 @@ impl PoolCoordinator {
     fn try_evict_one(&self, requesting_user: &str, db_name: &str) -> bool {
         let pools = get_all_pools_for_db(db_name);
 
-        // Sort by surplus (current - min_pool_size) descending
         let mut candidates: Vec<_> = pools
             .iter()
             .filter(|(id, _)| id.user != requesting_user)
@@ -353,9 +345,9 @@ impl PoolCoordinator {
 
 ### Retain Integration
 
-Background `retain_connections()` task:
-- **Reserve pressure relief**: idle reserve connections (`is_reserve=true`) closed when idle > `min_connection_lifetime`, even before `idle_timeout`
-- **Replenish with coordination**: `min_pool_size` replenish must acquire `CoordinatorPermit` before creating; skip if unavailable
+The background `retain_connections()` task gains two behaviors:
+- **Reserve pressure relief**: idle reserve connections (`is_reserve=true`) are closed once idle exceeds `min_connection_lifetime`, even before `idle_timeout`.
+- **Coordinated replenish**: `min_pool_size` replenish acquires a `CoordinatorPermit` before creating a connection. If the permit is unavailable, it skips and retries next cycle.
 
 ## Observability
 
@@ -381,23 +373,23 @@ pg_doorman_pool_coordinator_reserve_acquisitions_total{database="mydb"} 3
 
 | Level | Event |
 |-------|-------|
-| INFO | Eviction: `[pool_coordinator: mydb] evicted idle conn from 'analytics' (surplus:12, age:45s) for 'app_service'` |
-| WARN | Reserve used: `[pool_coordinator: mydb] reserve used (1/10) for 'migration' — eviction failed within 3000ms` |
-| ERROR | Exhausted: `[pool_coordinator: mydb] all connections exhausted (100+10), user 'migration' denied` |
+| INFO | `[pool_coordinator: mydb] evicted idle conn from 'analytics' (surplus:12, age:45s) for 'app_service'` |
+| WARN | `[pool_coordinator: mydb] reserve used (1/10) for 'migration' — eviction failed within 3000ms` |
+| ERROR | `[pool_coordinator: mydb] all connections exhausted (100+10), user 'migration' denied` |
 
 ## Edge Cases
 
 | Case | Behavior |
 |------|----------|
-| `sum(min_pool_size) > max_db_connections` | Config warning at startup. System works, but not all minimums can be satisfied simultaneously |
-| `user.pool_size > max_db_connections` | Config warning. User effectively capped at max_db_connections |
-| Config reload: max_db_connections changed | New PoolCoordinator created, old connections untracked, drain naturally |
-| Config reload: feature disabled (→ 0) | PoolCoordinator removed, all connections continue without coordination |
-| Session mode | Eviction useless (no idle). Hard limit + reserve still work. Clients queue or fail |
-| All connections active, no idle | Eviction skipped, go straight to wait → reserve → error |
-| Reserve connection goes idle | Closed by retain_connections() when idle > min_connection_lifetime |
-| Concurrent eviction + checkout | VecDeque under Mutex, cross-pool safe via Notify |
-| Replenish min_pool_size | Must acquire CoordinatorPermit; skip if unavailable |
+| `sum(min_pool_size) > max_db_connections` | Config warning at startup. Not all minimums can be met simultaneously. |
+| `user.pool_size > max_db_connections` | Config warning. User effectively capped at `max_db_connections`. |
+| Config reload: `max_db_connections` changed | New PoolCoordinator created. Old connections untracked, drain naturally. |
+| Config reload: feature disabled (set to 0) | PoolCoordinator removed. Existing connections continue without coordination. |
+| Session mode | Eviction useless (no idle connections). Hard limit and reserve still apply. |
+| All connections active, none idle | Eviction skipped. Goes straight to wait, then reserve, then error. |
+| Reserve connection becomes idle | Closed by `retain_connections()` once idle exceeds `min_connection_lifetime`. |
+| Concurrent eviction and checkout | VecDeque under Mutex. Cross-pool coordination via Notify. |
+| `min_pool_size` replenish | Must acquire CoordinatorPermit. Skipped if unavailable. |
 
 ## Files to Modify
 
@@ -407,7 +399,7 @@ pg_doorman_pool_coordinator_reserve_acquisitions_total{database="mydb"} 3
 | `src/config/pool.rs` | 4 new fields + validation |
 | `src/pool/inner.rs` | `coordinator_permit` in ObjectInner, permit acquire before create in `timeout_get`, `evict_one_idle` method |
 | `src/pool/mod.rs` | Create coordinators in `from_config()`, `surplus_above_min()` on ConnectionPool |
-| `src/pool/retain.rs` | Reserve pressure relief, replenish awareness |
+| `src/pool/retain.rs` | Reserve pressure relief, coordinated replenish |
 | `src/pool/errors.rs` | `DbLimitExhausted` variant |
-| `src/admin/show.rs` | `SHOW POOL_COORDINATOR` |
+| `src/admin/show.rs` | `SHOW POOL_COORDINATOR` command |
 | `src/prometheus/mod.rs` | 4 new metrics |
