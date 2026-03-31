@@ -88,7 +88,7 @@ Total:       100 / 100
 A new `migration` client (min=0) needs a connection:
 
 1. `db_semaphore.try_acquire()` fails (100/100)
-2. **Eviction**: `analytics` has surplus = 40 − 3 = 37 above min. Oldest idle connection (age > 5s) is closed.
+2. **Eviction**: `analytics` has spare = 40 − 3 = 37 above min. Oldest idle connection (age > 5s) is closed.
 3. Permit freed. `migration` gets a connection.
 4. Total stays 100/100, but `migration` is now connected.
 
@@ -102,7 +102,7 @@ migration:    0 active, wants 1
 Total:        20 / 20
 ```
 
-1. Eviction scan: `app_service` surplus=0 (at min), skip. `analytics` surplus=7, but idle connections younger than 5s — skip.
+1. Eviction scan: `app_service` spare=0 (at min), skip. `analytics` spare=7, but idle connections younger than 5s — skip.
 2. **Wait**: `migration` blocks on `connection_returned` notify for up to `reserve_pool_timeout` (3s).
 3. If someone returns a connection within 3s, `migration` gets it.
 4. Otherwise → reserve.
@@ -132,7 +132,7 @@ Total: 50/50, eviction impossible (all active, no idle)
 
 Both hit `reserve_pool_timeout`. Scoring:
 
-| User | deficit_priority | waiting_count | Score |
+| User | starving | queued_clients | Score |
 |------|-----------------|---------------|-------|
 | app_service | 0 (30 > min 10) | 8 | (0, 8) |
 | analytics | 0 (20 > min 3) | 2 | (0, 2) |
@@ -148,16 +148,16 @@ analytics:   0 active, 3 waiting (min=3) — below minimum!
 Total: 50/50
 ```
 
-Eviction: `app_service` surplus = 40, but no idle connections. Wait expires.
+Eviction: `app_service` spare = 40, but no idle connections. Wait expires.
 
 Reserve scoring:
 
-| User | deficit_priority | waiting_count | Score |
+| User | starving | queued_clients | Score |
 |------|-----------------|---------------|-------|
 | analytics | **1** (0 < min 3) | 3 | **(1, 3)** |
 | app_service | 0 (50 > min 10) | ... | (0, ...) |
 
-**analytics wins** — `deficit_priority=1` gives absolute priority over users above their minimum.
+**analytics wins** — `starving=1` (below guaranteed minimum) gives absolute priority over users that already have their minimum.
 
 ### Scenario 7: Reserve exhausted
 
@@ -189,7 +189,7 @@ Client receives: `All server connections to database 'mydb' are in use (max=50, 
 │  │              Eviction Engine                        │    │
 │  │  - scan other users' idle connections               │    │
 │  │  - respect min_pool_size, min_connection_lifetime    │    │
-│  │  - pick user with max surplus, oldest idle first     │    │
+│  │  - pick user with max spare, oldest idle first     │    │
 │  └────────────────────────────────────────────────────┘    │
 │                                                             │
 │  Counters: total_connections, reserve_in_use,               │
@@ -221,8 +221,8 @@ Client needs connection
 │     │     └─ Create connection, store CoordinatorPermit
 │     │
 │     ├─ [B] Limit reached → Eviction Engine:
-│     │     │  for each other user (sorted by surplus DESC):
-│     │     │    skip if surplus ≤ 0 (at/below min)
+│     │     │  for each other user (sorted by spare DESC):
+│     │     │    skip if spare ≤ 0 (at/below min)
 │     │     │    find oldest idle with age > min_connection_lifetime
 │     │     │    evict it → permit freed → try_acquire
 │     │     └─ Success → create connection
@@ -235,7 +235,7 @@ Client needs connection
 │     │
 │     ├─ [D] Timeout → Reserve phase:
 │     │     │  submit ReserveRequest { user, score }
-│     │     │  score = (is_below_min, waiting_count)
+│     │     │  score = (starving, queued_clients)
 │     │     │  arbiter grants to highest score
 │     │     └─ Got reserve permit → create (is_reserve=true)
 │     │
@@ -280,7 +280,7 @@ Background tokio task, one per PoolCoordinator:
 ```rust
 struct ReserveRequest {
     user: String,
-    score: (u8, usize),  // (deficit_priority, waiting_count)
+    score: (u8, usize),  // (starving, queued_clients)
     response: oneshot::Sender<CoordinatorPermit>,
 }
 
@@ -327,10 +327,10 @@ impl PoolCoordinator {
         let mut candidates: Vec<_> = pools
             .iter()
             .filter(|(id, _)| id.user != requesting_user)
-            .filter(|(_, pool)| pool.surplus_above_min() > 0)
+            .filter(|(_, pool)| pool.spare_above_min() > 0)
             .collect();
 
-        candidates.sort_by(|a, b| b.surplus().cmp(&a.surplus()));
+        candidates.sort_by(|a, b| b.spare().cmp(&a.spare()));
 
         for (_, pool) in candidates {
             if pool.evict_one_idle(self.config.min_connection_lifetime_ms) {
@@ -373,7 +373,7 @@ pg_doorman_pool_coordinator_reserve_acquisitions_total{database="mydb"} 3
 
 | Level | Event |
 |-------|-------|
-| INFO | `[pool_coordinator: mydb] evicted idle conn from 'analytics' (surplus:12, age:45s) for 'app_service'` |
+| INFO | `[pool_coordinator: mydb] evicted idle conn from 'analytics' (spare:12, age:45s) for 'app_service'` |
 | WARN | `[pool_coordinator: mydb] reserve used (1/10) for 'migration' — eviction failed within 3000ms` |
 | ERROR | `[pool_coordinator: mydb] all connections exhausted (100+10), user 'migration' denied` |
 
@@ -398,7 +398,7 @@ pg_doorman_pool_coordinator_reserve_acquisitions_total{database="mydb"} 3
 | `src/pool/pool_coordinator.rs` | **New.** PoolCoordinator, CoordinatorPermit, eviction, arbiter |
 | `src/config/pool.rs` | 4 new fields + validation |
 | `src/pool/inner.rs` | `coordinator_permit` in ObjectInner, permit acquire before create in `timeout_get`, `evict_one_idle` method |
-| `src/pool/mod.rs` | Create coordinators in `from_config()`, `surplus_above_min()` on ConnectionPool |
+| `src/pool/mod.rs` | Create coordinators in `from_config()`, `spare_above_min()` on ConnectionPool |
 | `src/pool/retain.rs` | Reserve pressure relief, coordinated replenish |
 | `src/pool/errors.rs` | `DbLimitExhausted` variant |
 | `src/admin/show.rs` | `SHOW POOL_COORDINATOR` command |
