@@ -2,27 +2,27 @@
 
 ## Проблема
 
-pg_doorman создаёт изолированный пул на каждую пару (база, пользователь). Пулы ограничены `pool_size`, но друг о друге не знают. Если у базы `max_connections = 100`, а у двух пользователей `pool_size = 60`, вместе они могут открыть 120 соединений и перегрузить PostgreSQL. Контроля на уровне базы нет.
+pg_doorman создаёт изолированный pool на каждую пару (database, user). Каждый pool ограничен `pool_size`, но pool'ы не знают друг о друге. Если у БД `max_connections = 100`, а у двух user'ов `pool_size = 60`, вместе они могут открыть 120 server connections и перегрузить PostgreSQL. Контроля на уровне database нет.
 
 pgbouncer решает часть проблемы через `max_db_connections` + `reserve_pool_size`, но не умеет:
-- гарантировать минимум соединений конкретному пользователю
-- забирать чужие idle-соединения при нехватке
-- защищать свежие соединения от немедленного изъятия
-- распределять резерв по степени нуждаемости
+- гарантировать minimum connections конкретному user'у
+- забирать чужие idle connections при нехватке (eviction)
+- защищать свежие connections от немедленного eviction (lifetime protection)
+- распределять reserve по степени нуждаемости (priority scoring)
 
 ## Решение: Pool Coordinator
 
-Один `PoolCoordinator` на базу данных. Координирует соединения всех пользователей к одной БД.
+Один `PoolCoordinator` на database. Координирует server connections всех user'ов к одной БД.
 
 ### Гарантии
 
 | Гарантия | Что это значит |
 |----------|---------------|
-| **Жёсткий лимит** | Суммарное число соединений к БД не превышает `max_db_connections` |
-| **Гарантированный минимум** | Каждый пользователь получает не менее `min_pool_size` соединений при любой нагрузке |
-| **Изъятие с защитой** | Если пользователю нужно соединение, а лимит исчерпан — idle-соединения забираются у других, но только у тех, кто выше своего `min_pool_size`, и только если соединению больше `min_connection_lifetime` |
-| **Резерв как последний рубеж** | Если изъятие не помогло за `reserve_pool_timeout` — берётся соединение из резерва (сверх лимита) |
-| **Приоритет по нуждаемости** | При конкуренции за резерв побеждает пользователь с большей очередью ожидания |
+| **Hard limit** | Суммарное число server connections к БД не превышает `max_db_connections` |
+| **Guaranteed minimum** | Каждый user получает не менее `min_pool_size` соединений при любой нагрузке |
+| **Eviction with protection** | Если user'у нужно соединение, а limit исчерпан — idle connections забираются у других, но только у тех, кто выше своего `min_pool_size`, и только если connection старше `min_connection_lifetime` |
+| **Reserve as last resort** | Если eviction не помог за `reserve_pool_timeout` — берётся connection из reserve pool (сверх лимита) |
+| **Priority by need** | При конкуренции за reserve побеждает user с наибольшим числом waiting clients |
 
 ## Конфигурация
 
@@ -61,11 +61,11 @@ pool_size = 5
 min_pool_size = 0       # без гарантий, все соединения могут быть изъяты
 ```
 
-При `max_db_connections = 0` (по умолчанию) координатор не создаётся, пулы работают как раньше.
+При `max_db_connections = 0` (default) coordinator не создаётся, pool'ы работают как раньше.
 
 ## Сценарии поведения
 
-### Сценарий 1: штатная работа
+### Сценарий 1: normal operation
 
 ```
 max_db_connections = 100
@@ -74,9 +74,9 @@ analytics:   15 активных (pool_size=80, min=3)
 Всего:       55 / 100
 ```
 
-Все запросы обслуживаются сразу. Координатор не вмешивается.
+Все запросы обслуживаются сразу. Coordinator не вмешивается.
 
-### Сценарий 2: лимит достигнут — изъятие помогает
+### Сценарий 2: limit reached — eviction помогает
 
 ```
 max_db_connections = 100
@@ -92,7 +92,7 @@ analytics:   40 активных, 20 idle (pool_size=80, min=3)
 3. Permit освобождён. `migration` получает соединение.
 4. Итого по-прежнему 100/100, но `migration` подключён.
 
-### Сценарий 3: изъятие невозможно — все на минимуме или слишком свежие
+### Сценарий 3: eviction невозможен — все на minimum или connections слишком свежие
 
 ```
 max_db_connections = 20
@@ -102,12 +102,12 @@ migration:    0 активных, нужно 1
 Всего:        20 / 20
 ```
 
-1. Попытка изъятия: `app_service` surplus=0, пропуск. `analytics` surplus=7, но idle-соединения моложе 5с — пропуск.
-2. **Ожидание**: `migration` ждёт на `connection_returned` до `reserve_pool_timeout` (3с).
-3. Если за 3 секунды кто-то вернёт соединение — `migration` его получает.
-4. Если нет — резерв.
+1. Eviction attempt: `app_service` surplus=0, skip. `analytics` surplus=7, но idle connections моложе 5с — skip.
+2. **Wait phase**: `migration` ждёт на `connection_returned` notify до `reserve_pool_timeout` (3с).
+3. Если за 3 секунды кто-то вернёт connection — `migration` его получает.
+4. Если нет — reserve.
 
-### Сценарий 4: используется резерв
+### Сценарий 4: reserve pool используется
 
 ```
 (продолжение сценария 3)
@@ -187,10 +187,11 @@ reserve_pool_size = 5, reserve_in_use = 5
 │         │                 │                    │            │
 │  ┌──────┴─────────────────┴────────────────────┴──────┐    │
 │  │              Eviction Engine                        │    │
-│  │  - сканирует idle-соединения чужих пользователей    │    │
+│  │  - сканирует idle connections чужих user'ов          │    │
 │  │  - учитывает min_pool_size, min_connection_lifetime  │    │
-│  │  - выбирает пользователя с макс. surplus, старейший │    │
-│  │    idle первым                                      │    │
+│  │  - evict у user с макс. surplus                      │    │
+│  │    (surplus = connections - min_pool_size)            │    │
+│  │  - oldest idle connection first                      │    │
 │  └────────────────────────────────────────────────────┘    │
 │                                                             │
 │  Счётчики: total_connections, reserve_in_use,               │
