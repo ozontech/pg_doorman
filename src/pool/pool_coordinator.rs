@@ -314,11 +314,9 @@ impl PoolCoordinator {
 /// What phase the coordinator was in when it gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcquirePhase {
-    /// Eviction failed, waited reserve_pool_timeout — no connections were freed.
-    WaitTimeout,
-    /// Reserve pool is fully used.
+    /// Reserve pool is fully used — all main and reserve permits occupied.
     ReserveExhausted,
-    /// No reserve configured (reserve_pool_size = 0).
+    /// No reserve configured (reserve_pool_size = 0) — only main permits available.
     NoReserve,
 }
 
@@ -344,16 +342,6 @@ impl std::fmt::Display for NoConnectionInfo {
                 self.database, self.max_db_connections, self.user
             ),
             AcquirePhase::ReserveExhausted => write!(
-                f,
-                "all server connections to database '{}' are in use \
-                 (max={}, reserve={}/{}, user='{}')",
-                self.database,
-                self.max_db_connections,
-                self.reserve_in_use,
-                self.reserve_size,
-                self.user
-            ),
-            AcquirePhase::WaitTimeout => write!(
                 f,
                 "all server connections to database '{}' are in use \
                  (max={}, reserve={}/{}, user='{}')",

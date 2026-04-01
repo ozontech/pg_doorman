@@ -268,3 +268,173 @@ Feature: Pool Coordinator — database-level connection limit
     And we send SimpleQuery "SELECT current_user" to session "u2_s1" without waiting
     Then we read SimpleQuery response from session "u2_s1" within 5000ms
     Then session "u2_s1" should receive DataRow with "postgres"
+
+  @coordinator-min-guaranteed-protects
+  Scenario: min_guaranteed_pool_size prevents eviction below minimum
+    # user1 has 2 connections, min_guaranteed_pool_size=2.
+    # spare_above_min = 0, so eviction cannot take from user1.
+    # user2 falls through to reserve.
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 2
+      min_guaranteed_pool_size = 2
+      min_connection_lifetime = 500
+      reserve_pool_size = 1
+      reserve_pool_timeout = 1000
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 2
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 2
+      """
+    When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s1"
+    When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s2"
+    When we sleep for 800 milliseconds
+    # user2: eviction impossible (user1 at guaranteed minimum), must use reserve
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT current_user" to session "u2_s1" without waiting
+    Then we read SimpleQuery response from session "u2_s1" within 5000ms
+    Then session "u2_s1" should receive DataRow with "postgres"
+
+  @coordinator-session-mode-reserve
+  Scenario: Session mode — no idle connections to evict, reserve is the only option
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      pool_mode = "session"
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 2
+      min_connection_lifetime = 500
+      reserve_pool_size = 1
+      reserve_pool_timeout = 1000
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 2
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 2
+      """
+    # Session mode: connections held for entire client session (never returned to pool)
+    When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s1"
+    When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s2"
+    When we sleep for 800 milliseconds
+    # user2: no idle connections to evict (session mode), falls to reserve
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT current_user" to session "u2_s1" without waiting
+    Then we read SimpleQuery response from session "u2_s1" within 5000ms
+    Then session "u2_s1" should receive DataRow with "postgres"
+
+  @coordinator-sustained-eviction
+  Scenario: Multiple evictions in rapid succession under sustained load
+    # user1 fills 5 slots, all go idle. 3 user2 clients arrive — each triggers eviction.
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 5
+      min_connection_lifetime = 500
+      reserve_pool_size = 0
+      reserve_pool_timeout = 2000
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 5
+      """
+    When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s1"
+    When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s2"
+    When we create session "u1_s3" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s3"
+    When we create session "u1_s4" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s4"
+    When we create session "u1_s5" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s5"
+    When we sleep for 800 milliseconds
+    # 3 user2 clients — each triggers an eviction of user1's idle connections
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_s1" without waiting
+    When we create session "u2_s2" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 2" to session "u2_s2" without waiting
+    When we create session "u2_s3" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 3" to session "u2_s3" without waiting
+    Then we read SimpleQuery response from session "u2_s1" within 5000ms
+    Then session "u2_s1" should receive DataRow with "1"
+    Then we read SimpleQuery response from session "u2_s2" within 5000ms
+    Then session "u2_s2" should receive DataRow with "2"
+    Then we read SimpleQuery response from session "u2_s3" within 5000ms
+    Then session "u2_s3" should receive DataRow with "3"
+
+  @coordinator-show-admin
+  Scenario: SHOW POOL_COORDINATOR returns coordinator state
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 5
+      reserve_pool_size = 2
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      """
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s1"
+    When we create admin session "admin" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
+    Then admin session "admin" column "max_db_conn" should be between 5 and 5
+    Then admin session "admin" column "reserve_size" should be between 2 and 2

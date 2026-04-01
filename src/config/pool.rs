@@ -230,6 +230,39 @@ impl Pool {
                         );
                     }
                 }
+
+                // min_connection_lifetime > idle_timeout: eviction will never trigger
+                // because idle connections are closed by idle_timeout first.
+                if let Some(min_lt) = self.min_connection_lifetime {
+                    if let Some(idle) = self.idle_timeout {
+                        if min_lt > idle && idle > 0 {
+                            log::warn!(
+                                "min_connection_lifetime ({}ms) > idle_timeout ({}ms); \
+                                 idle connections will be closed before becoming evictable",
+                                min_lt,
+                                idle
+                            );
+                        }
+                    }
+                }
+
+                // min_guaranteed_pool_size > any user's pool_size: user becomes
+                // immune to eviction but cannot reach the guaranteed minimum.
+                if let Some(guaranteed) = self.min_guaranteed_pool_size {
+                    if guaranteed > 0 {
+                        for user in &self.users {
+                            if guaranteed > user.pool_size {
+                                log::warn!(
+                                    "min_guaranteed_pool_size ({}) > pool_size ({}) for user '{}'; \
+                                     user is immune to eviction but cannot reach the guarantee",
+                                    guaranteed,
+                                    user.pool_size,
+                                    user.username
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
 
