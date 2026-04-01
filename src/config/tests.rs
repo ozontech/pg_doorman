@@ -1493,8 +1493,13 @@ async fn test_validate_coordinator_sum_min_pool_size_exceeds_max() {
         ],
         ..Pool::default()
     };
-    // sum(min_pool_size) = 12 > max_db_connections = 10 → accepted with warning
-    assert!(pool.validate().await.is_ok());
+    // sum(min_pool_size) = 12 > max_db_connections = 10 → rejected
+    let err = pool.validate().await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("sum of min_pool_size"),
+        "error should mention min_pool_size sum: {msg}"
+    );
 }
 
 #[tokio::test]
@@ -1564,5 +1569,22 @@ async fn test_validate_coordinator_disabled_skips_all_checks() {
         ..Pool::default()
     };
     // max_db_connections=0 → coordinator disabled, no warnings checked
+    assert!(pool.validate().await.is_ok());
+}
+
+#[tokio::test]
+async fn test_validate_coordinator_reserve_exceeds_max_db_connections_accepted_with_warning() {
+    let mut pool = Pool {
+        max_db_connections: Some(5),
+        reserve_pool_size: Some(10), // 10 > 5 → warn but OK
+        users: vec![User {
+            username: "u1".to_string(),
+            password: "p1".to_string(),
+            pool_size: 5,
+            ..Default::default()
+        }],
+        ..Pool::default()
+    };
+    // reserve_pool_size > max_db_connections → warning only, not error
     assert!(pool.validate().await.is_ok());
 }

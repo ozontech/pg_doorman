@@ -64,7 +64,7 @@ impl Drop for CoordinatorPermit {
         self.coordinator
             .total_connections
             .fetch_sub(1, Ordering::Relaxed);
-        self.coordinator.connection_returned.notify_waiters();
+        self.coordinator.connection_returned.notify_one();
     }
 }
 
@@ -97,7 +97,6 @@ impl Drop for ReserveGrant {
     fn drop(&mut self) {
         if let Some(coordinator) = &self.coordinator {
             coordinator.reserve_semaphore.add_permits(1);
-            coordinator.connection_returned.notify_waiters();
         }
     }
 }
@@ -224,9 +223,8 @@ impl PoolCoordinator {
         }
 
         // Phase C: wait for a connection to be returned.
-        // Register `notified()` BEFORE `try_acquire()` so that notifications
-        // arriving between a failed try_acquire and the select! are not lost.
-        // (`notify_waiters` does not store a permit for future waiters.)
+        // Register `notified()` BEFORE `try_acquire()` so that the
+        // `notify_one` from CoordinatorPermit::drop is not lost.
         let deadline = tokio::time::Instant::now()
             + Duration::from_millis(self.config.reserve_pool_timeout_ms);
 
@@ -387,10 +385,6 @@ async fn reserve_arbiter(
     let mut pending: BinaryHeap<ReserveRequest> = BinaryHeap::new();
 
     loop {
-        // Register Notify BEFORE processing so we don't miss wakeups
-        // that arrive between the grant loop and select!.
-        let notified = coordinator.connection_returned.notified();
-
         // Collect new requests (non-blocking)
         while let Ok(req) = rx.try_recv() {
             pending.push(req);
@@ -402,17 +396,16 @@ async fn reserve_arbiter(
                 sem_permit.forget();
                 let req = pending.pop().unwrap();
                 let grant = ReserveGrant::new(coordinator.clone());
-                // If send fails, grant drops here → permit returned automatically.
-                // If send succeeds but caller times out and drops the receiver,
-                // the grant inside the oneshot drops → permit returned automatically.
                 let _ = req.response.send(grant);
             } else {
                 break;
             }
         }
 
-        // Remove cancelled requests (caller timed out and dropped oneshot)
-        pending.retain(|req| !req.response.is_closed());
+        // Remove cancelled requests only when there's something to clean up
+        if !pending.is_empty() {
+            pending.retain(|req| !req.response.is_closed());
+        }
 
         tokio::select! {
             req = rx.recv() => {
@@ -421,7 +414,6 @@ async fn reserve_arbiter(
                     None => return, // channel closed, coordinator dropped
                 }
             }
-            _ = notified => {}
             _ = tokio::time::sleep(ARBITER_POLL_INTERVAL) => {}
         }
     }
@@ -734,7 +726,7 @@ mod tests {
         // Give waiter time to enter Phase C
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        // Drop permit — triggers notify_waiters
+        // Drop permit — triggers notify_one
         drop(p);
 
         let result = tokio::time::timeout(Duration::from_secs(2), waiter)
@@ -1069,5 +1061,99 @@ mod tests {
         let msg = format!("{pool_err}");
         assert!(msg.contains("db"));
         assert!(msg.contains("max=10"));
+    }
+
+    #[tokio::test]
+    async fn notify_one_exactly_one_waiter_acquires_single_permit() {
+        let cfg = CoordinatorConfig {
+            max_db_connections: 1,
+            min_connection_lifetime_ms: 5000,
+            reserve_pool_size: 0,
+            reserve_pool_timeout_ms: 80,
+        };
+        let coord = PoolCoordinator::new(cfg);
+        let p = coord.try_acquire().unwrap();
+
+        let success_count = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for i in 0..5 {
+            let c = coord.clone();
+            let cnt = success_count.clone();
+            handles.push(tokio::spawn(async move {
+                let eviction = NoOpEviction;
+                let user = format!("waiter_{i}");
+                if let Ok(_permit) = c.acquire("testdb", &user, &eviction).await {
+                    cnt.fetch_add(1, Ordering::Relaxed);
+                    // Hold permit until test ends — no chain reaction
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }));
+        }
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(p);
+
+        // Wait for Phase C timeout (80ms) + margin for all losers to finish
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert_eq!(
+            success_count.load(Ordering::Relaxed),
+            1,
+            "only one waiter should succeed with a single permit"
+        );
+
+        // Abort remaining tasks (the winner is sleeping 5s)
+        for h in handles {
+            h.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn sequential_permit_returns_wake_sequential_waiters() {
+        let cfg = CoordinatorConfig {
+            max_db_connections: 2,
+            min_connection_lifetime_ms: 5000,
+            reserve_pool_size: 0,
+            reserve_pool_timeout_ms: 300,
+        };
+        let coord = PoolCoordinator::new(cfg);
+        let p1 = coord.try_acquire().unwrap();
+        let p2 = coord.try_acquire().unwrap();
+
+        let success_count = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for i in 0..3 {
+            let c = coord.clone();
+            let cnt = success_count.clone();
+            handles.push(tokio::spawn(async move {
+                let eviction = NoOpEviction;
+                let user = format!("waiter_{i}");
+                if let Ok(_permit) = c.acquire("testdb", &user, &eviction).await {
+                    cnt.fetch_add(1, Ordering::Relaxed);
+                    // Hold permit — no chain reaction
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }));
+        }
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        drop(p1);
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        drop(p2);
+
+        // Wait for Phase C timeout + margin
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        assert_eq!(
+            success_count.load(Ordering::Relaxed),
+            2,
+            "two permits returned should wake exactly two waiters"
+        );
+
+        for h in handles {
+            h.abort();
+        }
     }
 }

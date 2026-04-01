@@ -46,16 +46,6 @@ pub struct Object {
     pool: Weak<PoolInner>,
 }
 
-impl Object {
-    /// Takes the object from this wrapper leaving behind an empty wrapper.
-    /// This is useful when you want to take ownership of the object.
-    #[allow(dead_code)]
-    pub fn take(mut this: Self) -> Server {
-        let inner = this.inner.take().unwrap();
-        inner.obj
-    }
-}
-
 impl Drop for Object {
     fn drop(&mut self) {
         if let Some(mut inner) = self.inner.take() {
@@ -125,7 +115,52 @@ struct PoolInner {
     username: String,
 }
 
+enum RecycleOutcome {
+    Reused(Box<ObjectInner>),
+    Failed,
+    Empty,
+}
+
 impl PoolInner {
+    async fn try_recycle_one(&self, timeouts: &Timeouts) -> RecycleOutcome {
+        let obj_inner = {
+            let mut slots = self.slots.lock();
+            slots.vec.pop_front()
+        };
+
+        let Some(mut inner) = obj_inner else {
+            return RecycleOutcome::Empty;
+        };
+
+        let recycle_result = match timeouts.recycle {
+            Some(duration) => {
+                match tokio::time::timeout(
+                    duration,
+                    self.server_pool.recycle(&mut inner.obj, &inner.metrics),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+                }
+            }
+            None => {
+                self.server_pool
+                    .recycle(&mut inner.obj, &inner.metrics)
+                    .await
+            }
+        };
+
+        match recycle_result {
+            Ok(()) => RecycleOutcome::Reused(Box::new(inner)),
+            Err(_) => {
+                let mut slots = self.slots.lock();
+                slots.size = slots.size.saturating_sub(1);
+                RecycleOutcome::Failed
+            }
+        }
+    }
+
     #[inline(always)]
     fn return_object(&self, inner: ObjectInner) {
         // Fast path: try to acquire lock without blocking
@@ -275,50 +310,13 @@ impl Pool {
             break;
         }
 
-        // First, try to get an existing connection (hot path - no cooldown check)
-        let obj_inner = {
-            let mut slots = self.inner.slots.lock();
-            slots.vec.pop_front()
-        };
-
-        // If we got a connection, try to recycle it (hot path)
-        if let Some(mut inner) = obj_inner {
-            let recycle_result = match timeouts.recycle {
-                Some(duration) => {
-                    match tokio::time::timeout(
-                        duration,
-                        self.inner
-                            .server_pool
-                            .recycle(&mut inner.obj, &inner.metrics),
-                    )
-                    .await
-                    {
-                        Ok(r) => r,
-                        Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                    }
-                }
-                None => {
-                    self.inner
-                        .server_pool
-                        .recycle(&mut inner.obj, &inner.metrics)
-                        .await
-                }
-            };
-
-            match recycle_result {
-                Ok(()) => {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
-                }
-                Err(_) => {
-                    let mut slots = self.inner.slots.lock();
-                    slots.size = slots.size.saturating_sub(1);
-                    // Continue to cooldown logic below
-                }
-            }
+        // Hot path: try to get an existing connection
+        if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+            permit.forget();
+            return Ok(Object {
+                inner: Some(*inner),
+                pool: Arc::downgrade(&self.inner),
+            });
         }
 
         // No connection available - check if we should use cooldown zone logic
@@ -331,162 +329,49 @@ impl Pool {
             slots.size >= warm_threshold
         };
 
-        // If in cooldown zone, try to wait for a free connection before creating new one
         if should_use_cooldown {
-            // Phase 1: Fast retries with yield_now (low latency, ~10-50μs)
             let fast_retries = self.inner.config.scaling.fast_retries;
             for _ in 0..fast_retries {
-                let obj_inner = {
-                    let mut slots = self.inner.slots.lock();
-                    slots.vec.pop_front()
-                };
-
-                if let Some(mut inner) = obj_inner {
-                    let recycle_result = match timeouts.recycle {
-                        Some(duration) => {
-                            match tokio::time::timeout(
-                                duration,
-                                self.inner
-                                    .server_pool
-                                    .recycle(&mut inner.obj, &inner.metrics),
-                            )
-                            .await
-                            {
-                                Ok(r) => r,
-                                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                            }
-                        }
-                        None => {
-                            self.inner
-                                .server_pool
-                                .recycle(&mut inner.obj, &inner.metrics)
-                                .await
-                        }
-                    };
-
-                    match recycle_result {
-                        Ok(()) => {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                        Err(_) => {
-                            let mut slots = self.inner.slots.lock();
-                            slots.size = slots.size.saturating_sub(1);
-                            continue;
-                        }
-                    }
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
 
-                // No connection available, short spin + yield before next retry
                 for _ in 0..4 {
                     std::hint::spin_loop();
                 }
                 tokio::task::yield_now().await;
             }
 
-            // Phase 2: Single sleep retry if fast retries didn't help
             let cooldown_sleep_ms = self.inner.config.scaling.cooldown_sleep_ms;
             if cooldown_sleep_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(cooldown_sleep_ms)).await;
 
-                let obj_inner = {
-                    let mut slots = self.inner.slots.lock();
-                    slots.vec.pop_front()
-                };
-
-                if let Some(mut inner) = obj_inner {
-                    let recycle_result = match timeouts.recycle {
-                        Some(duration) => {
-                            match tokio::time::timeout(
-                                duration,
-                                self.inner
-                                    .server_pool
-                                    .recycle(&mut inner.obj, &inner.metrics),
-                            )
-                            .await
-                            {
-                                Ok(r) => r,
-                                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                            }
-                        }
-                        None => {
-                            self.inner
-                                .server_pool
-                                .recycle(&mut inner.obj, &inner.metrics)
-                                .await
-                        }
-                    };
-
-                    match recycle_result {
-                        Ok(()) => {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                        Err(_) => {
-                            let mut slots = self.inner.slots.lock();
-                            slots.size = slots.size.saturating_sub(1);
-                        }
-                    }
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
             }
         }
 
-        // Try to get an existing object from the pool (fast path for non-cooldown or after cooldown retries)
+        // Drain any remaining recyclable connections before creating a new one
         loop {
-            let obj_inner = {
-                let mut slots = self.inner.slots.lock();
-                slots.vec.pop_front()
-            };
-
-            match obj_inner {
-                Some(mut inner) => {
-                    let recycle_result = match timeouts.recycle {
-                        Some(duration) => {
-                            match tokio::time::timeout(
-                                duration,
-                                self.inner
-                                    .server_pool
-                                    .recycle(&mut inner.obj, &inner.metrics),
-                            )
-                            .await
-                            {
-                                Ok(r) => r,
-                                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                            }
-                        }
-                        None => {
-                            self.inner
-                                .server_pool
-                                .recycle(&mut inner.obj, &inner.metrics)
-                                .await
-                        }
-                    };
-
-                    match recycle_result {
-                        Ok(()) => {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                        Err(_) => {
-                            let mut slots = self.inner.slots.lock();
-                            slots.size = slots.size.saturating_sub(1);
-                            continue;
-                        }
-                    }
+            match self.inner.try_recycle_one(timeouts).await {
+                RecycleOutcome::Reused(inner) => {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
-                None => {
-                    // No object available, create a new one
-                    break;
-                }
+                RecycleOutcome::Failed => continue,
+                RecycleOutcome::Empty => break,
             }
         }
 

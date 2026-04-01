@@ -211,13 +211,24 @@ impl Pool {
             if max > 0 {
                 let total_min: u32 = self.users.iter().filter_map(|u| u.min_pool_size).sum();
                 if total_min > max {
-                    log::warn!(
+                    return Err(Error::BadConfig(format!(
                         "sum of min_pool_size ({}) exceeds max_db_connections ({}); \
                          not all minimums can be satisfied simultaneously",
-                        total_min,
-                        max
-                    );
+                        total_min, max
+                    )));
                 }
+                if let Some(reserve) = self.reserve_pool_size {
+                    if reserve > max {
+                        log::warn!(
+                            "reserve_pool_size ({}) exceeds max_db_connections ({}); \
+                             PostgreSQL may receive up to {} connections",
+                            reserve,
+                            max,
+                            max + reserve
+                        );
+                    }
+                }
+
                 for user in &self.users {
                     if user.pool_size > max {
                         log::warn!(

@@ -4,6 +4,7 @@
 use log::error;
 use once_cell::sync::Lazy;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
 #[cfg(target_os = "linux")]
@@ -326,40 +327,55 @@ fn update_auth_query_metrics() {
     }
 }
 
-/// Previous coordinator database set — used to clean up stale label combinations
-/// when a database's coordinator is removed on RELOAD.
-static COORDINATOR_PREV_DBS: Lazy<std::sync::Mutex<std::collections::HashSet<String>>> =
-    Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+/// Previous coordinator state — tracks Arc pointers to detect replacements
+/// and database set to clean up stale label combinations on RELOAD.
+static COORDINATOR_PREV: Lazy<std::sync::Mutex<std::collections::HashMap<String, usize>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn reset_coordinator_counters(db: &str) {
+    for t in [
+        "connections",
+        "reserve_in_use",
+        "max_connections",
+        "reserve_pool_size",
+    ] {
+        let _ = COORDINATOR.remove_label_values(&[t, db]);
+    }
+    for t in ["evictions", "reserve_acquisitions", "exhaustions"] {
+        let _ = COORDINATOR_TOTALS.remove_label_values(&[t, db]);
+    }
+}
 
 fn update_coordinator_metrics() {
     let coordinators = COORDINATORS.load();
 
-    let current_dbs: std::collections::HashSet<String> = coordinators.keys().cloned().collect();
+    let current: std::collections::HashMap<String, usize> = coordinators
+        .iter()
+        .map(|(db, arc)| (db.clone(), Arc::as_ptr(arc) as usize))
+        .collect();
 
-    // Remove stale label combinations for databases no longer coordinated.
-    if let Ok(mut prev) = COORDINATOR_PREV_DBS.lock() {
-        for old_db in prev.difference(&current_dbs) {
-            let db: &str = old_db.as_str();
-            for t in [
-                "connections",
-                "reserve_in_use",
-                "max_connections",
-                "reserve_pool_size",
-            ] {
-                let _ = COORDINATOR.remove_label_values(&[t, db]);
-            }
-            for t in ["evictions", "reserve_acquisitions", "exhaustions"] {
-                let _ = COORDINATOR_TOTALS.remove_label_values(&[t, db]);
+    if let Ok(mut prev) = COORDINATOR_PREV.lock() {
+        // Remove counters for databases no longer coordinated
+        for old_db in prev.keys() {
+            if !current.contains_key(old_db) {
+                reset_coordinator_counters(old_db);
             }
         }
-        *prev = current_dbs;
+        // Reset counters for databases where coordinator was replaced (new Arc)
+        for (db, new_ptr) in &current {
+            if let Some(old_ptr) = prev.get(db) {
+                if old_ptr != new_ptr {
+                    reset_coordinator_counters(db);
+                }
+            }
+        }
+        *prev = current;
     }
 
     for (db, coordinator) in coordinators.iter() {
         let stats = coordinator.stats();
         let config = coordinator.config();
 
-        // Current state (gauges)
         COORDINATOR
             .with_label_values(&["connections", db])
             .set(stats.total_connections as f64);
@@ -373,9 +389,6 @@ fn update_coordinator_metrics() {
             .with_label_values(&["reserve_pool_size", db])
             .set(config.reserve_pool_size as f64);
 
-        // Cumulative counters — increment by delta since last scrape.
-        // IntCounter only supports inc(), so we compute the difference
-        // from the current Prometheus value to the coordinator's total.
         let evictions_counter = COORDINATOR_TOTALS.with_label_values(&["evictions", db]);
         let delta = stats
             .evictions_total
