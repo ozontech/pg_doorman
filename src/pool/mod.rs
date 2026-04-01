@@ -51,6 +51,15 @@ pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(Ha
 pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
+/// Per-database pool coordinators, keyed by pool name.
+/// Created in `from_config()` for pools with `max_db_connections > 0`.
+/// Replaced atomically on RELOAD. When a coordinator is replaced, old connections
+/// that hold permits from the previous coordinator continue working until they
+/// are naturally closed — the old `Arc<PoolCoordinator>` lives as long as its
+/// permits do.
+pub static COORDINATORS: Lazy<ArcSwap<HashMap<String, Arc<pool_coordinator::PoolCoordinator>>>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+
 /// Global client-server map, initialized once by `from_config()`.
 /// Needed by `create_dynamic_pool()` which doesn't have access to the map
 /// through function parameters.
@@ -257,6 +266,11 @@ pub struct ConnectionPool {
 
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
+
+    /// Database-level connection coordinator. `Some` when `max_db_connections > 0`
+    /// in the pool config, `None` otherwise (disabled, zero overhead).
+    /// Shared across all user pools for the same database.
+    pub coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
 }
 
 impl ConnectionPool {
@@ -266,6 +280,49 @@ impl ConnectionPool {
         let config = get_config();
 
         let mut new_pools = HashMap::new();
+
+        // Build per-database coordinators for pools with max_db_connections > 0.
+        // Reuse existing coordinators when config hasn't changed (avoids resetting
+        // semaphore state and losing in-flight permits on benign RELOAD).
+        let mut coordinators: HashMap<String, Arc<pool_coordinator::PoolCoordinator>> =
+            HashMap::new();
+        let old_coordinators = COORDINATORS.load();
+        for (pool_name, pool_config) in &config.pools {
+            let max = pool_config.max_db_connections.unwrap_or(0) as usize;
+            if max == 0 {
+                continue;
+            }
+            let new_cfg = pool_coordinator::CoordinatorConfig {
+                max_db_connections: max,
+                min_connection_lifetime_ms: pool_config.min_connection_lifetime.unwrap_or(5000),
+                reserve_pool_size: pool_config.reserve_pool_size.unwrap_or(0) as usize,
+                reserve_pool_timeout_ms: pool_config.reserve_pool_timeout.unwrap_or(3000),
+            };
+            // Reuse if config unchanged — keeps semaphores, arbiter, and in-flight permits alive.
+            if let Some(existing) = old_coordinators.get(pool_name.as_str()) {
+                if *existing.config() == new_cfg {
+                    debug!(
+                        "[pool: {}] coordinator config unchanged, reusing",
+                        pool_name
+                    );
+                    coordinators.insert(pool_name.clone(), existing.clone());
+                    continue;
+                }
+                info!(
+                    "[pool: {}] coordinator config changed, creating new (old connections drain naturally)",
+                    pool_name
+                );
+            } else {
+                info!(
+                    "[pool: {}] creating coordinator (max_db_connections={})",
+                    pool_name, max
+                );
+            }
+            coordinators.insert(
+                pool_name.clone(),
+                pool_coordinator::PoolCoordinator::new(new_cfg),
+            );
+        }
 
         for (pool_name, pool_config) in &config.pools {
             let new_pool_hash_value = pool_config.hash_value();
@@ -422,6 +479,7 @@ impl ConnectionPool {
                             config.general.worker_threads,
                         ))),
                     },
+                    coordinator: coordinators.get(pool_name).cloned(),
                 };
 
                 // There is one pool per database/user pair.
@@ -580,6 +638,7 @@ impl ConnectionPool {
                                     config.general.worker_threads,
                                 ))),
                             },
+                            coordinator: coordinators.get(pool_name).cloned(),
                         };
 
                         new_pools.insert(identifier.clone(), conn_pool);
@@ -678,6 +737,7 @@ impl ConnectionPool {
             info!("RELOAD: removed {} dynamic pool(s)", pools_to_remove.len());
         }
 
+        COORDINATORS.store(Arc::new(coordinators));
         AUTH_QUERY_STATE.store(Arc::new(auth_query_states));
         POOLS.store(Arc::new(new_pools.clone()));
         Ok(())
@@ -732,6 +792,15 @@ impl ConnectionPool {
             guard.set_from_hashmap(&conn.server_parameters_as_hashmap(), true);
         }
         Ok(guard.clone())
+    }
+
+    /// Connections above the user's guaranteed minimum — these are eligible
+    /// for eviction by the coordinator when another user needs a connection.
+    /// Returns 0 when the user is at or below their `min_pool_size`.
+    pub fn spare_above_min(&self) -> usize {
+        let min = self.settings.user.min_pool_size.unwrap_or(0) as usize;
+        let current = self.pool_state().size;
+        current.saturating_sub(min)
     }
 }
 
@@ -1022,6 +1091,70 @@ impl ServerPool {
     }
 }
 
+/// Adapter bridging `PoolCoordinator`'s eviction callbacks to real pool state.
+///
+/// The coordinator calls these methods when it needs to free a connection slot:
+/// - `try_evict_one`: close one idle connection from another user's pool
+/// - `queued_clients`: how many clients are waiting for this user's pool
+/// - `is_starving`: whether a user is below their guaranteed `min_pool_size`
+///
+/// # Eviction strategy
+///
+/// `try_evict_one` scans all pools for the same database, skipping the
+/// requesting user, and picks the pool with the most spare connections
+/// (above `min_pool_size`). It then closes the oldest idle connection
+/// in that pool. This is a stub until `inner.rs` provides `evict_one_idle()`.
+pub struct PoolEvictionSource {
+    database: String,
+}
+
+impl PoolEvictionSource {
+    pub fn new(database: &str) -> Self {
+        Self {
+            database: database.to_string(),
+        }
+    }
+}
+
+impl pool_coordinator::EvictionSource for PoolEvictionSource {
+    /// Try to evict one idle connection from another user's pool.
+    ///
+    /// Returns `true` if eviction succeeded and a coordinator permit
+    /// will become available (the evicted connection's `CoordinatorPermit`
+    /// is dropped synchronously before this returns `true`).
+    ///
+    /// Current implementation: stub returning `false`. The coordinator handles
+    /// this gracefully — it proceeds to wait phase and then reserve pool.
+    /// Real eviction will be wired in the `inner.rs` integration task.
+    fn try_evict_one(&self, _requesting_user: &str) -> bool {
+        // TODO: implement when inner.rs provides evict_one_idle()
+        //
+        // Algorithm (from design doc):
+        // 1. Get all pools for self.database via POOLS.load()
+        // 2. Filter: skip requesting_user, skip pools with spare_above_min() == 0
+        // 3. Sort by spare_above_min() descending (evict from user with most surplus)
+        // 4. For the top candidate, call pool.database.evict_one_idle(min_lifetime_ms)
+        // 5. Return true if eviction succeeded (permit dropped synchronously)
+        false
+    }
+
+    fn queued_clients(&self, user: &str) -> usize {
+        get_pool(&self.database, user)
+            .map(|p| p.pool_state().waiting)
+            .unwrap_or(0)
+    }
+
+    fn is_starving(&self, user: &str) -> bool {
+        get_pool(&self.database, user)
+            .map(|p| {
+                let min = p.settings.user.min_pool_size.unwrap_or(0) as usize;
+                let current = p.pool_state().size;
+                current < min
+            })
+            .unwrap_or(false)
+    }
+}
+
 /// Get the connection pool
 pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
     (*(*POOLS.load()))
@@ -1041,6 +1174,14 @@ pub fn get_pool_config(db: &str) -> Option<crate::config::Pool> {
 /// Returns an Arc to avoid cloning the entire HashMap on each call.
 pub fn get_all_pools() -> Arc<PoolMap> {
     POOLS.load_full()
+}
+
+/// Get pool coordinator for a database pool (if `max_db_connections > 0`).
+/// Returns `None` when coordination is disabled for this pool.
+pub fn get_coordinator(
+    db: &str,
+) -> Option<Arc<pool_coordinator::PoolCoordinator>> {
+    COORDINATORS.load().get(db).cloned()
 }
 
 /// Create a dynamic data pool for auth_query passthrough mode.
@@ -1189,6 +1330,7 @@ pub fn create_dynamic_pool(
                 config.general.worker_threads,
             ))),
         },
+        coordinator: get_coordinator(pool_name),
     };
 
     // Atomic insert into POOLS

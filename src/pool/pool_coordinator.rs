@@ -18,7 +18,7 @@ pub trait EvictionSource: Send + Sync {
     fn is_starving(&self, user: &str) -> bool;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoordinatorConfig {
     pub max_db_connections: usize,
     pub min_connection_lifetime_ms: u64,
@@ -111,6 +111,22 @@ pub struct PoolCoordinator {
     evictions_total: AtomicU64,
     reserve_acquisitions_total: AtomicU64,
     reserve_tx: mpsc::Sender<ReserveRequest>,
+}
+
+impl std::fmt::Debug for PoolCoordinator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PoolCoordinator")
+            .field("config", &self.config)
+            .field(
+                "total_connections",
+                &self.total_connections.load(Ordering::Relaxed),
+            )
+            .field(
+                "reserve_in_use",
+                &self.reserve_in_use.load(Ordering::Relaxed),
+            )
+            .finish()
+    }
 }
 
 /// Time to wait for the arbiter to process a reserve request
