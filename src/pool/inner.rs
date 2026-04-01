@@ -665,6 +665,34 @@ impl Pool {
         ) > 0
     }
 
+    /// Close idle reserve connections that have been idle longer than `min_lifetime_ms`.
+    ///
+    /// Reserve connections are temporary — created under coordinator pressure when the
+    /// main `max_db_connections` limit is reached. They should be released back to the
+    /// reserve pool ASAP once idle, not held until the regular `idle_timeout` fires.
+    /// This runs as part of the retain cycle to gradually relieve reserve pressure.
+    ///
+    /// Returns the number of reserve connections closed.
+    pub fn close_idle_reserve_connections(&self, min_lifetime_ms: u64) -> usize {
+        let mut guard = self.inner.slots.lock();
+        let len_before = guard.vec.len();
+        guard.vec.retain(|obj| {
+            let is_reserve = obj
+                .coordinator_permit
+                .as_ref()
+                .is_some_and(|p| p.is_reserve);
+            if !is_reserve {
+                return true;
+            }
+            // Close reserve connections idle longer than min_connection_lifetime
+            let idle = obj.metrics.last_used().as_millis();
+            idle < u128::from(min_lifetime_ms)
+        });
+        let closed = len_before - guard.vec.len();
+        guard.size -= closed;
+        closed
+    }
+
     /// Get current timeout configuration.
     #[inline(always)]
     pub fn timeouts(&self) -> Timeouts {
