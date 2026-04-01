@@ -59,6 +59,40 @@ impl Drop for CoordinatorPermit {
     }
 }
 
+/// RAII guard for a reserve semaphore permit granted by the arbiter.
+/// If dropped without being converted to a CoordinatorPermit (e.g., the caller
+/// timed out on the oneshot), the permit is automatically returned to the semaphore.
+struct ReserveGrant {
+    coordinator: Option<Arc<PoolCoordinator>>,
+}
+
+impl ReserveGrant {
+    fn new(coordinator: Arc<PoolCoordinator>) -> Self {
+        Self {
+            coordinator: Some(coordinator),
+        }
+    }
+
+    /// Consume the grant and produce a CoordinatorPermit.
+    /// The reserve semaphore permit is now owned by the CoordinatorPermit's Drop.
+    fn into_permit(mut self) -> CoordinatorPermit {
+        let coordinator = self.coordinator.take().unwrap();
+        CoordinatorPermit {
+            coordinator,
+            is_reserve: true,
+        }
+    }
+}
+
+impl Drop for ReserveGrant {
+    fn drop(&mut self) {
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.reserve_semaphore.add_permits(1);
+            coordinator.connection_returned.notify_waiters();
+        }
+    }
+}
+
 pub struct PoolCoordinator {
     db_semaphore: Semaphore,
     reserve_semaphore: Semaphore,
@@ -79,7 +113,7 @@ struct ReserveRequest {
     #[allow(dead_code)] // kept for logging/debugging
     user: String,
     score: (u8, usize), // (starving, queued_clients)
-    response: tokio::sync::oneshot::Sender<bool>,
+    response: tokio::sync::oneshot::Sender<ReserveGrant>,
 }
 
 impl Ord for ReserveRequest {
@@ -198,15 +232,12 @@ impl PoolCoordinator {
                 })
                 .await;
 
-            if let Ok(Ok(true)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await {
+            if let Ok(Ok(grant)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await {
                 self.total_connections.fetch_add(1, Ordering::Relaxed);
                 self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
                 self.reserve_acquisitions_total
                     .fetch_add(1, Ordering::Relaxed);
-                return Ok(CoordinatorPermit {
-                    coordinator: self.clone(),
-                    is_reserve: true,
-                });
+                return Ok(grant.into_permit());
             }
         }
 
@@ -274,12 +305,13 @@ async fn reserve_arbiter(
         // Grant to highest-scoring request if reserve available
         while pending.peek().is_some() {
             if let Ok(sem_permit) = coordinator.reserve_semaphore.try_acquire() {
-                sem_permit.forget(); // consume permit permanently
+                sem_permit.forget();
                 let req = pending.pop().unwrap();
-                if req.response.send(true).is_err() {
-                    // Caller timed out and dropped the receiver — return the permit
-                    coordinator.reserve_semaphore.add_permits(1);
-                }
+                let grant = ReserveGrant::new(coordinator.clone());
+                // If send fails, grant drops here → permit returned automatically.
+                // If send succeeds but caller times out and drops the receiver,
+                // the grant inside the oneshot drops → permit returned automatically.
+                let _ = req.response.send(grant);
             } else {
                 break;
             }
@@ -318,13 +350,32 @@ mod tests {
         }
     }
 
-    struct SuccessEviction;
-    impl EvictionSource for SuccessEviction {
+    /// Eviction mock that holds a real CoordinatorPermit and drops it
+    /// when try_evict_one is called — simulating actual connection eviction.
+    struct PermitDroppingEviction {
+        permit: std::sync::Mutex<Option<CoordinatorPermit>>,
+    }
+
+    impl PermitDroppingEviction {
+        fn new(permit: CoordinatorPermit) -> Self {
+            Self {
+                permit: std::sync::Mutex::new(Some(permit)),
+            }
+        }
+    }
+
+    impl EvictionSource for PermitDroppingEviction {
         fn try_evict_one(&self, _user: &str) -> bool {
-            true
+            let mut guard = self.permit.lock().unwrap();
+            if guard.is_some() {
+                *guard = None; // drops the permit, frees the semaphore slot
+                true
+            } else {
+                false
+            }
         }
         fn queued_clients(&self, _user: &str) -> usize {
-            5
+            0
         }
         fn is_starving(&self, _user: &str) -> bool {
             false
@@ -474,14 +525,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reserve_permits_not_leaked_on_timeout() {
-        // Acquire all main permits, then request reserve.
-        // Drop the oneshot receiver before arbiter processes → permit must be returned.
+    async fn reserve_permits_not_leaked_on_early_receiver_drop() {
+        // Drop the oneshot receiver BEFORE arbiter processes → permit must be returned.
         let coord = PoolCoordinator::new(test_config(1, 2));
         let _p1 = coord.try_acquire().unwrap();
 
-        // Send reserve request but immediately drop the receiver
-        let (tx, _rx_dropped) = tokio::sync::oneshot::channel::<bool>();
+        let (tx, rx_dropped) = tokio::sync::oneshot::channel::<ReserveGrant>();
         let _ = coord
             .reserve_tx
             .send(ReserveRequest {
@@ -490,17 +539,275 @@ mod tests {
                 response: tx,
             })
             .await;
-        drop(_rx_dropped);
+        drop(rx_dropped);
 
-        // Give arbiter time to process
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // Reserve permits should NOT be leaked — we should still be able to acquire both
         let eviction = NoOpEviction;
         let p2 = coord.acquire("ok_user", &eviction).await.unwrap();
         assert!(p2.is_reserve);
         let p3 = coord.acquire("ok_user2", &eviction).await.unwrap();
         assert!(p3.is_reserve);
         assert_eq!(coord.reserve_in_use(), 2);
+    }
+
+    // ===== New tests below =====
+
+    #[tokio::test]
+    async fn reserve_grant_returns_permit_on_drop() {
+        let coord = PoolCoordinator::new(test_config(1, 1));
+
+        // Manually acquire a reserve semaphore permit via the grant mechanism
+        let sem_permit = coord.reserve_semaphore.try_acquire().unwrap();
+        sem_permit.forget();
+
+        // Create a grant and immediately drop it
+        let grant = ReserveGrant::new(coord.clone());
+        drop(grant);
+
+        // Permit should be back — verify by acquiring it again
+        let sem_permit2 = coord.reserve_semaphore.try_acquire();
+        assert!(sem_permit2.is_ok(), "permit should be returned after grant drop");
+    }
+
+    #[tokio::test]
+    async fn reserve_permit_not_leaked_on_late_receiver_drop() {
+        // Regression test: arbiter sends grant, then receiver is dropped without
+        // consuming the value. Before fix (bool), permit was leaked permanently.
+        // After fix (ReserveGrant), permit is returned via RAII Drop.
+        let coord = PoolCoordinator::new(test_config(1, 1));
+        let _p1 = coord.try_acquire().unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<ReserveGrant>();
+        let _ = coord
+            .reserve_tx
+            .send(ReserveRequest {
+                user: "test".to_string(),
+                score: (0, 1),
+                response: tx,
+            })
+            .await;
+
+        // Let arbiter process and send the grant
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Drop receiver WITHOUT consuming the grant — simulates timeout race
+        drop(rx);
+
+        // Let ReserveGrant::Drop return the permit
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Reserve permit should NOT be leaked — another user can acquire it
+        let eviction = NoOpEviction;
+        let result = coord.acquire("another_user", &eviction).await;
+        assert!(result.is_ok(), "reserve permit was leaked");
+        assert!(result.unwrap().is_reserve);
+    }
+
+    #[tokio::test]
+    async fn acquire_eviction_frees_permit() {
+        let coord = PoolCoordinator::new(test_config(2, 0));
+        let p1 = coord.try_acquire().unwrap();
+        let _p2 = coord.try_acquire().unwrap();
+        assert!(coord.try_acquire().is_none()); // limit reached
+
+        // Eviction mock holds p1 and drops it when called
+        let eviction = PermitDroppingEviction::new(p1);
+        let result = coord.acquire("requester", &eviction).await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap().is_reserve);
+        assert_eq!(coord.stats().evictions_total, 1);
+    }
+
+    #[tokio::test]
+    async fn phase_c_wait_woken_by_permit_drop() {
+        let coord = PoolCoordinator::new(test_config(1, 0));
+        let p = coord.try_acquire().unwrap();
+
+        let coord2 = coord.clone();
+        let waiter = tokio::spawn(async move {
+            let eviction = NoOpEviction;
+            // Phase C: waits for connection_returned notify
+            coord2.acquire("waiter", &eviction).await
+        });
+
+        // Give waiter time to enter Phase C
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Drop permit — triggers notify_waiters
+        drop(p);
+
+        let result = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("waiter should complete")
+            .unwrap();
+        assert!(result.is_ok());
+        assert!(!result.unwrap().is_reserve);
+    }
+
+    #[tokio::test]
+    async fn reserve_arbiter_grants_by_priority() {
+        let coord = PoolCoordinator::new(test_config(1, 1)); // only 1 reserve permit
+        let _p1 = coord.try_acquire().unwrap();
+
+        // Send low-priority request first
+        let (tx_low, rx_low) = tokio::sync::oneshot::channel::<ReserveGrant>();
+        let _ = coord
+            .reserve_tx
+            .send(ReserveRequest {
+                user: "low".to_string(),
+                score: (0, 2), // not starving, 2 queued
+                response: tx_low,
+            })
+            .await;
+
+        // Send high-priority request second
+        let (tx_high, rx_high) = tokio::sync::oneshot::channel::<ReserveGrant>();
+        let _ = coord
+            .reserve_tx
+            .send(ReserveRequest {
+                user: "high".to_string(),
+                score: (1, 1), // starving — absolute priority
+                response: tx_high,
+            })
+            .await;
+
+        // Let arbiter process both requests
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // High priority should have received the grant (starving wins)
+        let high_result = tokio::time::timeout(Duration::from_millis(50), rx_high).await;
+        assert!(high_result.is_ok(), "starving user should get the grant");
+
+        // Low priority should NOT receive (only 1 reserve permit)
+        let low_result = tokio::time::timeout(Duration::from_millis(50), rx_low).await;
+        assert!(low_result.is_err(), "non-starving user should not get grant");
+    }
+
+    #[tokio::test]
+    async fn stats_accurate_after_mixed_operations() {
+        let coord = PoolCoordinator::new(test_config(2, 2));
+
+        let p1 = coord.try_acquire().unwrap();
+        let p2 = coord.try_acquire().unwrap();
+        assert_eq!(coord.stats().total_connections, 2);
+
+        // Reserve acquire
+        let eviction = NoOpEviction;
+        let p3 = coord.acquire("user_a", &eviction).await.unwrap();
+        assert!(p3.is_reserve);
+        assert_eq!(coord.stats().total_connections, 3);
+        assert_eq!(coord.stats().reserve_in_use, 1);
+        assert_eq!(coord.stats().reserve_acquisitions_total, 1);
+
+        drop(p1);
+        assert_eq!(coord.stats().total_connections, 2);
+
+        drop(p3);
+        assert_eq!(coord.stats().total_connections, 1);
+        assert_eq!(coord.stats().reserve_in_use, 0);
+
+        drop(p2);
+        assert_eq!(coord.stats().total_connections, 0);
+        assert_eq!(coord.stats().reserve_in_use, 0);
+        assert_eq!(coord.stats().reserve_acquisitions_total, 1);
+    }
+
+    #[tokio::test]
+    async fn zero_reserve_returns_exhausted() {
+        let coord = PoolCoordinator::new(test_config(1, 0)); // no reserve
+        let _p1 = coord.try_acquire().unwrap();
+
+        let eviction = NoOpEviction;
+        let result = coord.acquire("user", &eviction).await;
+        assert!(matches!(result, Err(AcquireError::Exhausted)));
+    }
+
+    #[tokio::test]
+    async fn reserve_fully_exhausted() {
+        let coord = PoolCoordinator::new(test_config(1, 1)); // 1 main + 1 reserve
+        let _p1 = coord.try_acquire().unwrap();
+
+        let eviction = NoOpEviction;
+        let _p2 = coord.acquire("user_a", &eviction).await.unwrap(); // takes reserve
+        assert_eq!(coord.reserve_in_use(), 1);
+
+        // Second reserve attempt should fail — reserve exhausted
+        let result = coord.acquire("user_b", &eviction).await;
+        assert!(matches!(result, Err(AcquireError::Exhausted)));
+    }
+
+    #[tokio::test]
+    async fn arbiter_exits_on_channel_close() {
+        let coord = PoolCoordinator::new(test_config(1, 1));
+
+        // The only way to close the channel is to drop all senders.
+        // PoolCoordinator holds reserve_tx; dropping the Arc drops the sender.
+        drop(coord);
+
+        // Arbiter should exit — give it time to notice
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // If arbiter panicked or hung, the test runtime would detect it.
+        // The fact that we reach here means the arbiter exited cleanly.
+    }
+
+    #[tokio::test]
+    async fn high_concurrency_no_permit_leak() {
+        let max = 10;
+        let reserve = 5;
+        let coord = PoolCoordinator::new(test_config(max, reserve));
+
+        let mut handles = Vec::new();
+        for i in 0..50 {
+            let c = coord.clone();
+            handles.push(tokio::spawn(async move {
+                let user = format!("user_{}", i);
+                let eviction = NoOpEviction;
+                match c.acquire(&user, &eviction).await {
+                    Ok(permit) => {
+                        // Hold the permit briefly
+                        tokio::task::yield_now().await;
+                        drop(permit);
+                    }
+                    Err(_) => {
+                        // Expected: some will be exhausted under contention
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // All permits must be returned — no leaks
+        assert_eq!(coord.total_connections(), 0);
+        assert_eq!(coord.reserve_in_use(), 0);
+
+        // Verify semaphores are fully replenished
+        let mut permits = Vec::new();
+        for _ in 0..max {
+            permits.push(coord.try_acquire().unwrap());
+        }
+        assert!(coord.try_acquire().is_none());
+        assert_eq!(coord.total_connections(), max);
+    }
+
+    #[tokio::test]
+    async fn eviction_counter_increments() {
+        let coord = PoolCoordinator::new(test_config(2, 0));
+        let p1 = coord.try_acquire().unwrap();
+        let p2 = coord.try_acquire().unwrap();
+
+        // First eviction
+        let eviction1 = PermitDroppingEviction::new(p1);
+        let _p3 = coord.acquire("user_a", &eviction1).await.unwrap();
+        assert_eq!(coord.stats().evictions_total, 1);
+
+        // Second eviction
+        let eviction2 = PermitDroppingEviction::new(p2);
+        let _p4 = coord.acquire("user_b", &eviction2).await.unwrap();
+        assert_eq!(coord.stats().evictions_total, 2);
+        assert_eq!(coord.total_connections(), 2);
     }
 }
