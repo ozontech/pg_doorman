@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use log::{debug, info, warn};
 use tokio::sync::{mpsc, Notify, Semaphore};
 
 /// Source of eviction candidates and user state.
@@ -53,6 +54,7 @@ impl std::fmt::Debug for CoordinatorPermit {
 
 impl Drop for CoordinatorPermit {
     fn drop(&mut self) {
+        let permit_type = if self.is_reserve { "reserve" } else { "main" };
         if self.is_reserve {
             self.coordinator.reserve_semaphore.add_permits(1);
             self.coordinator
@@ -61,10 +63,18 @@ impl Drop for CoordinatorPermit {
         } else {
             self.coordinator.db_semaphore.add_permits(1);
         }
-        self.coordinator
+        let prev = self
+            .coordinator
             .total_connections
             .fetch_sub(1, Ordering::Relaxed);
         self.coordinator.connection_returned.notify_one();
+        debug!(
+            "[pool: {}] coordinator: {} permit released (active: {} -> {})",
+            self.coordinator.database,
+            permit_type,
+            prev,
+            prev - 1,
+        );
     }
 }
 
@@ -96,12 +106,17 @@ impl ReserveGrant {
 impl Drop for ReserveGrant {
     fn drop(&mut self) {
         if let Some(coordinator) = &self.coordinator {
+            debug!(
+                "[pool: {}] coordinator: unused reserve grant returned to pool",
+                coordinator.database,
+            );
             coordinator.reserve_semaphore.add_permits(1);
         }
     }
 }
 
 pub struct PoolCoordinator {
+    database: String,
     db_semaphore: Semaphore,
     reserve_semaphore: Semaphore,
     total_connections: AtomicUsize,
@@ -117,6 +132,7 @@ pub struct PoolCoordinator {
 impl std::fmt::Debug for PoolCoordinator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PoolCoordinator")
+            .field("database", &self.database)
             .field("config", &self.config)
             .field(
                 "total_connections",
@@ -163,9 +179,10 @@ impl Eq for ReserveRequest {}
 
 impl PoolCoordinator {
     /// Create a new coordinator. Spawns the reserve arbiter task.
-    pub fn new(config: CoordinatorConfig) -> Arc<Self> {
+    pub fn new(database: String, config: CoordinatorConfig) -> Arc<Self> {
         let (reserve_tx, reserve_rx) = mpsc::channel(256);
         let coordinator = Arc::new(Self {
+            database,
             db_semaphore: Semaphore::new(config.max_db_connections),
             reserve_semaphore: Semaphore::new(config.reserve_pool_size),
             total_connections: AtomicUsize::new(0),
@@ -209,24 +226,75 @@ impl PoolCoordinator {
         user: &str,
         eviction_source: &dyn EvictionSource,
     ) -> Result<CoordinatorPermit, AcquireError> {
-        // Phase A: fast path
+        let max = self.config.max_db_connections;
+
+        // Phase A: fast path — non-blocking semaphore acquire
         if let Some(permit) = self.try_acquire() {
+            debug!(
+                "[pool: {}][user: {}] coordinator: permit acquired via fast path \
+                 (active={}/{})",
+                database,
+                user,
+                self.total_connections.load(Ordering::Relaxed),
+                max,
+            );
             return Ok(permit);
         }
 
-        // Phase B: try eviction
-        if eviction_source.try_evict_one(user) {
+        let active = self.total_connections.load(Ordering::Relaxed);
+        debug!(
+            "[pool: {}][user: {}] coordinator: fast path unavailable \
+             (active={}/{}), trying eviction",
+            database, user, active, max,
+        );
+
+        // Phase B: try eviction — close an idle connection from another user
+        let evicted = eviction_source.try_evict_one(user);
+        if evicted {
             self.evictions_total.fetch_add(1, Ordering::Relaxed);
             if let Some(permit) = self.try_acquire() {
+                debug!(
+                    "[pool: {}][user: {}] coordinator: eviction freed a slot, \
+                     permit acquired (active={}/{})",
+                    database,
+                    user,
+                    self.total_connections.load(Ordering::Relaxed),
+                    max,
+                );
                 return Ok(permit);
             }
+            debug!(
+                "[pool: {}][user: {}] coordinator: eviction freed a slot \
+                 but permit already taken by concurrent waiter (active={}/{})",
+                database,
+                user,
+                self.total_connections.load(Ordering::Relaxed),
+                max,
+            );
+        } else {
+            debug!(
+                "[pool: {}][user: {}] coordinator: eviction found no eligible \
+                 idle connections in other users' pools",
+                database, user,
+            );
         }
 
         // Phase C: wait for a connection to be returned.
         // Register `notified()` BEFORE `try_acquire()` so that the
         // `notify_one` from CoordinatorPermit::drop is not lost.
-        let deadline = tokio::time::Instant::now()
-            + Duration::from_millis(self.config.reserve_pool_timeout_ms);
+        let timeout_ms = self.config.reserve_pool_timeout_ms;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+        let mut wait_wakeups = 0u32;
+
+        debug!(
+            "[pool: {}][user: {}] coordinator: entering wait phase \
+             (timeout={}ms, active={}/{})",
+            database,
+            user,
+            timeout_ms,
+            self.total_connections.load(Ordering::Relaxed),
+            max,
+        );
 
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -237,21 +305,56 @@ impl PoolCoordinator {
             let notified = self.connection_returned.notified();
 
             if let Some(permit) = self.try_acquire() {
+                debug!(
+                    "[pool: {}][user: {}] coordinator: wait phase succeeded \
+                     after {} wakeup(s), permit acquired (active={}/{})",
+                    database,
+                    user,
+                    wait_wakeups,
+                    self.total_connections.load(Ordering::Relaxed),
+                    max,
+                );
                 return Ok(permit);
             }
 
             tokio::select! {
-                _ = notified => {}
+                _ = notified => {
+                    wait_wakeups += 1;
+                }
                 _ = tokio::time::sleep(remaining) => {
                     break;
                 }
             }
         }
 
+        debug!(
+            "[pool: {}][user: {}] coordinator: wait phase exhausted \
+             after {} wakeup(s), timeout={}ms (active={}/{})",
+            database,
+            user,
+            wait_wakeups,
+            timeout_ms,
+            self.total_connections.load(Ordering::Relaxed),
+            max,
+        );
+
         // Phase D: reserve
         let phase = if self.config.reserve_pool_size > 0 {
             let starving = u8::from(eviction_source.is_starving(user));
             let queued = eviction_source.queued_clients(user);
+            let reserve_in_use = self.reserve_in_use.load(Ordering::Relaxed);
+
+            debug!(
+                "[pool: {}][user: {}] coordinator: requesting reserve permit \
+                 (starving={}, queued_clients={}, reserve_in_use={}/{})",
+                database,
+                user,
+                starving == 1,
+                queued,
+                reserve_in_use,
+                self.config.reserve_pool_size,
+            );
+
             let (tx, rx) = tokio::sync::oneshot::channel();
 
             if self
@@ -269,24 +372,66 @@ impl PoolCoordinator {
                     self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
                     self.reserve_acquisitions_total
                         .fetch_add(1, Ordering::Relaxed);
+                    info!(
+                        "[pool: {}][user: {}] coordinator: reserve permit granted \
+                         (active={}/{}, reserve_in_use={}/{})",
+                        database,
+                        user,
+                        self.total_connections.load(Ordering::Relaxed),
+                        max,
+                        self.reserve_in_use.load(Ordering::Relaxed),
+                        self.config.reserve_pool_size,
+                    );
                     return Ok(grant.into_permit());
                 }
             }
 
+            debug!(
+                "[pool: {}][user: {}] coordinator: reserve request denied — \
+                 no reserve permits available or arbiter timeout \
+                 (reserve_in_use={}/{})",
+                database,
+                user,
+                self.reserve_in_use.load(Ordering::Relaxed),
+                self.config.reserve_pool_size,
+            );
+
             AcquirePhase::ReserveExhausted
         } else {
+            debug!(
+                "[pool: {}][user: {}] coordinator: reserve pool not configured, \
+                 skipping reserve phase",
+                database, user,
+            );
             AcquirePhase::NoReserve
         };
 
         // Phase E: exhausted — client will get an error
         self.exhaustions_total.fetch_add(1, Ordering::Relaxed);
+        let active = self.total_connections.load(Ordering::Relaxed);
+        let reserve_in_use = self.reserve_in_use.load(Ordering::Relaxed);
+
+        warn!(
+            "[pool: {}][user: {}] coordinator: EXHAUSTED — all permits in use, \
+             client will receive error (active={}/{}, reserve={}/{}, phase={:?}, \
+             total_exhaustions={})",
+            database,
+            user,
+            active,
+            max,
+            reserve_in_use,
+            self.config.reserve_pool_size,
+            phase,
+            self.exhaustions_total.load(Ordering::Relaxed),
+        );
+
         Err(AcquireError::NoConnection(NoConnectionInfo {
             database: database.to_string(),
             user: user.to_string(),
             max_db_connections: self.config.max_db_connections,
-            active_connections: self.total_connections.load(Ordering::Relaxed),
+            active_connections: active,
             reserve_size: self.config.reserve_pool_size,
-            reserve_in_use: self.reserve_in_use.load(Ordering::Relaxed),
+            reserve_in_use,
             phase,
         }))
     }
@@ -387,6 +532,11 @@ async fn reserve_arbiter(
     loop {
         // Collect new requests (non-blocking)
         while let Ok(req) = rx.try_recv() {
+            debug!(
+                "[pool: {}] arbiter: received reserve request from '{}' \
+                 (score=starving:{}, queued:{})",
+                coordinator.database, req.user, req.score.0, req.score.1,
+            );
             pending.push(req);
         }
 
@@ -396,21 +546,58 @@ async fn reserve_arbiter(
                 sem_permit.forget();
                 let req = pending.pop().unwrap();
                 let grant = ReserveGrant::new(coordinator.clone());
-                let _ = req.response.send(grant);
+                let sent = req.response.send(grant);
+                if sent.is_ok() {
+                    debug!(
+                        "[pool: {}] arbiter: granted reserve permit to '{}' \
+                         (score=starving:{}, queued:{})",
+                        coordinator.database, req.user, req.score.0, req.score.1,
+                    );
+                } else {
+                    debug!(
+                        "[pool: {}] arbiter: grant to '{}' failed — \
+                         requester already timed out, permit returned",
+                        coordinator.database, req.user,
+                    );
+                }
             } else {
+                debug!(
+                    "[pool: {}] arbiter: no reserve permits available, \
+                     {} request(s) still pending",
+                    coordinator.database,
+                    pending.len(),
+                );
                 break;
             }
         }
 
         // Remove cancelled requests only when there's something to clean up
         if !pending.is_empty() {
+            let before = pending.len();
             pending.retain(|req| !req.response.is_closed());
+            let pruned = before - pending.len();
+            if pruned > 0 {
+                debug!(
+                    "[pool: {}] arbiter: pruned {} cancelled request(s), \
+                     {} still pending",
+                    coordinator.database,
+                    pruned,
+                    pending.len(),
+                );
+            }
         }
 
         tokio::select! {
             req = rx.recv() => {
                 match req {
-                    Some(req) => pending.push(req),
+                    Some(req) => {
+                        debug!(
+                            "[pool: {}] arbiter: received reserve request from '{}' \
+                             (score=starving:{}, queued:{})",
+                            coordinator.database, req.user, req.score.0, req.score.1,
+                        );
+                        pending.push(req);
+                    }
                     None => return, // channel closed, coordinator dropped
                 }
             }
@@ -479,7 +666,7 @@ mod tests {
 
     #[tokio::test]
     async fn try_acquire_within_limit() {
-        let coord = PoolCoordinator::new(test_config(10, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(10, 0));
         let permit = coord.try_acquire().unwrap();
         assert_eq!(coord.total_connections(), 1);
         assert!(!permit.is_reserve);
@@ -489,7 +676,7 @@ mod tests {
 
     #[tokio::test]
     async fn try_acquire_at_limit_returns_none() {
-        let coord = PoolCoordinator::new(test_config(2, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(2, 0));
         let _p1 = coord.try_acquire().unwrap();
         let _p2 = coord.try_acquire().unwrap();
         assert!(coord.try_acquire().is_none());
@@ -498,7 +685,7 @@ mod tests {
 
     #[tokio::test]
     async fn permit_drop_frees_slot() {
-        let coord = PoolCoordinator::new(test_config(1, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
         let p = coord.try_acquire().unwrap();
         assert!(coord.try_acquire().is_none());
         drop(p);
@@ -507,7 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_with_eviction() {
-        let coord = PoolCoordinator::new(test_config(1, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
         let _p1 = coord.try_acquire().unwrap();
 
         // Simulate eviction: SuccessEviction returns true, but doesn't
@@ -520,7 +707,7 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_reserve_on_exhaustion() {
-        let coord = PoolCoordinator::new(test_config(1, 5));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 5));
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -535,7 +722,7 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_fully_exhausted() {
-        let coord = PoolCoordinator::new(test_config(1, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -545,7 +732,7 @@ mod tests {
 
     #[tokio::test]
     async fn permit_drop_notifies_waiters() {
-        let coord = PoolCoordinator::new(test_config(1, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
         let p = coord.try_acquire().unwrap();
 
         let coord2 = coord.clone();
@@ -613,7 +800,7 @@ mod tests {
     #[tokio::test]
     async fn reserve_permits_not_leaked_on_early_receiver_drop() {
         // Drop the oneshot receiver BEFORE arbiter processes → permit must be returned.
-        let coord = PoolCoordinator::new(test_config(1, 2));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 2));
         let _p1 = coord.try_acquire().unwrap();
 
         let (tx, rx_dropped) = tokio::sync::oneshot::channel::<ReserveGrant>();
@@ -644,7 +831,7 @@ mod tests {
 
     #[tokio::test]
     async fn reserve_grant_returns_permit_on_drop() {
-        let coord = PoolCoordinator::new(test_config(1, 1));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1));
 
         // Manually acquire a reserve semaphore permit via the grant mechanism
         let sem_permit = coord.reserve_semaphore.try_acquire().unwrap();
@@ -667,7 +854,7 @@ mod tests {
         // Regression test: arbiter sends grant, then receiver is dropped without
         // consuming the value. Before fix (bool), permit was leaked permanently.
         // After fix (ReserveGrant), permit is returned via RAII Drop.
-        let coord = PoolCoordinator::new(test_config(1, 1));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1));
         let _p1 = coord.try_acquire().unwrap();
 
         let (tx, rx) = tokio::sync::oneshot::channel::<ReserveGrant>();
@@ -698,7 +885,7 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_eviction_frees_permit() {
-        let coord = PoolCoordinator::new(test_config(2, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(2, 0));
         let p1 = coord.try_acquire().unwrap();
         let _p2 = coord.try_acquire().unwrap();
         assert!(coord.try_acquire().is_none()); // limit reached
@@ -713,7 +900,7 @@ mod tests {
 
     #[tokio::test]
     async fn phase_c_wait_woken_by_permit_drop() {
-        let coord = PoolCoordinator::new(test_config(1, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
         let p = coord.try_acquire().unwrap();
 
         let coord2 = coord.clone();
@@ -739,7 +926,7 @@ mod tests {
 
     #[tokio::test]
     async fn reserve_arbiter_grants_by_priority() {
-        let coord = PoolCoordinator::new(test_config(1, 1)); // only 1 reserve permit
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1)); // only 1 reserve permit
         let _p1 = coord.try_acquire().unwrap();
 
         // Send low-priority request first
@@ -781,7 +968,7 @@ mod tests {
 
     #[tokio::test]
     async fn stats_accurate_after_mixed_operations() {
-        let coord = PoolCoordinator::new(test_config(2, 2));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(2, 2));
 
         let p1 = coord.try_acquire().unwrap();
         let p2 = coord.try_acquire().unwrap();
@@ -810,7 +997,7 @@ mod tests {
 
     #[tokio::test]
     async fn zero_reserve_returns_exhausted() {
-        let coord = PoolCoordinator::new(test_config(1, 0)); // no reserve
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0)); // no reserve
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -820,7 +1007,7 @@ mod tests {
 
     #[tokio::test]
     async fn reserve_fully_exhausted() {
-        let coord = PoolCoordinator::new(test_config(1, 1)); // 1 main + 1 reserve
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1)); // 1 main + 1 reserve
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -834,7 +1021,7 @@ mod tests {
 
     #[tokio::test]
     async fn arbiter_exits_on_channel_close() {
-        let coord = PoolCoordinator::new(test_config(1, 1));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1));
 
         // The only way to close the channel is to drop all senders.
         // PoolCoordinator holds reserve_tx; dropping the Arc drops the sender.
@@ -850,7 +1037,7 @@ mod tests {
     async fn high_concurrency_no_permit_leak() {
         let max = 10;
         let reserve = 5;
-        let coord = PoolCoordinator::new(test_config(max, reserve));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(max, reserve));
 
         let mut handles = Vec::new();
         for i in 0..50 {
@@ -890,7 +1077,7 @@ mod tests {
 
     #[tokio::test]
     async fn eviction_counter_increments() {
-        let coord = PoolCoordinator::new(test_config(2, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(2, 0));
         let p1 = coord.try_acquire().unwrap();
         let p2 = coord.try_acquire().unwrap();
 
@@ -910,7 +1097,7 @@ mod tests {
 
     #[tokio::test]
     async fn error_no_reserve_configured() {
-        let coord = PoolCoordinator::new(test_config(1, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -924,7 +1111,7 @@ mod tests {
 
     #[tokio::test]
     async fn error_reserve_exhausted() {
-        let coord = PoolCoordinator::new(test_config(1, 1));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1));
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -946,7 +1133,7 @@ mod tests {
     async fn error_wait_timeout() {
         // reserve_pool_size > 0 but all reserve permits occupied,
         // so Phase D can't grant → ReserveExhausted
-        let coord = PoolCoordinator::new(test_config(1, 1));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1));
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -967,7 +1154,7 @@ mod tests {
 
     #[tokio::test]
     async fn error_contains_database_and_user() {
-        let coord = PoolCoordinator::new(test_config(1, 0));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
@@ -985,7 +1172,7 @@ mod tests {
 
     #[tokio::test]
     async fn error_contains_connection_counts() {
-        let coord = PoolCoordinator::new(test_config(3, 2));
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(3, 2));
         let _p1 = coord.try_acquire().unwrap();
         let _p2 = coord.try_acquire().unwrap();
         let _p3 = coord.try_acquire().unwrap();
@@ -1071,7 +1258,7 @@ mod tests {
             reserve_pool_size: 0,
             reserve_pool_timeout_ms: 80,
         };
-        let coord = PoolCoordinator::new(cfg);
+        let coord = PoolCoordinator::new("test_db".to_string(), cfg);
         let p = coord.try_acquire().unwrap();
 
         let success_count = Arc::new(AtomicUsize::new(0));
@@ -1117,7 +1304,7 @@ mod tests {
             reserve_pool_size: 0,
             reserve_pool_timeout_ms: 300,
         };
-        let coord = PoolCoordinator::new(cfg);
+        let coord = PoolCoordinator::new("test_db".to_string(), cfg);
         let p1 = coord.try_acquire().unwrap();
         let p2 = coord.try_acquire().unwrap();
 

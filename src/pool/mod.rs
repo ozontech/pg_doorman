@@ -257,7 +257,7 @@ impl ConnectionPool {
             }
             coordinators.insert(
                 pool_name.clone(),
-                pool_coordinator::PoolCoordinator::new(new_cfg),
+                pool_coordinator::PoolCoordinator::new(pool_name.clone(), new_cfg),
             );
         }
 

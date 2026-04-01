@@ -71,7 +71,9 @@ fn coordinator_happy_path(c: &mut Criterion) {
             BenchmarkId::new("try_acquire_drop", max),
             &max,
             |b, &max| {
-                let coord = rt.block_on(async { PoolCoordinator::new(make_config(max)) });
+                let coord = rt.block_on(async {
+                    PoolCoordinator::new("bench_db".to_string(), make_config(max))
+                });
 
                 b.iter(|| {
                     let permit = coord.try_acquire().unwrap();
@@ -91,7 +93,8 @@ fn permit_lifecycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("permit_lifecycle");
     group.throughput(Throughput::Elements(1));
 
-    let coord = rt.block_on(async { PoolCoordinator::new(make_config(100)) });
+    let coord =
+        rt.block_on(async { PoolCoordinator::new("bench_db".to_string(), make_config(100)) });
 
     group.bench_function("acquire_drop_cycle", |b| {
         b.iter(|| {
@@ -117,7 +120,9 @@ fn coordinator_contention(c: &mut Criterion) {
             BenchmarkId::new(format!("{tasks}t"), permits),
             &(tasks, permits),
             |b, &(tasks, permits)| {
-                let coord = rt.block_on(async { PoolCoordinator::new(make_config(permits)) });
+                let coord = rt.block_on(async {
+                    PoolCoordinator::new("bench_db".to_string(), make_config(permits))
+                });
 
                 b.iter(|| {
                     rt.block_on(async {
@@ -151,13 +156,17 @@ fn coordinator_async_acquire(c: &mut Criterion) {
     let mut group = c.benchmark_group("coordinator_async_acquire");
     group.throughput(Throughput::Elements(1));
 
-    let coord = rt.block_on(async { PoolCoordinator::new(make_config(100)) });
+    let coord =
+        rt.block_on(async { PoolCoordinator::new("bench_db".to_string(), make_config(100)) });
     let eviction = NoOpEviction;
 
     group.bench_function("acquire_no_contention", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let permit = coord.acquire("bench_user", &eviction).await.unwrap();
+                let permit = coord
+                    .acquire("bench_db", "bench_user", &eviction)
+                    .await
+                    .unwrap();
                 std::hint::black_box(&permit);
                 drop(permit);
             });
@@ -198,7 +207,8 @@ fn pool_checkout_without_coordinator(c: &mut Criterion) {
         let rt = runtime();
         let sem = Arc::new(Semaphore::new(10));
         let slots = Arc::new(parking_lot::Mutex::new(VecDeque::from([1u64, 2, 3, 4, 5])));
-        let coord = rt.block_on(async { PoolCoordinator::new(make_config(100)) });
+        let coord =
+            rt.block_on(async { PoolCoordinator::new("bench_db".to_string(), make_config(100)) });
 
         b.iter(|| {
             // Coordinator overhead (on new connection creation path)

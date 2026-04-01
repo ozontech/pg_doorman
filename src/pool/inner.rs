@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use log::warn;
+use log::{debug, warn};
 
 use crate::utils::clock;
 
@@ -384,7 +384,16 @@ impl Pool {
                 .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
                 .await
             {
-                Ok(permit) => Some(permit),
+                Ok(permit) => {
+                    debug!(
+                        "[pool: {}][user: {}] coordinator: new connection authorized \
+                         (permit_type={})",
+                        self.inner.pool_name,
+                        self.inner.username,
+                        if permit.is_reserve { "reserve" } else { "main" },
+                    );
+                    Some(permit)
+                }
                 Err(pool_coordinator::AcquireError::NoConnection(info)) => {
                     return Err(PoolError::DbLimitExhausted(info));
                 }
