@@ -113,6 +113,23 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaling_cooldown_sleep: Option<Duration>,
 
+    /// Maximum total server connections to this database across all users.
+    /// 0 or None = disabled (default), each user pool works independently.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_db_connections: Option<u32>,
+
+    /// Don't evict connections younger than this (milliseconds). Default: 5000.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_connection_lifetime: Option<u64>,
+
+    /// Extra connections beyond max_db_connections, used as last resort. Default: 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve_pool_size: Option<u32>,
+
+    /// Wait time (milliseconds) before using reserve pool. Default: 3000.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve_pool_timeout: Option<u64>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
 
@@ -183,6 +200,33 @@ impl Pool {
             }
         }
 
+        // Validate pool coordinator settings
+        if let Some(max) = self.max_db_connections {
+            if max > 0 {
+                let total_min: u32 = self.users.iter().filter_map(|u| u.min_pool_size).sum();
+                if total_min > max {
+                    log::warn!(
+                        "sum of min_pool_size ({}) exceeds max_db_connections ({}); \
+                         not all minimums can be satisfied simultaneously",
+                        total_min,
+                        max
+                    );
+                }
+                for user in &self.users {
+                    if user.pool_size > max {
+                        log::warn!(
+                            "user '{}' pool_size ({}) exceeds max_db_connections ({}); \
+                             effectively capped at {}",
+                            user.username,
+                            user.pool_size,
+                            max,
+                            max
+                        );
+                    }
+                }
+            }
+        }
+
         // Validate username uniqueness
         let mut seen_usernames = HashSet::new();
         for user in &self.users {
@@ -242,6 +286,10 @@ impl Default for Pool {
             scaling_warm_pool_ratio: None,
             scaling_fast_retries: None,
             scaling_cooldown_sleep: None,
+            max_db_connections: None,
+            min_connection_lifetime: None,
+            reserve_pool_size: None,
+            reserve_pool_timeout: None,
             auth_query: None,
         }
     }
