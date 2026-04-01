@@ -341,3 +341,20 @@ pub(crate) static AUTH_QUERY_DYNAMIC_POOLS: Lazy<GaugeVec> = Lazy::new(|| {
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
 });
+
+pub(crate) static COORDINATOR: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pool_coordinator",
+            "Pool coordinator metrics by type and database. Types: connections (current total), \
+             reserve_in_use (current reserve), max_connections (configured limit), \
+             reserve_pool_size (configured reserve), evictions_total (cumulative evictions), \
+             reserve_acquisitions_total (cumulative reserve grants), \
+             exhaustions_total (cumulative client errors from limit exhaustion).",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});

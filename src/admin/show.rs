@@ -10,7 +10,7 @@ use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::{get_all_pools, AUTH_QUERY_STATE, DYNAMIC_POOLS};
+use crate::pool::{get_all_pools, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
@@ -205,7 +205,7 @@ where
 {
     let columns = vec![("item", DataType::Text)];
     let help_items = [
-        "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|PREPARED_STATEMENTS|CLIENTS|SERVERS|USERS|AUTH_QUERY|VERSION",
+        "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|POOL_COORDINATOR|PREPARED_STATEMENTS|CLIENTS|SERVERS|USERS|AUTH_QUERY|VERSION",
         "SHOW LISTS",
         "SHOW CONNECTIONS",
         "SHOW STATS",
@@ -609,6 +609,54 @@ where
         ("unknown", DataType::Numeric),
     ]));
     res.put(data_row(&sockets_info.to_vector()));
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Show pool coordinator status per database.
+/// Displays connection limits, current usage, and cumulative counters.
+pub async fn show_pool_coordinator<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let columns = vec![
+        ("database", DataType::Text),
+        ("max_db_conn", DataType::Numeric),
+        ("current", DataType::Numeric),
+        ("reserve_size", DataType::Numeric),
+        ("reserve_used", DataType::Numeric),
+        ("evictions", DataType::Numeric),
+        ("reserve_acq", DataType::Numeric),
+        ("exhaustions", DataType::Numeric),
+    ];
+
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    let coordinators = COORDINATORS.load();
+    let mut db_names: Vec<&String> = coordinators.keys().collect();
+    db_names.sort();
+
+    for db in db_names {
+        if let Some(coordinator) = coordinators.get(db) {
+            let stats = coordinator.stats();
+            let config = coordinator.config();
+            res.put(data_row(&[
+                db.to_string(),
+                config.max_db_connections.to_string(),
+                stats.total_connections.to_string(),
+                config.reserve_pool_size.to_string(),
+                stats.reserve_in_use.to_string(),
+                stats.evictions_total.to_string(),
+                stats.reserve_acquisitions_total.to_string(),
+                stats.exhaustions_total.to_string(),
+            ]));
+        }
+    }
+
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
     res.put_i32(5);

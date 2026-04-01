@@ -4,7 +4,7 @@
 use log::error;
 use std::sync::atomic::Ordering;
 
-use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, DYNAMIC_POOLS};
+use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
 use crate::stats::pool::PoolStats;
@@ -24,6 +24,7 @@ use super::{
     SHOW_POOLS_TRANSACTIONS_PERCENTILE, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME,
     SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE,
     SHOW_SERVERS_PREPARED_HITS, SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
+    COORDINATOR,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -37,6 +38,7 @@ pub fn update_metrics() {
     update_pool_metrics();
     update_server_metrics();
     update_auth_query_metrics();
+    update_coordinator_metrics();
 }
 
 fn update_memory_metrics() {
@@ -320,5 +322,41 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_DYNAMIC_POOLS
             .with_label_values(&["destroyed", db])
             .set(s.dynamic_pools_destroyed as f64);
+    }
+}
+
+fn update_coordinator_metrics() {
+    COORDINATOR.reset();
+
+    let coordinators = COORDINATORS.load();
+    if coordinators.is_empty() {
+        return;
+    }
+
+    for (db, coordinator) in coordinators.iter() {
+        let stats = coordinator.stats();
+        let config = coordinator.config();
+
+        COORDINATOR
+            .with_label_values(&["connections", db])
+            .set(stats.total_connections as f64);
+        COORDINATOR
+            .with_label_values(&["reserve_in_use", db])
+            .set(stats.reserve_in_use as f64);
+        COORDINATOR
+            .with_label_values(&["max_connections", db])
+            .set(config.max_db_connections as f64);
+        COORDINATOR
+            .with_label_values(&["reserve_pool_size", db])
+            .set(config.reserve_pool_size as f64);
+        COORDINATOR
+            .with_label_values(&["evictions_total", db])
+            .set(stats.evictions_total as f64);
+        COORDINATOR
+            .with_label_values(&["reserve_acquisitions_total", db])
+            .set(stats.reserve_acquisitions_total as f64);
+        COORDINATOR
+            .with_label_values(&["exhaustions_total", db])
+            .set(stats.exhaustions_total as f64);
     }
 }

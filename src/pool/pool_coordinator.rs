@@ -33,6 +33,7 @@ pub struct CoordinatorStats {
     pub reserve_in_use: usize,
     pub evictions_total: u64,
     pub reserve_acquisitions_total: u64,
+    pub exhaustions_total: u64,
 }
 
 /// RAII permit — held for the lifetime of a server connection.
@@ -110,6 +111,7 @@ pub struct PoolCoordinator {
     config: CoordinatorConfig,
     evictions_total: AtomicU64,
     reserve_acquisitions_total: AtomicU64,
+    exhaustions_total: AtomicU64,
     reserve_tx: mpsc::Sender<ReserveRequest>,
 }
 
@@ -172,6 +174,7 @@ impl PoolCoordinator {
             connection_returned: Notify::new(),
             evictions_total: AtomicU64::new(0),
             reserve_acquisitions_total: AtomicU64::new(0),
+            exhaustions_total: AtomicU64::new(0),
             reserve_tx,
             config,
         });
@@ -272,7 +275,8 @@ impl PoolCoordinator {
             AcquirePhase::NoReserve
         };
 
-        // Phase E: exhausted
+        // Phase E: exhausted — client will get an error
+        self.exhaustions_total.fetch_add(1, Ordering::Relaxed);
         Err(AcquireError::NoConnection(NoConnectionInfo {
             database: database.to_string(),
             user: user.to_string(),
@@ -298,6 +302,7 @@ impl PoolCoordinator {
             reserve_in_use: self.reserve_in_use.load(Ordering::Relaxed),
             evictions_total: self.evictions_total.load(Ordering::Relaxed),
             reserve_acquisitions_total: self.reserve_acquisitions_total.load(Ordering::Relaxed),
+            exhaustions_total: self.exhaustions_total.load(Ordering::Relaxed),
         }
     }
 
