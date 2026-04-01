@@ -130,6 +130,12 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reserve_pool_timeout: Option<u64>,
 
+    /// Minimum connections per user protected from coordinator eviction.
+    /// Overrides user-level min_pool_size for eviction decisions only
+    /// (does not trigger prewarm/replenish). Default: 0 (no protection).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_guaranteed_pool_size: Option<u32>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
 
@@ -290,6 +296,7 @@ impl Default for Pool {
             min_connection_lifetime: None,
             reserve_pool_size: None,
             reserve_pool_timeout: None,
+            min_guaranteed_pool_size: None,
             auth_query: None,
         }
     }

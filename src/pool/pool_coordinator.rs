@@ -84,7 +84,7 @@ impl ReserveGrant {
     /// Consume the grant and produce a CoordinatorPermit.
     /// The reserve semaphore permit is now owned by the CoordinatorPermit's Drop.
     fn into_permit(mut self) -> CoordinatorPermit {
-        let coordinator = self.coordinator.take().unwrap();
+        let coordinator = self.coordinator.take().expect("grant already consumed");
         CoordinatorPermit {
             coordinator,
             is_reserve: true,
@@ -192,7 +192,7 @@ impl PoolCoordinator {
                 permit.forget();
                 self.total_connections.fetch_add(1, Ordering::Relaxed);
                 Some(CoordinatorPermit {
-                    coordinator: self.clone(),
+                    coordinator: Arc::clone(self),
                     is_reserve: false,
                 })
             }
@@ -248,21 +248,23 @@ impl PoolCoordinator {
             let queued = eviction_source.queued_clients(user);
             let (tx, rx) = tokio::sync::oneshot::channel();
 
-            let _ = self
+            if self
                 .reserve_tx
                 .send(ReserveRequest {
                     user: user.to_string(),
                     score: (starving, queued),
                     response: tx,
                 })
-                .await;
-
-            if let Ok(Ok(grant)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await {
-                self.total_connections.fetch_add(1, Ordering::Relaxed);
-                self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
-                self.reserve_acquisitions_total
-                    .fetch_add(1, Ordering::Relaxed);
-                return Ok(grant.into_permit());
+                .await
+                .is_ok()
+            {
+                if let Ok(Ok(grant)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await {
+                    self.total_connections.fetch_add(1, Ordering::Relaxed);
+                    self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
+                    self.reserve_acquisitions_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    return Ok(grant.into_permit());
+                }
             }
 
             AcquirePhase::ReserveExhausted

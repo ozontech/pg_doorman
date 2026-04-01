@@ -228,6 +228,10 @@ pub struct PoolSettings {
 
     idle_timeout_ms: u64,
     life_time_ms: u64,
+
+    /// Pool-level minimum connections protected from coordinator eviction.
+    /// Effective protection = max(user.min_pool_size, this value).
+    pub min_guaranteed_pool_size: u32,
 }
 
 impl Default for PoolSettings {
@@ -239,6 +243,7 @@ impl Default for PoolSettings {
             idle_timeout_ms: General::default_idle_timeout().as_millis(),
             life_time_ms: General::default_server_lifetime().as_millis(),
             sync_server_parameters: General::default_sync_server_parameters(),
+            min_guaranteed_pool_size: 0,
         }
     }
 }
@@ -270,7 +275,7 @@ pub struct ConnectionPool {
     /// Database-level connection coordinator. `Some` when `max_db_connections > 0`
     /// in the pool config, `None` otherwise (disabled, zero overhead).
     /// Shared across all user pools for the same database.
-    pub coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+    pub(crate) coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
 }
 
 impl ConnectionPool {
@@ -474,6 +479,9 @@ impl ConnectionPool {
                             .server_lifetime
                             .unwrap_or(config.general.server_lifetime.as_millis()),
                         sync_server_parameters: config.general.sync_server_parameters,
+                        min_guaranteed_pool_size: pool_config
+                            .min_guaranteed_pool_size
+                            .unwrap_or(0),
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
                         false => None,
@@ -636,6 +644,9 @@ impl ConnectionPool {
                                     .server_lifetime
                                     .unwrap_or(config.general.server_lifetime.as_millis()),
                                 sync_server_parameters: config.general.sync_server_parameters,
+                                min_guaranteed_pool_size: pool_config
+                                    .min_guaranteed_pool_size
+                                    .unwrap_or(0),
                             },
                             prepared_statement_cache: match config.general.prepared_statements {
                                 false => None,
@@ -802,11 +813,13 @@ impl ConnectionPool {
 
     /// Connections above the user's guaranteed minimum — these are eligible
     /// for eviction by the coordinator when another user needs a connection.
-    /// Returns 0 when the user is at or below their `min_pool_size`.
+    /// Effective minimum = max(user.min_pool_size, pool.min_guaranteed_pool_size).
     pub fn spare_above_min(&self) -> usize {
-        let min = self.settings.user.min_pool_size.unwrap_or(0) as usize;
+        let user_min = self.settings.user.min_pool_size.unwrap_or(0) as usize;
+        let pool_min = self.settings.min_guaranteed_pool_size as usize;
+        let effective_min = user_min.max(pool_min);
         let current = self.pool_state().size;
-        current.saturating_sub(min)
+        current.saturating_sub(effective_min)
     }
 }
 
@@ -1102,14 +1115,7 @@ impl ServerPool {
 /// The coordinator calls these methods when it needs to free a connection slot:
 /// - `try_evict_one`: close one idle connection from another user's pool
 /// - `queued_clients`: how many clients are waiting for this user's pool
-/// - `is_starving`: whether a user is below their guaranteed `min_pool_size`
-///
-/// # Eviction strategy
-///
-/// `try_evict_one` scans all pools for the same database, skipping the
-/// requesting user, and picks the pool with the most spare connections
-/// (above `min_pool_size`). It then closes the oldest idle connection
-/// in that pool. This is a stub until `inner.rs` provides `evict_one_idle()`.
+/// - `is_starving`: whether a user is below their guaranteed minimum
 pub struct PoolEvictionSource {
     database: String,
 }
@@ -1123,21 +1129,22 @@ impl PoolEvictionSource {
 }
 
 impl pool_coordinator::EvictionSource for PoolEvictionSource {
-    /// Try to evict one idle connection from another user's pool.
+    /// Evict one idle connection from the user with the largest surplus.
     ///
     /// Scans all pools for the same database, skipping the requesting user.
-    /// Picks the pool with the most connections above `min_pool_size` (largest
-    /// surplus) and evicts its oldest idle connection — but only if it's older
-    /// than `min_connection_lifetime`. The evicted connection's `CoordinatorPermit`
-    /// is dropped synchronously, making the slot available immediately.
+    /// Snapshots `spare_above_min()` once per candidate to avoid TOCTOU
+    /// inconsistency from repeated locking. Evicts only connections older
+    /// than `min_connection_lifetime`. The evicted connection's
+    /// `CoordinatorPermit` drops synchronously, freeing the slot.
     fn try_evict_one(&self, requesting_user: &str) -> bool {
         let all_pools = POOLS.load();
 
-        // Collect candidate pools: same database, different user, has surplus.
-        let mut candidates: Vec<(&PoolIdentifier, &ConnectionPool)> = all_pools
+        // Snapshot spare count once per candidate (avoids repeated locking).
+        let mut candidates: Vec<(&PoolIdentifier, &ConnectionPool, usize)> = all_pools
             .iter()
             .filter(|(id, _)| id.db == self.database && id.user != requesting_user)
-            .filter(|(_, pool)| pool.spare_above_min() > 0)
+            .map(|(id, pool)| (id, pool, pool.spare_above_min()))
+            .filter(|(_, _, spare)| *spare > 0)
             .collect();
 
         if candidates.is_empty() {
@@ -1145,22 +1152,19 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
         }
 
         // Evict from the user with the most surplus first — minimizes impact.
-        candidates.sort_by(|a, b| b.1.spare_above_min().cmp(&a.1.spare_above_min()));
+        candidates.sort_by(|a, b| b.2.cmp(&a.2));
 
         let min_lifetime_ms = candidates
             .first()
-            .and_then(|(_, pool)| pool.coordinator.as_ref())
+            .and_then(|(_, pool, _)| pool.coordinator.as_ref())
             .map(|c| c.config().min_connection_lifetime_ms)
             .unwrap_or(5000);
 
-        for (id, pool) in &candidates {
+        for (id, pool, spare) in &candidates {
             if pool.database.evict_one_idle(min_lifetime_ms) {
-                log::info!(
-                    "[pool_coordinator: {}] evicted idle connection from '{}' (spare:{}) for '{}'",
-                    self.database,
-                    id.user,
-                    pool.spare_above_min(),
-                    requesting_user
+                info!(
+                    "[pool: {}][user: {}] coordinator evicted idle connection (spare:{}) for '{}'",
+                    self.database, id.user, spare, requesting_user
                 );
                 return true;
             }
@@ -1177,9 +1181,11 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
     fn is_starving(&self, user: &str) -> bool {
         get_pool(&self.database, user)
             .map(|p| {
-                let min = p.settings.user.min_pool_size.unwrap_or(0) as usize;
+                let user_min = p.settings.user.min_pool_size.unwrap_or(0) as usize;
+                let pool_min = p.settings.min_guaranteed_pool_size as usize;
+                let effective_min = user_min.max(pool_min);
                 let current = p.pool_state().size;
-                current < min
+                current < effective_min
             })
             .unwrap_or(false)
     }
@@ -1355,6 +1361,7 @@ pub fn create_dynamic_pool(
                 .server_lifetime
                 .unwrap_or(config.general.server_lifetime.as_millis()),
             sync_server_parameters: config.general.sync_server_parameters,
+            min_guaranteed_pool_size: pool_config.min_guaranteed_pool_size.unwrap_or(0),
         },
         prepared_statement_cache: match config.general.prepared_statements {
             false => None,

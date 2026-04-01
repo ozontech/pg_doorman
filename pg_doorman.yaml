@@ -523,6 +523,14 @@ pools:
     # During this time the coordinator waits for a connection to be returned.
     # reserve_pool_timeout: 3000
 
+    # Minimum connections per user protected from coordinator eviction.
+    # Unlike min_pool_size (which triggers prewarm/replenish), this only
+    # affects eviction: the coordinator will never evict a user's connections
+    # below this number. Does not create connections proactively.
+    # Useful when min_pool_size = 0 for most users (no prewarm desired)
+    # but you still want eviction fairness under max_db_connections pressure.
+    # min_guaranteed_pool_size: 0
+
     # --------------------------------------------------------------------------
     # Application Settings
     # --------------------------------------------------------------------------

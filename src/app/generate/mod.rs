@@ -146,6 +146,7 @@ pub fn generate_config_with_client(
                     min_connection_lifetime: None,
                     reserve_pool_size: None,
                     reserve_pool_timeout: None,
+                    min_guaranteed_pool_size: None,
                     auth_query: None,
                     users: users.clone(),
                 },

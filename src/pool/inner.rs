@@ -660,7 +660,7 @@ impl Pool {
     /// Returns `true` if a connection was evicted.
     pub fn evict_one_idle(&self, min_lifetime_ms: u64) -> bool {
         self.retain_oldest_first(
-            |_, metrics| metrics.age().as_millis() as u64 >= min_lifetime_ms,
+            |_, metrics| metrics.age().as_millis() >= u128::from(min_lifetime_ms),
             1,
         ) > 0
     }

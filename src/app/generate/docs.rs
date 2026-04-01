@@ -284,6 +284,7 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
         "min_connection_lifetime",
         "reserve_pool_size",
         "reserve_pool_timeout",
+        "min_guaranteed_pool_size",
     ];
 
     for name in &fields {

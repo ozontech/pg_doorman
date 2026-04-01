@@ -1139,6 +1139,35 @@ fields:
         connections. Only relevant when `max_db_connections > 0` and `reserve_pool_size > 0`.
       default: "3000 (3 seconds)"
 
+    min_guaranteed_pool_size:
+      config:
+        en: |
+          Minimum connections per user protected from coordinator eviction.
+          Unlike min_pool_size (which triggers prewarm/replenish), this only
+          affects eviction: the coordinator will never evict a user's connections
+          below this number. Does not create connections proactively.
+          Useful when min_pool_size = 0 for most users (no prewarm desired)
+          but you still want eviction fairness under max_db_connections pressure.
+        ru: |
+          Минимум соединений на пользователя, защищённых от изъятия координатором.
+          В отличие от min_pool_size (который прогревает пул заранее), этот параметр
+          влияет только на eviction: координатор не будет изымать соединения пользователя
+          ниже этого числа. Не создаёт соединения проактивно.
+          Полезен когда min_pool_size = 0 (прогрев не нужен), но нужна справедливость
+          изъятия при давлении max_db_connections.
+      doc: |
+        Pool-level default for the minimum number of connections per user that are protected
+        from coordinator eviction. When the coordinator needs to free a connection slot for
+        another user, it will not evict connections from a user who is at or below this count.
+
+        This is separate from `min_pool_size` (user-level): `min_pool_size` controls prewarm
+        and replenish (proactively creating connections), while `min_guaranteed_pool_size`
+        only affects eviction decisions (never creates connections).
+
+        The effective protection for a user is `max(user.min_pool_size, pool.min_guaranteed_pool_size)`.
+        Set to `0` (or omit) for no eviction protection. Only relevant when `max_db_connections > 0`.
+      default: "0 (no protection)"
+
     application_name:
       config:
         en: |

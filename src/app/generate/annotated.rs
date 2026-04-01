@@ -148,6 +148,7 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         min_connection_lifetime: None,
         reserve_pool_size: None,
         reserve_pool_timeout: None,
+        min_guaranteed_pool_size: None,
         auth_query: None,
         users: vec![User {
             username: "app_user".to_string(),
@@ -1246,6 +1247,14 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
         w.kv(fi, "reserve_pool_timeout", &w.num_val(val));
     } else {
         w.commented_kv(fi, "reserve_pool_timeout", "3000");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "min_guaranteed_pool_size");
+    if let Some(val) = pool.min_guaranteed_pool_size {
+        w.kv(fi, "min_guaranteed_pool_size", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "min_guaranteed_pool_size", "0");
     }
     w.blank();
 
