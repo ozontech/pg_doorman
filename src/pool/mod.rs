@@ -32,6 +32,7 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 pub use crate::server::PreparedStatementCache;
 
 pub mod gc;
+pub mod pool_coordinator;
 pub mod retain;
 
 pub type ProcessId = i32;
