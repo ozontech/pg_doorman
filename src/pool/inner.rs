@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
 
 use super::errors::{PoolError, RecycleError, TimeoutType};
+use super::pool_coordinator;
 use super::types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
 use super::ServerPool;
 use crate::server::Server;
@@ -24,10 +25,18 @@ use crate::server::Server;
 const MAX_FAST_RETRY: i32 = 10;
 
 /// Internal object wrapper with metrics.
+/// The `coordinator_permit` is held for the entire lifetime of the connection:
+/// - Acquired when a NEW connection is created (timeout_get / replenish)
+/// - Stays with the ObjectInner when returned to the idle pool (VecDeque)
+/// - Dropped when the connection is destroyed → frees coordinator semaphore slot
+/// - `None` when coordination is disabled (max_db_connections = 0)
 #[derive(Debug)]
 struct ObjectInner {
     obj: Server,
     metrics: Metrics,
+    /// Held for RAII — dropped when connection is destroyed, freeing coordinator slot.
+    #[allow(dead_code)]
+    coordinator_permit: Option<pool_coordinator::CoordinatorPermit>,
 }
 
 /// Wrapper around the actual pooled object which implements Deref and DerefMut.
@@ -108,6 +117,12 @@ struct PoolInner {
     users: AtomicUsize,
     semaphore: Semaphore,
     config: PoolConfig,
+    /// Database-level coordinator (None when max_db_connections = 0).
+    coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+    /// Pool name (database name in config), used in coordinator error messages.
+    pool_name: String,
+    /// Username for this pool, used in coordinator error messages.
+    username: String,
 }
 
 impl PoolInner {
@@ -180,6 +195,9 @@ impl Pool {
                 users: AtomicUsize::new(0),
                 semaphore: Semaphore::new(builder.config.max_size),
                 config: builder.config,
+                coordinator: builder.coordinator,
+                pool_name: builder.pool_name,
+                username: builder.username,
             }),
         }
     }
@@ -472,6 +490,28 @@ impl Pool {
             }
         }
 
+        // Acquire coordinator permit before creating a new connection.
+        // Only the NEW CONNECTION path goes through the coordinator —
+        // idle reuse above is unaffected (permit is already inside ObjectInner).
+        let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
+            let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
+            match coordinator
+                .acquire(
+                    &self.inner.pool_name,
+                    &self.inner.username,
+                    &eviction,
+                )
+                .await
+            {
+                Ok(permit) => Some(permit),
+                Err(pool_coordinator::AcquireError::NoConnection(info)) => {
+                    return Err(PoolError::DbLimitExhausted(info));
+                }
+            }
+        } else {
+            None
+        };
+
         // Create a new object
         let obj = match timeouts.create {
             Some(duration) => {
@@ -502,6 +542,7 @@ impl Pool {
             inner: Some(ObjectInner {
                 obj,
                 metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+                coordinator_permit,
             }),
             pool: Arc::downgrade(&self.inner),
         })
@@ -610,6 +651,20 @@ impl Pool {
         closed
     }
 
+    /// Evict the oldest idle connection whose age exceeds `min_lifetime_ms`.
+    ///
+    /// Used by the pool coordinator when it needs to free a connection slot
+    /// for another user. The evicted connection's `CoordinatorPermit` is dropped
+    /// synchronously, making the slot available immediately.
+    ///
+    /// Returns `true` if a connection was evicted.
+    pub fn evict_one_idle(&self, min_lifetime_ms: u64) -> bool {
+        self.retain_oldest_first(
+            |_, metrics| metrics.age().as_millis() as u64 >= min_lifetime_ms,
+            1,
+        ) > 0
+    }
+
     /// Get current timeout configuration.
     #[inline(always)]
     pub fn timeouts(&self) -> Timeouts {
@@ -630,6 +685,23 @@ impl Pool {
                 }
             }
 
+            // Acquire coordinator permit (non-blocking). If the coordinator
+            // limit is reached, skip and retry on the next retain cycle.
+            let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
+                match coordinator.try_acquire() {
+                    Some(permit) => Some(permit),
+                    None => {
+                        log::debug!(
+                            "[pool: {}] coordinator limit reached, skipping replenish",
+                            self.inner.pool_name
+                        );
+                        break;
+                    }
+                }
+            } else {
+                None
+            };
+
             // Create a new connection
             let obj = match self.inner.server_pool.create().await {
                 Ok(obj) => obj,
@@ -649,6 +721,7 @@ impl Pool {
             let inner = ObjectInner {
                 obj,
                 metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+                coordinator_permit,
             };
 
             {
@@ -737,6 +810,9 @@ impl Pool {
 pub struct PoolBuilder {
     server_pool: ServerPool,
     config: PoolConfig,
+    coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+    pool_name: String,
+    username: String,
 }
 
 impl PoolBuilder {
@@ -744,12 +820,36 @@ impl PoolBuilder {
         Self {
             server_pool,
             config: PoolConfig::default(),
+            coordinator: None,
+            pool_name: String::new(),
+            username: String::new(),
         }
     }
 
     /// Sets the PoolConfig.
     pub fn config(mut self, config: PoolConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Sets the database-level coordinator (for max_db_connections enforcement).
+    pub fn coordinator(
+        mut self,
+        coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+    ) -> Self {
+        self.coordinator = coordinator;
+        self
+    }
+
+    /// Sets the pool name (database name), used in coordinator error messages.
+    pub fn pool_name(mut self, name: String) -> Self {
+        self.pool_name = name;
+        self
+    }
+
+    /// Sets the username for this pool, used in coordinator error messages.
+    pub fn username(mut self, name: String) -> Self {
+        self.username = name;
         self
     }
 

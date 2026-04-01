@@ -439,7 +439,10 @@ impl ConnectionPool {
 
                 info!("[pool: {}][user: {}]", pool_name, user.username);
 
-                let mut builder_config = Pool::builder(manager);
+                let mut builder_config = Pool::builder(manager)
+                    .coordinator(coordinators.get(pool_name).cloned())
+                    .pool_name(pool_name.clone())
+                    .username(user.username.clone());
                 builder_config = builder_config.config(PoolConfig {
                     max_size: user.pool_size as usize,
                     timeouts: Timeouts {
@@ -599,6 +602,9 @@ impl ConnectionPool {
                         );
 
                         let pool = Pool::builder(manager)
+                            .coordinator(coordinators.get(pool_name).cloned())
+                            .pool_name(pool_name.clone())
+                            .username(shared_user.username.clone())
                             .config(PoolConfig {
                                 max_size: shared_user.pool_size as usize,
                                 timeouts: Timeouts {
@@ -1119,22 +1125,46 @@ impl PoolEvictionSource {
 impl pool_coordinator::EvictionSource for PoolEvictionSource {
     /// Try to evict one idle connection from another user's pool.
     ///
-    /// Returns `true` if eviction succeeded and a coordinator permit
-    /// will become available (the evicted connection's `CoordinatorPermit`
-    /// is dropped synchronously before this returns `true`).
-    ///
-    /// Current implementation: stub returning `false`. The coordinator handles
-    /// this gracefully — it proceeds to wait phase and then reserve pool.
-    /// Real eviction will be wired in the `inner.rs` integration task.
-    fn try_evict_one(&self, _requesting_user: &str) -> bool {
-        // TODO: implement when inner.rs provides evict_one_idle()
-        //
-        // Algorithm (from design doc):
-        // 1. Get all pools for self.database via POOLS.load()
-        // 2. Filter: skip requesting_user, skip pools with spare_above_min() == 0
-        // 3. Sort by spare_above_min() descending (evict from user with most surplus)
-        // 4. For the top candidate, call pool.database.evict_one_idle(min_lifetime_ms)
-        // 5. Return true if eviction succeeded (permit dropped synchronously)
+    /// Scans all pools for the same database, skipping the requesting user.
+    /// Picks the pool with the most connections above `min_pool_size` (largest
+    /// surplus) and evicts its oldest idle connection — but only if it's older
+    /// than `min_connection_lifetime`. The evicted connection's `CoordinatorPermit`
+    /// is dropped synchronously, making the slot available immediately.
+    fn try_evict_one(&self, requesting_user: &str) -> bool {
+        let all_pools = POOLS.load();
+
+        // Collect candidate pools: same database, different user, has surplus.
+        let mut candidates: Vec<(&PoolIdentifier, &ConnectionPool)> = all_pools
+            .iter()
+            .filter(|(id, _)| id.db == self.database && id.user != requesting_user)
+            .filter(|(_, pool)| pool.spare_above_min() > 0)
+            .collect();
+
+        if candidates.is_empty() {
+            return false;
+        }
+
+        // Evict from the user with the most surplus first — minimizes impact.
+        candidates.sort_by(|a, b| b.1.spare_above_min().cmp(&a.1.spare_above_min()));
+
+        let min_lifetime_ms = candidates
+            .first()
+            .and_then(|(_, pool)| pool.coordinator.as_ref())
+            .map(|c| c.config().min_connection_lifetime_ms)
+            .unwrap_or(5000);
+
+        for (id, pool) in &candidates {
+            if pool.database.evict_one_idle(min_lifetime_ms) {
+                log::info!(
+                    "[pool_coordinator: {}] evicted idle connection from '{}' (spare:{}) for '{}'",
+                    self.database,
+                    id.user,
+                    pool.spare_above_min(),
+                    requesting_user
+                );
+                return true;
+            }
+        }
         false
     }
 
@@ -1294,6 +1324,9 @@ pub fn create_dynamic_pool(
     };
 
     let pool = Pool::builder(manager)
+        .coordinator(get_coordinator(pool_name))
+        .pool_name(pool_name.to_string())
+        .username(username.to_string())
         .config(PoolConfig {
             max_size: user.pool_size as usize,
             timeouts: Timeouts {
