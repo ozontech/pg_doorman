@@ -54,6 +54,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Auth query passthrough (per-user backend identity) | Yes | No | Yes |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
+| Database-level connection limits (`max_db_connections`) | Yes | Yes (no eviction) | No |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
 | TLS: minimum TLS 1.2, Mozilla ciphers | Yes | Yes | No (allows TLS 1.0, weak ciphers) |
 | Prometheus metrics | Built-in | External | Built-in |
@@ -261,6 +262,7 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `pg_doorman_pool_prepared_cache_entries` | user, database | Prepared statement cache entries            |
 | `pg_doorman_auth_query_cache` | event, database | Auth query cache hits / misses              |
 | `pg_doorman_auth_query_dynamic_pools` | database | Active dynamic user pools                    |
+| `pg_doorman_pool_coordinator` | type, database | Coordinator stats (connections, reserve, evictions, exhaustions) |
 | `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
 | `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |
 
