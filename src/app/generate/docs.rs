@@ -280,6 +280,10 @@ fn write_pool_fields(out: &mut String, f: &FieldsData) {
         "scaling_warm_pool_ratio",
         "scaling_fast_retries",
         "scaling_cooldown_sleep",
+        "max_db_connections",
+        "min_connection_lifetime",
+        "reserve_pool_size",
+        "reserve_pool_timeout",
     ];
 
     for name in &fields {
