@@ -20,8 +20,8 @@ use commands::{pause, reconnect, reload, resume, shutdown};
 use show::show_sockets;
 use show::{
     show_auth_query, show_clients, show_config, show_connections, show_databases, show_help,
-    show_lists, show_pools, show_pools_extended, show_pools_memory, show_prepared_statements,
-    show_pool_coordinator, show_servers, show_stats, show_users, show_version,
+    show_lists, show_pool_coordinator, show_pools, show_pools_extended, show_pools_memory,
+    show_prepared_statements, show_servers, show_stats, show_users, show_version,
 };
 
 /// Handle admin client.

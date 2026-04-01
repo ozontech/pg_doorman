@@ -496,11 +496,7 @@ impl Pool {
         let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
             let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
             match coordinator
-                .acquire(
-                    &self.inner.pool_name,
-                    &self.inner.username,
-                    &eviction,
-                )
+                .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
                 .await
             {
                 Ok(permit) => Some(permit),

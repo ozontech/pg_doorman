@@ -223,7 +223,10 @@ impl PoolCoordinator {
             }
         }
 
-        // Phase C: wait for a connection to be returned
+        // Phase C: wait for a connection to be returned.
+        // Register `notified()` BEFORE `try_acquire()` so that notifications
+        // arriving between a failed try_acquire and the select! are not lost.
+        // (`notify_waiters` does not store a permit for future waiters.)
         let deadline = tokio::time::Instant::now()
             + Duration::from_millis(self.config.reserve_pool_timeout_ms);
 
@@ -233,12 +236,14 @@ impl PoolCoordinator {
                 break;
             }
 
+            let notified = self.connection_returned.notified();
+
+            if let Some(permit) = self.try_acquire() {
+                return Ok(permit);
+            }
+
             tokio::select! {
-                _ = self.connection_returned.notified() => {
-                    if let Some(permit) = self.try_acquire() {
-                        return Ok(permit);
-                    }
-                }
+                _ = notified => {}
                 _ = tokio::time::sleep(remaining) => {
                     break;
                 }
@@ -635,7 +640,10 @@ mod tests {
         let eviction = NoOpEviction;
         let p2 = coord.acquire("testdb", "ok_user", &eviction).await.unwrap();
         assert!(p2.is_reserve);
-        let p3 = coord.acquire("testdb", "ok_user2", &eviction).await.unwrap();
+        let p3 = coord
+            .acquire("testdb", "ok_user2", &eviction)
+            .await
+            .unwrap();
         assert!(p3.is_reserve);
         assert_eq!(coord.reserve_in_use(), 2);
     }
@@ -656,7 +664,10 @@ mod tests {
 
         // Permit should be back — verify by acquiring it again
         let sem_permit2 = coord.reserve_semaphore.try_acquire();
-        assert!(sem_permit2.is_ok(), "permit should be returned after grant drop");
+        assert!(
+            sem_permit2.is_ok(),
+            "permit should be returned after grant drop"
+        );
     }
 
     #[tokio::test]
@@ -770,7 +781,10 @@ mod tests {
 
         // Low priority should NOT receive (only 1 reserve permit)
         let low_result = tokio::time::timeout(Duration::from_millis(50), rx_low).await;
-        assert!(low_result.is_err(), "non-starving user should not get grant");
+        assert!(
+            low_result.is_err(),
+            "non-starving user should not get grant"
+        );
     }
 
     #[tokio::test]
@@ -923,12 +937,12 @@ mod tests {
 
         let eviction = NoOpEviction;
         let _p2 = coord.acquire("mydb", "user_a", &eviction).await.unwrap();
-        assert!(
-            _p2.is_reserve,
-            "first reserve should succeed"
-        );
+        assert!(_p2.is_reserve, "first reserve should succeed");
 
-        let err = coord.acquire("mydb", "user_b", &eviction).await.unwrap_err();
+        let err = coord
+            .acquire("mydb", "user_b", &eviction)
+            .await
+            .unwrap_err();
         match err {
             AcquireError::NoConnection(info) => {
                 assert_eq!(info.phase, AcquirePhase::ReserveExhausted);
@@ -946,7 +960,10 @@ mod tests {
         let eviction = NoOpEviction;
         let _reserve = coord.acquire("mydb", "holder", &eviction).await.unwrap();
 
-        let err = coord.acquire("mydb", "waiter", &eviction).await.unwrap_err();
+        let err = coord
+            .acquire("mydb", "waiter", &eviction)
+            .await
+            .unwrap_err();
         match err {
             AcquireError::NoConnection(info) => {
                 assert_eq!(info.phase, AcquirePhase::ReserveExhausted);
@@ -962,7 +979,10 @@ mod tests {
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
-        let err = coord.acquire("production_db", "analytics", &eviction).await.unwrap_err();
+        let err = coord
+            .acquire("production_db", "analytics", &eviction)
+            .await
+            .unwrap_err();
         match err {
             AcquireError::NoConnection(info) => {
                 assert_eq!(info.database, "production_db");

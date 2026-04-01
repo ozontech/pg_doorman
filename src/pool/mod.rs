@@ -8,9 +8,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::config::{
-    get_config, Address, BackendAuthMethod, General, PoolMode, User,
-};
+use crate::config::{get_config, Address, BackendAuthMethod, General, PoolMode, User};
 use crate::errors::Error;
 use crate::messages::Parse;
 
@@ -28,12 +26,12 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 
 pub use crate::server::PreparedStatementCache;
 
-pub mod gc;
-pub mod pool_coordinator;
-pub mod retain;
 mod auth_query_state;
 mod dynamic;
 mod eviction;
+pub mod gc;
+pub mod pool_coordinator;
+pub mod retain;
 mod server_pool;
 
 pub use auth_query_state::AuthQueryState;
@@ -413,9 +411,7 @@ impl ConnectionPool {
                             .server_lifetime
                             .unwrap_or(config.general.server_lifetime.as_millis()),
                         sync_server_parameters: config.general.sync_server_parameters,
-                        min_guaranteed_pool_size: pool_config
-                            .min_guaranteed_pool_size
-                            .unwrap_or(0),
+                        min_guaranteed_pool_size: pool_config.min_guaranteed_pool_size.unwrap_or(0),
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
                         false => None,
@@ -779,9 +775,7 @@ pub fn get_all_pools() -> Arc<PoolMap> {
 
 /// Get pool coordinator for a database pool (if `max_db_connections > 0`).
 /// Returns `None` when coordination is disabled for this pool.
-pub fn get_coordinator(
-    db: &str,
-) -> Option<Arc<pool_coordinator::PoolCoordinator>> {
+pub fn get_coordinator(db: &str) -> Option<Arc<pool_coordinator::PoolCoordinator>> {
     COORDINATORS.load().get(db).cloned()
 }
 

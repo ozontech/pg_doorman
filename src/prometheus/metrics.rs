@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "linux")]
 use log::error;
+use once_cell::sync::Lazy;
 use std::sync::atomic::Ordering;
 
 use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
@@ -17,14 +18,14 @@ use super::system::get_process_memory_usage;
 #[cfg(target_os = "linux")]
 use super::SHOW_SOCKETS;
 use super::{
-    AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR,
-    SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS,
-    SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE,
-    SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER,
-    SHOW_POOLS_TRANSACTIONS_PERCENTILE, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME,
-    SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE,
-    SHOW_SERVERS_PREPARED_HITS, SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
-    COORDINATOR,
+    AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR, COORDINATOR,
+    COORDINATOR_TOTALS, SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES,
+    SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT,
+    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
+    SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
+    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
+    SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
+    SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -325,18 +326,40 @@ fn update_auth_query_metrics() {
     }
 }
 
-fn update_coordinator_metrics() {
-    COORDINATOR.reset();
+/// Previous coordinator database set — used to clean up stale label combinations
+/// when a database's coordinator is removed on RELOAD.
+static COORDINATOR_PREV_DBS: Lazy<std::sync::Mutex<std::collections::HashSet<String>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
 
+fn update_coordinator_metrics() {
     let coordinators = COORDINATORS.load();
-    if coordinators.is_empty() {
-        return;
+
+    let current_dbs: std::collections::HashSet<String> = coordinators.keys().cloned().collect();
+
+    // Remove stale label combinations for databases no longer coordinated.
+    if let Ok(mut prev) = COORDINATOR_PREV_DBS.lock() {
+        for old_db in prev.difference(&current_dbs) {
+            let db: &str = old_db.as_str();
+            for t in [
+                "connections",
+                "reserve_in_use",
+                "max_connections",
+                "reserve_pool_size",
+            ] {
+                let _ = COORDINATOR.remove_label_values(&[t, db]);
+            }
+            for t in ["evictions", "reserve_acquisitions", "exhaustions"] {
+                let _ = COORDINATOR_TOTALS.remove_label_values(&[t, db]);
+            }
+        }
+        *prev = current_dbs;
     }
 
     for (db, coordinator) in coordinators.iter() {
         let stats = coordinator.stats();
         let config = coordinator.config();
 
+        // Current state (gauges)
         COORDINATOR
             .with_label_values(&["connections", db])
             .set(stats.total_connections as f64);
@@ -349,14 +372,32 @@ fn update_coordinator_metrics() {
         COORDINATOR
             .with_label_values(&["reserve_pool_size", db])
             .set(config.reserve_pool_size as f64);
-        COORDINATOR
-            .with_label_values(&["evictions_total", db])
-            .set(stats.evictions_total as f64);
-        COORDINATOR
-            .with_label_values(&["reserve_acquisitions_total", db])
-            .set(stats.reserve_acquisitions_total as f64);
-        COORDINATOR
-            .with_label_values(&["exhaustions_total", db])
-            .set(stats.exhaustions_total as f64);
+
+        // Cumulative counters — increment by delta since last scrape.
+        // IntCounter only supports inc(), so we compute the difference
+        // from the current Prometheus value to the coordinator's total.
+        let evictions_counter = COORDINATOR_TOTALS.with_label_values(&["evictions", db]);
+        let delta = stats
+            .evictions_total
+            .saturating_sub(evictions_counter.get());
+        if delta > 0 {
+            evictions_counter.inc_by(delta);
+        }
+
+        let reserve_counter = COORDINATOR_TOTALS.with_label_values(&["reserve_acquisitions", db]);
+        let delta = stats
+            .reserve_acquisitions_total
+            .saturating_sub(reserve_counter.get());
+        if delta > 0 {
+            reserve_counter.inc_by(delta);
+        }
+
+        let exhaustions_counter = COORDINATOR_TOTALS.with_label_values(&["exhaustions", db]);
+        let delta = stats
+            .exhaustions_total
+            .saturating_sub(exhaustions_counter.get());
+        if delta > 0 {
+            exhaustions_counter.inc_by(delta);
+        }
     }
 }

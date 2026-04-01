@@ -410,10 +410,7 @@ pub async fn abort_session_tcp_connection(world: &mut DoormanWorld, session_name
 }
 
 #[when(regex = r#"^we abort TCP connection with RST for session "([^"]+)"$"#)]
-pub async fn abort_session_tcp_connection_with_rst(
-    world: &mut DoormanWorld,
-    session_name: String,
-) {
+pub async fn abort_session_tcp_connection_with_rst(world: &mut DoormanWorld, session_name: String) {
     let conn = world
         .named_sessions
         .remove(&session_name)

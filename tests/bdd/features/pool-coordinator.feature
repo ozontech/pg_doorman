@@ -438,3 +438,212 @@ Feature: Pool Coordinator — database-level connection limit
     And we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
     Then admin session "admin" column "max_db_conn" should be between 5 and 5
     Then admin session "admin" column "reserve_size" should be between 2 and 2
+
+  @coordinator-reload-unchanged
+  Scenario: RELOAD with unchanged config — coordinator reused, connections survive
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 3
+      reserve_pool_size = 1
+      reserve_pool_timeout = 500
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 3
+      """
+    # Create a connection to populate the pool
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s1"
+    # RELOAD with same config — coordinator should be reused
+    When we create admin session "admin" to pg_doorman as "admin" with password "admin"
+    And we execute "RELOAD" on admin session "admin" and store response
+    And we sleep for 300 milliseconds
+    # Verify coordinator still works after RELOAD
+    When we create session "s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 2" to session "s2" without waiting
+    Then we read SimpleQuery response from session "s2" within 2000ms
+    Then session "s2" should receive DataRow with "2"
+    # Verify SHOW POOL_COORDINATOR still shows coordinator
+    When we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
+    Then admin session "admin" column "max_db_conn" should be between 3 and 3
+
+  @coordinator-reload-changed
+  Scenario: RELOAD with changed max_db_connections — new coordinator applies
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      query_wait_timeout = 2000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 1
+      reserve_pool_size = 0
+      reserve_pool_timeout = 500
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 3
+      """
+    # With max_db_connections=1, only 1 server connection allowed.
+    # Fill it with an active transaction.
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "s1"
+    # Second query should fail (limit=1, reserve=0)
+    When we create session "s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s2" without waiting
+    Then we read SimpleQuery response from session "s2" within 5000ms
+    Then session "s2" should receive error containing "all server connections"
+    # Now RELOAD with higher limit: max_db_connections=5
+    When we overwrite pg_doorman config file with:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      query_wait_timeout = 2000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 5
+      reserve_pool_size = 0
+      reserve_pool_timeout = 500
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 3
+      """
+    When we create admin session "admin" to pg_doorman as "admin" with password "admin"
+    And we execute "RELOAD" on admin session "admin" and store response
+    And we sleep for 300 milliseconds
+    # Now second query should succeed (new coordinator has limit=5)
+    When we create session "s3" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 42" to session "s3" without waiting
+    Then we read SimpleQuery response from session "s3" within 2000ms
+    Then session "s3" should receive DataRow with "42"
+    # Verify SHOW reflects new limit
+    When we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
+    Then admin session "admin" column "max_db_conn" should be between 5 and 5
+
+  @coordinator-reload-add-coordinator
+  Scenario: RELOAD adds coordinator to pool that had none
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      """
+    # No coordinator — SHOW POOL_COORDINATOR should return empty
+    When we create admin session "admin" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
+    Then admin session "admin" response should not contain "example_db"
+    # Add coordinator via RELOAD
+    When we overwrite pg_doorman config file with:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 3
+      reserve_pool_size = 1
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 3
+      """
+    And we execute "RELOAD" on admin session "admin" and store response
+    And we sleep for 300 milliseconds
+    # Now coordinator should be active
+    When we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
+    Then admin session "admin" column "max_db_conn" should be between 3 and 3
+    Then admin session "admin" column "reserve_size" should be between 1 and 1
+
+  @coordinator-reserve-pressure-relief
+  Scenario: Reserve connections are released after idle time exceeds min_connection_lifetime
+    # Reserve connections should be closed by the retain cycle once idle long
+    # enough, freeing reserve permits for future use.
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      retain_connections_time = 500
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 2
+      min_connection_lifetime = 500
+      reserve_pool_size = 1
+      reserve_pool_timeout = 1000
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 2
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 2
+      """
+    # user1 fills 2 main coordinator slots
+    When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "u1_s1"
+    When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "u1_s2"
+    # user2 gets a reserve connection
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_s1"
+    # user2's transaction-mode query completes → reserve connection goes idle.
+    # Wait for retain cycle (500ms interval) + min_connection_lifetime (500ms)
+    # to allow reserve pressure relief to close the idle reserve connection.
+    When we sleep for 1500 milliseconds
+    # Reserve should be freed — another user can get a reserve again
+    When we create session "u2_s2" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 2" to session "u2_s2" without waiting
+    Then we read SimpleQuery response from session "u2_s2" within 5000ms
+    Then session "u2_s2" should receive DataRow with "2"
