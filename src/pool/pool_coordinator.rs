@@ -42,6 +42,14 @@ pub struct CoordinatorPermit {
     pub is_reserve: bool,
 }
 
+impl std::fmt::Debug for CoordinatorPermit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CoordinatorPermit")
+            .field("is_reserve", &self.is_reserve)
+            .finish()
+    }
+}
+
 impl Drop for CoordinatorPermit {
     fn drop(&mut self) {
         if self.is_reserve {
@@ -179,6 +187,7 @@ impl PoolCoordinator {
     /// Full acquisition path: try → evict → wait → reserve → error.
     pub async fn acquire(
         self: &Arc<Self>,
+        database: &str,
         user: &str,
         eviction_source: &dyn EvictionSource,
     ) -> Result<CoordinatorPermit, AcquireError> {
@@ -218,7 +227,7 @@ impl PoolCoordinator {
         }
 
         // Phase D: reserve
-        if self.config.reserve_pool_size > 0 {
+        let phase = if self.config.reserve_pool_size > 0 {
             let starving = u8::from(eviction_source.is_starving(user));
             let queued = eviction_source.queued_clients(user);
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -239,10 +248,22 @@ impl PoolCoordinator {
                     .fetch_add(1, Ordering::Relaxed);
                 return Ok(grant.into_permit());
             }
-        }
+
+            AcquirePhase::ReserveExhausted
+        } else {
+            AcquirePhase::NoReserve
+        };
 
         // Phase E: exhausted
-        Err(AcquireError::Exhausted)
+        Err(AcquireError::NoConnection(NoConnectionInfo {
+            database: database.to_string(),
+            user: user.to_string(),
+            max_db_connections: self.config.max_db_connections,
+            active_connections: self.total_connections.load(Ordering::Relaxed),
+            reserve_size: self.config.reserve_pool_size,
+            reserve_in_use: self.reserve_in_use.load(Ordering::Relaxed),
+            phase,
+        }))
     }
 
     pub fn total_connections(&self) -> usize {
@@ -267,15 +288,72 @@ impl PoolCoordinator {
     }
 }
 
+/// What phase the coordinator was in when it gave up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcquirePhase {
+    /// Eviction failed, waited reserve_pool_timeout — no connections were freed.
+    WaitTimeout,
+    /// Reserve pool is fully used.
+    ReserveExhausted,
+    /// No reserve configured (reserve_pool_size = 0).
+    NoReserve,
+}
+
+/// Context about why a connection could not be acquired.
+#[derive(Debug, Clone)]
+pub struct NoConnectionInfo {
+    pub database: String,
+    pub user: String,
+    pub max_db_connections: usize,
+    pub active_connections: usize,
+    pub reserve_size: usize,
+    pub reserve_in_use: usize,
+    pub phase: AcquirePhase,
+}
+
+impl std::fmt::Display for NoConnectionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.phase {
+            AcquirePhase::NoReserve => write!(
+                f,
+                "all server connections to database '{}' are in use \
+                 (max={}, user='{}')",
+                self.database, self.max_db_connections, self.user
+            ),
+            AcquirePhase::ReserveExhausted => write!(
+                f,
+                "all server connections to database '{}' are in use \
+                 (max={}, reserve={}/{}, user='{}')",
+                self.database,
+                self.max_db_connections,
+                self.reserve_in_use,
+                self.reserve_size,
+                self.user
+            ),
+            AcquirePhase::WaitTimeout => write!(
+                f,
+                "all server connections to database '{}' are in use \
+                 (max={}, reserve={}/{}, user='{}')",
+                self.database,
+                self.max_db_connections,
+                self.reserve_in_use,
+                self.reserve_size,
+                self.user
+            ),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum AcquireError {
-    Exhausted,
+    /// Database connection limit reached — eviction, wait, and reserve all failed.
+    NoConnection(NoConnectionInfo),
 }
 
 impl std::fmt::Display for AcquireError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AcquireError::Exhausted => write!(f, "all database connections exhausted"),
+            AcquireError::NoConnection(info) => write!(f, "{info}"),
         }
     }
 }
@@ -428,7 +506,7 @@ mod tests {
         // actually free a permit. So acquire will still fail.
         // This tests that eviction path is attempted.
         let eviction = NoOpEviction;
-        let result = coord.acquire("test", &eviction).await;
+        let result = coord.acquire("testdb", "test", &eviction).await;
         assert!(result.is_err());
     }
 
@@ -438,7 +516,7 @@ mod tests {
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
-        let permit = coord.acquire("test", &eviction).await.unwrap();
+        let permit = coord.acquire("testdb", "test", &eviction).await.unwrap();
         assert!(permit.is_reserve);
         assert_eq!(coord.reserve_in_use(), 1);
         assert_eq!(coord.stats().reserve_acquisitions_total, 1);
@@ -453,7 +531,7 @@ mod tests {
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
-        let result = coord.acquire("test", &eviction).await;
+        let result = coord.acquire("testdb", "test", &eviction).await;
         assert!(result.is_err());
     }
 
@@ -465,7 +543,7 @@ mod tests {
         let coord2 = coord.clone();
         let handle = tokio::spawn(async move {
             let eviction = NoOpEviction;
-            coord2.acquire("waiter", &eviction).await
+            coord2.acquire("testdb", "waiter", &eviction).await
         });
 
         // Give the waiter time to start waiting
@@ -544,9 +622,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let eviction = NoOpEviction;
-        let p2 = coord.acquire("ok_user", &eviction).await.unwrap();
+        let p2 = coord.acquire("testdb", "ok_user", &eviction).await.unwrap();
         assert!(p2.is_reserve);
-        let p3 = coord.acquire("ok_user2", &eviction).await.unwrap();
+        let p3 = coord.acquire("testdb", "ok_user2", &eviction).await.unwrap();
         assert!(p3.is_reserve);
         assert_eq!(coord.reserve_in_use(), 2);
     }
@@ -599,7 +677,7 @@ mod tests {
 
         // Reserve permit should NOT be leaked — another user can acquire it
         let eviction = NoOpEviction;
-        let result = coord.acquire("another_user", &eviction).await;
+        let result = coord.acquire("testdb", "another_user", &eviction).await;
         assert!(result.is_ok(), "reserve permit was leaked");
         assert!(result.unwrap().is_reserve);
     }
@@ -613,7 +691,7 @@ mod tests {
 
         // Eviction mock holds p1 and drops it when called
         let eviction = PermitDroppingEviction::new(p1);
-        let result = coord.acquire("requester", &eviction).await;
+        let result = coord.acquire("testdb", "requester", &eviction).await;
         assert!(result.is_ok());
         assert!(!result.unwrap().is_reserve);
         assert_eq!(coord.stats().evictions_total, 1);
@@ -628,7 +706,7 @@ mod tests {
         let waiter = tokio::spawn(async move {
             let eviction = NoOpEviction;
             // Phase C: waits for connection_returned notify
-            coord2.acquire("waiter", &eviction).await
+            coord2.acquire("testdb", "waiter", &eviction).await
         });
 
         // Give waiter time to enter Phase C
@@ -694,7 +772,7 @@ mod tests {
 
         // Reserve acquire
         let eviction = NoOpEviction;
-        let p3 = coord.acquire("user_a", &eviction).await.unwrap();
+        let p3 = coord.acquire("testdb", "user_a", &eviction).await.unwrap();
         assert!(p3.is_reserve);
         assert_eq!(coord.stats().total_connections, 3);
         assert_eq!(coord.stats().reserve_in_use, 1);
@@ -719,8 +797,8 @@ mod tests {
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
-        let result = coord.acquire("user", &eviction).await;
-        assert!(matches!(result, Err(AcquireError::Exhausted)));
+        let result = coord.acquire("testdb", "user", &eviction).await;
+        assert!(matches!(result, Err(AcquireError::NoConnection(_))));
     }
 
     #[tokio::test]
@@ -729,12 +807,12 @@ mod tests {
         let _p1 = coord.try_acquire().unwrap();
 
         let eviction = NoOpEviction;
-        let _p2 = coord.acquire("user_a", &eviction).await.unwrap(); // takes reserve
+        let _p2 = coord.acquire("testdb", "user_a", &eviction).await.unwrap(); // takes reserve
         assert_eq!(coord.reserve_in_use(), 1);
 
         // Second reserve attempt should fail — reserve exhausted
-        let result = coord.acquire("user_b", &eviction).await;
-        assert!(matches!(result, Err(AcquireError::Exhausted)));
+        let result = coord.acquire("testdb", "user_b", &eviction).await;
+        assert!(matches!(result, Err(AcquireError::NoConnection(_))));
     }
 
     #[tokio::test]
@@ -763,7 +841,7 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 let user = format!("user_{}", i);
                 let eviction = NoOpEviction;
-                match c.acquire(&user, &eviction).await {
+                match c.acquire("testdb", &user, &eviction).await {
                     Ok(permit) => {
                         // Hold the permit briefly
                         tokio::task::yield_now().await;
@@ -801,13 +879,164 @@ mod tests {
 
         // First eviction
         let eviction1 = PermitDroppingEviction::new(p1);
-        let _p3 = coord.acquire("user_a", &eviction1).await.unwrap();
+        let _p3 = coord.acquire("testdb", "user_a", &eviction1).await.unwrap();
         assert_eq!(coord.stats().evictions_total, 1);
 
         // Second eviction
         let eviction2 = PermitDroppingEviction::new(p2);
-        let _p4 = coord.acquire("user_b", &eviction2).await.unwrap();
+        let _p4 = coord.acquire("testdb", "user_b", &eviction2).await.unwrap();
         assert_eq!(coord.stats().evictions_total, 2);
         assert_eq!(coord.total_connections(), 2);
+    }
+
+    // ===== Error type tests =====
+
+    #[tokio::test]
+    async fn error_no_reserve_configured() {
+        let coord = PoolCoordinator::new(test_config(1, 0));
+        let _p1 = coord.try_acquire().unwrap();
+
+        let eviction = NoOpEviction;
+        let err = coord.acquire("mydb", "app", &eviction).await.unwrap_err();
+        match err {
+            AcquireError::NoConnection(info) => {
+                assert_eq!(info.phase, AcquirePhase::NoReserve);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn error_reserve_exhausted() {
+        let coord = PoolCoordinator::new(test_config(1, 1));
+        let _p1 = coord.try_acquire().unwrap();
+
+        let eviction = NoOpEviction;
+        let _p2 = coord.acquire("mydb", "user_a", &eviction).await.unwrap();
+        assert!(
+            _p2.is_reserve,
+            "first reserve should succeed"
+        );
+
+        let err = coord.acquire("mydb", "user_b", &eviction).await.unwrap_err();
+        match err {
+            AcquireError::NoConnection(info) => {
+                assert_eq!(info.phase, AcquirePhase::ReserveExhausted);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn error_wait_timeout() {
+        // reserve_pool_size > 0 but all reserve permits occupied,
+        // so Phase D can't grant → ReserveExhausted
+        let coord = PoolCoordinator::new(test_config(1, 1));
+        let _p1 = coord.try_acquire().unwrap();
+
+        let eviction = NoOpEviction;
+        let _reserve = coord.acquire("mydb", "holder", &eviction).await.unwrap();
+
+        let err = coord.acquire("mydb", "waiter", &eviction).await.unwrap_err();
+        match err {
+            AcquireError::NoConnection(info) => {
+                assert_eq!(info.phase, AcquirePhase::ReserveExhausted);
+                assert_eq!(info.reserve_in_use, 1);
+                assert_eq!(info.reserve_size, 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn error_contains_database_and_user() {
+        let coord = PoolCoordinator::new(test_config(1, 0));
+        let _p1 = coord.try_acquire().unwrap();
+
+        let eviction = NoOpEviction;
+        let err = coord.acquire("production_db", "analytics", &eviction).await.unwrap_err();
+        match err {
+            AcquireError::NoConnection(info) => {
+                assert_eq!(info.database, "production_db");
+                assert_eq!(info.user, "analytics");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn error_contains_connection_counts() {
+        let coord = PoolCoordinator::new(test_config(3, 2));
+        let _p1 = coord.try_acquire().unwrap();
+        let _p2 = coord.try_acquire().unwrap();
+        let _p3 = coord.try_acquire().unwrap();
+
+        let eviction = NoOpEviction;
+        let _r1 = coord.acquire("db", "u1", &eviction).await.unwrap(); // reserve 1
+        let _r2 = coord.acquire("db", "u2", &eviction).await.unwrap(); // reserve 2
+
+        let err = coord.acquire("db", "u3", &eviction).await.unwrap_err();
+        match err {
+            AcquireError::NoConnection(info) => {
+                assert_eq!(info.max_db_connections, 3);
+                assert_eq!(info.active_connections, 5); // 3 main + 2 reserve
+                assert_eq!(info.reserve_size, 2);
+                assert_eq!(info.reserve_in_use, 2);
+            }
+        }
+    }
+
+    #[test]
+    fn error_display_no_reserve() {
+        let info = NoConnectionInfo {
+            database: "mydb".to_string(),
+            user: "app".to_string(),
+            max_db_connections: 100,
+            active_connections: 100,
+            reserve_size: 0,
+            reserve_in_use: 0,
+            phase: AcquirePhase::NoReserve,
+        };
+        let msg = format!("{info}");
+        assert!(msg.contains("mydb"), "should contain database name");
+        assert!(msg.contains("max=100"), "should contain max");
+        assert!(msg.contains("user='app'"), "should contain user");
+        assert!(!msg.contains("reserve"), "no reserve info when NoReserve");
+    }
+
+    #[test]
+    fn error_display_reserve_exhausted() {
+        let info = NoConnectionInfo {
+            database: "mydb".to_string(),
+            user: "migration".to_string(),
+            max_db_connections: 50,
+            active_connections: 55,
+            reserve_size: 5,
+            reserve_in_use: 5,
+            phase: AcquirePhase::ReserveExhausted,
+        };
+        let msg = format!("{info}");
+        assert!(msg.contains("mydb"));
+        assert!(msg.contains("max=50"));
+        assert!(msg.contains("reserve=5/5"));
+        assert!(msg.contains("user='migration'"));
+    }
+
+    #[test]
+    fn pool_error_from_acquire_error() {
+        use crate::pool::errors::PoolError;
+
+        let acquire_err = AcquireError::NoConnection(NoConnectionInfo {
+            database: "db".to_string(),
+            user: "u".to_string(),
+            max_db_connections: 10,
+            active_connections: 10,
+            reserve_size: 0,
+            reserve_in_use: 0,
+            phase: AcquirePhase::NoReserve,
+        });
+
+        let pool_err: PoolError = acquire_err.into();
+        assert!(matches!(pool_err, PoolError::DbLimitExhausted(_)));
+
+        let msg = format!("{pool_err}");
+        assert!(msg.contains("db"));
+        assert!(msg.contains("max=10"));
     }
 }
