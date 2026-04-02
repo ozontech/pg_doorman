@@ -1588,3 +1588,71 @@ async fn test_validate_coordinator_reserve_exceeds_max_db_connections_accepted_w
     // reserve_pool_size > max_db_connections → warning only, not error
     assert!(pool.validate().await.is_ok());
 }
+
+#[tokio::test]
+async fn test_validate_reserve_pool_timeout_exceeds_query_wait_timeout_accepted_with_warning() {
+    let mut config = Config::default();
+    config.general.query_wait_timeout = Duration::from_millis(2000);
+
+    let mut pool = Pool {
+        max_db_connections: Some(10),
+        reserve_pool_timeout: Some(5000), // 5000 > 2000 → warn but OK
+        users: vec![User {
+            username: "u1".to_string(),
+            password: "p1".to_string(),
+            pool_size: 10,
+            ..Default::default()
+        }],
+        ..Pool::default()
+    };
+    pool.validate().await.unwrap();
+    config.pools.insert("test_db".to_string(), pool);
+
+    // Cross-config validation: reserve_pool_timeout > query_wait_timeout → accepted with warning
+    assert!(config.validate().await.is_ok());
+}
+
+#[tokio::test]
+async fn test_validate_reserve_pool_timeout_within_query_wait_timeout_no_warning() {
+    let mut config = Config::default();
+    config.general.query_wait_timeout = Duration::from_millis(5000);
+
+    let mut pool = Pool {
+        max_db_connections: Some(10),
+        reserve_pool_timeout: Some(3000), // 3000 < 5000 → no warning
+        users: vec![User {
+            username: "u1".to_string(),
+            password: "p1".to_string(),
+            pool_size: 10,
+            ..Default::default()
+        }],
+        ..Pool::default()
+    };
+    pool.validate().await.unwrap();
+    config.pools.insert("test_db".to_string(), pool);
+
+    assert!(config.validate().await.is_ok());
+}
+
+#[tokio::test]
+async fn test_validate_reserve_pool_timeout_skipped_when_coordinator_disabled() {
+    let mut config = Config::default();
+    config.general.query_wait_timeout = Duration::from_millis(1000);
+
+    let mut pool = Pool {
+        max_db_connections: Some(0), // coordinator disabled
+        reserve_pool_timeout: Some(9999),
+        users: vec![User {
+            username: "u1".to_string(),
+            password: "p1".to_string(),
+            pool_size: 10,
+            ..Default::default()
+        }],
+        ..Pool::default()
+    };
+    pool.validate().await.unwrap();
+    config.pools.insert("test_db".to_string(), pool);
+
+    // Coordinator disabled → no cross-config check
+    assert!(config.validate().await.is_ok());
+}

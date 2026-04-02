@@ -415,6 +415,25 @@ impl Config {
             pool.validate().await?;
         }
 
+        // Cross-config validation: coordinator timeouts vs query_wait_timeout
+        let qwt = self.general.query_wait_timeout.as_millis();
+        for (pool_name, pool_config) in &self.pools {
+            if pool_config.max_db_connections.unwrap_or(0) == 0 {
+                continue;
+            }
+            let rpt = pool_config.reserve_pool_timeout.unwrap_or(3000);
+            if rpt > qwt {
+                log::warn!(
+                    "[pool: {}] reserve_pool_timeout ({}ms) > query_wait_timeout ({}ms); \
+                     the outer timeout will fire first, producing a generic Timeout error \
+                     instead of the informative DbLimitExhausted error from the coordinator",
+                    pool_name,
+                    rpt,
+                    qwt,
+                );
+            }
+        }
+
         Ok(())
     }
 }
