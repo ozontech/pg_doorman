@@ -650,9 +650,13 @@ Feature: Pool Coordinator — database-level connection limit
 
   @coordinator-eviction-too-young
   Scenario: Eviction skipped for connections younger than min_connection_lifetime — error without reserve
-    # max_db_connections = 2, min_connection_lifetime = 30000ms (30s), reserve = 0.
-    # user1 fills both slots. Without waiting for 30s, user2 arrives —
-    # eviction skipped (connections too young), no reserve → error.
+    # max_db_connections = 3, min_connection_lifetime = 30s, reserve = 0.
+    # user2 warms up first (caches server params, pins 1 coordinator slot).
+    # user1 opens 2 CONCURRENT transactions to force 2 separate backend connections,
+    # then commits both so the connections go idle (but keep coordinator permits).
+    # user2 tries a second connection — coordinator is full (3/3).
+    # Eviction scans user1's 2 idle connections but they are < 30s old → skipped.
+    # No reserve → error.
     Given pg_doorman started with config:
       """
       [general]
@@ -666,7 +670,7 @@ Feature: Pool Coordinator — database-level connection limit
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
-      max_db_connections = 2
+      max_db_connections = 3
       min_connection_lifetime = 30000
       reserve_pool_size = 0
       reserve_pool_timeout = 500
@@ -683,16 +687,29 @@ Feature: Pool Coordinator — database-level connection limit
       pool_size = 2
       min_pool_size = 0
       """
-    # user1 fills 2 slots, connections are < 30s old
+    # user2 warmup: cache server params and pin 1 coordinator slot with active transaction
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "u2_s1"
+    And we send SimpleQuery "SELECT 1" to session "u2_s1"
+    # user1 opens 2 concurrent transactions — forces 2 separate backend connections
+    # (second session can't reuse first session's connection because it's active)
     When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "u1_s1"
     And we send SimpleQuery "SELECT 1" to session "u1_s1"
     When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "u1_s2"
     And we send SimpleQuery "SELECT 1" to session "u1_s2"
-    # user2 arrives immediately — connections too young, eviction skipped, no reserve
-    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
-    And we send SimpleQuery "SELECT 1" to session "u2_s1" without waiting
-    Then we read SimpleQuery response from session "u2_s1" within 5000ms
-    Then session "u2_s1" should receive error containing "all server connections"
+    # Commit both → connections return to idle pool (coordinator permits stay in ObjectInner)
+    And we send SimpleQuery "COMMIT" to session "u1_s1"
+    And we send SimpleQuery "COMMIT" to session "u1_s2"
+    # Coordinator: 3/3 (user2 active + user1 x2 idle). All connections < 30s old.
+    # user2 second session: server params cached, pool has room (pool_size=2),
+    # but needs new backend connection → coordinator full →
+    # eviction: user1 has 2 idle but age < 30s → skipped → no reserve → error
+    When we create session "u2_s2" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_s2" without waiting
+    Then we read SimpleQuery response from session "u2_s2" within 5000ms
+    Then session "u2_s2" should receive error containing "all server connections"
 
   @coordinator-fair-eviction
   Scenario: Eviction targets user with largest surplus, not the one with fewest connections
@@ -758,9 +775,11 @@ Feature: Pool Coordinator — database-level connection limit
     Then session "u3_s1" should receive DataRow with "example_user_2"
 
   @coordinator-replenish-respects-limit
-  Scenario: Replenish (min_pool_size prewarm) does not exceed coordinator limit
-    # user1 has min_pool_size=3, but max_db_connections=2.
-    # Replenish should stop at 2 (coordinator limit), not try to create 3.
+  Scenario: Replenish (min_pool_size prewarm) respects coordinator limit
+    # min_pool_size=2, max_db_connections=2, pool_size=5.
+    # Replenish creates exactly min_pool_size connections; coordinator allows them
+    # (sum(min_pool_size)=2 ≤ max_db_connections=2).
+    # Verify total connections ≤ max_db_connections after prewarm.
     Given pg_doorman started with config:
       """
       [general]
@@ -781,11 +800,11 @@ Feature: Pool Coordinator — database-level connection limit
       username = "example_user_1"
       password = ""
       pool_size = 5
-      min_pool_size = 3
+      min_pool_size = 2
       """
     # Wait for prewarm (retain cycle creates connections up to min_pool_size)
     When we sleep for 1500 milliseconds
-    # Coordinator should have at most 2 active connections (not 3)
+    # Coordinator should have at most 2 active connections
     When we create admin session "admin" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
     Then admin session "admin" column "current" should be between 0 and 2
