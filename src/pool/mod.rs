@@ -744,12 +744,26 @@ impl ConnectionPool {
     /// for eviction by the coordinator when another user needs a connection.
     /// Effective minimum = max(user.min_pool_size, pool.min_guaranteed_pool_size).
     pub fn spare_above_min(&self) -> usize {
-        let user_min = self.settings.user.min_pool_size.unwrap_or(0) as usize;
-        let pool_min = self.settings.min_guaranteed_pool_size as usize;
-        let effective_min = user_min.max(pool_min);
         let current = self.pool_state().size;
-        current.saturating_sub(effective_min)
+        compute_spare(
+            current,
+            self.settings.user.min_pool_size,
+            self.settings.min_guaranteed_pool_size,
+        )
     }
+}
+
+/// Compute how many connections are above the effective guaranteed minimum.
+/// Pure function extracted from `ConnectionPool::spare_above_min()` for testability.
+fn compute_spare(
+    current_pool_size: usize,
+    user_min_pool_size: Option<u32>,
+    pool_min_guaranteed: u32,
+) -> usize {
+    let user_min = user_min_pool_size.unwrap_or(0) as usize;
+    let pool_min = pool_min_guaranteed as usize;
+    let effective_min = user_min.max(pool_min);
+    current_pool_size.saturating_sub(effective_min)
 }
 
 /// Get the connection pool
@@ -780,3 +794,73 @@ pub fn get_coordinator(db: &str) -> Option<Arc<pool_coordinator::PoolCoordinator
 }
 
 // create_dynamic_pool is in dynamic.rs, re-exported above.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- compute_spare tests ---
+
+    #[test]
+    fn spare_no_minimums_set() {
+        // No min_pool_size, no min_guaranteed → all connections are spare
+        assert_eq!(compute_spare(5, None, 0), 5);
+    }
+
+    #[test]
+    fn spare_with_user_min_pool_size_only() {
+        // user.min_pool_size=3, pool.min_guaranteed=0 → effective_min=3
+        assert_eq!(compute_spare(5, Some(3), 0), 2);
+    }
+
+    #[test]
+    fn spare_with_pool_guaranteed_only() {
+        // user.min_pool_size=None, pool.min_guaranteed=4 → effective_min=4
+        assert_eq!(compute_spare(5, None, 4), 1);
+    }
+
+    #[test]
+    fn spare_pool_guaranteed_wins_over_user_min() {
+        // user.min_pool_size=2, pool.min_guaranteed=4 → effective_min=max(2,4)=4
+        assert_eq!(compute_spare(5, Some(2), 4), 1);
+    }
+
+    #[test]
+    fn spare_user_min_wins_over_pool_guaranteed() {
+        // user.min_pool_size=5, pool.min_guaranteed=2 → effective_min=max(5,2)=5
+        assert_eq!(compute_spare(5, Some(5), 2), 0);
+    }
+
+    #[test]
+    fn spare_at_exact_minimum() {
+        // current == effective_min → 0 spare
+        assert_eq!(compute_spare(3, Some(3), 0), 0);
+        assert_eq!(compute_spare(4, None, 4), 0);
+    }
+
+    #[test]
+    fn spare_below_minimum_saturates_to_zero() {
+        // current < effective_min → saturating_sub returns 0
+        assert_eq!(compute_spare(2, Some(5), 0), 0);
+        assert_eq!(compute_spare(1, None, 3), 0);
+        assert_eq!(compute_spare(0, Some(1), 2), 0);
+    }
+
+    #[test]
+    fn spare_zero_current_connections() {
+        assert_eq!(compute_spare(0, None, 0), 0);
+        assert_eq!(compute_spare(0, Some(3), 5), 0);
+    }
+
+    #[test]
+    fn spare_both_minimums_equal() {
+        // user.min_pool_size=3, pool.min_guaranteed=3 → effective_min=3
+        assert_eq!(compute_spare(5, Some(3), 3), 2);
+    }
+
+    #[test]
+    fn spare_large_values() {
+        assert_eq!(compute_spare(1000, Some(100), 200), 800);
+        assert_eq!(compute_spare(1000, Some(999), 1), 1);
+    }
+}

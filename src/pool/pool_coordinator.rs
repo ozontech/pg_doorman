@@ -151,7 +151,6 @@ impl std::fmt::Debug for PoolCoordinator {
 const ARBITER_RESPONSE_TIMEOUT: Duration = Duration::from_millis(100);
 
 struct ReserveRequest {
-    #[allow(dead_code)] // kept for logging/debugging
     user: String,
     score: (u8, usize), // (starving, queued_clients)
     response: tokio::sync::oneshot::Sender<ReserveGrant>,
@@ -571,7 +570,8 @@ async fn reserve_arbiter(
             }
         }
 
-        // Remove cancelled requests only when there's something to clean up
+        // Remove cancelled requests and cap heap size to prevent
+        // unbounded growth during sustained overload.
         if !pending.is_empty() {
             let before = pending.len();
             pending.retain(|req| !req.response.is_closed());
@@ -583,6 +583,25 @@ async fn reserve_arbiter(
                     coordinator.database,
                     pruned,
                     pending.len(),
+                );
+            }
+
+            const HEAP_CAP_MULTIPLIER: usize = 4;
+            let cap = coordinator.config.reserve_pool_size.max(1) * HEAP_CAP_MULTIPLIER;
+            if pending.len() > cap {
+                let dropped = pending.len() - cap;
+                let mut kept = BinaryHeap::with_capacity(cap);
+                for _ in 0..cap {
+                    if let Some(req) = pending.pop() {
+                        kept.push(req);
+                    }
+                }
+                // Remaining low-priority requests are dropped (oneshot closed → caller gets timeout)
+                pending = kept;
+                warn!(
+                    "[pool: {}] arbiter: heap overflow — dropped {} lowest-priority request(s), \
+                     cap={}",
+                    coordinator.database, dropped, cap,
                 );
             }
         }
@@ -1627,5 +1646,55 @@ mod tests {
             }
         }
         // If we reach here without panic/hang, arbiter exited cleanly
+    }
+
+    /// Arbiter caps its pending heap: when more requests accumulate
+    /// than reserve_pool_size * 4, lowest-priority requests are dropped.
+    /// Their oneshot channels close, and callers get a timeout.
+    #[tokio::test]
+    async fn arbiter_heap_capped_under_overload() {
+        // reserve_pool_size=1 → cap = max(1,1)*4 = 4
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1));
+        let _p1 = coord.try_acquire().unwrap();
+
+        // Don't let arbiter grant any reserves (occupy the only reserve permit)
+        let rsem = coord.reserve_semaphore.try_acquire().unwrap();
+        rsem.forget();
+
+        // Flood arbiter with 10 requests (cap is 4)
+        let mut receivers = Vec::new();
+        for i in 0..10 {
+            let (tx, rx) = tokio::sync::oneshot::channel::<ReserveGrant>();
+            let _ = coord
+                .reserve_tx
+                .send(ReserveRequest {
+                    user: format!("flood_{i}"),
+                    score: (0, i), // ascending priority
+                    response: tx,
+                })
+                .await;
+            receivers.push(rx);
+        }
+
+        // Let arbiter process and apply cap
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Count how many receivers are already closed (sender dropped by cap).
+        // Use a short timeout: if the sender is still alive in the heap,
+        // the receiver will block — treat that as "not dropped".
+        let mut dropped = 0;
+        for rx in receivers {
+            match tokio::time::timeout(Duration::from_millis(50), rx).await {
+                Ok(Err(_)) => dropped += 1, // sender was dropped by cap
+                Ok(Ok(_grant)) => {}        // unexpectedly granted
+                Err(_) => {}                // still pending in heap (not dropped)
+            }
+        }
+
+        // At least some low-priority requests should have been dropped
+        assert!(
+            dropped >= 4,
+            "expected at least 4 dropped requests, got {dropped}"
+        );
     }
 }

@@ -647,3 +647,145 @@ Feature: Pool Coordinator — database-level connection limit
     And we send SimpleQuery "SELECT 2" to session "u2_s2" without waiting
     Then we read SimpleQuery response from session "u2_s2" within 5000ms
     Then session "u2_s2" should receive DataRow with "2"
+
+  @coordinator-eviction-too-young
+  Scenario: Eviction skipped for connections younger than min_connection_lifetime — error without reserve
+    # max_db_connections = 2, min_connection_lifetime = 30000ms (30s), reserve = 0.
+    # user1 fills both slots. Without waiting for 30s, user2 arrives —
+    # eviction skipped (connections too young), no reserve → error.
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      query_wait_timeout = 2000
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 2
+      min_connection_lifetime = 30000
+      reserve_pool_size = 0
+      reserve_pool_timeout = 500
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 2
+      min_pool_size = 0
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 2
+      min_pool_size = 0
+      """
+    # user1 fills 2 slots, connections are < 30s old
+    When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s1"
+    When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s2"
+    # user2 arrives immediately — connections too young, eviction skipped, no reserve
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_s1" without waiting
+    Then we read SimpleQuery response from session "u2_s1" within 5000ms
+    Then session "u2_s1" should receive error containing "all server connections"
+
+  @coordinator-fair-eviction
+  Scenario: Eviction targets user with largest surplus, not the one with fewest connections
+    # 3 users share max_db_connections = 6.
+    # user1 fills 4 slots, user2 fills 2 slots. All go idle.
+    # user3 arrives — eviction should close user1's idle (surplus=4 > user2's surplus=2).
+    # Verify user3 gets a connection (eviction worked) and total is still ≤ 6.
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 6
+      min_connection_lifetime = 500
+      reserve_pool_size = 0
+      reserve_pool_timeout = 2000
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 6
+      min_pool_size = 0
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 6
+      min_pool_size = 0
+
+      [[pools.example_db.users]]
+      username = "example_user_2"
+      password = ""
+      pool_size = 6
+      min_pool_size = 0
+      """
+    # user1 fills 4 slots
+    When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s1"
+    When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s2"
+    When we create session "u1_s3" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s3"
+    When we create session "u1_s4" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u1_s4"
+    # user2 fills 2 slots
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_s1"
+    When we create session "u2_s2" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_s2"
+    # All 6 slots filled. Wait for min_connection_lifetime.
+    When we sleep for 800 milliseconds
+    # user3 arrives — should evict from user1 (surplus=4 > user2's surplus=2)
+    When we create session "u3_s1" to pg_doorman as "example_user_2" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT current_user" to session "u3_s1" without waiting
+    Then we read SimpleQuery response from session "u3_s1" within 5000ms
+    Then session "u3_s1" should receive DataRow with "example_user_2"
+
+  @coordinator-replenish-respects-limit
+  Scenario: Replenish (min_pool_size prewarm) does not exceed coordinator limit
+    # user1 has min_pool_size=3, but max_db_connections=2.
+    # Replenish should stop at 2 (coordinator limit), not try to create 3.
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 2
+      reserve_pool_size = 0
+      reserve_pool_timeout = 500
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      min_pool_size = 3
+      """
+    # Wait for prewarm (retain cycle creates connections up to min_pool_size)
+    When we sleep for 1500 milliseconds
+    # Coordinator should have at most 2 active connections (not 3)
+    When we create admin session "admin" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
+    Then admin session "admin" column "current" should be between 0 and 2

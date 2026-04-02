@@ -97,6 +97,17 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
             .unwrap_or(5000);
 
         for (id, pool, spare) in &candidates {
+            // Re-check spare to narrow TOCTOU window: another thread may have
+            // acquired a connection since the snapshot, reducing spare to 0.
+            let current_spare = pool.spare_above_min();
+            if current_spare == 0 {
+                debug!(
+                    "[pool: {}][user: {}] eviction: skipped — spare dropped to 0 since snapshot \
+                     (was {}, requesting_user='{}')",
+                    self.database, id.user, spare, requesting_user,
+                );
+                continue;
+            }
             if pool.database.evict_one_idle(min_lifetime_ms) {
                 info!(
                     "[pool: {}][user: {}] coordinator evicted idle connection \
