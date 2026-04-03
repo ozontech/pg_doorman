@@ -438,10 +438,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         .await
                         {
                             Ok(session_info) => {
-                                let duration = chrono::offset::Utc::now().naive_utc() - start;
-                                let session = format_duration(&duration);
-
                                 if log_client_disconnections {
+                                    let session = format_duration(
+                                        &(chrono::offset::Utc::now().naive_utc() - start),
+                                    );
                                     match &session_info {
                                         Some(info) => info!(
                                             "[{}@{}] client disconnected from {addr}, session={session}",
@@ -449,7 +449,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                         ),
                                         None => info!("Client {addr} disconnected, session={session}"),
                                     }
-                                } else {
+                                } else if log::log_enabled!(log::Level::Debug) {
+                                    let session = format_duration(
+                                        &(chrono::offset::Utc::now().naive_utc() - start),
+                                    );
                                     match &session_info {
                                         Some(info) => debug!(
                                             "[{}@{}] client disconnected from {addr}, session={session}",
