@@ -303,22 +303,28 @@ impl Config {
                 pool_name, pool.cleanup_server_connections
             );
             info!(
-                "[pool: {}] Connect timeout: {}ms",
+                "[pool: {}] Connect timeout: {}",
                 pool_name,
-                pool.connect_timeout
-                    .unwrap_or(self.general.connect_timeout.as_millis())
+                format_duration_ms(
+                    pool.connect_timeout
+                        .unwrap_or(self.general.connect_timeout.as_millis())
+                )
             );
             info!(
-                "[pool: {}] Idle timeout: {}ms",
+                "[pool: {}] Idle timeout: {}",
                 pool_name,
-                pool.idle_timeout
-                    .unwrap_or(self.general.idle_timeout.as_millis())
+                format_duration_ms(
+                    pool.idle_timeout
+                        .unwrap_or(self.general.idle_timeout.as_millis())
+                )
             );
             info!(
-                "[pool: {}] Server lifetime: {}ms",
+                "[pool: {}] Server lifetime: {}",
                 pool_name,
-                pool.server_lifetime
-                    .unwrap_or(self.general.server_lifetime.as_millis())
+                format_duration_ms(
+                    pool.server_lifetime
+                        .unwrap_or(self.general.server_lifetime.as_millis())
+                )
             );
             for (user_index, user) in pool.users.iter().enumerate() {
                 info!(
