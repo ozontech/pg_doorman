@@ -64,7 +64,8 @@ impl Log for TextLogger {
     fn log(&self, record: &Record) {
         let now = chrono::Utc::now();
         let level = record.level();
-        let target = record.target();
+        let file = record.file().unwrap_or("unknown");
+        let line = record.line().unwrap_or(0);
 
         if self.use_color {
             let level_color = match level {
@@ -77,21 +78,23 @@ impl Log for TextLogger {
             let reset = "\x1b[0m";
             let _ = writeln!(
                 std::io::stderr(),
-                "{} {}{:>5}{} {}: {}",
+                "{} {}{:>5}{} {}:{}: {}",
                 now.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
                 level_color,
                 level,
                 reset,
-                target,
+                file,
+                line,
                 record.args()
             );
         } else {
             let _ = writeln!(
                 std::io::stderr(),
-                "{} {:>5} {}: {}",
+                "{} {:>5} {}:{}: {}",
                 now.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
                 level,
-                target,
+                file,
+                line,
                 record.args()
             );
         }
@@ -126,7 +129,8 @@ impl Log for JsonLogger {
             log::Level::Debug => "DEBUG",
             log::Level::Trace => "TRACE",
         };
-        let target = record.target();
+        let file = record.file().unwrap_or("unknown");
+        let line = record.line().unwrap_or(0);
         let msg = record.args();
 
         // Escape JSON string manually to avoid serde overhead.
@@ -141,10 +145,11 @@ impl Log for JsonLogger {
 
         let _ = writeln!(
             std::io::stderr(),
-            r#"{{"timestamp":"{}","level":"{}","target":"{}","message":"{}"}}"#,
+            r#"{{"timestamp":"{}","level":"{}","file":"{}","line":{},"message":"{}"}}"#,
             timestamp,
             level,
-            target,
+            file,
+            line,
             escaped,
         );
     }
