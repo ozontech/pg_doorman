@@ -5,6 +5,7 @@ use log::{info, warn};
 use rand::seq::SliceRandom;
 
 use crate::config::get_config;
+use crate::utils::format_duration_ms;
 
 use super::{get_all_pools, ConnectionPool};
 
@@ -51,15 +52,25 @@ impl ConnectionPool {
         count.fetch_add(closed, Ordering::Relaxed);
 
         if closed > 0 {
+            let idle_timeout = self.settings.idle_timeout_ms;
+            let lifetime = self.settings.life_time_ms;
+            let limits = match (idle_timeout > 0, lifetime > 0) {
+                (true, true) => format!(
+                    "idle_timeout=~{}, lifetime=~{}",
+                    format_duration_ms(idle_timeout),
+                    format_duration_ms(lifetime),
+                ),
+                (true, false) => format!("idle_timeout=~{}", format_duration_ms(idle_timeout)),
+                (false, true) => format!("lifetime=~{}", format_duration_ms(lifetime)),
+                (false, false) => "no limits configured".to_string(),
+            };
             info!(
-                "[pool: {}][user: {}] closed {} idle connection{} (base_idle_timeout: {}ms±20%, base_lifetime: {}ms±20%, oldest_first: {})",
-                self.address.pool_name,
+                "[{}@{}] closed {} idle server{}: expired ({})",
                 self.address.username,
+                self.address.pool_name,
                 closed,
                 if closed == 1 { "" } else { "s" },
-                self.settings.idle_timeout_ms,
-                self.settings.life_time_ms,
-                max > 0,
+                limits,
             );
         }
 
@@ -80,9 +91,9 @@ impl ConnectionPool {
 
         if closed > 0 {
             info!(
-                "[pool: {}][user: {}] drained {} idle connection{}",
-                self.address.pool_name,
+                "[{}@{}] drained {} idle server{}",
                 self.address.username,
+                self.address.pool_name,
                 closed,
                 if closed == 1 { "" } else { "s" }
             );
@@ -116,19 +127,17 @@ pub async fn retain_connections() {
             let created = pool.database.replenish(min).await;
             if created > 0 {
                 info!(
-                    "[pool: {}][user: {}] prewarmed {} connection{} (min_pool_size: {})",
-                    pool.address.pool_name,
+                    "[{}@{}] prewarmed {} server{} (min_pool_size={})",
                     pool.address.username,
+                    pool.address.pool_name,
                     created,
                     if created == 1 { "" } else { "s" },
                     min,
                 );
             } else {
                 warn!(
-                    "[pool: {}][user: {}] prewarm failed — could not create connections (min_pool_size: {})",
-                    pool.address.pool_name,
-                    pool.address.username,
-                    min,
+                    "[{}@{}] prewarm failed (min_pool_size={})",
+                    pool.address.username, pool.address.pool_name, min,
                 );
             }
         }
@@ -156,12 +165,12 @@ pub async fn retain_connections() {
                 let closed = pool.database.close_idle_reserve_connections(min_lifetime);
                 if closed > 0 {
                     info!(
-                        "[pool: {}][user: {}] released {} reserve connection{} (idle > {}ms)",
-                        pool.address.pool_name,
+                        "[{}@{}] released {} reserve server{} (idle > {})",
                         pool.address.username,
+                        pool.address.pool_name,
                         closed,
                         if closed == 1 { "" } else { "s" },
-                        min_lifetime,
+                        format_duration_ms(min_lifetime),
                     );
                 }
             }
@@ -185,22 +194,41 @@ pub async fn retain_connections() {
                     let deficit = min - current_size;
                     let created = pool.database.replenish(deficit).await;
                     if created > 0 {
-                        info!(
-                            "[pool: {}][user: {}] replenished {} connection{} (min_pool_size: {})",
-                            pool.address.pool_name,
-                            pool.address.username,
-                            created,
-                            if created == 1 { "" } else { "s" },
-                            min,
-                        );
+                        let prev_failures = pool.replenish_failures.swap(0, Ordering::Relaxed);
+                        if prev_failures > 0 {
+                            info!(
+                                "[{}@{}] replenish recovered after {} failure{}: created {} server{} (min_pool_size={})",
+                                pool.address.username, pool.address.pool_name,
+                                prev_failures,
+                                if prev_failures == 1 { "" } else { "s" },
+                                created,
+                                if created == 1 { "" } else { "s" },
+                                min,
+                            );
+                        } else {
+                            info!(
+                                "[{}@{}] replenished {} server{} (min_pool_size={})",
+                                pool.address.username,
+                                pool.address.pool_name,
+                                created,
+                                if created == 1 { "" } else { "s" },
+                                min,
+                            );
+                        }
                     } else {
-                        warn!(
-                            "[pool: {}][user: {}] failed to replenish connections (deficit: {}, min_pool_size: {})",
-                            pool.address.pool_name,
-                            pool.address.username,
-                            deficit,
-                            min,
-                        );
+                        let failures = pool.replenish_failures.fetch_add(1, Ordering::Relaxed) + 1;
+                        if failures == 1 {
+                            warn!(
+                                "[{}@{}] replenish failed (deficit={}, min_pool_size={})",
+                                pool.address.username, pool.address.pool_name, deficit, min,
+                            );
+                        } else if failures % 20 == 0 {
+                            warn!(
+                                "[{}@{}] replenish still failing: {} consecutive failures (deficit={}, min_pool_size={})",
+                                pool.address.username, pool.address.pool_name,
+                                failures, deficit, min,
+                            );
+                        }
                     }
                 }
             }
@@ -217,7 +245,7 @@ pub fn drain_all_pools() -> usize {
     }
     if total_drained > 0 {
         info!(
-            "Graceful shutdown: drained {} idle connection{} from all pools",
+            "Graceful shutdown: drained {} idle server{} from all pools",
             total_drained,
             if total_drained == 1 { "" } else { "s" }
         );

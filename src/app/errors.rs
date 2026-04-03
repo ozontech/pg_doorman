@@ -93,13 +93,15 @@ impl std::fmt::Display for ClientIdentifier {
 pub struct ServerIdentifier {
     pub username: String,
     pub database: String,
+    pub pool_name: String,
 }
 
 impl ServerIdentifier {
-    pub fn new(username: String, database: &str) -> ServerIdentifier {
+    pub fn new(username: String, database: &str, pool_name: &str) -> ServerIdentifier {
         ServerIdentifier {
             username,
             database: database.into(),
+            pool_name: pool_name.into(),
         }
     }
 }

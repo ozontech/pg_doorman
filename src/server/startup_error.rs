@@ -41,8 +41,12 @@ pub(crate) async fn handle_startup_error(
             match PgErrorMsg::parse(&error) {
                 Ok(f) => {
                     error!(
-                        "Get server error - {} {}: {}",
-                        f.severity, f.code, f.message
+                        "[{}@{}] startup error: severity={}, code={}, message={}",
+                        server_identifier.username,
+                        server_identifier.pool_name,
+                        f.severity,
+                        f.code,
+                        f.message
                     );
                     Err(Error::ServerStartupError(
                         f.message,
@@ -50,7 +54,10 @@ pub(crate) async fn handle_startup_error(
                     ))
                 }
                 Err(err) => {
-                    error!("Get unparsed server error: {err:?}");
+                    error!(
+                        "[{}@{}] startup error: could not parse: {err}",
+                        server_identifier.username, server_identifier.pool_name
+                    );
                     Err(Error::ServerStartupError(
                         format!("while create new connection to postgresql received error, but can't read it: {err:?}"),
                         server_identifier.clone(),

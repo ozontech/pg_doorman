@@ -392,12 +392,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let (mut socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),
                         Err(err) => {
-                            error!("accept error: {err:?}");
+                            error!("accept error: {err}");
                             continue;
                         }
                     };
                     if admin_only {
-                        error!("Accepting new client {addr} after shutdown");
+                        warn!("Rejecting client {addr}: pooler shutting down");
                         let _ = socket.shutdown().await;
                         continue;
                     }
@@ -415,12 +415,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
                         // max clients.
                         if current_clients as u64 > max_connections {
-                            warn!("Client {addr:?}: too many clients already");
+                            warn!("Client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
                            match crate::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map).await {
                                 Ok(()) => (),
                                 Err(err) => {
-                                    error!("Client {addr:?}: disconnected with error: {err}");
+                                    error!("Client {addr}: disconnected with error: {err}");
                                 }
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
@@ -437,27 +437,32 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         )
                         .await
                         {
-                            Ok(()) => {
+                            Ok(session_info) => {
                                 let duration = chrono::offset::Utc::now().naive_utc() - start;
+                                let session = format_duration(&duration);
 
                                 if log_client_disconnections {
-                                    info!(
-                                        "Client {:?} disconnected, session duration: {}",
-                                        addr,
-                                        format_duration(&duration)
-                                    );
+                                    match &session_info {
+                                        Some(info) => info!(
+                                            "[{}@{}] client disconnected from {addr}, session={session}",
+                                            info.username, info.pool_name,
+                                        ),
+                                        None => info!("Client {addr} disconnected, session={session}"),
+                                    }
                                 } else {
-                                    debug!(
-                                        "Client {:?} disconnected, session duration: {}",
-                                        addr,
-                                        format_duration(&duration)
-                                    );
+                                    match &session_info {
+                                        Some(info) => debug!(
+                                            "[{}@{}] client disconnected from {addr}, session={session}",
+                                            info.username, info.pool_name,
+                                        ),
+                                        None => debug!("Client {addr} disconnected, session={session}"),
+                                    }
                                 }
                             }
 
                             Err(err) => {
                                 let duration = chrono::offset::Utc::now().naive_utc() - start;
-                                warn!("Client {:?} disconnected with error {:?}, duration: {}", addr, err, format_duration(&duration));
+                                warn!("Client {addr} disconnected with error: {err}, session={}", format_duration(&duration));
                             }
                         };
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);

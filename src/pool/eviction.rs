@@ -102,24 +102,28 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
             let current_spare = pool.spare_above_min();
             if current_spare == 0 {
                 debug!(
-                    "[pool: {}][user: {}] eviction: skipped — spare dropped to 0 since snapshot \
+                    "[{}@{}] eviction: skipped — spare dropped to 0 since snapshot \
                      (was {}, requesting_user='{}')",
-                    self.database, id.user, spare, requesting_user,
+                    id.user, self.database, spare, requesting_user,
                 );
                 continue;
             }
             if pool.database.evict_one_idle(min_lifetime_ms) {
                 info!(
-                    "[pool: {}][user: {}] coordinator evicted idle connection \
-                     (spare={}, min_lifetime={}ms) to free slot for '{}'",
-                    self.database, id.user, spare, min_lifetime_ms, requesting_user,
+                    "[{}@{}] coordinator evicted idle connection \
+                     (spare={}, min_lifetime={}) to free slot for '{}'",
+                    id.user,
+                    self.database,
+                    spare,
+                    crate::utils::format_duration_ms(min_lifetime_ms),
+                    requesting_user,
                 );
                 return true;
             }
             debug!(
-                "[pool: {}][user: {}] eviction: candidate skipped — \
+                "[{}@{}] eviction: candidate skipped — \
                  no idle connections older than {}ms (spare={})",
-                self.database, id.user, min_lifetime_ms, spare,
+                id.user, self.database, min_lifetime_ms, spare,
             );
         }
 

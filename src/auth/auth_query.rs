@@ -297,7 +297,7 @@ impl AuthQueryExecutor {
 
         match rows.len() {
             0 => Ok(None),
-            1 => Self::extract_password(&rows[0], username),
+            1 => Self::extract_password(&rows[0], username, &self.pool_name),
             n => Err(Error::AuthQueryConfigError(format!(
                 "query returned {n} rows for user '{username}', expected 0 or 1"
             ))),
@@ -313,6 +313,7 @@ impl AuthQueryExecutor {
     fn extract_password(
         row: &tokio_postgres::Row,
         username: &str,
+        pool_name: &str,
     ) -> Result<Option<String>, Error> {
         let columns = row.columns();
         let password: Option<String> = if let Ok(p) = row.try_get::<_, Option<String>>("passwd") {
@@ -336,7 +337,7 @@ impl AuthQueryExecutor {
         match password {
             Some(p) if !p.is_empty() => Ok(Some(p)),
             _ => {
-                warn!("auth_query: user '{username}' has NULL or empty password");
+                warn!("[{username}@{pool_name}] auth_query: password is NULL or empty");
                 Ok(None)
             }
         }
@@ -412,6 +413,8 @@ impl CacheEntry {
 /// Generic over the fetcher: defaults to `AuthQueryExecutor` in production,
 /// tests substitute a mock.
 pub struct AuthQueryCache<F = AuthQueryExecutor> {
+    /// Pool name for log context.
+    pool_name: String,
     /// Cached credentials keyed by username.
     entries: DashMap<String, CacheEntry>,
     /// Per-username locks for request coalescing.
@@ -431,11 +434,13 @@ pub struct AuthQueryCache<F = AuthQueryExecutor> {
 
 impl<F: PasswordFetcher> AuthQueryCache<F> {
     pub fn new(
+        pool_name: String,
         executor: Arc<F>,
         config: &AuthQueryConfig,
         stats: Option<Arc<AuthQueryStats>>,
     ) -> Self {
         Self {
+            pool_name,
             entries: DashMap::new(),
             locks: DashMap::new(),
             executor,
@@ -462,7 +467,8 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     pub async fn get_or_fetch(&self, username: &str) -> Result<Option<CacheEntry>, Error> {
         if username.len() > MAX_USERNAME_LEN {
             warn!(
-                "auth_query cache: rejecting username of length {} (max {MAX_USERNAME_LEN})",
+                "[{username}@{}] auth_query cache: rejecting username (len={}, max={MAX_USERNAME_LEN})",
+                self.pool_name,
                 username.len()
             );
             return Ok(None);
@@ -527,7 +533,10 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
     /// Called on auth failure to trigger re-fetch on next attempt.
     pub fn invalidate(&self, username: &str) {
         if self.entries.remove(username).is_some() {
-            info!("auth_query cache: invalidated entry for '{username}'");
+            info!(
+                "[{username}@{}] auth_query cache: invalidated",
+                self.pool_name
+            );
         }
     }
 
@@ -554,8 +563,8 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 if last.elapsed() < self.min_interval.as_std() {
                     self.inc(|s| &s.cache_rate_limited);
                     warn!(
-                        "auth_query cache: refetch rate-limited for '{username}' ({:.1?} since last)",
-                        last.elapsed()
+                        "[{username}@{}] auth_query cache: refetch rate-limited ({:.1?} since last)",
+                        self.pool_name, last.elapsed()
                     );
                     return Ok(None); // Rate limited
                 }
@@ -703,7 +712,7 @@ mod tests {
         fetcher: Arc<MockFetcher>,
         config: &AuthQueryConfig,
     ) -> AuthQueryCache<MockFetcher> {
-        AuthQueryCache::new(fetcher, config, None)
+        AuthQueryCache::new("test_pool".to_string(), fetcher, config, None)
     }
 
     // -- test_cache_hit: second get_or_fetch returns cached, no extra fetch --
@@ -912,7 +921,12 @@ mod tests {
         let fetcher = Arc::new(MockFetcher::new());
         fetcher.add_user("alice", "md5abc123");
         let stats = Arc::new(AuthQueryStats::default());
-        let cache = AuthQueryCache::new(fetcher.clone(), &test_config(), Some(stats.clone()));
+        let cache = AuthQueryCache::new(
+            "test_pool".to_string(),
+            fetcher.clone(),
+            &test_config(),
+            Some(stats.clone()),
+        );
 
         // Cache miss → executor_queries + cache_misses
         cache.get_or_fetch("alice").await.unwrap();

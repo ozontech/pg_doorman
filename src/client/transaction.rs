@@ -561,8 +561,8 @@ where
             }
             if SHUTDOWN_IN_PROGRESS.load(Ordering::Relaxed) && !self.admin {
                 warn!(
-                    "Dropping client {:?} because connection pooler is shutting down",
-                    self.addr
+                    "[{}@{}] dropping client {}: shutting down",
+                    self.username, self.pool_name, self.addr
                 );
                 error_response_terminal(&mut self.write, "pooler is shut down now", "58006")
                     .await?;
@@ -634,9 +634,8 @@ where
                                 Ok(()) => break conn,
                                 Err(err) => {
                                     warn!(
-                                        "Server {} cleanup error: {:?}",
-                                        conn.address_to_string(),
-                                        err
+                                        "[{}@{}] server cleanup error: {err}",
+                                        self.username, self.pool_name,
                                     );
                                     continue;
                                 }
@@ -663,8 +662,8 @@ where
                             .await?;
 
                             error!(
-                                "Failed to get connection from pool: {{ pool_name: {:?}, username: {:?}, error: \"{:?}\" }}",
-                                self.pool_name, self.username, err
+                                "[{}@{}] failed to get server connection: {err}",
+                                self.username, self.pool_name,
                             );
                             return Err(Error::AllServersDown);
                         }
@@ -758,8 +757,10 @@ where
                                 Ok(NextClientMessage::Message(msg)) => msg,
                                 Ok(NextClientMessage::ServerDead) => {
                                     warn!(
-                                        "Server {} connection died while client {} idle in transaction",
-                                        server, self.addr
+                                        "[{}@{}] server died while idle in transaction pid={}",
+                                        self.username,
+                                        self.pool_name,
+                                        server.get_process_id()
                                     );
                                     server
                                         .mark_bad("server closed while client idle in transaction");
@@ -870,7 +871,10 @@ where
                         // Some unexpected message. We either did not implement the protocol correctly
                         // or this is not a Postgres client we're talking to.
                         _ => {
-                            error!("Unexpected code: {code}");
+                            error!(
+                                "[{}@{}] unexpected message code: '{code}'",
+                                self.username, self.pool_name
+                            );
                             TransactionAction::Continue
                         }
                     };
@@ -1019,9 +1023,9 @@ where
             self.stats.active_write();
             if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
                 warn!(
-                    "Write to client {} failed: {:?}, draining server [{}] data",
-                    self.addr,
-                    err_write,
+                    "[{}@{}] write to client failed pid={}: {err_write}",
+                    self.username,
+                    self.pool_name,
                     server.get_process_id()
                 );
                 server.wait_available().await;

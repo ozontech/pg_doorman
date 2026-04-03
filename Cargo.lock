@@ -1932,6 +1932,7 @@ dependencies = [
  "tokio-postgres",
  "toml",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
  "xxhash-rust",
  "zerocopy",

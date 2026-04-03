@@ -223,10 +223,11 @@ Once connected, you can view available commands:
 pgdoorman=> SHOW HELP;
 NOTICE:  Console usage
 DETAIL:
-	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|LOG_LEVEL|VERSION
 	SHOW LISTS
 	SHOW CONNECTIONS
 	SHOW STATS
+	SET log_level = '<filter>'
 	RELOAD
 	SHUTDOWN
 	UPGRADE
@@ -485,6 +486,26 @@ When executed:
 ```admonish warning title="Service Interruption"
 Using the `SHUTDOWN` command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.
 ```
+
+#### SET log_level
+
+Change the log level at runtime without restarting the pooler:
+
+```sql
+-- Global level
+pgdoorman=> SET log_level = 'debug';
+
+-- Per-module (RUST_LOG syntax)
+pgdoorman=> SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug';
+
+-- View current level
+pgdoorman=> SHOW LOG_LEVEL;
+
+-- Reset to startup default
+pgdoorman=> SET log_level = 'default';
+```
+
+Changes are ephemeral — lost on restart. Valid levels: `error`, `warn`, `info`, `debug`, `trace`, `off`.
 
 #### RELOAD
 

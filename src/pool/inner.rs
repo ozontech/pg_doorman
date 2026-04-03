@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use log::{debug, warn};
+use log::debug;
 
 use crate::utils::clock;
 
@@ -386,10 +386,10 @@ impl Pool {
             {
                 Ok(permit) => {
                     debug!(
-                        "[pool: {}][user: {}] coordinator: new connection authorized \
+                        "[{}@{}] coordinator: new connection authorized \
                          (permit_type={})",
-                        self.inner.pool_name,
                         self.inner.username,
+                        self.inner.pool_name,
                         if permit.is_reserve { "reserve" } else { "main" },
                     );
                     Some(permit)
@@ -624,9 +624,9 @@ impl Pool {
             let obj = match self.inner.server_pool.create().await {
                 Ok(obj) => obj,
                 Err(e) => {
-                    warn!(
-                        "[pool: {}] failed to create connection during replenish: {}",
-                        self.inner.server_pool.address(),
+                    log::debug!(
+                        "[pool: {}] replenish: failed to create server: {}",
+                        self.inner.pool_name,
                         e
                     );
                     break;

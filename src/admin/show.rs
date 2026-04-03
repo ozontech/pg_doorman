@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 
 use bytes::{BufMut, BytesMut};
 
+use crate::app::log_level;
 use crate::config::{get_config, VERSION};
 use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
@@ -92,6 +93,21 @@ where
     let mut res = BytesMut::new();
     res.put(row_description(&vec![("version", DataType::Text)]));
     res.put(data_row(&[format!("PgDoorman {}", VERSION)]));
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Show current log level filter.
+pub async fn show_log_level<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let mut res = BytesMut::new();
+    res.put(row_description(&vec![("log_level", DataType::Text)]));
+    res.put(data_row(&[log_level::get_log_level()]));
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
     res.put_i32(5);
@@ -204,22 +220,28 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let columns = vec![("item", DataType::Text)];
+    let show_list = super::SHOW_SUBCOMMANDS
+        .iter()
+        .map(|s| s.to_ascii_uppercase())
+        .collect::<Vec<_>>()
+        .join("|");
     let help_items = [
-        "SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|POOL_COORDINATOR|PREPARED_STATEMENTS|CLIENTS|SERVERS|USERS|AUTH_QUERY|VERSION",
-        "SHOW LISTS",
-        "SHOW CONNECTIONS",
-        "SHOW STATS",
-        "RELOAD",
-        "SHUTDOWN",
-        "UPGRADE",
-        "PAUSE [db]",
-        "RESUME [db]",
-        "RECONNECT [db]",
+        format!("SHOW {show_list}"),
+        "SHOW LISTS".to_string(),
+        "SHOW CONNECTIONS".to_string(),
+        "SHOW STATS".to_string(),
+        "SET log_level = '<filter>'".to_string(),
+        "RELOAD".to_string(),
+        "SHUTDOWN".to_string(),
+        "UPGRADE".to_string(),
+        "PAUSE [db]".to_string(),
+        "RESUME [db]".to_string(),
+        "RECONNECT [db]".to_string(),
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
-    for item in help_items {
-        res.put(data_row(&[item.to_string()]));
+    for item in &help_items {
+        res.put(data_row(&[item.as_str()]));
     }
     res.put(command_complete("SHOW"));
     // ReadyForQuery

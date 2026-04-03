@@ -149,7 +149,6 @@ impl PreparedStatementCache {
         // Find the entry with the smallest count_used timestamp
         let mut oldest_key: Option<u64> = None;
         let mut oldest_time = u64::MAX;
-        let mut evicted_name: Option<String> = None;
 
         // Sample entries to find the oldest one
         // We iterate through all entries but this is still efficient because
@@ -164,12 +163,18 @@ impl PreparedStatementCache {
         // Remove the oldest entry
         if let Some(key) = oldest_key {
             if let Some((_, entry)) = self.cache.remove(&key) {
-                evicted_name = Some(entry.parse.name.clone());
+                let query = entry.parse.query().replace(['\n', '\r'], " ");
+                let truncated: String = query.chars().take(80).collect();
+                let ellipsis = if query.chars().count() > 80 {
+                    "..."
+                } else {
+                    ""
+                };
+                warn!(
+                    "Prepared statement cache eviction: name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
+                    entry.parse.name, self.cache.len(), self.max_size,
+                );
             }
-        }
-
-        if let Some(name) = evicted_name {
-            warn!("Evicted prepared statement {} from cache", name);
         }
     }
 }

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, info, warn};
+use log::{debug, info};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::config::{Address, User};
@@ -149,8 +149,12 @@ impl ServerPool {
 
         let conn_num = self.connection_counter.fetch_add(1, Ordering::Relaxed) + 1;
         info!(
-            "Creating a new server connection to {}[#{}]",
-            self.address, conn_num
+            "[{}@{}] new server connection #{} to {}:{}",
+            self.address.username,
+            self.address.pool_name,
+            conn_num,
+            self.address.host,
+            self.address.port,
         );
         let stats = Arc::new(ServerStats::new(
             self.address.clone(),
@@ -259,11 +263,13 @@ impl ServerPool {
     /// Performs lifetime check and alive check for idle connections.
     pub async fn recycle(&self, conn: &mut Server, metrics: &Metrics) -> RecycleResult {
         if conn.is_bad() {
+            conn.close_reason = Some("bad connection".to_string());
             return Err(RecycleError::StaticMessage("Bad connection"));
         }
 
         // RECONNECT epoch check: reject connections created before current epoch
         if metrics.epoch < self.current_epoch() {
+            conn.close_reason = Some("reconnect epoch outdated".to_string());
             return Err(RecycleError::StaticMessage(
                 "Connection outdated (RECONNECT)",
             ));
@@ -274,10 +280,11 @@ impl ServerPool {
         if metrics.lifetime_ms > 0 {
             let age_ms = metrics.age().as_millis() as u64;
             if age_ms > metrics.lifetime_ms {
-                warn!(
-                    "Connection {} exceeded lifetime ({}ms > {}ms)",
-                    conn, age_ms, metrics.lifetime_ms
-                );
+                conn.close_reason = Some(format!(
+                    "lifetime exceeded (age={}, limit={})",
+                    crate::utils::format_duration_ms(age_ms),
+                    crate::utils::format_duration_ms(metrics.lifetime_ms),
+                ));
                 return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
             }
         }
@@ -292,10 +299,10 @@ impl ServerPool {
                         conn, idle_time_ms
                     );
                     if conn.check_alive(self.connect_timeout).await.is_err() {
-                        warn!(
-                            "Connection {} failed alive check after {}ms idle",
-                            conn, idle_time_ms
-                        );
+                        conn.close_reason = Some(format!(
+                            "failed alive check after {} idle",
+                            crate::utils::format_duration_ms(idle_time_ms),
+                        ));
                         return Err(RecycleError::StaticMessage("Connection failed alive check"));
                     }
                     debug!("Connection {} passed alive check", conn);

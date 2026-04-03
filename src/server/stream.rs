@@ -102,9 +102,9 @@ pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<St
     let stream = match UnixStream::connect(&format!("{host}/.s.PGSQL.{port}")).await {
         Ok(s) => s,
         Err(err) => {
-            log::error!("Could not connect to server: {err}");
+            log::error!("Could not connect to {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
-                "Could not connect to server: {err}"
+                "Could not connect to {host}:{port}: {err}"
             )));
         }
     };
@@ -123,9 +123,9 @@ pub(crate) async fn create_tcp_stream_inner(
     let mut stream = match TcpStream::connect(&format!("{host}:{port}")).await {
         Ok(stream) => stream,
         Err(err) => {
-            log::error!("Could not connect to server: {err}");
+            log::error!("Could not connect to {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
-                "Could not connect to server: {err}"
+                "Could not connect to {host}:{port}: {err}"
             )));
         }
     };
@@ -149,7 +149,7 @@ pub(crate) async fn create_tcp_stream_inner(
         match response {
             // Server supports TLS
             'S' => {
-                log::error!("Connection to server via tls is not supported");
+                log::error!("TLS connection to {host}:{port} is not supported");
                 return Err(Error::SocketError("Server TLS is unsupported".to_string()));
             }
             // Server does not support TLS
