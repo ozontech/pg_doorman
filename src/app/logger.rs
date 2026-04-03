@@ -1,9 +1,9 @@
 extern crate log;
 
-use log::{info, LevelFilter};
+use log::{info, LevelFilter, Log, Metadata, Record};
+use std::io::Write;
 use std::process;
 use syslog::{BasicLogger, Facility, Formatter3164};
-use tracing_subscriber::EnvFilter;
 
 use super::args::{Args, LogFormat};
 use super::log_level::LogLevelController;
@@ -17,7 +17,6 @@ pub fn init_logging(args: &Args, config: &Config) -> Result<(), Box<dyn std::err
 
 fn init(args: &Args, syslog_name: Option<String>) {
     if let Some(syslog_name) = syslog_name {
-        // Syslog mode: wrap BasicLogger in LogLevelController
         let formatter = Formatter3164 {
             facility: Facility::LOG_USER,
             hostname: None,
@@ -29,7 +28,6 @@ fn init(args: &Args, syslog_name: Option<String>) {
         let startup_level = LevelFilter::Info;
         LogLevelController::new(inner, startup_level).register();
     } else {
-        // Tracing mode: build subscriber, set as global, wrap LogTracer in controller
         let startup_level: LevelFilter = match args.log_level {
             tracing::Level::ERROR => LevelFilter::Error,
             tracing::Level::WARN => LevelFilter::Warn,
@@ -37,30 +35,122 @@ fn init(args: &Args, syslog_name: Option<String>) {
             tracing::Level::DEBUG => LevelFilter::Debug,
             tracing::Level::TRACE => LevelFilter::Trace,
         };
-        let filter = EnvFilter::from_default_env().add_directive(args.log_level.into());
 
-        let trace_sub = tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_ansi(!args.no_color);
-
-        // Use .finish() instead of .init() so we control the log facade ourselves
-        match args.log_format {
-            LogFormat::Structured => {
-                let subscriber = trace_sub.json().finish();
-                tracing::subscriber::set_global_default(subscriber).unwrap();
-            }
-            LogFormat::Debug => {
-                let subscriber = trace_sub.pretty().finish();
-                tracing::subscriber::set_global_default(subscriber).unwrap();
-            }
-            _ => {
-                let subscriber = trace_sub.finish();
-                tracing::subscriber::set_global_default(subscriber).unwrap();
-            }
+        let inner: Box<dyn Log> = match args.log_format {
+            LogFormat::Structured => Box::new(JsonLogger::new()),
+            _ => Box::new(TextLogger::new(!args.no_color)),
         };
 
-        // Bridge log → tracing, wrapped in our controller for runtime level changes
-        let inner = Box::new(tracing_log::LogTracer::new());
         LogLevelController::new(inner, startup_level).register();
+    }
+}
+
+/// Direct text logger — no tracing bridge.
+/// Format: `2024-01-07T19:19:38.080Z  INFO pg_doorman::pool: message`
+struct TextLogger {
+    use_color: bool,
+}
+
+impl TextLogger {
+    fn new(use_color: bool) -> Self {
+        Self { use_color }
+    }
+}
+
+impl Log for TextLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true // LogLevelController handles filtering
+    }
+
+    fn log(&self, record: &Record) {
+        let now = chrono::Utc::now();
+        let level = record.level();
+        let target = record.target();
+
+        if self.use_color {
+            let level_color = match level {
+                log::Level::Error => "\x1b[31m", // red
+                log::Level::Warn => "\x1b[33m",  // yellow
+                log::Level::Info => "\x1b[32m",  // green
+                log::Level::Debug => "\x1b[36m", // cyan
+                log::Level::Trace => "\x1b[90m", // gray
+            };
+            let reset = "\x1b[0m";
+            let _ = writeln!(
+                std::io::stderr(),
+                "{} {}{:>5}{} {}: {}",
+                now.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+                level_color,
+                level,
+                reset,
+                target,
+                record.args()
+            );
+        } else {
+            let _ = writeln!(
+                std::io::stderr(),
+                "{} {:>5} {}: {}",
+                now.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+                level,
+                target,
+                record.args()
+            );
+        }
+    }
+
+    fn flush(&self) {
+        let _ = std::io::stderr().flush();
+    }
+}
+
+/// Direct JSON logger — structured output without tracing overhead.
+struct JsonLogger;
+
+impl JsonLogger {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl Log for JsonLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &Record) {
+        let now = chrono::Utc::now();
+        let timestamp = now.format("%Y-%m-%dT%H:%M:%S%.3fZ");
+        let level = match record.level() {
+            log::Level::Error => "ERROR",
+            log::Level::Warn => "WARN",
+            log::Level::Info => "INFO",
+            log::Level::Debug => "DEBUG",
+            log::Level::Trace => "TRACE",
+        };
+        let target = record.target();
+        let msg = record.args();
+
+        // Escape JSON string manually to avoid serde overhead.
+        // Message is the only field that can contain arbitrary user data.
+        let msg_str = msg.to_string();
+        let escaped = msg_str
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+
+        let _ = writeln!(
+            std::io::stderr(),
+            r#"{{"timestamp":"{}","level":"{}","target":"{}","message":"{}"}}"#,
+            timestamp,
+            level,
+            target,
+            escaped,
+        );
+    }
+
+    fn flush(&self) {
+        let _ = std::io::stderr().flush();
     }
 }
