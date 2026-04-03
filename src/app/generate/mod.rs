@@ -4,6 +4,7 @@ pub mod docs;
 use std::error::Error;
 
 use crate::app::args::GenerateConfig;
+use crate::auth::hba::PgHba;
 use crate::config::{Config, PoolMode};
 
 #[cfg(not(test))]
@@ -80,6 +81,10 @@ pub fn generate_config_with_client(
     result.general.host = "0.0.0.0".to_string();
     result.general.port = 6432; // Default port for pg_doorman
     result.general.server_tls = config.ssl;
+    // Default HBA: trust all local connections (matches typical dev/localhost setup)
+    result.general.pg_hba = Some(PgHba::from_content(
+        "host all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\nlocal all all trust",
+    ));
 
     // Store users with their authentication details
     let mut users = Vec::new();
