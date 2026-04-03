@@ -24,14 +24,16 @@ pub fn generate_config(config: &GenerateConfig) -> Result<Config, Box<dyn Error>
     result.general.server_tls = config.ssl;
 
     // Create connection string from the provided configuration
-    let connection_string = format!(
-        "host={} port={} user={} password={} dbname={}",
+    let mut connection_string = format!(
+        "host={} port={} user={} dbname={}",
         config.host.as_deref().unwrap_or("localhost"),
         config.port,
         config.user.as_deref().unwrap_or("postgres"),
-        config.password.as_deref().unwrap_or(""),
         config.database.as_deref().unwrap_or("postgres")
     );
+    if let Some(password) = &config.password {
+        connection_string.push_str(&format!(" password={password}"));
+    }
 
     // Connect to the PostgreSQL database
     // Use TLS if SSL is enabled in configuration
