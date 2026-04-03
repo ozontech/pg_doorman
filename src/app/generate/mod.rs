@@ -85,13 +85,11 @@ pub fn generate_config_with_client(
     let mut users = Vec::new();
     {
         // Query pg_shadow to get username and password hashes (requires superuser privileges)
-        let rows = client.query(
-            "SELECT usename, passwd FROM pg_shadow WHERE passwd is not null",
-            &[],
-        )?;
+        let rows = client.query("SELECT usename, passwd FROM pg_shadow", &[])?;
         for row in rows {
             let usename: String = row.get(0);
-            let passwd: String = row.get(1);
+            let passwd: Option<String> = row.get(1);
+            let passwd = passwd.unwrap_or_default();
             // Create user configuration for each PostgreSQL user
             let user = crate::config::User {
                 username: usename,
