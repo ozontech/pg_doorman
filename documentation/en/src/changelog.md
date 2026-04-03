@@ -1,5 +1,17 @@
 # Changelog
 
+### 3.4.0 <small>Apr 1, 2026</small>
+
+**New Features:**
+
+- **Pool Coordinator — database-level connection limits.** New `max_db_connections` setting caps total server connections per database across all user pools. When the limit is reached, the coordinator evicts idle connections from users with the largest surplus (respecting `min_guaranteed_pool_size`), then waits for a connection to be returned, and falls back to a reserve pool as last resort. Disabled by default (`max_db_connections = 0`) — zero overhead when not configured. Five new pool-level config fields: `max_db_connections`, `min_connection_lifetime` (eviction age threshold), `reserve_pool_size` (extra slots beyond the limit), `reserve_pool_timeout` (wait before using reserve), `min_guaranteed_pool_size` (per-user eviction protection independent of `min_pool_size`).
+
+- **`SHOW POOL_COORDINATOR` admin command.** Displays per-database coordinator status: configured limits, current connection count, reserve usage, cumulative evictions, reserve acquisitions, and client exhaustion errors.
+
+- **Pool Coordinator Prometheus metrics.** Seven new metrics under `pg_doorman_pool_coordinator{type, database}`: `connections` (current), `reserve_in_use` (current), `max_connections` (configured limit), `reserve_pool_size` (configured reserve), `evictions_total`, `reserve_acquisitions_total`, `exhaustions_total` (client errors from full exhaustion — primary pager signal).
+
+- **Reserve pressure relief.** Idle reserve connections (created under `max_db_connections` pressure) are closed early by the retain cycle once idle longer than `min_connection_lifetime`, returning reserve capacity before the regular `idle_timeout` fires.
+
 ### 3.3.5 <small>Mar 31, 2026</small>
 
 **Bug Fixes:**

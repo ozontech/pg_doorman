@@ -144,6 +144,11 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         scaling_warm_pool_ratio: None,
         scaling_fast_retries: None,
         scaling_cooldown_sleep: None,
+        max_db_connections: None,
+        min_connection_lifetime: None,
+        reserve_pool_size: None,
+        reserve_pool_timeout: None,
+        min_guaranteed_pool_size: None,
         auth_query: None,
         users: vec![User {
             username: "app_user".to_string(),
@@ -1206,6 +1211,50 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
             ConfigFormat::Toml => w.commented_kv(fi, "scaling_cooldown_sleep", "10"),
             ConfigFormat::Yaml => w.commented_kv(fi, "scaling_cooldown_sleep", "\"10ms\""),
         }
+    }
+    w.blank();
+
+    // --- Pool Coordinator ---
+    w.separator(fi, f.section_title("pool_coordinator").get(w.russian));
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "max_db_connections");
+    if let Some(val) = pool.max_db_connections {
+        w.kv(fi, "max_db_connections", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "max_db_connections", "0");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "min_connection_lifetime");
+    if let Some(val) = pool.min_connection_lifetime {
+        w.kv(fi, "min_connection_lifetime", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "min_connection_lifetime", "5000");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "reserve_pool_size");
+    if let Some(val) = pool.reserve_pool_size {
+        w.kv(fi, "reserve_pool_size", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "reserve_pool_size", "0");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "reserve_pool_timeout");
+    if let Some(val) = pool.reserve_pool_timeout {
+        w.kv(fi, "reserve_pool_timeout", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "reserve_pool_timeout", "3000");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "min_guaranteed_pool_size");
+    if let Some(val) = pool.min_guaranteed_pool_size {
+        w.kv(fi, "min_guaranteed_pool_size", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "min_guaranteed_pool_size", "0");
     }
     w.blank();
 

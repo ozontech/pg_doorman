@@ -2,9 +2,11 @@
 
 #[cfg(target_os = "linux")]
 use log::error;
+use once_cell::sync::Lazy;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
-use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, DYNAMIC_POOLS};
+use crate::pool::{PoolIdentifier, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
 use crate::stats::pool::PoolStats;
@@ -17,13 +19,14 @@ use super::system::get_process_memory_usage;
 #[cfg(target_os = "linux")]
 use super::SHOW_SOCKETS;
 use super::{
-    AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR,
-    SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS,
-    SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE,
-    SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER,
-    SHOW_POOLS_TRANSACTIONS_PERCENTILE, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME,
-    SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE,
-    SHOW_SERVERS_PREPARED_HITS, SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
+    AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR, COORDINATOR,
+    COORDINATOR_TOTALS, SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES,
+    SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT,
+    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
+    SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
+    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
+    SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
+    SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -37,6 +40,7 @@ pub fn update_metrics() {
     update_pool_metrics();
     update_server_metrics();
     update_auth_query_metrics();
+    update_coordinator_metrics();
 }
 
 fn update_memory_metrics() {
@@ -320,5 +324,93 @@ fn update_auth_query_metrics() {
         AUTH_QUERY_DYNAMIC_POOLS
             .with_label_values(&["destroyed", db])
             .set(s.dynamic_pools_destroyed as f64);
+    }
+}
+
+/// Previous coordinator state — tracks Arc pointers to detect replacements
+/// and database set to clean up stale label combinations on RELOAD.
+static COORDINATOR_PREV: Lazy<std::sync::Mutex<std::collections::HashMap<String, usize>>> =
+    Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn reset_coordinator_counters(db: &str) {
+    for t in [
+        "connections",
+        "reserve_in_use",
+        "max_connections",
+        "reserve_pool_size",
+    ] {
+        let _ = COORDINATOR.remove_label_values(&[t, db]);
+    }
+    for t in ["evictions", "reserve_acquisitions", "exhaustions"] {
+        let _ = COORDINATOR_TOTALS.remove_label_values(&[t, db]);
+    }
+}
+
+fn update_coordinator_metrics() {
+    let coordinators = COORDINATORS.load();
+
+    let current: std::collections::HashMap<String, usize> = coordinators
+        .iter()
+        .map(|(db, arc)| (db.clone(), Arc::as_ptr(arc) as usize))
+        .collect();
+
+    if let Ok(mut prev) = COORDINATOR_PREV.lock() {
+        // Remove counters for databases no longer coordinated
+        for old_db in prev.keys() {
+            if !current.contains_key(old_db) {
+                reset_coordinator_counters(old_db);
+            }
+        }
+        // Reset counters for databases where coordinator was replaced (new Arc)
+        for (db, new_ptr) in &current {
+            if let Some(old_ptr) = prev.get(db) {
+                if old_ptr != new_ptr {
+                    reset_coordinator_counters(db);
+                }
+            }
+        }
+        *prev = current;
+    }
+
+    for (db, coordinator) in coordinators.iter() {
+        let stats = coordinator.stats();
+        let config = coordinator.config();
+
+        COORDINATOR
+            .with_label_values(&["connections", db])
+            .set(stats.total_connections as f64);
+        COORDINATOR
+            .with_label_values(&["reserve_in_use", db])
+            .set(stats.reserve_in_use as f64);
+        COORDINATOR
+            .with_label_values(&["max_connections", db])
+            .set(config.max_db_connections as f64);
+        COORDINATOR
+            .with_label_values(&["reserve_pool_size", db])
+            .set(config.reserve_pool_size as f64);
+
+        let evictions_counter = COORDINATOR_TOTALS.with_label_values(&["evictions", db]);
+        let delta = stats
+            .evictions_total
+            .saturating_sub(evictions_counter.get());
+        if delta > 0 {
+            evictions_counter.inc_by(delta);
+        }
+
+        let reserve_counter = COORDINATOR_TOTALS.with_label_values(&["reserve_acquisitions", db]);
+        let delta = stats
+            .reserve_acquisitions_total
+            .saturating_sub(reserve_counter.get());
+        if delta > 0 {
+            reserve_counter.inc_by(delta);
+        }
+
+        let exhaustions_counter = COORDINATOR_TOTALS.with_label_values(&["exhaustions", db]);
+        let delta = stats
+            .exhaustions_total
+            .saturating_sub(exhaustions_counter.get());
+        if delta > 0 {
+            exhaustions_counter.inc_by(delta);
+        }
     }
 }

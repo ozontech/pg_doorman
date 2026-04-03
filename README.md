@@ -20,6 +20,8 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 **Built for operations.** `pg_doorman generate --host your-db` creates a config by introspecting PostgreSQL — no manual user/database enumeration. `pg_doorman -t` validates config before deploy (PgBouncer and Odyssey lack this). YAML config with human-readable durations (`"30s"`, `"5m"`, `"1h"`). Built-in Prometheus endpoint — no external exporter needed (PgBouncer requires a separate process; Odyssey's built-in metrics segfault when combined with standard logging).
 
+**Database-level connection limits with eviction.** `max_db_connections` caps total server connections per database. When the limit is reached, idle connections are evicted from users with the largest surplus — respecting per-user minimums. PgBouncer has `max_db_connections` but without eviction or fairness guarantees. Odyssey has no equivalent.
+
 **Dead backend detection.** When a client holds a transaction open, pg_doorman probes the backend and returns an error immediately if the server is gone (failover, OOM kill). Other poolers rely on TCP keepalive, leaving clients hanging for minutes.
 
 ## Benchmarks
@@ -54,6 +56,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Auth query passthrough (per-user backend identity) | Yes | No | Yes |
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
+| Database-level connection limits (`max_db_connections`) | Yes | Yes (no eviction) | No |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
 | TLS: minimum TLS 1.2, Mozilla ciphers | Yes | Yes | No (allows TLS 1.0, weak ciphers) |
 | Prometheus metrics | Built-in | External | Built-in |
@@ -192,6 +195,31 @@ UPGRADE;
 
 See [admin commands documentation](https://ozontech.github.io/pg_doorman/tutorials/basic-usage.html) for details.
 
+## Database-level connection limits
+
+Cap total server connections per database across all user pools. When the limit is reached, pg_doorman evicts idle connections from users with the largest surplus, waits for a connection to free up, and falls back to a reserve pool as last resort.
+
+```yaml
+pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    max_db_connections: 80        # hard cap (0 = disabled)
+    min_connection_lifetime: 5000 # don't evict connections younger than 5s
+    reserve_pool_size: 20         # extra slots beyond the limit
+    reserve_pool_timeout: 3000    # wait up to 3s for a free connection before falling back to reserve
+    min_guaranteed_pool_size: 2   # per-user eviction protection
+    users:
+      - username: "app"
+        password: "md5..."
+        pool_size: 60
+      - username: "analytics"
+        password: "md5..."
+        pool_size: 80
+```
+
+Disabled by default — zero overhead when `max_db_connections` is 0 or omitted. `min_guaranteed_pool_size` protects each user from having all connections evicted (independent of `min_pool_size`, which controls prewarm). Monitor via `SHOW POOL_COORDINATOR` or the `pg_doorman_pool_coordinator` Prometheus metric.
+
 ## TLS / SSL
 
 PgDoorman supports TLS encryption on both the client-facing and server-facing sides.
@@ -261,6 +289,7 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `pg_doorman_pool_prepared_cache_entries` | user, database | Prepared statement cache entries            |
 | `pg_doorman_auth_query_cache` | event, database | Auth query cache hits / misses              |
 | `pg_doorman_auth_query_dynamic_pools` | database | Active dynamic user pools                    |
+| `pg_doorman_pool_coordinator` | type, database | Coordinator stats (connections, reserve, evictions, exhaustions) |
 | `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
 | `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |
 
@@ -329,6 +358,8 @@ PgDoorman uses YAML instead of INI, but the concepts are the same:
 | `server_lifetime = 3600` | `general.server_lifetime: "1h"` | Human-readable durations |
 | `server_idle_timeout = 600` | `general.idle_timeout: "10m"` | |
 | `auth_query = ...` | `pools.<db>.auth_query.query: ...` | Same concept, YAML structure |
+| `max_db_connections = 80` | `pools.<db>.max_db_connections: 80` | + eviction, reserve pool, per-user protection |
+| `reserve_pool_size = 20` | `pools.<db>.reserve_pool_size: 20` | + priority-based distribution |
 | `listen_addr = *` | `general.host: "0.0.0.0"` | |
 | `listen_port = 6432` | `general.port: 6432` | |
 | `admin_users = admin` | `general.admin_username: "admin"` | |

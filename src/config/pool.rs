@@ -113,6 +113,29 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaling_cooldown_sleep: Option<Duration>,
 
+    /// Maximum total server connections to this database across all users.
+    /// 0 or None = disabled (default), each user pool works independently.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_db_connections: Option<u32>,
+
+    /// Don't evict connections younger than this (milliseconds). Default: 5000.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_connection_lifetime: Option<u64>,
+
+    /// Extra connections beyond max_db_connections, used as last resort. Default: 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve_pool_size: Option<u32>,
+
+    /// Wait time (milliseconds) before using reserve pool. Default: 3000.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve_pool_timeout: Option<u64>,
+
+    /// Minimum connections per user protected from coordinator eviction.
+    /// Overrides user-level min_pool_size for eviction decisions only
+    /// (does not trigger prewarm/replenish). Default: 0 (no protection).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_guaranteed_pool_size: Option<u32>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
 
@@ -183,6 +206,77 @@ impl Pool {
             }
         }
 
+        // Validate pool coordinator settings
+        if let Some(max) = self.max_db_connections {
+            if max > 0 {
+                let total_min: u32 = self.users.iter().filter_map(|u| u.min_pool_size).sum();
+                if total_min > max {
+                    return Err(Error::BadConfig(format!(
+                        "sum of min_pool_size ({}) exceeds max_db_connections ({}); \
+                         not all minimums can be satisfied simultaneously",
+                        total_min, max
+                    )));
+                }
+                if let Some(reserve) = self.reserve_pool_size {
+                    if reserve > max {
+                        log::warn!(
+                            "reserve_pool_size ({}) exceeds max_db_connections ({}); \
+                             PostgreSQL may receive up to {} connections",
+                            reserve,
+                            max,
+                            max + reserve
+                        );
+                    }
+                }
+
+                for user in &self.users {
+                    if user.pool_size > max {
+                        log::warn!(
+                            "user '{}' pool_size ({}) exceeds max_db_connections ({}); \
+                             effectively capped at {}",
+                            user.username,
+                            user.pool_size,
+                            max,
+                            max
+                        );
+                    }
+                }
+
+                // min_connection_lifetime > idle_timeout: eviction will never trigger
+                // because idle connections are closed by idle_timeout first.
+                if let Some(min_lt) = self.min_connection_lifetime {
+                    if let Some(idle) = self.idle_timeout {
+                        if min_lt > idle && idle > 0 {
+                            log::warn!(
+                                "min_connection_lifetime ({}ms) > idle_timeout ({}ms); \
+                                 idle connections will be closed before becoming evictable",
+                                min_lt,
+                                idle
+                            );
+                        }
+                    }
+                }
+
+                // min_guaranteed_pool_size > any user's pool_size: user becomes
+                // immune to eviction but cannot reach the guaranteed minimum.
+                if let Some(guaranteed) = self.min_guaranteed_pool_size {
+                    if guaranteed > 0 {
+                        for user in &self.users {
+                            if guaranteed > user.pool_size {
+                                log::warn!(
+                                    "min_guaranteed_pool_size ({}) > pool_size ({}) for user '{}'; \
+                                     user is immune to eviction but cannot reach the guarantee",
+                                    guaranteed,
+                                    user.pool_size,
+                                    user.username
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Validate username uniqueness
         let mut seen_usernames = HashSet::new();
         for user in &self.users {
@@ -242,6 +336,11 @@ impl Default for Pool {
             scaling_warm_pool_ratio: None,
             scaling_fast_retries: None,
             scaling_cooldown_sleep: None,
+            max_db_connections: None,
+            min_connection_lifetime: None,
+            reserve_pool_size: None,
+            reserve_pool_timeout: None,
+            min_guaranteed_pool_size: None,
             auth_query: None,
         }
     }

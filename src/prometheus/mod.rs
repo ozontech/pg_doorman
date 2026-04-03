@@ -4,7 +4,7 @@
 //! various statistics about the connection pooler's operation.
 
 use once_cell::sync::Lazy;
-use prometheus::{Gauge, GaugeVec, Opts, Registry};
+use prometheus::{Gauge, GaugeVec, IntCounterVec, Opts, Registry};
 
 // Sub-modules
 mod metrics;
@@ -340,4 +340,33 @@ pub(crate) static AUTH_QUERY_DYNAMIC_POOLS: Lazy<GaugeVec> = Lazy::new(|| {
     .unwrap();
     REGISTRY.register(Box::new(gauge.clone())).unwrap();
     gauge
+});
+
+pub(crate) static COORDINATOR: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pool_coordinator",
+            "Pool coordinator current state by type and database. Types: connections (current total), \
+             reserve_in_use (current reserve), max_connections (configured limit), \
+             reserve_pool_size (configured reserve).",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static COORDINATOR_TOTALS: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_pool_coordinator_total",
+            "Pool coordinator cumulative counters by type and database. Types: evictions, \
+             reserve_acquisitions, exhaustions.",
+        ),
+        &["type", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
 });

@@ -458,6 +458,35 @@ cleanup_server_connections = true
 # scaling_cooldown_sleep = 10
 
 # --------------------------------------------------------------------------
+# Pool Coordinator (database-level connection limit)
+# --------------------------------------------------------------------------
+
+# Maximum total server connections to this database across all users.
+# When the limit is reached, idle connections from other users are evicted.
+# 0 = disabled (default): each user pool works independently.
+# max_db_connections = 0
+
+# Don't evict connections younger than this (milliseconds).
+# Protects freshly created connections from immediate eviction.
+# min_connection_lifetime = 5000
+
+# Extra connections beyond max_db_connections, used as last resort.
+# Allocated by priority: users below min_pool_size get served first.
+# reserve_pool_size = 0
+
+# Wait time (milliseconds) before falling back to reserve pool.
+# During this time the coordinator waits for a connection to be returned.
+# reserve_pool_timeout = 3000
+
+# Minimum connections per user protected from coordinator eviction.
+# Unlike min_pool_size (which triggers prewarm/replenish), this only
+# affects eviction: the coordinator will never evict a user's connections
+# below this number. Does not create connections proactively.
+# Useful when min_pool_size = 0 for most users (no prewarm desired)
+# but you still want eviction fairness under max_db_connections pressure.
+# min_guaranteed_pool_size = 0
+
+# --------------------------------------------------------------------------
 # Application Settings
 # --------------------------------------------------------------------------
 

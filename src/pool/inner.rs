@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use log::warn;
+use log::{debug, warn};
 
 use crate::utils::clock;
 
@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
 
 use super::errors::{PoolError, RecycleError, TimeoutType};
+use super::pool_coordinator;
 use super::types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
 use super::ServerPool;
 use crate::server::Server;
@@ -24,10 +25,18 @@ use crate::server::Server;
 const MAX_FAST_RETRY: i32 = 10;
 
 /// Internal object wrapper with metrics.
+/// The `coordinator_permit` is held for the entire lifetime of the connection:
+/// - Acquired when a NEW connection is created (timeout_get / replenish)
+/// - Stays with the ObjectInner when returned to the idle pool (VecDeque)
+/// - Dropped when the connection is destroyed → frees coordinator semaphore slot
+/// - `None` when coordination is disabled (max_db_connections = 0)
 #[derive(Debug)]
 struct ObjectInner {
     obj: Server,
     metrics: Metrics,
+    /// Held for RAII — dropped when connection is destroyed, freeing coordinator slot.
+    #[allow(dead_code)]
+    coordinator_permit: Option<pool_coordinator::CoordinatorPermit>,
 }
 
 /// Wrapper around the actual pooled object which implements Deref and DerefMut.
@@ -35,16 +44,6 @@ struct ObjectInner {
 pub struct Object {
     inner: Option<ObjectInner>,
     pool: Weak<PoolInner>,
-}
-
-impl Object {
-    /// Takes the object from this wrapper leaving behind an empty wrapper.
-    /// This is useful when you want to take ownership of the object.
-    #[allow(dead_code)]
-    pub fn take(mut this: Self) -> Server {
-        let inner = this.inner.take().unwrap();
-        inner.obj
-    }
 }
 
 impl Drop for Object {
@@ -108,9 +107,60 @@ struct PoolInner {
     users: AtomicUsize,
     semaphore: Semaphore,
     config: PoolConfig,
+    /// Database-level coordinator (None when max_db_connections = 0).
+    coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+    /// Pool name (database name in config), used in coordinator error messages.
+    pool_name: String,
+    /// Username for this pool, used in coordinator error messages.
+    username: String,
+}
+
+enum RecycleOutcome {
+    Reused(Box<ObjectInner>),
+    Failed,
+    Empty,
 }
 
 impl PoolInner {
+    async fn try_recycle_one(&self, timeouts: &Timeouts) -> RecycleOutcome {
+        let obj_inner = {
+            let mut slots = self.slots.lock();
+            slots.vec.pop_front()
+        };
+
+        let Some(mut inner) = obj_inner else {
+            return RecycleOutcome::Empty;
+        };
+
+        let recycle_result = match timeouts.recycle {
+            Some(duration) => {
+                match tokio::time::timeout(
+                    duration,
+                    self.server_pool.recycle(&mut inner.obj, &inner.metrics),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+                }
+            }
+            None => {
+                self.server_pool
+                    .recycle(&mut inner.obj, &inner.metrics)
+                    .await
+            }
+        };
+
+        match recycle_result {
+            Ok(()) => RecycleOutcome::Reused(Box::new(inner)),
+            Err(_) => {
+                let mut slots = self.slots.lock();
+                slots.size = slots.size.saturating_sub(1);
+                RecycleOutcome::Failed
+            }
+        }
+    }
+
     #[inline(always)]
     fn return_object(&self, inner: ObjectInner) {
         // Fast path: try to acquire lock without blocking
@@ -180,6 +230,9 @@ impl Pool {
                 users: AtomicUsize::new(0),
                 semaphore: Semaphore::new(builder.config.max_size),
                 config: builder.config,
+                coordinator: builder.coordinator,
+                pool_name: builder.pool_name,
+                username: builder.username,
             }),
         }
     }
@@ -257,50 +310,13 @@ impl Pool {
             break;
         }
 
-        // First, try to get an existing connection (hot path - no cooldown check)
-        let obj_inner = {
-            let mut slots = self.inner.slots.lock();
-            slots.vec.pop_front()
-        };
-
-        // If we got a connection, try to recycle it (hot path)
-        if let Some(mut inner) = obj_inner {
-            let recycle_result = match timeouts.recycle {
-                Some(duration) => {
-                    match tokio::time::timeout(
-                        duration,
-                        self.inner
-                            .server_pool
-                            .recycle(&mut inner.obj, &inner.metrics),
-                    )
-                    .await
-                    {
-                        Ok(r) => r,
-                        Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                    }
-                }
-                None => {
-                    self.inner
-                        .server_pool
-                        .recycle(&mut inner.obj, &inner.metrics)
-                        .await
-                }
-            };
-
-            match recycle_result {
-                Ok(()) => {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
-                }
-                Err(_) => {
-                    let mut slots = self.inner.slots.lock();
-                    slots.size = slots.size.saturating_sub(1);
-                    // Continue to cooldown logic below
-                }
-            }
+        // Hot path: try to get an existing connection
+        if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+            permit.forget();
+            return Ok(Object {
+                inner: Some(*inner),
+                pool: Arc::downgrade(&self.inner),
+            });
         }
 
         // No connection available - check if we should use cooldown zone logic
@@ -313,164 +329,78 @@ impl Pool {
             slots.size >= warm_threshold
         };
 
-        // If in cooldown zone, try to wait for a free connection before creating new one
         if should_use_cooldown {
-            // Phase 1: Fast retries with yield_now (low latency, ~10-50μs)
             let fast_retries = self.inner.config.scaling.fast_retries;
             for _ in 0..fast_retries {
-                let obj_inner = {
-                    let mut slots = self.inner.slots.lock();
-                    slots.vec.pop_front()
-                };
-
-                if let Some(mut inner) = obj_inner {
-                    let recycle_result = match timeouts.recycle {
-                        Some(duration) => {
-                            match tokio::time::timeout(
-                                duration,
-                                self.inner
-                                    .server_pool
-                                    .recycle(&mut inner.obj, &inner.metrics),
-                            )
-                            .await
-                            {
-                                Ok(r) => r,
-                                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                            }
-                        }
-                        None => {
-                            self.inner
-                                .server_pool
-                                .recycle(&mut inner.obj, &inner.metrics)
-                                .await
-                        }
-                    };
-
-                    match recycle_result {
-                        Ok(()) => {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                        Err(_) => {
-                            let mut slots = self.inner.slots.lock();
-                            slots.size = slots.size.saturating_sub(1);
-                            continue;
-                        }
-                    }
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
 
-                // No connection available, short spin + yield before next retry
                 for _ in 0..4 {
                     std::hint::spin_loop();
                 }
                 tokio::task::yield_now().await;
             }
 
-            // Phase 2: Single sleep retry if fast retries didn't help
             let cooldown_sleep_ms = self.inner.config.scaling.cooldown_sleep_ms;
             if cooldown_sleep_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(cooldown_sleep_ms)).await;
 
-                let obj_inner = {
-                    let mut slots = self.inner.slots.lock();
-                    slots.vec.pop_front()
-                };
-
-                if let Some(mut inner) = obj_inner {
-                    let recycle_result = match timeouts.recycle {
-                        Some(duration) => {
-                            match tokio::time::timeout(
-                                duration,
-                                self.inner
-                                    .server_pool
-                                    .recycle(&mut inner.obj, &inner.metrics),
-                            )
-                            .await
-                            {
-                                Ok(r) => r,
-                                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                            }
-                        }
-                        None => {
-                            self.inner
-                                .server_pool
-                                .recycle(&mut inner.obj, &inner.metrics)
-                                .await
-                        }
-                    };
-
-                    match recycle_result {
-                        Ok(()) => {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                        Err(_) => {
-                            let mut slots = self.inner.slots.lock();
-                            slots.size = slots.size.saturating_sub(1);
-                        }
-                    }
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
             }
         }
 
-        // Try to get an existing object from the pool (fast path for non-cooldown or after cooldown retries)
+        // Drain any remaining recyclable connections before creating a new one
         loop {
-            let obj_inner = {
-                let mut slots = self.inner.slots.lock();
-                slots.vec.pop_front()
-            };
-
-            match obj_inner {
-                Some(mut inner) => {
-                    let recycle_result = match timeouts.recycle {
-                        Some(duration) => {
-                            match tokio::time::timeout(
-                                duration,
-                                self.inner
-                                    .server_pool
-                                    .recycle(&mut inner.obj, &inner.metrics),
-                            )
-                            .await
-                            {
-                                Ok(r) => r,
-                                Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
-                            }
-                        }
-                        None => {
-                            self.inner
-                                .server_pool
-                                .recycle(&mut inner.obj, &inner.metrics)
-                                .await
-                        }
-                    };
-
-                    match recycle_result {
-                        Ok(()) => {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                        Err(_) => {
-                            let mut slots = self.inner.slots.lock();
-                            slots.size = slots.size.saturating_sub(1);
-                            continue;
-                        }
-                    }
+            match self.inner.try_recycle_one(timeouts).await {
+                RecycleOutcome::Reused(inner) => {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
-                None => {
-                    // No object available, create a new one
-                    break;
-                }
+                RecycleOutcome::Failed => continue,
+                RecycleOutcome::Empty => break,
             }
         }
+
+        // Acquire coordinator permit before creating a new connection.
+        // Only the NEW CONNECTION path goes through the coordinator —
+        // idle reuse above is unaffected (permit is already inside ObjectInner).
+        let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
+            let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
+            match coordinator
+                .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
+                .await
+            {
+                Ok(permit) => {
+                    debug!(
+                        "[pool: {}][user: {}] coordinator: new connection authorized \
+                         (permit_type={})",
+                        self.inner.pool_name,
+                        self.inner.username,
+                        if permit.is_reserve { "reserve" } else { "main" },
+                    );
+                    Some(permit)
+                }
+                Err(pool_coordinator::AcquireError::NoConnection(info)) => {
+                    return Err(PoolError::DbLimitExhausted(info));
+                }
+            }
+        } else {
+            None
+        };
 
         // Create a new object
         let obj = match timeouts.create {
@@ -502,6 +432,7 @@ impl Pool {
             inner: Some(ObjectInner {
                 obj,
                 metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+                coordinator_permit,
             }),
             pool: Arc::downgrade(&self.inner),
         })
@@ -610,6 +541,48 @@ impl Pool {
         closed
     }
 
+    /// Evict the oldest idle connection whose age exceeds `min_lifetime_ms`.
+    ///
+    /// Used by the pool coordinator when it needs to free a connection slot
+    /// for another user. The evicted connection's `CoordinatorPermit` is dropped
+    /// synchronously, making the slot available immediately.
+    ///
+    /// Returns `true` if a connection was evicted.
+    pub fn evict_one_idle(&self, min_lifetime_ms: u64) -> bool {
+        self.retain_oldest_first(
+            |_, metrics| metrics.age().as_millis() >= u128::from(min_lifetime_ms),
+            1,
+        ) > 0
+    }
+
+    /// Close idle reserve connections that have been idle longer than `min_lifetime_ms`.
+    ///
+    /// Reserve connections are temporary — created under coordinator pressure when the
+    /// main `max_db_connections` limit is reached. They should be released back to the
+    /// reserve pool ASAP once idle, not held until the regular `idle_timeout` fires.
+    /// This runs as part of the retain cycle to gradually relieve reserve pressure.
+    ///
+    /// Returns the number of reserve connections closed.
+    pub fn close_idle_reserve_connections(&self, min_lifetime_ms: u64) -> usize {
+        let mut guard = self.inner.slots.lock();
+        let len_before = guard.vec.len();
+        guard.vec.retain(|obj| {
+            let is_reserve = obj
+                .coordinator_permit
+                .as_ref()
+                .is_some_and(|p| p.is_reserve);
+            if !is_reserve {
+                return true;
+            }
+            // Close reserve connections idle longer than min_connection_lifetime
+            let idle = obj.metrics.last_used().as_millis();
+            idle < u128::from(min_lifetime_ms)
+        });
+        let closed = len_before - guard.vec.len();
+        guard.size -= closed;
+        closed
+    }
+
     /// Get current timeout configuration.
     #[inline(always)]
     pub fn timeouts(&self) -> Timeouts {
@@ -630,6 +603,23 @@ impl Pool {
                 }
             }
 
+            // Acquire coordinator permit (non-blocking). If the coordinator
+            // limit is reached, skip and retry on the next retain cycle.
+            let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
+                match coordinator.try_acquire() {
+                    Some(permit) => Some(permit),
+                    None => {
+                        log::debug!(
+                            "[pool: {}] coordinator limit reached, skipping replenish",
+                            self.inner.pool_name
+                        );
+                        break;
+                    }
+                }
+            } else {
+                None
+            };
+
             // Create a new connection
             let obj = match self.inner.server_pool.create().await {
                 Ok(obj) => obj,
@@ -649,6 +639,7 @@ impl Pool {
             let inner = ObjectInner {
                 obj,
                 metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+                coordinator_permit,
             };
 
             {
@@ -737,6 +728,9 @@ impl Pool {
 pub struct PoolBuilder {
     server_pool: ServerPool,
     config: PoolConfig,
+    coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+    pool_name: String,
+    username: String,
 }
 
 impl PoolBuilder {
@@ -744,12 +738,36 @@ impl PoolBuilder {
         Self {
             server_pool,
             config: PoolConfig::default(),
+            coordinator: None,
+            pool_name: String::new(),
+            username: String::new(),
         }
     }
 
     /// Sets the PoolConfig.
     pub fn config(mut self, config: PoolConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Sets the database-level coordinator (for max_db_connections enforcement).
+    pub fn coordinator(
+        mut self,
+        coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+    ) -> Self {
+        self.coordinator = coordinator;
+        self
+    }
+
+    /// Sets the pool name (database name), used in coordinator error messages.
+    pub fn pool_name(mut self, name: String) -> Self {
+        self.pool_name = name;
+        self
+    }
+
+    /// Sets the username for this pool, used in coordinator error messages.
+    pub fn username(mut self, name: String) -> Self {
+        self.username = name;
         self
     }
 

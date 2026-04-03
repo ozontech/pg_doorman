@@ -77,6 +77,9 @@ sections:
   pool_scaling:
     en: "Connection Scaling Overrides"
     ru: "Переопределение масштабирования соединений"
+  pool_coordinator:
+    en: "Pool Coordinator (database-level connection limit)"
+    ru: "Координатор пула (лимит соединений на уровне БД)"
   pool_examples:
     en: "Additional Pool Examples"
     ru: "Дополнительные примеры пулов"
@@ -1073,6 +1076,97 @@ fields:
         en: "Override global scaling_cooldown_sleep for this pool."
         ru: "Переопределить глобальный scaling_cooldown_sleep для этого пула."
       doc: "Override global scaling_cooldown_sleep for this pool. If not specified, the global setting is used. Accepts duration strings like `\"10ms\"`, `\"1s\"`, or plain numbers (milliseconds)."
+
+    max_db_connections:
+      config:
+        en: |
+          Maximum total server connections to this database across all users.
+          When the limit is reached, idle connections from other users are evicted.
+          0 = disabled (default): each user pool works independently.
+        ru: |
+          Максимальное суммарное число серверных соединений к этой БД по всем пользователям.
+          При достижении лимита idle-соединения других пользователей изымаются.
+          0 = выключено (по умолчанию): каждый пул пользователя работает независимо.
+      doc: |
+        Hard cap on the total number of server connections to this database, shared across all user
+        pools. When the limit is reached and a new connection is needed, the coordinator first tries
+        to evict idle connections from other users (respecting their `min_pool_size`), then waits
+        for a connection to be returned, and finally falls back to the reserve pool. Set to `0`
+        (or omit) to disable coordination — each user pool works independently, capped only by its
+        own `pool_size`. Similar to PgBouncer's `max_db_connections`.
+      default: "0 (disabled)"
+
+    min_connection_lifetime:
+      config:
+        en: |
+          Don't evict connections younger than this (milliseconds).
+          Protects freshly created connections from immediate eviction.
+        ru: |
+          Не изымать соединения моложе этого значения (миллисекунды).
+          Защищает свежесозданные соединения от немедленного изъятия.
+      doc: |
+        Minimum age (in milliseconds) a connection must reach before it can be evicted by the
+        pool coordinator. Prevents thundering herd scenarios where freshly created connections
+        are immediately taken away. Only relevant when `max_db_connections > 0`.
+      default: "5000 (5 seconds)"
+
+    reserve_pool_size:
+      config:
+        en: |
+          Extra connections beyond max_db_connections, used as last resort.
+          Allocated by priority: users below min_pool_size get served first.
+        ru: |
+          Дополнительные соединения сверх max_db_connections, крайняя мера.
+          Распределяются по приоритету: пользователи ниже min_pool_size обслуживаются первыми.
+      doc: |
+        Number of extra connections allowed beyond `max_db_connections` as a last resort. When
+        eviction fails and no connections are returned within `reserve_pool_timeout`, a reserve
+        connection is granted to the highest-priority requester. Users below their `min_pool_size`
+        get absolute priority. Only relevant when `max_db_connections > 0`.
+      default: "0"
+
+    reserve_pool_timeout:
+      config:
+        en: |
+          Wait time (milliseconds) before falling back to reserve pool.
+          During this time the coordinator waits for a connection to be returned.
+        ru: |
+          Время ожидания (миллисекунды) перед использованием резервного пула.
+          В течение этого времени координатор ждёт возврата соединения.
+      doc: |
+        How long (in milliseconds) to wait for a regular connection to become available before
+        falling back to the reserve pool. During this window the coordinator listens for returned
+        connections. Only relevant when `max_db_connections > 0` and `reserve_pool_size > 0`.
+      default: "3000 (3 seconds)"
+
+    min_guaranteed_pool_size:
+      config:
+        en: |
+          Minimum connections per user protected from coordinator eviction.
+          Unlike min_pool_size (which triggers prewarm/replenish), this only
+          affects eviction: the coordinator will never evict a user's connections
+          below this number. Does not create connections proactively.
+          Useful when min_pool_size = 0 for most users (no prewarm desired)
+          but you still want eviction fairness under max_db_connections pressure.
+        ru: |
+          Минимум соединений на пользователя, защищённых от изъятия координатором.
+          В отличие от min_pool_size (который прогревает пул заранее), этот параметр
+          влияет только на eviction: координатор не будет изымать соединения пользователя
+          ниже этого числа. Не создаёт соединения проактивно.
+          Полезен когда min_pool_size = 0 (прогрев не нужен), но нужна справедливость
+          изъятия при давлении max_db_connections.
+      doc: |
+        Pool-level default for the minimum number of connections per user that are protected
+        from coordinator eviction. When the coordinator needs to free a connection slot for
+        another user, it will not evict connections from a user who is at or below this count.
+
+        This is separate from `min_pool_size` (user-level): `min_pool_size` controls prewarm
+        and replenish (proactively creating connections), while `min_guaranteed_pool_size`
+        only affects eviction decisions (never creates connections).
+
+        The effective protection for a user is `max(user.min_pool_size, pool.min_guaranteed_pool_size)`.
+        Set to `0` (or omit) for no eviction protection. Only relevant when `max_db_connections > 0`.
+      default: "0 (no protection)"
 
     application_name:
       config:

@@ -1,25 +1,20 @@
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
-use log::{debug, info, warn};
+use log::{debug, info};
 use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::{Notify, Semaphore};
 
-use crate::auth::auth_query::{AuthQueryCache, AuthQueryExecutor};
-use crate::config::{
-    get_config, Address, AuthQueryConfig, BackendAuthMethod, General, PoolMode, User,
-};
+use crate::config::{get_config, Address, BackendAuthMethod, General, PoolMode, User};
 use crate::errors::Error;
 use crate::messages::Parse;
 
-use crate::server::{Server, ServerParameters};
+use crate::server::ServerParameters;
 use crate::stats::auth_query::AuthQueryStats;
-use crate::stats::{AddressStats, ServerStats};
+use crate::stats::AddressStats;
 
 mod errors;
 mod inner;
@@ -31,8 +26,18 @@ pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts}
 
 pub use crate::server::PreparedStatementCache;
 
+mod auth_query_state;
+mod dynamic;
+mod eviction;
 pub mod gc;
+pub mod pool_coordinator;
 pub mod retain;
+mod server_pool;
+
+pub use auth_query_state::AuthQueryState;
+pub use dynamic::create_dynamic_pool;
+pub use eviction::PoolEvictionSource;
+pub use server_pool::ServerPool;
 
 pub type ProcessId = i32;
 pub type SecretKey = i32;
@@ -50,6 +55,15 @@ pub static POOLS: Lazy<ArcSwap<PoolMap>> = Lazy::new(|| ArcSwap::from_pointee(Ha
 pub static CANCELED_PIDS: Lazy<Arc<Mutex<HashSet<ProcessId>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashSet::new())));
 
+/// Per-database pool coordinators, keyed by pool name.
+/// Created in `from_config()` for pools with `max_db_connections > 0`.
+/// Replaced atomically on RELOAD. When a coordinator is replaced, old connections
+/// that hold permits from the previous coordinator continue working until they
+/// are naturally closed — the old `Arc<PoolCoordinator>` lives as long as its
+/// permits do.
+pub static COORDINATORS: Lazy<ArcSwap<HashMap<String, Arc<pool_coordinator::PoolCoordinator>>>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+
 /// Global client-server map, initialized once by `from_config()`.
 /// Needed by `create_dynamic_pool()` which doesn't have access to the map
 /// through function parameters.
@@ -66,79 +80,7 @@ fn get_client_server_map() -> Option<ClientServerMap> {
 pub type PreparedStatementCacheType = Arc<PreparedStatementCache>;
 pub type ServerParametersType = Arc<tokio::sync::Mutex<ServerParameters>>;
 
-// ---------------------------------------------------------------------------
-// Auth query state (per-pool, lazily initialized)
-// ---------------------------------------------------------------------------
-
-/// Per-pool auth_query state: cache + config + shared pool identifier.
-///
-/// The executor and cache are lazily initialized via `OnceCell` on the first
-/// auth_query authentication attempt. This ensures `from_config()` never fails
-/// due to an unreachable auth_query PostgreSQL server — static users continue
-/// working. If the first init fails, `OnceCell` retries on the next call.
-pub struct AuthQueryState {
-    cache_cell: tokio::sync::OnceCell<AuthQueryCache>,
-    config: AuthQueryConfig,
-    pool_name: String,
-    server_host: String,
-    server_port: u16,
-    /// Pool identifier for the shared server_user pool (None = passthrough mode).
-    pub shared_pool_id: Option<PoolIdentifier>,
-    /// Per-pool auth_query metrics (shared with cache and admin/prometheus).
-    pub stats: Arc<AuthQueryStats>,
-}
-
-impl AuthQueryState {
-    /// Get the auth_query config for this pool.
-    pub fn config(&self) -> &AuthQueryConfig {
-        &self.config
-    }
-
-    /// Get the cache, lazily initializing the executor + cache on first access.
-    ///
-    /// If PG is unreachable, returns `Err`; the `OnceCell` does NOT store the
-    /// error, so the next call will retry the connection.
-    /// Clear the auth_query cache if it was already initialized.
-    /// Called on RELOAD when auth_query config changes. Does NOT trigger
-    /// lazy initialization (safe to call even if executor was never created).
-    pub fn try_clear_cache(&self) {
-        if let Some(cache) = self.cache_cell.get() {
-            cache.clear();
-            info!(
-                "[pool: {}] auth_query cache cleared on RELOAD",
-                self.pool_name
-            );
-        }
-    }
-
-    pub async fn cache(&self) -> Result<&AuthQueryCache, Error> {
-        self.cache_cell
-            .get_or_try_init(|| async {
-                info!(
-                    "[pool: {}] auth_query: initializing executor (lazy, first request)",
-                    self.pool_name
-                );
-                let executor = AuthQueryExecutor::new(
-                    &self.config,
-                    &self.pool_name,
-                    &self.server_host,
-                    self.server_port,
-                )
-                .await?;
-                Ok(AuthQueryCache::new(
-                    Arc::new(executor),
-                    &self.config,
-                    Some(self.stats.clone()),
-                ))
-            })
-            .await
-    }
-
-    /// Number of cached entries (0 if cache not yet initialized).
-    pub fn cache_len(&self) -> usize {
-        self.cache_cell.get().map_or(0, |c| c.len())
-    }
-}
+// AuthQueryState is in auth_query_state.rs, re-exported above.
 
 /// Global auth_query state per database pool.
 /// Replaced atomically on RELOAD together with POOLS.
@@ -218,6 +160,10 @@ pub struct PoolSettings {
 
     idle_timeout_ms: u64,
     life_time_ms: u64,
+
+    /// Pool-level minimum connections protected from coordinator eviction.
+    /// Effective protection = max(user.min_pool_size, this value).
+    pub min_guaranteed_pool_size: u32,
 }
 
 impl Default for PoolSettings {
@@ -229,6 +175,7 @@ impl Default for PoolSettings {
             idle_timeout_ms: General::default_idle_timeout().as_millis(),
             life_time_ms: General::default_server_lifetime().as_millis(),
             sync_server_parameters: General::default_sync_server_parameters(),
+            min_guaranteed_pool_size: 0,
         }
     }
 }
@@ -256,6 +203,11 @@ pub struct ConnectionPool {
 
     /// Cache
     pub prepared_statement_cache: Option<PreparedStatementCacheType>,
+
+    /// Database-level connection coordinator. `Some` when `max_db_connections > 0`
+    /// in the pool config, `None` otherwise (disabled, zero overhead).
+    /// Shared across all user pools for the same database.
+    pub(crate) coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
 }
 
 impl ConnectionPool {
@@ -265,6 +217,49 @@ impl ConnectionPool {
         let config = get_config();
 
         let mut new_pools = HashMap::new();
+
+        // Build per-database coordinators for pools with max_db_connections > 0.
+        // Reuse existing coordinators when config hasn't changed (avoids resetting
+        // semaphore state and losing in-flight permits on benign RELOAD).
+        let mut coordinators: HashMap<String, Arc<pool_coordinator::PoolCoordinator>> =
+            HashMap::new();
+        let old_coordinators = COORDINATORS.load();
+        for (pool_name, pool_config) in &config.pools {
+            let max = pool_config.max_db_connections.unwrap_or(0) as usize;
+            if max == 0 {
+                continue;
+            }
+            let new_cfg = pool_coordinator::CoordinatorConfig {
+                max_db_connections: max,
+                min_connection_lifetime_ms: pool_config.min_connection_lifetime.unwrap_or(5000),
+                reserve_pool_size: pool_config.reserve_pool_size.unwrap_or(0) as usize,
+                reserve_pool_timeout_ms: pool_config.reserve_pool_timeout.unwrap_or(3000),
+            };
+            // Reuse if config unchanged — keeps semaphores, arbiter, and in-flight permits alive.
+            if let Some(existing) = old_coordinators.get(pool_name.as_str()) {
+                if *existing.config() == new_cfg {
+                    debug!(
+                        "[pool: {}] coordinator config unchanged, reusing",
+                        pool_name
+                    );
+                    coordinators.insert(pool_name.clone(), existing.clone());
+                    continue;
+                }
+                info!(
+                    "[pool: {}] coordinator config changed, creating new (old connections drain naturally)",
+                    pool_name
+                );
+            } else {
+                info!(
+                    "[pool: {}] creating coordinator (max_db_connections={})",
+                    pool_name, max
+                );
+            }
+            coordinators.insert(
+                pool_name.clone(),
+                pool_coordinator::PoolCoordinator::new(pool_name.clone(), new_cfg),
+            );
+        }
 
         for (pool_name, pool_config) in &config.pools {
             let new_pool_hash_value = pool_config.hash_value();
@@ -381,7 +376,10 @@ impl ConnectionPool {
 
                 info!("[pool: {}][user: {}]", pool_name, user.username);
 
-                let mut builder_config = Pool::builder(manager);
+                let mut builder_config = Pool::builder(manager)
+                    .coordinator(coordinators.get(pool_name).cloned())
+                    .pool_name(pool_name.clone())
+                    .username(user.username.clone());
                 builder_config = builder_config.config(PoolConfig {
                     max_size: user.pool_size as usize,
                     timeouts: Timeouts {
@@ -413,6 +411,7 @@ impl ConnectionPool {
                             .server_lifetime
                             .unwrap_or(config.general.server_lifetime.as_millis()),
                         sync_server_parameters: config.general.sync_server_parameters,
+                        min_guaranteed_pool_size: pool_config.min_guaranteed_pool_size.unwrap_or(0),
                     },
                     prepared_statement_cache: match config.general.prepared_statements {
                         false => None,
@@ -421,6 +420,7 @@ impl ConnectionPool {
                             config.general.worker_threads,
                         ))),
                     },
+                    coordinator: coordinators.get(pool_name).cloned(),
                 };
 
                 // There is one pool per database/user pair.
@@ -540,6 +540,9 @@ impl ConnectionPool {
                         );
 
                         let pool = Pool::builder(manager)
+                            .coordinator(coordinators.get(pool_name).cloned())
+                            .pool_name(pool_name.clone())
+                            .username(shared_user.username.clone())
                             .config(PoolConfig {
                                 max_size: shared_user.pool_size as usize,
                                 timeouts: Timeouts {
@@ -571,6 +574,9 @@ impl ConnectionPool {
                                     .server_lifetime
                                     .unwrap_or(config.general.server_lifetime.as_millis()),
                                 sync_server_parameters: config.general.sync_server_parameters,
+                                min_guaranteed_pool_size: pool_config
+                                    .min_guaranteed_pool_size
+                                    .unwrap_or(0),
                             },
                             prepared_statement_cache: match config.general.prepared_statements {
                                 false => None,
@@ -579,6 +585,7 @@ impl ConnectionPool {
                                     config.general.worker_threads,
                                 ))),
                             },
+                            coordinator: coordinators.get(pool_name).cloned(),
                         };
 
                         new_pools.insert(identifier.clone(), conn_pool);
@@ -591,15 +598,14 @@ impl ConnectionPool {
 
                 auth_query_states.insert(
                     pool_name.clone(),
-                    Arc::new(AuthQueryState {
-                        cache_cell: tokio::sync::OnceCell::new(),
-                        config: aq_config.clone(),
-                        pool_name: pool_name.clone(),
-                        server_host: pool_config.server_host.clone(),
-                        server_port: pool_config.server_port,
+                    Arc::new(AuthQueryState::new(
+                        aq_config.clone(),
+                        pool_name.clone(),
+                        pool_config.server_host.clone(),
+                        pool_config.server_port,
                         shared_pool_id,
-                        stats: Arc::new(AuthQueryStats::default()),
-                    }),
+                        Arc::new(AuthQueryStats::default()),
+                    )),
                 );
             }
         }
@@ -677,6 +683,7 @@ impl ConnectionPool {
             info!("RELOAD: removed {} dynamic pool(s)", pools_to_remove.len());
         }
 
+        COORDINATORS.store(Arc::new(coordinators));
         AUTH_QUERY_STATE.store(Arc::new(auth_query_states));
         POOLS.store(Arc::new(new_pools.clone()));
         Ok(())
@@ -732,293 +739,31 @@ impl ConnectionPool {
         }
         Ok(guard.clone())
     }
-}
 
-/// Wrapper for the connection pool.
-pub struct ServerPool {
-    /// Server address.
-    address: Address,
-
-    /// Pool user.
-    user: User,
-
-    /// Server database.
-    database: String,
-
-    /// Client/server mapping.
-    client_server_map: ClientServerMap,
-
-    /// Should we clean up dirty connections before putting them into the pool?
-    cleanup_connections: bool,
-
-    application_name: String,
-
-    /// Log client parameter status changes
-    log_client_parameter_status_changes: bool,
-
-    /// Prepared statement cache size
-    prepared_statement_cache_size: usize,
-
-    /// Semaphore to limit concurrent server connection creation.
-    create_semaphore: Arc<Semaphore>,
-
-    /// Counter for total connections created (for logging).
-    connection_counter: AtomicU64,
-
-    /// Server lifetime in milliseconds (0 = unlimited).
-    lifetime_ms: u64,
-
-    /// Idle timeout in milliseconds (0 = disabled).
-    /// Connections idle longer than this are closed by retain.
-    idle_timeout_ms: u64,
-
-    /// Time after which idle connections should be checked before reuse (0 = disabled).
-    idle_check_timeout_ms: u64,
-
-    /// Connect timeout for alive checks.
-    connect_timeout: Duration,
-
-    /// Session mode flag passed to created Server connections.
-    session_mode: bool,
-
-    /// Combined pool state: bit 32 = paused, bits 0-31 = reconnect epoch (u32).
-    pool_state: AtomicU64,
-
-    /// Notify to wake up clients blocked on PAUSE.
-    resume_notify: Notify,
-}
-
-impl std::fmt::Debug for ServerPool {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServerPool")
-            .field("address", &self.address)
-            .field("user", &self.user)
-            .field("database", &self.database)
-            .field("cleanup_connections", &self.cleanup_connections)
-            .field("application_name", &self.application_name)
-            .field(
-                "log_client_parameter_status_changes",
-                &self.log_client_parameter_status_changes,
-            )
-            .field(
-                "prepared_statement_cache_size",
-                &self.prepared_statement_cache_size,
-            )
-            .field(
-                "connection_counter",
-                &self.connection_counter.load(Ordering::Relaxed),
-            )
-            .finish()
-    }
-}
-
-impl ServerPool {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        address: Address,
-        user: User,
-        database: &str,
-        client_server_map: ClientServerMap,
-        cleanup_connections: bool,
-        log_client_parameter_status_changes: bool,
-        prepared_statement_cache_size: usize,
-        application_name: String,
-        max_concurrent_creates: usize,
-        lifetime_ms: u64,
-        idle_timeout_ms: u64,
-        idle_check_timeout_ms: u64,
-        connect_timeout: Duration,
-        session_mode: bool,
-    ) -> ServerPool {
-        ServerPool {
-            address,
-            user: user.clone(),
-            database: database.to_string(),
-            client_server_map,
-            cleanup_connections,
-            log_client_parameter_status_changes,
-            prepared_statement_cache_size,
-            create_semaphore: Arc::new(Semaphore::new(max_concurrent_creates)),
-            connection_counter: AtomicU64::new(0),
-            application_name,
-            lifetime_ms,
-            idle_timeout_ms,
-            idle_check_timeout_ms,
-            connect_timeout,
-            pool_state: AtomicU64::new(0),
-            resume_notify: Notify::new(),
-            session_mode,
-        }
-    }
-
-    /// Attempts to create a new connection.
-    /// Uses a semaphore to limit concurrent connection creation instead of serializing with mutex.
-    pub async fn create(&self) -> Result<Server, Error> {
-        // Acquire semaphore permit to limit concurrent creates
-        let _permit = self
-            .create_semaphore
-            .acquire()
-            .await
-            .map_err(|_| Error::ServerStartupReadParameters("Semaphore closed".to_string()))?;
-
-        let conn_num = self.connection_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        info!(
-            "Creating a new server connection to {}[#{}]",
-            self.address, conn_num
-        );
-        let stats = Arc::new(ServerStats::new(
-            self.address.clone(),
-            crate::utils::clock::now(),
-        ));
-
-        stats.register(stats.clone());
-
-        // Connect to the PostgreSQL server.
-        match Server::startup(
-            &self.address,
-            &self.user,
-            &self.database,
-            self.client_server_map.clone(),
-            stats.clone(),
-            self.cleanup_connections,
-            self.log_client_parameter_status_changes,
-            self.prepared_statement_cache_size,
-            self.application_name.clone(),
-            self.session_mode,
+    /// Connections above the user's guaranteed minimum — these are eligible
+    /// for eviction by the coordinator when another user needs a connection.
+    /// Effective minimum = max(user.min_pool_size, pool.min_guaranteed_pool_size).
+    pub fn spare_above_min(&self) -> usize {
+        let current = self.pool_state().size;
+        compute_spare(
+            current,
+            self.settings.user.min_pool_size,
+            self.settings.min_guaranteed_pool_size,
         )
-        .await
-        {
-            Ok(conn) => {
-                // Permit is released automatically when _permit goes out of scope
-                conn.stats.idle(0);
-                Ok(conn)
-            }
-            Err(err) => {
-                // Brief backoff on error to avoid hammering a failing server
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                stats.disconnect();
-                Err(err)
-            }
-        }
     }
+}
 
-    /// Returns the address of this pool.
-    pub fn address(&self) -> &Address {
-        &self.address
-    }
-
-    /// Returns the base lifetime in milliseconds for connections in this pool.
-    pub fn lifetime_ms(&self) -> u64 {
-        self.lifetime_ms
-    }
-
-    /// Returns the base idle timeout in milliseconds for connections in this pool.
-    pub fn idle_timeout_ms(&self) -> u64 {
-        self.idle_timeout_ms
-    }
-
-    /// Bit flag for the paused state within `pool_state`.
-    const PAUSED_BIT: u64 = 1 << 32;
-    /// Mask for the reconnect epoch (lower 32 bits) within `pool_state`.
-    const EPOCH_MASK: u64 = 0xFFFF_FFFF;
-
-    /// Returns whether the pool is paused.
-    pub fn is_paused(&self) -> bool {
-        self.pool_state.load(Ordering::Acquire) & Self::PAUSED_BIT != 0
-    }
-
-    /// Sets the pool as paused.
-    pub fn pause(&self) {
-        self.pool_state
-            .fetch_or(Self::PAUSED_BIT, Ordering::Release);
-    }
-
-    /// Resumes the pool and wakes all waiting clients.
-    pub fn resume(&self) {
-        self.pool_state
-            .fetch_and(!Self::PAUSED_BIT, Ordering::Release);
-        self.resume_notify.notify_waiters();
-    }
-
-    /// Returns a future that completes when the pool is resumed.
-    pub fn resume_notified(&self) -> tokio::sync::futures::Notified<'_> {
-        self.resume_notify.notified()
-    }
-
-    /// Returns the current reconnect epoch.
-    pub fn current_epoch(&self) -> u32 {
-        (self.pool_state.load(Ordering::Acquire) & Self::EPOCH_MASK) as u32
-    }
-
-    /// Increments the reconnect epoch and returns the new value.
-    /// Uses CAS loop to modify only the lower 32 bits, preventing
-    /// epoch overflow from corrupting PAUSED_BIT at bit 32.
-    pub fn bump_epoch(&self) -> u32 {
-        loop {
-            let old = self.pool_state.load(Ordering::Acquire);
-            let old_epoch = (old & Self::EPOCH_MASK) as u32;
-            let new_epoch = old_epoch.wrapping_add(1);
-            let new = (old & !Self::EPOCH_MASK) | (new_epoch as u64);
-            if self
-                .pool_state
-                .compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                return new_epoch;
-            }
-        }
-    }
-
-    /// Checks if the connection can be recycled.
-    /// Performs lifetime check and alive check for idle connections.
-    pub async fn recycle(&self, conn: &mut Server, metrics: &Metrics) -> RecycleResult {
-        if conn.is_bad() {
-            return Err(RecycleError::StaticMessage("Bad connection"));
-        }
-
-        // RECONNECT epoch check: reject connections created before current epoch
-        if metrics.epoch < self.current_epoch() {
-            return Err(RecycleError::StaticMessage(
-                "Connection outdated (RECONNECT)",
-            ));
-        }
-
-        // Check server_lifetime - applies to all connections, not just idle
-        // Uses per-connection lifetime with jitter to prevent mass closures
-        if metrics.lifetime_ms > 0 {
-            let age_ms = metrics.age().as_millis() as u64;
-            if age_ms > metrics.lifetime_ms {
-                warn!(
-                    "Connection {} exceeded lifetime ({}ms > {}ms)",
-                    conn, age_ms, metrics.lifetime_ms
-                );
-                return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
-            }
-        }
-
-        // Check if connection was idle too long and needs alive check
-        if self.idle_check_timeout_ms > 0 {
-            if let Some(recycled) = metrics.recycled {
-                let idle_time_ms = recycled.elapsed().as_millis() as u64;
-                if idle_time_ms > self.idle_check_timeout_ms {
-                    debug!(
-                        "Connection {} idle for {}ms, checking alive...",
-                        conn, idle_time_ms
-                    );
-                    if conn.check_alive(self.connect_timeout).await.is_err() {
-                        warn!(
-                            "Connection {} failed alive check after {}ms idle",
-                            conn, idle_time_ms
-                        );
-                        return Err(RecycleError::StaticMessage("Connection failed alive check"));
-                    }
-                    debug!("Connection {} passed alive check", conn);
-                }
-            }
-        }
-
-        Ok(())
-    }
+/// Compute how many connections are above the effective guaranteed minimum.
+/// Pure function extracted from `ConnectionPool::spare_above_min()` for testability.
+fn compute_spare(
+    current_pool_size: usize,
+    user_min_pool_size: Option<u32>,
+    pool_min_guaranteed: u32,
+) -> usize {
+    let user_min = user_min_pool_size.unwrap_or(0) as usize;
+    let pool_min = pool_min_guaranteed as usize;
+    let effective_min = user_min.max(pool_min);
+    current_pool_size.saturating_sub(effective_min)
 }
 
 /// Get the connection pool
@@ -1042,213 +787,80 @@ pub fn get_all_pools() -> Arc<PoolMap> {
     POOLS.load_full()
 }
 
-/// Create a dynamic data pool for auth_query passthrough mode.
-/// Returns the new (or existing) pool. Race-safe: if another thread
-/// created the pool concurrently, returns the existing one.
-///
-/// On RELOAD, dynamic pools are dropped (not in config) and recreated
-/// on the next client connection with fresh settings.
-pub fn create_dynamic_pool(
-    pool_name: &str,
-    username: &str,
-    backend_auth: Option<BackendAuthMethod>,
-) -> Result<ConnectionPool, Error> {
-    // Fast path: pool already exists
-    if let Some(existing) = get_pool(pool_name, username) {
-        // Update backend_auth (credentials may have changed)
-        if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
-            debug!(
-                "[pool: {pool_name}] auth_query: dynamic pool for '{username}' already exists, updating backend_auth"
-            );
-            *ba_lock.write() = new_ba.clone();
-        }
-        return Ok(existing);
+/// Get pool coordinator for a database pool (if `max_db_connections > 0`).
+/// Returns `None` when coordination is disabled for this pool.
+pub fn get_coordinator(db: &str) -> Option<Arc<pool_coordinator::PoolCoordinator>> {
+    COORDINATORS.load().get(db).cloned()
+}
+
+// create_dynamic_pool is in dynamic.rs, re-exported above.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- compute_spare tests ---
+
+    #[test]
+    fn spare_no_minimums_set() {
+        // No min_pool_size, no min_guaranteed → all connections are spare
+        assert_eq!(compute_spare(5, None, 0), 5);
     }
 
-    let config = get_config();
-    let pool_config = config.pools.get(pool_name).ok_or_else(|| {
-        Error::AuthError(format!(
-            "auth_query: pool config '{pool_name}' not found for dynamic pool"
-        ))
-    })?;
-    let aq_config = pool_config.auth_query.as_ref().ok_or_else(|| {
-        Error::AuthError(format!(
-            "auth_query: config not found in pool '{pool_name}' for dynamic pool"
-        ))
-    })?;
-    let client_server_map = get_client_server_map()
-        .ok_or_else(|| Error::AuthError("auth_query: client_server_map not initialized".into()))?;
-
-    let server_database = pool_config
-        .server_database
-        .clone()
-        .unwrap_or_else(|| pool_name.to_string());
-
-    let ba_arc = backend_auth.map(|ba| Arc::new(parking_lot::RwLock::new(ba)));
-
-    let address = Address {
-        database: pool_name.to_string(),
-        host: pool_config.server_host.clone(),
-        port: pool_config.server_port,
-        username: username.to_string(),
-        password: String::new(),
-        pool_name: pool_name.to_string(),
-        stats: Arc::new(AddressStats::default()),
-        backend_auth: ba_arc,
-    };
-
-    let user = User {
-        username: username.to_string(),
-        password: String::new(),
-        pool_size: aq_config.pool_size,
-        min_pool_size: if aq_config.min_pool_size > 0 {
-            Some(aq_config.min_pool_size)
-        } else {
-            None
-        },
-        server_username: Some(username.to_string()),
-        server_password: None,
-        ..Default::default()
-    };
-
-    let prepared_statements_cache_size = match config.general.prepared_statements {
-        true => pool_config
-            .prepared_statements_cache_size
-            .unwrap_or(config.general.prepared_statements_cache_size),
-        false => 0,
-    };
-
-    let application_name = pool_config
-        .application_name
-        .clone()
-        .unwrap_or_else(|| "pg_doorman".to_string());
-
-    let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
-
-    let manager = ServerPool::new(
-        address.clone(),
-        user.clone(),
-        server_database.as_str(),
-        client_server_map,
-        pool_config.cleanup_server_connections,
-        pool_config.log_client_parameter_status_changes,
-        prepared_statements_cache_size,
-        application_name,
-        config.general.max_concurrent_creates,
-        pool_config
-            .server_lifetime
-            .unwrap_or(config.general.server_lifetime.as_millis()),
-        pool_config
-            .idle_timeout
-            .unwrap_or(config.general.idle_timeout.as_millis()),
-        config.general.server_idle_check_timeout.as_millis(),
-        config.general.connect_timeout.as_std(),
-        pool_mode == PoolMode::Session,
-    );
-
-    let queue_strategy = match config.general.server_round_robin {
-        true => QueueMode::Fifo,
-        false => QueueMode::Lifo,
-    };
-
-    let pool = Pool::builder(manager)
-        .config(PoolConfig {
-            max_size: user.pool_size as usize,
-            timeouts: Timeouts {
-                wait: Some(config.general.query_wait_timeout.as_std()),
-                create: Some(config.general.connect_timeout.as_std()),
-                recycle: None,
-            },
-            queue_mode: queue_strategy,
-            scaling: pool_config.resolve_scaling_config(&config.general),
-        })
-        .build();
-
-    let conn_pool = ConnectionPool {
-        database: pool,
-        address,
-        config_hash: 0, // dynamic pools don't participate in hash-based reload
-        original_server_parameters: Arc::new(tokio::sync::Mutex::new(ServerParameters::new())),
-        settings: PoolSettings {
-            pool_mode,
-            user,
-            db: pool_name.to_string(),
-            idle_timeout_ms: pool_config
-                .idle_timeout
-                .unwrap_or(config.general.idle_timeout.as_millis()),
-            life_time_ms: pool_config
-                .server_lifetime
-                .unwrap_or(config.general.server_lifetime.as_millis()),
-            sync_server_parameters: config.general.sync_server_parameters,
-        },
-        prepared_statement_cache: match config.general.prepared_statements {
-            false => None,
-            true => Some(Arc::new(PreparedStatementCache::new(
-                prepared_statements_cache_size,
-                config.general.worker_threads,
-            ))),
-        },
-    };
-
-    // Atomic insert into POOLS
-    let identifier = PoolIdentifier::new(pool_name, username);
-    let current = POOLS.load();
-    let mut new_pools = (**current).clone();
-
-    // Re-check after clone (another thread may have created it)
-    if let Some(existing) = new_pools.get(&identifier) {
-        if let (Some(ref ba_lock), Some(ref new_ba)) = (
-            &existing.address.backend_auth,
-            &conn_pool.address.backend_auth,
-        ) {
-            *ba_lock.write() = new_ba.read().clone();
-        }
-        return Ok(existing.clone());
+    #[test]
+    fn spare_with_user_min_pool_size_only() {
+        // user.min_pool_size=3, pool.min_guaranteed=0 → effective_min=3
+        assert_eq!(compute_spare(5, Some(3), 0), 2);
     }
 
-    let auth_method = match &conn_pool.address.backend_auth {
-        Some(ba) => {
-            let guard = ba.read();
-            match &*guard {
-                BackendAuthMethod::Md5PassTheHash(_) => "md5-pass-the-hash",
-                BackendAuthMethod::ScramPassthrough(_) => "scram-passthrough",
-                BackendAuthMethod::ScramPending => "scram-pending",
-            }
-        }
-        None => "none",
-    };
-    info!(
-        "[pool: {pool_name}] auth_query: created dynamic passthrough pool for '{username}' (backend_auth={auth_method})"
-    );
-    new_pools.insert(identifier.clone(), conn_pool.clone());
-    POOLS.store(Arc::new(new_pools));
-    register_dynamic_pool(&identifier);
-
-    // Prewarm: spawn background task to create min_pool_size connections
-    if aq_config.min_pool_size > 0 {
-        let pool_clone = conn_pool.clone();
-        let min = aq_config.min_pool_size as usize;
-        let pn = pool_name.to_string();
-        let un = username.to_string();
-        tokio::spawn(async move {
-            let created = pool_clone.database.replenish(min).await;
-            if created > 0 {
-                info!(
-                    "[pool: {pn}][user: {un}] prewarmed {created} dynamic connection(s) (min_pool_size: {min})"
-                );
-            } else {
-                warn!("[pool: {pn}][user: {un}] dynamic prewarm failed (min_pool_size: {min})");
-            }
-        });
+    #[test]
+    fn spare_with_pool_guaranteed_only() {
+        // user.min_pool_size=None, pool.min_guaranteed=4 → effective_min=4
+        assert_eq!(compute_spare(5, None, 4), 1);
     }
 
-    // Increment dynamic_pools_created stat
-    if let Some(state) = get_auth_query_state(pool_name) {
-        state
-            .stats
-            .dynamic_pools_created
-            .fetch_add(1, Ordering::Relaxed);
+    #[test]
+    fn spare_pool_guaranteed_wins_over_user_min() {
+        // user.min_pool_size=2, pool.min_guaranteed=4 → effective_min=max(2,4)=4
+        assert_eq!(compute_spare(5, Some(2), 4), 1);
     }
 
-    Ok(conn_pool)
+    #[test]
+    fn spare_user_min_wins_over_pool_guaranteed() {
+        // user.min_pool_size=5, pool.min_guaranteed=2 → effective_min=max(5,2)=5
+        assert_eq!(compute_spare(5, Some(5), 2), 0);
+    }
+
+    #[test]
+    fn spare_at_exact_minimum() {
+        // current == effective_min → 0 spare
+        assert_eq!(compute_spare(3, Some(3), 0), 0);
+        assert_eq!(compute_spare(4, None, 4), 0);
+    }
+
+    #[test]
+    fn spare_below_minimum_saturates_to_zero() {
+        // current < effective_min → saturating_sub returns 0
+        assert_eq!(compute_spare(2, Some(5), 0), 0);
+        assert_eq!(compute_spare(1, None, 3), 0);
+        assert_eq!(compute_spare(0, Some(1), 2), 0);
+    }
+
+    #[test]
+    fn spare_zero_current_connections() {
+        assert_eq!(compute_spare(0, None, 0), 0);
+        assert_eq!(compute_spare(0, Some(3), 5), 0);
+    }
+
+    #[test]
+    fn spare_both_minimums_equal() {
+        // user.min_pool_size=3, pool.min_guaranteed=3 → effective_min=3
+        assert_eq!(compute_spare(5, Some(3), 3), 2);
+    }
+
+    #[test]
+    fn spare_large_values() {
+        assert_eq!(compute_spare(1000, Some(100), 200), 800);
+        assert_eq!(compute_spare(1000, Some(999), 1), 1);
+    }
 }

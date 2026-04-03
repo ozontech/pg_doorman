@@ -1,6 +1,6 @@
 [package]
 name = "pg_doorman"
-version = "3.3.5"
+version = "3.4.0"
 edition = "2021"
 rust-version = "1.87.0"
 license = "MIT"
@@ -102,6 +102,10 @@ harness = false
 
 [[bench]]
 name = "cache_benchmarks"
+harness = false
+
+[[bench]]
+name = "coordinator_benchmarks"
 harness = false
 
 [features]

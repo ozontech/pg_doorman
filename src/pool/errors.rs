@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::errors::Error;
+use crate::pool::pool_coordinator::{AcquireError, NoConnectionInfo};
 
 /// Possible errors returned by the recycle() method.
 #[derive(Debug)]
@@ -72,6 +73,9 @@ pub enum PoolError {
 
     /// Pool has been closed.
     Closed,
+
+    /// Database-level connection limit exhausted (pool coordinator).
+    DbLimitExhausted(NoConnectionInfo),
 }
 
 impl From<Error> for PoolError {
@@ -103,6 +107,15 @@ impl fmt::Display for PoolError {
                 e
             ),
             Self::Closed => write!(f, "Pool has been closed"),
+            Self::DbLimitExhausted(info) => write!(f, "{info}"),
+        }
+    }
+}
+
+impl From<AcquireError> for PoolError {
+    fn from(e: AcquireError) -> Self {
+        match e {
+            AcquireError::NoConnection(info) => Self::DbLimitExhausted(info),
         }
     }
 }

@@ -147,6 +147,26 @@ pub async fn retain_connections() {
         let mut pool_refs: Vec<_> = pools.values().collect();
         pool_refs.shuffle(&mut rand::rng());
 
+        // Reserve pressure relief: close idle reserve connections early.
+        // Reserve connections are temporary (created when max_db_connections was
+        // reached) and should be released as soon as they've been idle long enough.
+        for pool in &pool_refs {
+            if let Some(ref coordinator) = pool.coordinator {
+                let min_lifetime = coordinator.config().min_connection_lifetime_ms;
+                let closed = pool.database.close_idle_reserve_connections(min_lifetime);
+                if closed > 0 {
+                    info!(
+                        "[pool: {}][user: {}] released {} reserve connection{} (idle > {}ms)",
+                        pool.address.pool_name,
+                        pool.address.username,
+                        closed,
+                        if closed == 1 { "" } else { "s" },
+                        min_lifetime,
+                    );
+                }
+            }
+        }
+
         for pool in &pool_refs {
             pool.retain_pool_connections(count.clone(), retain_max);
         }
