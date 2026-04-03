@@ -28,8 +28,16 @@ extern crate exitcode;
 
 use pg_doorman::app;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     app::install_panic_hook();
+
+    if let Err(err) = run() {
+        eprintln!("Error: {err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = app::parse_args()?;
     let config = app::init_config(&args)?;
 
