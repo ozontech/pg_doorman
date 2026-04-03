@@ -196,7 +196,7 @@ impl Collector {
     ///
     /// This method returns immediately after spawning the background task.
     pub async fn collect(&mut self) {
-        info!("Events reporter started");
+        info!("Stats reporter started");
 
         tokio::task::spawn(async move {
             // Create a periodic interval for statistics collection

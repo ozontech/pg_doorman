@@ -18,6 +18,7 @@ use self::tls::{load_identity, TLSMode};
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
+use crate::utils::format_duration_ms;
 
 // Sub-modules
 mod address;
@@ -234,8 +235,14 @@ impl Config {
     /// Print current configuration.
     pub fn show(&self) {
         info!("Worker threads: {}", self.general.worker_threads);
-        info!("Connection timeout: {}ms", self.general.connect_timeout);
-        info!("Idle timeout: {}ms", self.general.idle_timeout);
+        info!(
+            "Connection timeout: {}",
+            format_duration_ms(self.general.connect_timeout.as_millis())
+        );
+        info!(
+            "Idle timeout: {}",
+            format_duration_ms(self.general.idle_timeout.as_millis())
+        );
         info!(
             "Log client connections: {}",
             self.general.log_client_connections
@@ -244,9 +251,12 @@ impl Config {
             "Log client disconnections: {}",
             self.general.log_client_disconnections
         );
-        info!("Shutdown timeout: {}ms", self.general.shutdown_timeout);
         info!(
-            "Message size to be steam: {}",
+            "Shutdown timeout: {}",
+            format_duration_ms(self.general.shutdown_timeout.as_millis())
+        );
+        info!(
+            "Message size to stream: {}",
             self.general.message_size_to_be_stream
         );
         info!(
@@ -254,12 +264,12 @@ impl Config {
             self.general.max_memory_usage
         );
         info!(
-            "Default max server lifetime: {}ms",
-            self.general.server_lifetime
+            "Default max server lifetime: {}",
+            format_duration_ms(self.general.server_lifetime.as_millis())
         );
         info!("Backlog: {}", self.general.backlog);
         info!("Max connections: {}", self.general.max_connections);
-        info!("Sever round robin: {}", self.general.server_round_robin);
+        info!("Server round robin: {}", self.general.server_round_robin);
         if self.general.hba.is_empty() {
             if let Some(pg_hba) = &self.general.pg_hba {
                 info!("HBA config:\n{pg_hba}\n");

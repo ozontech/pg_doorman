@@ -305,7 +305,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         // while still continuing the graceful shutdown process
         let mut listener = Some(listener);
 
-        info!("Waiting for dear clients");
+        info!("Accepting connections");
         loop {
             // Create upgrade signal future (SIGUSR2 on unix, never resolves on windows)
             let upgrade_future = async {

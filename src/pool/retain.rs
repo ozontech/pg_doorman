@@ -111,8 +111,8 @@ pub async fn retain_connections() {
     let count = Arc::new(AtomicUsize::new(0));
 
     info!(
-        "Starting connection retain task: interval={}ms, max_per_cycle={}",
-        retain_time.as_millis(),
+        "Retain task started: interval={}, max_per_cycle={}",
+        format_duration_ms(retain_time.as_millis() as u64),
         if retain_max == 0 {
             "unlimited".to_string()
         } else {
