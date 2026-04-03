@@ -28,6 +28,31 @@ pub async fn create_admin_session(
     world.named_sessions.insert(session_name, conn);
 }
 
+#[when(regex = r#"^we execute "([^"]+)" on admin session "([^"]+)"$"#)]
+pub async fn execute_admin_command(world: &mut DoormanWorld, query: String, session_name: String) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    conn.send_simple_query(&query)
+        .await
+        .expect("Failed to send query");
+
+    loop {
+        let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
+
+        match msg_type {
+            'Z' => break,
+            'E' => {
+                let err = String::from_utf8_lossy(&data);
+                panic!(
+                    "Error from admin session '{}' on '{}': {}",
+                    session_name, query, err
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
 #[when(regex = r#"^we execute "([^"]+)" on admin session "([^"]+)" and store row count$"#)]
 pub async fn execute_admin_query_and_store_row_count(
     world: &mut DoormanWorld,
