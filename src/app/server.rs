@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpSocket;
 #[cfg(not(windows))]
@@ -438,28 +438,17 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         .await
                         {
                             Ok(session_info) => {
-                                if log_client_disconnections {
+                                if log_client_disconnections
+                                    || log::log_enabled!(log::Level::Debug)
+                                {
                                     let session = format_duration(
                                         &(chrono::offset::Utc::now().naive_utc() - start),
                                     );
-                                    match &session_info {
-                                        Some(info) => info!(
-                                            "[{}@{}] client disconnected from {addr}, session={session}",
-                                            info.username, info.pool_name,
-                                        ),
-                                        None => info!("Client {addr} disconnected, session={session}"),
-                                    }
-                                } else if log::log_enabled!(log::Level::Debug) {
-                                    let session = format_duration(
-                                        &(chrono::offset::Utc::now().naive_utc() - start),
-                                    );
-                                    match &session_info {
-                                        Some(info) => debug!(
-                                            "[{}@{}] client disconnected from {addr}, session={session}",
-                                            info.username, info.pool_name,
-                                        ),
-                                        None => debug!("Client {addr} disconnected, session={session}"),
-                                    }
+                                    let identity = match &session_info {
+                                        Some(si) => format!("[{}@{}]", si.username, si.pool_name),
+                                        None => String::new(),
+                                    };
+                                    info!("{identity} client disconnected from {addr}, session={session}");
                                 }
                             }
 
