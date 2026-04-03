@@ -161,6 +161,22 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="340-apr-1-2026"><a class="header" href="#340-apr-1-2026">3.4.0 <small>Apr 1, 2026</small></a></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>Pool Coordinator — database-level connection limits.</strong> New <code>max_db_connections</code> setting caps total server connections per database across all user pools. When the limit is reached, the coordinator evicts idle connections from users with the largest surplus (respecting <code>min_guaranteed_pool_size</code>), then waits for a connection to be returned, and falls back to a reserve pool as last resort. Disabled by default (<code>max_db_connections = 0</code>) — zero overhead when not configured. Five new pool-level config fields: <code>max_db_connections</code>, <code>min_connection_lifetime</code> (eviction age threshold), <code>reserve_pool_size</code> (extra slots beyond the limit), <code>reserve_pool_timeout</code> (wait before using reserve), <code>min_guaranteed_pool_size</code> (per-user eviction protection independent of <code>min_pool_size</code>).</p>
+</li>
+<li>
+<p><strong><code>SHOW POOL_COORDINATOR</code> admin command.</strong> Displays per-database coordinator status: configured limits, current connection count, reserve usage, cumulative evictions, reserve acquisitions, and client exhaustion errors.</p>
+</li>
+<li>
+<p><strong>Pool Coordinator Prometheus metrics.</strong> Seven new metrics under <code>pg_doorman_pool_coordinator{type, database}</code>: <code>connections</code> (current), <code>reserve_in_use</code> (current), <code>max_connections</code> (configured limit), <code>reserve_pool_size</code> (configured reserve), <code>evictions_total</code>, <code>reserve_acquisitions_total</code>, <code>exhaustions_total</code> (client errors from full exhaustion — primary pager signal).</p>
+</li>
+<li>
+<p><strong>Reserve pressure relief.</strong> Idle reserve connections (created under <code>max_db_connections</code> pressure) are closed early by the retain cycle once idle longer than <code>min_connection_lifetime</code>, returning reserve capacity before the regular <code>idle_timeout</code> fires.</p>
+</li>
+</ul>
 <h3 id="335-mar-31-2026"><a class="header" href="#335-mar-31-2026">3.3.5 <small>Mar 31, 2026</small></a></h3>
 <p><strong>Bug Fixes:</strong></p>
 <ul>

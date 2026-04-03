@@ -206,6 +206,40 @@ to save the cleanup roundtrip.</p>
 <p>Override global scaling_fast_retries for this pool. If not specified, the global setting is used.</p>
 <h3 id="scaling_cooldown_sleep"><a class="header" href="#scaling_cooldown_sleep">scaling_cooldown_sleep</a></h3>
 <p>Override global scaling_cooldown_sleep for this pool. If not specified, the global setting is used. Accepts duration strings like <code>"10ms"</code>, <code>"1s"</code>, or plain numbers (milliseconds).</p>
+<h3 id="max_db_connections"><a class="header" href="#max_db_connections">max_db_connections</a></h3>
+<p>Hard cap on the total number of server connections to this database, shared across all user
+pools. When the limit is reached and a new connection is needed, the coordinator first tries
+to evict idle connections from other users (respecting their <code>min_pool_size</code>), then waits
+for a connection to be returned, and finally falls back to the reserve pool. Set to <code>0</code>
+(or omit) to disable coordination — each user pool works independently, capped only by its
+own <code>pool_size</code>. Similar to PgBouncer's <code>max_db_connections</code>.</p>
+<p>Default: <code>0 (disabled)</code>.</p>
+<h3 id="min_connection_lifetime"><a class="header" href="#min_connection_lifetime">min_connection_lifetime</a></h3>
+<p>Minimum age (in milliseconds) a connection must reach before it can be evicted by the
+pool coordinator. Prevents thundering herd scenarios where freshly created connections
+are immediately taken away. Only relevant when <code>max_db_connections &gt; 0</code>.</p>
+<p>Default: <code>5000 (5 seconds)</code>.</p>
+<h3 id="reserve_pool_size"><a class="header" href="#reserve_pool_size">reserve_pool_size</a></h3>
+<p>Number of extra connections allowed beyond <code>max_db_connections</code> as a last resort. When
+eviction fails and no connections are returned within <code>reserve_pool_timeout</code>, a reserve
+connection is granted to the highest-priority requester. Users below their <code>min_pool_size</code>
+get absolute priority. Only relevant when <code>max_db_connections &gt; 0</code>.</p>
+<p>Default: <code>0</code>.</p>
+<h3 id="reserve_pool_timeout"><a class="header" href="#reserve_pool_timeout">reserve_pool_timeout</a></h3>
+<p>How long (in milliseconds) to wait for a regular connection to become available before
+falling back to the reserve pool. During this window the coordinator listens for returned
+connections. Only relevant when <code>max_db_connections &gt; 0</code> and <code>reserve_pool_size &gt; 0</code>.</p>
+<p>Default: <code>3000 (3 seconds)</code>.</p>
+<h3 id="min_guaranteed_pool_size"><a class="header" href="#min_guaranteed_pool_size">min_guaranteed_pool_size</a></h3>
+<p>Pool-level default for the minimum number of connections per user that are protected
+from coordinator eviction. When the coordinator needs to free a connection slot for
+another user, it will not evict connections from a user who is at or below this count.</p>
+<p>This is separate from <code>min_pool_size</code> (user-level): <code>min_pool_size</code> controls prewarm
+and replenish (proactively creating connections), while <code>min_guaranteed_pool_size</code>
+only affects eviction decisions (never creates connections).</p>
+<p>The effective protection for a user is <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>.
+Set to <code>0</code> (or omit) for no eviction protection. Only relevant when <code>max_db_connections &gt; 0</code>.</p>
+<p>Default: <code>0 (no protection)</code>.</p>
 <h2 id="auth-query-settings"><a class="header" href="#auth-query-settings">Auth Query Settings</a></h2>
 <p>The <code>auth_query</code> section enables dynamic user authentication by querying a PostgreSQL database for credentials at connection time. This allows pg_doorman to authenticate users without listing them statically in the configuration file.</p>
 <pre><code class="language-yaml">pools:
