@@ -16,6 +16,14 @@ pub fn init_logging(args: &Args, config: &Config) -> Result<(), Box<dyn std::err
 }
 
 fn init(args: &Args, syslog_name: Option<String>) {
+    let startup_level: LevelFilter = match args.log_level {
+        tracing::Level::ERROR => LevelFilter::Error,
+        tracing::Level::WARN => LevelFilter::Warn,
+        tracing::Level::INFO => LevelFilter::Info,
+        tracing::Level::DEBUG => LevelFilter::Debug,
+        tracing::Level::TRACE => LevelFilter::Trace,
+    };
+
     if let Some(syslog_name) = syslog_name {
         let formatter = Formatter3164 {
             facility: Facility::LOG_USER,
@@ -25,17 +33,8 @@ fn init(args: &Args, syslog_name: Option<String>) {
         };
         let syslog_logger = syslog::unix(formatter).unwrap();
         let inner = Box::new(BasicLogger::new(syslog_logger));
-        let startup_level = LevelFilter::Info;
         LogLevelController::new(inner, startup_level).register();
     } else {
-        let startup_level: LevelFilter = match args.log_level {
-            tracing::Level::ERROR => LevelFilter::Error,
-            tracing::Level::WARN => LevelFilter::Warn,
-            tracing::Level::INFO => LevelFilter::Info,
-            tracing::Level::DEBUG => LevelFilter::Debug,
-            tracing::Level::TRACE => LevelFilter::Trace,
-        };
-
         let inner: Box<dyn Log> = match args.log_format {
             LogFormat::Structured => Box::new(JsonLogger::new()),
             _ => Box::new(TextLogger::new(!args.no_color)),
