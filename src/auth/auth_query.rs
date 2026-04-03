@@ -185,7 +185,7 @@ impl AuthQueryExecutor {
     /// Returns `Some(password_hash)` or `None` if user not found.
     pub async fn fetch_password(&self, username: &str) -> Result<Option<String>, Error> {
         debug!(
-            "[pool: {}] auth_query: fetching password for user '{username}'",
+            "[{username}@{}] auth_query: fetching password",
             self.pool_name
         );
 
@@ -193,8 +193,7 @@ impl AuthQueryExecutor {
             let mut rx = self.rx.lock().await;
             rx.recv().await.ok_or_else(|| {
                 error!(
-                    "[pool: {}] auth_query: executor pool closed, \
-                     cannot fetch password for user '{username}'",
+                    "[{username}@{}] auth_query: executor pool closed, cannot fetch password",
                     self.pool_name
                 );
                 Error::AuthQueryPoolClosed
@@ -208,20 +207,19 @@ impl AuthQueryExecutor {
         match &result {
             Ok(Some(_)) => {
                 debug!(
-                    "[pool: {}] auth_query: user '{username}' found ({elapsed:.1?})",
+                    "[{username}@{}] auth_query: password found ({elapsed:.1?})",
                     self.pool_name
                 );
             }
             Ok(None) => {
                 debug!(
-                    "[pool: {}] auth_query: user '{username}' not found ({elapsed:.1?})",
+                    "[{username}@{}] auth_query: user not found ({elapsed:.1?})",
                     self.pool_name
                 );
             }
             Err(e) => {
                 error!(
-                    "[pool: {}] auth_query: query failed for user '{username}' \
-                     ({elapsed:.1?}): {e}",
+                    "[{username}@{}] auth_query: query failed ({elapsed:.1?}): {e}",
                     self.pool_name
                 );
             }
@@ -232,7 +230,7 @@ impl AuthQueryExecutor {
             let _ = self.tx.send(client).await;
         } else {
             warn!(
-                "[pool: {}] auth_query: executor connection dead after query failure, \
+                "[{username}@{}] auth_query: executor connection dead after query failure, \
                  attempting reconnect",
                 self.pool_name
             );

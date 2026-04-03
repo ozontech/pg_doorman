@@ -53,17 +53,15 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
         if candidates.is_empty() {
             if all_other_users.is_empty() {
                 debug!(
-                    "[pool: {}] eviction: no other users' pools exist for this database \
-                     (requesting_user='{}')",
-                    self.database, requesting_user,
+                    "[{requesting_user}@{}] eviction: no other users' pools exist for this database",
+                    self.database,
                 );
             } else {
                 debug!(
-                    "[pool: {}] eviction: {} other user(s) checked, none have spare \
-                     connections above guaranteed minimum (requesting_user='{}', users: {})",
+                    "[{requesting_user}@{}] eviction: {} other user(s) checked, none have spare \
+                     connections above guaranteed minimum (users: {})",
                     self.database,
                     all_other_users.len(),
-                    requesting_user,
                     all_other_users
                         .iter()
                         .map(|(id, _, spare)| format!("{}(spare={})", id.user, spare))
@@ -78,11 +76,9 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
         candidates.sort_by(|a, b| b.2.cmp(&a.2));
 
         debug!(
-            "[pool: {}] eviction: {} candidate(s) with spare connections \
-             (requesting_user='{}', candidates: {})",
+            "[{requesting_user}@{}] eviction: {} candidate(s) with spare connections ({})",
             self.database,
             candidates.len(),
-            requesting_user,
             candidates
                 .iter()
                 .map(|(id, _, spare)| format!("{}(spare={})", id.user, spare))
@@ -128,12 +124,11 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
         }
 
         debug!(
-            "[pool: {}] eviction: all {} candidate(s) had connections \
-             too young to evict (min_lifetime={}ms, requesting_user='{}')",
+            "[{requesting_user}@{}] eviction: all {} candidate(s) had connections \
+             too young to evict (min_lifetime={}ms)",
             self.database,
             candidates.len(),
             min_lifetime_ms,
-            requesting_user,
         );
         false
     }

@@ -36,19 +36,19 @@ fn gc_idle_dynamic_pools() {
             Some(pool) if pool.pool_state().size == 0 => {
                 // Don't GC paused pools — they're under admin control
                 if pool.database.is_paused() {
-                    debug!("GC: dynamic pool {id} is paused, skipping");
+                    debug!("[{id}] GC: paused, skipping");
                     continue;
                 }
                 // Don't GC pools with min_pool_size — retain cycle manages them
                 if pool.settings.user.min_pool_size.unwrap_or(0) > 0 {
-                    debug!("GC: dynamic pool {id} has min_pool_size > 0, skipping despite size=0");
+                    debug!("[{id}] GC: min_pool_size > 0, skipping despite size=0");
                     continue;
                 }
-                debug!("GC: dynamic pool {id} has 0 connections, marking for removal");
+                debug!("[{id}] GC: 0 connections, marking for removal");
                 to_remove.push(id.clone());
             }
             None => {
-                debug!("GC: dynamic pool {id} no longer in POOLS, removing stale entry");
+                debug!("[{id}] GC: stale entry (not in POOLS), removing");
                 to_remove.push(id.clone());
             }
             _ => {}

@@ -653,7 +653,7 @@ where
     let cache = match aq_state.cache().await {
         Ok(cache) => cache,
         Err(err) => {
-            error!("[pool: {pool_name}] auth_query: executor initialization failed: {err}");
+            error!("[{username}@{pool_name}] auth_query: executor initialization failed: {err}");
             error_response(
                 write,
                 "Authentication service unavailable. Please try again later.",
@@ -670,16 +670,14 @@ where
         Ok(None) => {
             // User not found
             auth_fail!(aq_state);
-            warn!("[pool: {pool_name}] auth_query: user '{username}' not found");
+            warn!("[{username}@{pool_name}] auth_query: user not found");
             wrong_password(write, username).await?;
             return Err(Error::AuthError(format!(
                 "auth_query: user '{username}' not found in pool '{pool_name}'"
             )));
         }
         Err(err) => {
-            error!(
-                "[pool: {pool_name}] auth_query: failed to fetch password for '{username}': {err}"
-            );
+            error!("[{username}@{pool_name}] auth_query: failed to fetch password: {err}");
             error_response(
                 write,
                 "Authentication service unavailable. Please try again later.",
@@ -734,16 +732,14 @@ where
                     );
                     if new_expected == password_response {
                         auth_ok = true;
-                        info!(
-                            "[pool: {pool_name}] auth_query: re-fetched password for '{username}' matched"
-                        );
+                        info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
                     }
                 }
             }
             if !auth_ok {
                 auth_fail!(aq_state);
                 warn!(
-                    "[pool: {pool_name}] auth_query: MD5 auth failed for '{username}' (refetch didn't help or was rate-limited)"
+                    "[{username}@{pool_name}] auth_query: MD5 auth failed (refetch didn't help or was rate-limited)"
                 );
                 wrong_password(write, username).await?;
                 return Err(Error::AuthError(format!(
@@ -756,7 +752,9 @@ where
         let server_secret = match parse_server_secret(pool_password) {
             Ok(s) => s,
             Err(err) => {
-                error!("[pool: {pool_name}] auth_query: failed to parse SCRAM verifier for '{username}': {err}");
+                error!(
+                    "[{username}@{pool_name}] auth_query: failed to parse SCRAM verifier: {err}"
+                );
                 error_response_terminal(
                     write,
                     "Server authentication configuration error. Please contact your database administrator.",
@@ -774,7 +772,7 @@ where
         let client_first = match parse_client_first_message(String::from_utf8_lossy(&first_msg)) {
             Ok(msg) => msg,
             Err(err) => {
-                warn!("[pool: {pool_name}] auth_query: SCRAM client first message parse error for '{username}': {err}");
+                warn!("[{username}@{pool_name}] auth_query: SCRAM client first message parse error: {err}");
                 error_response_terminal(
                     write,
                     "Authentication protocol error. Your client may not support SCRAM authentication properly.",
@@ -799,7 +797,7 @@ where
         let client_final = match parse_client_final_message(String::from_utf8_lossy(&final_msg)) {
             Ok(msg) => msg,
             Err(err) => {
-                warn!("[pool: {pool_name}] auth_query: SCRAM client final message parse error for '{username}': {err}");
+                warn!("[{username}@{pool_name}] auth_query: SCRAM client final message parse error: {err}");
                 error_response_terminal(
                     write,
                     "Authentication protocol error. Your client sent an invalid SCRAM final message.",
@@ -833,7 +831,7 @@ where
                 auth_fail!(aq_state);
                 cache.invalidate(username);
                 error!(
-                    "[pool: {pool_name}] auth_query: SCRAM authentication failed for user '{username}', cache invalidated"
+                    "[{username}@{pool_name}] auth_query: SCRAM authentication failed, cache invalidated"
                 );
                 wrong_password(write, username).await?;
                 return Err(Error::AuthError(format!(
@@ -863,7 +861,7 @@ where
                 Some(pool) => pool,
                 None => {
                     error!(
-                        "[pool: {pool_name}] auth_query: shared pool {}@{} not found",
+                        "[{username}@{pool_name}] auth_query: shared pool {}@{} not found",
                         shared_pool_id.user, shared_pool_id.db
                     );
                     error_response(write, "Internal pool configuration error.", "58000").await?;
@@ -882,7 +880,7 @@ where
                 Ok(params) => params,
                 Err(err) => {
                     error!(
-                        "[pool: {pool_name}] auth_query: failed to get server parameters: {err:?}"
+                        "[{username}@{pool_name}] auth_query: failed to get server parameters: {err:?}"
                     );
                     error_response(
                         write,
@@ -896,7 +894,7 @@ where
 
             aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
             info!(
-                "[pool: {pool_name}] auth_query: user '{username}' authenticated, using shared pool '{}'",
+                "[{username}@{pool_name}] auth_query: authenticated, using shared pool '{}'",
                 shared_pool_id
             );
 
@@ -910,14 +908,13 @@ where
                 auth_client_key.map(BackendAuthMethod::ScramPassthrough)
             };
 
-            let mut pool = create_dynamic_pool(pool_name, username, backend_auth).map_err(
-                |err| {
+            let mut pool =
+                create_dynamic_pool(pool_name, username, backend_auth).map_err(|err| {
                     error!(
-                        "[pool: {pool_name}] auth_query: failed to create dynamic pool for '{username}': {err}"
+                        "[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}"
                     );
                     err
-                },
-            )?;
+                })?;
 
             // Do NOT change client_identifier.username — stay as the dynamic user
             // so that Client.username matches the pool's user for get_pool() lookups.
@@ -929,9 +926,7 @@ where
             let server_parameters = match pool.get_server_parameters().await {
                 Ok(params) => params,
                 Err(err) => {
-                    error!(
-                        "[pool: {pool_name}] auth_query: passthrough pool for '{username}' failed: {err:?}"
-                    );
+                    error!("[{username}@{pool_name}] auth_query: passthrough pool failed: {err:?}");
                     error_response(
                         write,
                         "Unable to connect to database server. Please try again later.",
@@ -943,9 +938,7 @@ where
             };
 
             aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
-            info!(
-                "[pool: {pool_name}] auth_query: user '{username}' authenticated (passthrough mode)"
-            );
+            info!("[{username}@{pool_name}] auth_query: authenticated (passthrough mode)");
 
             Ok((transaction_mode, server_parameters))
         }

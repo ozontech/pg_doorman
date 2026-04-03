@@ -610,7 +610,8 @@ impl Pool {
                     Some(permit) => Some(permit),
                     None => {
                         log::debug!(
-                            "[pool: {}] coordinator limit reached, skipping replenish",
+                            "[{}@{}] coordinator limit reached, skipping replenish",
+                            self.inner.username,
                             self.inner.pool_name
                         );
                         break;
@@ -625,7 +626,8 @@ impl Pool {
                 Ok(obj) => obj,
                 Err(e) => {
                     log::debug!(
-                        "[pool: {}] replenish: failed to create server: {}",
+                        "[{}@{}] replenish: failed to create server: {}",
+                        self.inner.username,
                         self.inner.pool_name,
                         e
                     );

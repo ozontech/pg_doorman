@@ -532,9 +532,9 @@ async fn reserve_arbiter(
         // Collect new requests (non-blocking)
         while let Ok(req) = rx.try_recv() {
             debug!(
-                "[pool: {}] arbiter: received reserve request from '{}' \
+                "[{}@{}] arbiter: received reserve request \
                  (score=starving:{}, queued:{})",
-                coordinator.database, req.user, req.score.0, req.score.1,
+                req.user, coordinator.database, req.score.0, req.score.1,
             );
             pending.push(req);
         }
@@ -548,15 +548,15 @@ async fn reserve_arbiter(
                 let sent = req.response.send(grant);
                 if sent.is_ok() {
                     debug!(
-                        "[pool: {}] arbiter: granted reserve permit to '{}' \
+                        "[{}@{}] arbiter: granted reserve permit \
                          (score=starving:{}, queued:{})",
-                        coordinator.database, req.user, req.score.0, req.score.1,
+                        req.user, coordinator.database, req.score.0, req.score.1,
                     );
                 } else {
                     debug!(
-                        "[pool: {}] arbiter: grant to '{}' failed — \
+                        "[{}@{}] arbiter: grant failed — \
                          requester already timed out, permit returned",
-                        coordinator.database, req.user,
+                        req.user, coordinator.database,
                     );
                 }
             } else {

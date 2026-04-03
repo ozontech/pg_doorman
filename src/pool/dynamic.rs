@@ -37,7 +37,7 @@ pub fn create_dynamic_pool(
         // Update backend_auth (credentials may have changed)
         if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
             debug!(
-                "[pool: {pool_name}] auth_query: dynamic pool for '{username}' already exists, updating backend_auth"
+                "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
             );
             *ba_lock.write() = new_ba.clone();
         }
