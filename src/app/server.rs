@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use log::{error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpSocket;
@@ -426,7 +427,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
                             return
                         }
-                        let start = chrono::offset::Utc::now().naive_utc();
+                        let start = Utc::now().naive_utc();
 
                         match crate::client::client_entrypoint(
                             socket,
@@ -442,7 +443,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                     || log::log_enabled!(log::Level::Debug)
                                 {
                                     let session = format_duration(
-                                        &(chrono::offset::Utc::now().naive_utc() - start),
+                                        &(Utc::now().naive_utc() - start),
                                     );
                                     let identity = match &session_info {
                                         Some(si) => format!("[{}@{}]", si.username, si.pool_name),
@@ -453,8 +454,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             }
 
                             Err(err) => {
-                                let duration = chrono::offset::Utc::now().naive_utc() - start;
-                                warn!("Client {addr} disconnected with error: {err}, session={}", format_duration(&duration));
+                                let session = format_duration(&(Utc::now().naive_utc() - start));
+                                warn!("client disconnected from {addr} with error: {err}, session={session}");
                             }
                         };
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);

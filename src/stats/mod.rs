@@ -123,7 +123,7 @@ impl Reporter {
         use std::collections::hash_map::Entry;
         match CLIENT_STATS.write().entry(client_id) {
             Entry::Occupied(_) => {
-                warn!("Client {client_id:?} was double registered!");
+                warn!("Client stats: duplicate registration for client_id={client_id}");
             }
             Entry::Vacant(entry) => {
                 entry.insert(stats);
