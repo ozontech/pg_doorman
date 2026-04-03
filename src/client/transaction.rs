@@ -328,16 +328,16 @@ where
                     let count = self.prepared.cache.len();
                     self.prepared.cache.clear();
                     debug!(
-                        "DEALLOCATE ALL: cleared {} entries from client prepared statements cache",
-                        count
+                        "[{}@{}] DEALLOCATE ALL: cleared {} entries from client cache",
+                        self.username, self.pool_name, count
                     );
                 } else if !statement_part.is_empty() {
                     // DEALLOCATE <name> - remove specific statement from cache
                     let key = PreparedStatementKey::Named(statement_part.to_string());
                     if self.prepared.cache.pop(&key).is_some() {
                         debug!(
-                            "DEALLOCATE {}: removed from client prepared statements cache",
-                            statement_part
+                            "[{}@{}] DEALLOCATE {}: removed from client cache",
+                            self.username, self.pool_name, statement_part
                         );
                     }
                 }
@@ -398,7 +398,13 @@ where
             // Mark this client as async client forever
             self.prepared.async_client = true;
             self.stats.set_async_client();
-            debug!("Client requested flush, going async");
+            debug!(
+                "[{}@{}] client {} entered async mode (Flush) pid={}",
+                self.username,
+                self.pool_name,
+                self.addr,
+                server.get_process_id()
+            );
 
             // Calculate expected responses from batch operations BEFORE any clearing
             let mut expected: u32 = 0;
@@ -414,7 +420,10 @@ where
                 }
             }
             server.set_expected_responses(expected);
-            debug!("Flush: expecting {} responses from server", expected);
+            debug!(
+                "[{}@{}] flush: expecting {} responses from server",
+                self.username, self.pool_name, expected
+            );
 
             // If there are skipped Parse operations, send synthetic ParseComplete to client
             // BEFORE waiting for server response. This is necessary because:
@@ -425,8 +434,8 @@ where
             if !self.prepared.skipped_parses.is_empty() {
                 let count = self.prepared.skipped_parses.len();
                 debug!(
-                    "Flush: sending {} synthetic ParseComplete for skipped Parse operations",
-                    count
+                    "[{}@{}] flush: injecting {} synthetic ParseComplete for cached Parse",
+                    self.username, self.pool_name, count
                 );
                 let mut synthetic_response = BytesMut::with_capacity(count * 5);
                 for _ in 0..count {
@@ -555,7 +564,10 @@ where
                 Err(err) => return self.process_error(err).await,
             };
             if message[0] as char == 'X' {
-                debug!("Client {} sent Terminate [X]", self.addr);
+                debug!(
+                    "[{}@{}] client {} sent Terminate",
+                    self.username, self.pool_name, self.addr
+                );
                 self.stats.disconnect();
                 return Ok(());
             }
@@ -591,8 +603,8 @@ where
             // reserves a connection which is wasteful if client is slow.
             if is_standalone_begin(&message) && self.client_pending_begin.is_none() {
                 debug!(
-                    "Synthesizing response for standalone BEGIN from {}",
-                    self.addr
+                    "[{}@{}] deferring BEGIN for client {}",
+                    self.username, self.pool_name, self.addr
                 );
 
                 // Send synthetic response: CommandComplete('BEGIN') + ReadyForQuery('T')
@@ -690,7 +702,13 @@ where
                 self.stats.active_idle();
                 self.last_server_stats = Some(server.stats.clone());
 
-                debug!("Client {:?} talking to server {}", self.addr, server);
+                debug!(
+                    "[{}@{}] client {} acquired server pid={}",
+                    self.username,
+                    self.pool_name,
+                    self.addr,
+                    server.get_process_id()
+                );
 
                 if current_pool.settings.sync_server_parameters {
                     server.sync_parameters(&self.server_parameters).await?;
@@ -700,7 +718,12 @@ where
                 // If we deferred BEGIN, send it to server first (without forwarding response to client)
                 // Client already received synthetic response, so we discard the real server response
                 if let Some(begin_msg) = pending_begin {
-                    debug!("Sending deferred BEGIN to server for client {}", self.addr);
+                    debug!(
+                        "[{}@{}] sending deferred BEGIN to server pid={}",
+                        self.username,
+                        self.pool_name,
+                        server.get_process_id()
+                    );
 
                     // Send BEGIN to server
                     if let Err(err) = server

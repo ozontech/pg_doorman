@@ -150,7 +150,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 match listen_socket.set_tos_v4(0x10) {
                     Ok(_) => (),
                     Err(err) => {
-                        warn!("Can't set IPTOS_LOWDELAY: {err:?}");
+                        warn!("Failed to set IPTOS_LOWDELAY on listener socket: {err:?}");
                     }
                 };
             };
@@ -219,7 +219,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         match ConnectionPool::from_config(client_server_map.clone()).await {
             Ok(_) => (),
             Err(err) => {
-                error!("Pool error: {err:?}");
+                error!("Failed to initialize connection pools: {err:?}");
                 std::process::exit(exitcode::CONFIG);
             }
         };
@@ -393,7 +393,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let (mut socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),
                         Err(err) => {
-                            error!("accept error: {err}");
+                            error!("Failed to accept new connection: {err}");
                             continue;
                         }
                     };

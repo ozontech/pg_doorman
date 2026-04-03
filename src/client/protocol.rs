@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use log::debug;
+use log::{debug, warn};
 use std::convert::TryInto;
 use std::sync::Arc;
 
@@ -279,7 +279,7 @@ where
             match self.prepared.last_anonymous_hash {
                 Some(hash) => Ok(PreparedStatementKey::Anonymous(hash)),
                 None => {
-                    debug!("Got anonymous prepared statement reference but no anonymous prepared statement exists");
+                    warn!("anonymous prepared statement referenced but none registered");
                     error_response(
                         &mut self.write,
                         "prepared statement \"\" does not exist",
@@ -356,7 +356,7 @@ where
                 Ok(())
             }
             None => {
-                debug!("Got bind for unknown prepared statement {client_given_name:?}");
+                warn!("Bind references unknown prepared statement {client_given_name:?}");
 
                 error_response(
                     &mut self.write,
@@ -474,7 +474,7 @@ where
             }
 
             None => {
-                debug!("Got describe for unknown prepared statement {describe:?}");
+                warn!("Describe references unknown prepared statement {describe:?}");
 
                 error_response(
                     &mut self.write,

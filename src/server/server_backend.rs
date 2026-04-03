@@ -960,11 +960,11 @@ impl Drop for Server {
             match self.stream.get_mut().try_write(&bytes) {
                 Ok(5) => (),
                 Err(err) => warn!(
-                    "[{}@{}] dirty shutdown pid={}: {err}",
+                    "[{}@{}] failed to send Terminate to server pid={}: {err}",
                     self.address.username, self.address.pool_name, self.process_id
                 ),
                 _ => warn!(
-                    "[{}@{}] dirty shutdown pid={}",
+                    "[{}@{}] incomplete Terminate sent to server pid={}",
                     self.address.username, self.address.pool_name, self.process_id
                 ),
             };

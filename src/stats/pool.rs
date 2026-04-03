@@ -565,7 +565,12 @@ impl PoolStats {
                         CLIENT_STATE_ACTIVE => pool_stats.cl_active += 1,
                         CLIENT_STATE_IDLE => pool_stats.cl_idle += 1,
                         CLIENT_STATE_WAITING => pool_stats.cl_waiting += 1,
-                        _ => error!("unknown client state"),
+                        _ => error!(
+                            "[{}@{}] unknown client state: {}",
+                            client.username(),
+                            client.pool_name(),
+                            client.state()
+                        ),
                     };
 
                     // Update maximum wait time
@@ -579,7 +584,11 @@ impl PoolStats {
                         pool_stats.async_clients_count += 1;
                     }
                 }
-                None => debug!("Client from an obsolete pool"),
+                None => debug!(
+                    "[{}@{}] skipping client from obsolete pool",
+                    client.username(),
+                    client.pool_name()
+                ),
             }
         }
 
@@ -596,13 +605,22 @@ impl PoolStats {
                         SERVER_STATE_ACTIVE => pool_stats.sv_active += 1,
                         SERVER_STATE_IDLE => pool_stats.sv_idle += 1,
                         SERVER_STATE_LOGIN => pool_stats.sv_login += 1,
-                        _ => error!("unknown server state"),
+                        _ => error!(
+                            "[{}@{}] unknown server state: {}",
+                            server.username(),
+                            server.pool_name(),
+                            server.state()
+                        ),
                     }
                 }
                 // Benign race: server snapshot was taken before pool snapshot,
                 // and the dynamic pool was GC'd in between. The server is already
                 // gone; its stats were captured via address stats in initialize_pool_stats.
-                None => debug!("Server from an obsolete pool"),
+                None => debug!(
+                    "[{}@{}] skipping server from obsolete pool",
+                    server.pool_name(),
+                    server.username()
+                ),
             }
         }
     }
