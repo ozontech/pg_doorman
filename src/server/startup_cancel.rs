@@ -21,7 +21,7 @@ pub(crate) async fn cancel(
         create_tcp_stream_inner(host, port, false, false).await?
     };
 
-    warn!("Forwarding cancel request to {host}:{port} pid={process_id}");
+    warn!("cancel request forwarded to {host}:{port} pid={process_id}");
 
     let mut bytes = BytesMut::with_capacity(16);
     bytes.put_i32(16);

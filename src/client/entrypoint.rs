@@ -196,7 +196,7 @@ pub async fn client_entrypoint(
                     // Client probably disconnected rejecting our plain text connection.
                     Ok((ClientConnectionType::Tls, _))
                     | Ok((ClientConnectionType::CancelQuery, _)) => Err(Error::ProtocolSyncError(
-                        "Bad postgres client (plain)".into(),
+                        "Unexpected protocol message during plain-text startup negotiation".into(),
                     )),
 
                     Err(err) => Err(err),
@@ -281,7 +281,7 @@ pub async fn client_entrypoint(
 
         // Something failed, probably the socket.
         Err(err) => {
-            error!("Client {addr} startup failed: {err}");
+            error!("#c{connection_id} client {addr} startup failed: {err}");
             Err(err)
         }
     }

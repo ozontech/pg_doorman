@@ -638,7 +638,7 @@ where
                                 let mut guard = CANCELED_PIDS.lock();
                                 if guard.contains(&conn.get_process_id()) {
                                     guard.remove(&conn.get_process_id());
-                                    conn.mark_bad("because was canceled");
+                                    conn.mark_bad("connection was previously canceled");
                                     continue; // try to find another server.
                                 }
                             }

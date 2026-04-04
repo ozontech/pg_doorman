@@ -16,15 +16,15 @@ pub fn configure_unix_socket(stream: &UnixStream) {
 
     match sock_ref.set_linger(Some(Duration::from_secs(conf.general.tcp_so_linger))) {
         Ok(_) => {}
-        Err(err) => error!("Could not configure unix_so_linger for socket: {err}"),
+        Err(err) => error!("failed to set SO_LINGER on Unix socket: {err}"),
     }
     match sock_ref.set_send_buffer_size(conf.general.unix_socket_buffer_size.as_usize()) {
         Ok(_) => {}
-        Err(err) => error!("Could not configure set_send_buffer_size for socket: {err}"),
+        Err(err) => error!("failed to set send buffer size on Unix socket: {err}"),
     }
     match sock_ref.set_recv_buffer_size(conf.general.unix_socket_buffer_size.as_usize()) {
         Ok(_) => {}
-        Err(err) => error!("Could not configure set_recv_buffer_size for socket: {err}"),
+        Err(err) => error!("failed to set recv buffer size on Unix socket: {err}"),
     }
 }
 
@@ -32,11 +32,11 @@ pub fn configure_tcp_socket_for_cancel(stream: &TcpStream) {
     let sock_ref = SockRef::from(stream);
     match sock_ref.set_linger(None) {
         Ok(_) => {}
-        Err(err) => error!("Could not configure tcp_so_linger (node) for socket: {err}"),
+        Err(err) => error!("failed to set SO_LINGER(none) on cancel TCP socket: {err}"),
     }
     match sock_ref.set_tcp_nodelay(false) {
         Ok(_) => {}
-        Err(err) => error!("Could not configure no delay (false) for socket: {err}"),
+        Err(err) => error!("failed to disable TCP_NODELAY on cancel TCP socket: {err}"),
     }
 }
 
@@ -47,12 +47,12 @@ pub fn configure_tcp_socket(stream: &TcpStream) {
 
     match sock_ref.set_linger(Some(Duration::from_secs(conf.general.tcp_so_linger))) {
         Ok(_) => {}
-        Err(err) => error!("Could not configure tcp_so_linger for socket: {err}"),
+        Err(err) => error!("failed to set SO_LINGER on TCP socket: {err}"),
     }
 
     match sock_ref.set_tcp_nodelay(conf.general.tcp_no_delay) {
         Ok(_) => {}
-        Err(err) => error!("Could not configure no delay for socket: {err}"),
+        Err(err) => error!("failed to set TCP_NODELAY on TCP socket: {err}"),
     }
 
     match sock_ref.set_keepalive(true) {
@@ -64,10 +64,10 @@ pub fn configure_tcp_socket(stream: &TcpStream) {
                     .with_time(Duration::from_secs(conf.general.tcp_keepalives_idle)),
             ) {
                 Ok(_) => (),
-                Err(err) => error!("Could not configure tcp_keepalive for socket: {err}"),
+                Err(err) => error!("failed to set TCP keepalive parameters on socket: {err}"),
             }
         }
-        Err(err) => error!("Could not configure socket: {err}"),
+        Err(err) => error!("failed to enable SO_KEEPALIVE on TCP socket: {err}"),
     }
 
     // TCP_USER_TIMEOUT is only supported on Linux
@@ -77,7 +77,7 @@ pub fn configure_tcp_socket(stream: &TcpStream) {
             .set_tcp_user_timeout(Some(Duration::from_secs(conf.general.tcp_user_timeout)))
         {
             Ok(_) => (),
-            Err(err) => error!("Could not configure tcp_user_timeout for socket: {err}"),
+            Err(err) => error!("failed to set TCP_USER_TIMEOUT on socket: {err}"),
         }
     }
 }

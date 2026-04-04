@@ -109,7 +109,7 @@ pub(crate) async fn handle_authentication(
         AUTHENTICATION_CLEAR_PASSWORD => {
             if user.server_username.is_none() || user.server_password.is_none() {
                 error!(
-                    "[{}@{}] clear auth not configured",
+                    "[{}@{}] clear password authentication requested by server but not configured",
                     server_identifier.username, server_identifier.pool_name,
                 );
                 return Err(Error::ServerAuthError(
@@ -175,7 +175,7 @@ pub(crate) async fn handle_authentication(
                 // Static user: derive from server_username/server_password
                 if user.server_username.is_none() || user.server_password.is_none() {
                     error!(
-                        "[{}@{}] MD5 auth not configured",
+                        "[{}@{}] MD5 authentication requested by server but not configured",
                         server_identifier.username, server_identifier.pool_name,
                     );
                     return Err(Error::ServerAuthError(
