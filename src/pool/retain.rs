@@ -5,7 +5,7 @@ use log::{info, warn};
 use rand::seq::SliceRandom;
 
 use crate::config::get_config;
-use crate::utils::format_duration_ms;
+use crate::utils::{format_duration_ms, format_elapsed};
 
 use super::{get_all_pools, ConnectionPool};
 
@@ -112,7 +112,7 @@ pub async fn retain_connections() {
 
     info!(
         "Retain task started: interval={}, max_per_cycle={}",
-        format_duration_ms(retain_time.as_millis() as u64),
+        format_elapsed(retain_time),
         if retain_max == 0 {
             "unlimited".to_string()
         } else {

@@ -15,6 +15,7 @@ use crate::config::{Address, User};
 use crate::errors::Error;
 use crate::server::Server;
 use crate::stats::ServerStats;
+use crate::utils::format_duration_ms;
 
 use super::errors::{RecycleError, RecycleResult};
 use super::types::Metrics;
@@ -282,8 +283,8 @@ impl ServerPool {
             if age_ms > metrics.lifetime_ms {
                 conn.close_reason = Some(format!(
                     "lifetime exceeded (age={}, limit={})",
-                    crate::utils::format_duration_ms(age_ms),
-                    crate::utils::format_duration_ms(metrics.lifetime_ms),
+                    format_duration_ms(age_ms),
+                    format_duration_ms(metrics.lifetime_ms),
                 ));
                 return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
             }
@@ -301,7 +302,7 @@ impl ServerPool {
                     if conn.check_alive(self.connect_timeout).await.is_err() {
                         conn.close_reason = Some(format!(
                             "failed alive check after {} idle",
-                            crate::utils::format_duration_ms(idle_time_ms),
+                            format_duration_ms(idle_time_ms),
                         ));
                         return Err(RecycleError::StaticMessage("Connection failed alive check"));
                     }

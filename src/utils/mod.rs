@@ -13,6 +13,11 @@ pub fn format_duration(duration: &chrono::Duration) -> String {
     format_duration_ms(total_ms as u64)
 }
 
+/// Format std::time::Duration in Go-style. Accepts `Instant::elapsed()`, `Duration::from_*()`.
+pub fn format_elapsed(d: std::time::Duration) -> String {
+    format_duration_ms(d.as_millis() as u64)
+}
+
 /// Format milliseconds as Go-style duration: `123ms`, `5.123s`, `4m30s`, `1h30m`, `2d 4h30m`.
 pub fn format_duration_ms(ms: u64) -> String {
     if ms == 0 {

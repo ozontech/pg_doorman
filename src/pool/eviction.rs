@@ -5,6 +5,8 @@
 
 use log::{debug, info};
 
+use crate::utils::format_duration_ms;
+
 use super::pool_coordinator;
 use super::{get_pool, ConnectionPool, PoolIdentifier, POOLS};
 
@@ -111,7 +113,7 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
                     id.user,
                     self.database,
                     spare,
-                    crate::utils::format_duration_ms(min_lifetime_ms),
+                    format_duration_ms(min_lifetime_ms),
                     requesting_user,
                 );
                 return true;
@@ -121,7 +123,7 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
                  no idle connections older than {} (spare={})",
                 id.user,
                 self.database,
-                crate::utils::format_duration_ms(min_lifetime_ms),
+                format_duration_ms(min_lifetime_ms),
                 spare,
             );
         }
@@ -131,7 +133,7 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
              too young to evict (min_lifetime={})",
             self.database,
             candidates.len(),
-            crate::utils::format_duration_ms(min_lifetime_ms),
+            format_duration_ms(min_lifetime_ms),
         );
         false
     }

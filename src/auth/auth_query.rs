@@ -14,7 +14,7 @@ use std::time::Instant;
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
 
-use crate::utils::format_duration_ms;
+use crate::utils::format_elapsed;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_postgres::{Client, NoTls};
@@ -164,7 +164,7 @@ impl AuthQueryExecutor {
                 "connection {index} to {server_host}:{server_port}/{database} as '{user}': {e}"
             ))
         })?;
-        let elapsed = format_duration_ms(start.elapsed().as_millis() as u64);
+        let elapsed = format_elapsed(start.elapsed());
 
         info!(
             "[pool: {pool_name}] auth_query: executor connection {index} established \
@@ -204,8 +204,7 @@ impl AuthQueryExecutor {
 
         let start = std::time::Instant::now();
         let result = self.execute_query(&client, username).await;
-        let elapsed_ms = start.elapsed().as_millis() as u64;
-        let elapsed = format_duration_ms(elapsed_ms);
+        let elapsed = format_elapsed(start.elapsed());
 
         match &result {
             Ok(Some(_)) => {
@@ -566,7 +565,7 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                     warn!(
                         "[{username}@{}] auth_query cache: refetch rate-limited ({} since last)",
                         self.pool_name,
-                        format_duration_ms(last.elapsed().as_millis() as u64)
+                        format_elapsed(last.elapsed())
                     );
                     return Ok(None); // Rate limited
                 }
