@@ -359,10 +359,11 @@ mirroring PostgreSQL behavior. TLS-related rule types are honored: <code>hostssl
 <pre><code class="language-sql">pgdoorman=&gt; SHOW HELP;
 NOTICE:  Console usage
 DETAIL:
-	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|LOG_LEVEL|VERSION
 	SHOW LISTS
 	SHOW CONNECTIONS
 	SHOW STATS
+	SET log_level = '&lt;filter&gt;'
 	RELOAD
 	SHUTDOWN
 	UPGRADE
@@ -619,6 +620,21 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <p>Using the <code>SHUTDOWN</code> command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.</p>
 </div>
 </div>
+<h4 id="set-log_level"><a class="header" href="#set-log_level">SET log_level</a></h4>
+<p>Change the log level at runtime without restarting the pooler:</p>
+<pre><code class="language-sql">-- Global level
+pgdoorman=&gt; SET log_level = 'debug';
+
+-- Per-module (RUST_LOG syntax)
+pgdoorman=&gt; SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug';
+
+-- View current level
+pgdoorman=&gt; SHOW LOG_LEVEL;
+
+-- Reset to startup default
+pgdoorman=&gt; SET log_level = 'default';
+</code></pre>
+<p>Changes are ephemeral — lost on restart. Valid levels: <code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>, <code>off</code>.</p>
 <h4 id="reload"><a class="header" href="#reload">RELOAD</a></h4>
 <p>The <code>RELOAD</code> command refreshes PgDoorman's configuration without restarting the service:</p>
 <pre><code class="language-sql">pgdoorman=&gt; RELOAD;

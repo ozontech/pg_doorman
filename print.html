@@ -526,10 +526,11 @@ mirroring PostgreSQL behavior. TLS-related rule types are honored: <code>hostssl
 <pre><code class="language-sql">pgdoorman=&gt; SHOW HELP;
 NOTICE:  Console usage
 DETAIL:
-	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|VERSION
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|LOG_LEVEL|VERSION
 	SHOW LISTS
 	SHOW CONNECTIONS
 	SHOW STATS
+	SET log_level = '&lt;filter&gt;'
 	RELOAD
 	SHUTDOWN
 	UPGRADE
@@ -786,6 +787,21 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <p>Using the <code>SHUTDOWN</code> command will terminate the PgDoorman service, disconnecting all clients. Use this command with caution in production environments.</p>
 </div>
 </div>
+<h4 id="set-log_level"><a class="header" href="#set-log_level">SET log_level</a></h4>
+<p>Change the log level at runtime without restarting the pooler:</p>
+<pre><code class="language-sql">-- Global level
+pgdoorman=&gt; SET log_level = 'debug';
+
+-- Per-module (RUST_LOG syntax)
+pgdoorman=&gt; SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug';
+
+-- View current level
+pgdoorman=&gt; SHOW LOG_LEVEL;
+
+-- Reset to startup default
+pgdoorman=&gt; SET log_level = 'default';
+</code></pre>
+<p>Changes are ephemeral — lost on restart. Valid levels: <code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>, <code>off</code>.</p>
 <h4 id="reload"><a class="header" href="#reload">RELOAD</a></h4>
 <p>The <code>RELOAD</code> command refreshes PgDoorman's configuration without restarting the service:</p>
 <pre><code class="language-sql">pgdoorman=&gt; RELOAD;
@@ -2061,6 +2077,33 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <li><strong>Important</strong>: The values shown are <strong>relative performance ratios</strong>, not absolute TPS numbers. While absolute TPS values may vary depending on hardware and system load, the relative ratios between poolers should remain consistent when tests are run sequentially in a short timeframe (30 seconds each). This allows for fair comparison across different connection poolers under identical conditions</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="341-apr-3-2026"><a class="header" href="#341-apr-3-2026">3.4.1 <small>Apr 3, 2026</small></a></h3>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>
+<p><strong>Log readability overhaul.</strong> All operational log messages use a consistent <code>[user@pool]</code> identity prefix with <code>pid=N</code> for server connections, replacing three different formats. Stats line switched to logfmt (<code>query_ms p50=... | xact_ms p50=...</code>). Durations formatted as <code>4m30s</code> instead of raw milliseconds or <code>0d 00:04:30.134</code>. PG error messages sanitized (newlines escaped) to prevent log line splitting.</p>
+</li>
+<li>
+<p><strong>Auth failure logs include client IP.</strong> SCRAM, MD5, JWT, and PAM authentication failures now show the source address, visible during brute-force attempts.</p>
+</li>
+<li>
+<p><strong>Replenish failure noise suppression.</strong> When <code>min_pool_size</code> replenish repeatedly fails (e.g., SCRAM user missing on a replica), only the first failure is logged at warn level. Subsequent failures are suppressed with a periodic reminder every ~10 minutes showing the consecutive failure count. Recovery is logged when replenish succeeds after a failure streak.</p>
+</li>
+<li>
+<p><strong>Client disconnect logs include identity.</strong> Disconnect messages show <code>[user@pool]</code> when the client completed authentication, not just the IP address.</p>
+</li>
+<li>
+<p><strong>Prepared statement cache eviction log.</strong> Shows truncated query text and current cache size (<code>size=99/100</code>) to help diagnose cache sizing issues.</p>
+</li>
+</ul>
+<p><strong>New features:</strong></p>
+<ul>
+<li><strong>Runtime log level control via admin <code>SET</code> command.</strong> Change log level without restarting the pooler: <code>SET log_level = 'debug'</code> for global, <code>SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'</code> for per-module (RUST_LOG syntax). View current level with <code>SHOW LOG_LEVEL</code>. Changes are ephemeral (lost on restart). Zero overhead on the hot path at production log levels — filtering uses lock-free <code>ArcSwap</code> instead of <code>RwLock</code>.</li>
+</ul>
+<p><strong>Security:</strong></p>
+<ul>
+<li><strong>Removed password hash from logs.</strong> The "unsupported password type" warning no longer includes the password hash value.</li>
+</ul>
 <h3 id="340-apr-1-2026"><a class="header" href="#340-apr-1-2026">3.4.0 <small>Apr 1, 2026</small></a></h3>
 <p><strong>New Features:</strong></p>
 <ul>
