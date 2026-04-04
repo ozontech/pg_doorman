@@ -185,7 +185,7 @@ Feature: Cancel request (pqCancel) functionality
     # Read the result — should be success, not cancel error
     Then session "main" should complete without error
     # Session remains usable
-    And we send SimpleQuery "SELECT 1" to session "main" without waiting
+    When we send SimpleQuery "SELECT 1" to session "main" without waiting
     Then we read SimpleQuery response from session "main" within 2000ms
     Then session "main" should receive DataRow with "1"
 
