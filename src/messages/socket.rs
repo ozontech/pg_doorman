@@ -127,17 +127,18 @@ where
     result
 }
 
-/// Shrink threshold: buffers above this are replaced after small messages.
-const READ_BUF_SHRINK_THRESHOLD: usize = 65536; // 64 KB
+/// Shrink threshold for read buffers: buffers above this are replaced
+/// during the periodic retain cycle (not on the hot path).
+pub const READ_BUF_SHRINK_THRESHOLD: usize = 65536; // 64 KB
 /// Default read buffer capacity.
-const READ_BUF_DEFAULT_CAPACITY: usize = 8192; // 8 KB
+pub const READ_BUF_DEFAULT_CAPACITY: usize = 8192; // 8 KB
 
 /// Read a message into a reusable buffer. Returns owned BytesMut via split(),
 /// keeping the backing capacity in `buf` for the next call. Zero heap
 /// allocations for messages that fit in the existing capacity.
 ///
-/// After a large message (>64KB), the buffer is replaced with a fresh 8KB
-/// allocation to prevent permanent bloat from a single oversized result.
+/// Buffer shrinking is NOT done here — it runs in the background retain
+/// cycle to avoid allocations on the hot path.
 #[inline]
 pub async fn read_message_reuse<S>(
     stream: &mut S,
@@ -181,11 +182,6 @@ where
     };
 
     CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
-
-    // Shrink oversized buffer after the data has been split off.
-    if buf.capacity() > READ_BUF_SHRINK_THRESHOLD && total_len < READ_BUF_DEFAULT_CAPACITY {
-        *buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
-    }
 
     result
 }
