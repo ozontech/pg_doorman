@@ -549,7 +549,7 @@ impl PoolStats {
     /// * `server_map` - A reference to the map of server statistics
     fn update_client_server_states(
         pool_map: &mut HashMap<PoolIdentifier, PoolStats>,
-        client_map: &HashMap<i32, Arc<ClientStats>>,
+        client_map: &HashMap<u64, Arc<ClientStats>>,
         server_map: &HashMap<i32, Arc<ServerStats>>,
     ) {
         // Update client state counters

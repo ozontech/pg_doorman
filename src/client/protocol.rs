@@ -30,8 +30,8 @@ where
         match cached {
             Some(cached) => {
                 debug!(
-                    "[{}@{}] client cache hit for prepared statement {:?}",
-                    self.username, self.pool_name, key
+                    "[{}@{} #c{}] client cache hit for prepared statement {:?}",
+                    self.username, self.pool_name, self.connection_id, key
                 );
                 // Get the server-side name (may be async_name for async clients)
                 let server_name = cached.server_name().to_string();
@@ -51,7 +51,7 @@ where
                     Ok(_) => (),
                     Err(err) => match err {
                         Error::PreparedStatementError => {
-                            warn!("[{}@{}] server rejected prepared statement {:?}, evicting from client cache", self.username, self.pool_name, key);
+                            warn!("[{}@{} #c{}] server rejected prepared statement {:?}, evicting from client cache", self.username, self.pool_name, self.connection_id, key);
                             self.prepared.cache.pop(&key);
                         }
 
@@ -96,8 +96,8 @@ where
         pool.promote_prepared_statement_hash(hash);
 
         debug!(
-            "[{}@{}] checking server connection cache for statement `{}`",
-            self.username, self.pool_name, server_name
+            "[{}@{} #c{}] checking server connection cache for statement `{}`",
+            self.username, self.pool_name, self.connection_id, server_name
         );
 
         server
@@ -118,8 +118,8 @@ where
         // Avoid parsing if prepared statements not enabled
         if !self.prepared.enabled {
             debug!(
-                "[{}@{}] prepared statements disabled, forwarding Parse as-is",
-                self.username, self.pool_name
+                "[{}@{} #c{}] prepared statements disabled, forwarding Parse as-is",
+                self.username, self.pool_name, self.connection_id,
             );
             let first_char_in_name = *message.get(5).unwrap_or(&0);
             if first_char_in_name != 0 {
@@ -166,9 +166,10 @@ where
         };
 
         debug!(
-            "[{}@{}] mapped client statement `{}` -> pool name `{}` (hash={:#x}{})",
+            "[{}@{} #c{}] mapped client statement `{}` -> pool name `{}` (hash={:#x}{})",
             self.username,
             self.pool_name,
+            self.connection_id,
             client_given_name,
             shared_parse.name,
             hash,
@@ -207,8 +208,8 @@ where
             // For async clients, always send Parse to get real ParseComplete from server
             if self.prepared.async_client {
                 debug!(
-                    "[{}@{}] async client: sending Parse `{}` (unique per-session name requires server roundtrip)",
-                    self.username, self.pool_name, server_stmt_name
+                    "[{}@{} #c{}] async client: sending Parse `{}` (unique per-session name requires server roundtrip)",
+                    self.username, self.pool_name, self.connection_id, server_stmt_name
                 );
 
                 // Add parse message to buffer with the server statement name
@@ -220,8 +221,8 @@ where
                 // We don't want to send the parse message to the server
                 // Track this skipped Parse - ParseComplete will be inserted before BindComplete in response
                 debug!(
-                    "[{}@{}] Parse skipped for `{}`: already prepared on server, synthetic ParseComplete queued",
-                    self.username, self.pool_name, server_stmt_name
+                    "[{}@{} #c{}] Parse skipped for `{}`: already prepared on server, synthetic ParseComplete queued",
+                    self.username, self.pool_name, self.connection_id, server_stmt_name
                 );
                 // insert_at_beginning starts as false. It will be set to true later
                 // if a new Parse is sent to server AFTER this skipped Parse.
@@ -243,8 +244,8 @@ where
             }
         } else {
             debug!(
-                "[{}@{}] statement `{}` not in server connection cache, sending Parse to backend",
-                self.username, self.pool_name, server_stmt_name
+                "[{}@{} #c{}] statement `{}` not in server connection cache, sending Parse to backend",
+                self.username, self.pool_name, self.connection_id, server_stmt_name
             );
             // Register to server cache (this may send eviction close to server)
             self.register_parse_to_server_cache(
@@ -297,8 +298,8 @@ where
                 Some(hash) => Ok(PreparedStatementKey::Anonymous(hash)),
                 None => {
                     warn!(
-                        "[{}@{}] anonymous prepared statement referenced but none registered",
-                        self.username, self.pool_name
+                        "[{}@{} #c{}] anonymous prepared statement referenced but none registered",
+                        self.username, self.pool_name, self.connection_id,
                     );
                     error_response(
                         &mut self.write,
@@ -327,8 +328,8 @@ where
         // Avoid parsing if prepared statements not enabled
         if !self.prepared.enabled {
             debug!(
-                "[{}@{}] prepared statements disabled, forwarding Bind as-is",
-                self.username, self.pool_name
+                "[{}@{} #c{}] prepared statements disabled, forwarding Bind as-is",
+                self.username, self.pool_name, self.connection_id,
             );
             self.buffer.put(&message[..]);
             // Track operation for correct expected_responses calculation in Flush
@@ -350,8 +351,12 @@ where
                 let message = Bind::rename(message, &server_name)?;
 
                 debug!(
-                    "[{}@{}] Bind: translated statement name `{}` -> `{}`",
-                    self.username, self.pool_name, client_given_name, server_name
+                    "[{}@{} #c{}] Bind: translated statement name `{}` -> `{}`",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    client_given_name,
+                    server_name
                 );
 
                 // Ensure prepared statement is on server
@@ -383,8 +388,8 @@ where
             }
             None => {
                 warn!(
-                    "[{}@{}] Bind references unknown prepared statement {client_given_name:?}",
-                    self.username, self.pool_name
+                    "[{}@{} #c{}] Bind references unknown prepared statement {client_given_name:?}",
+                    self.username, self.pool_name, self.connection_id,
                 );
 
                 error_response(
@@ -412,8 +417,8 @@ where
         // Avoid parsing if prepared statements not enabled
         if !self.prepared.enabled {
             debug!(
-                "[{}@{}] prepared statements disabled, forwarding Describe as-is",
-                self.username, self.pool_name
+                "[{}@{} #c{}] prepared statements disabled, forwarding Describe as-is",
+                self.username, self.pool_name, self.connection_id,
             );
             self.buffer.put(&message[..]);
             // Track operation for correct expected_responses calculation in Flush
@@ -437,8 +442,8 @@ where
         let describe: Describe = (&message).try_into()?;
         if describe.target == 'P' {
             debug!(
-                "[{}@{}] Describe targets portal, forwarding as-is",
-                self.username, self.pool_name
+                "[{}@{} #c{}] Describe targets portal, forwarding as-is",
+                self.username, self.pool_name, self.connection_id,
             );
             self.buffer.put(&message[..]);
             // Track portal describe for correct ParseComplete insertion position
@@ -461,8 +466,12 @@ where
                 let describe = describe.rename(&server_name);
 
                 debug!(
-                    "[{}@{}] Describe: translated statement name `{}` -> `{}`",
-                    self.username, self.pool_name, client_given_name, describe.statement_name
+                    "[{}@{} #c{}] Describe: translated statement name `{}` -> `{}`",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    client_given_name,
+                    describe.statement_name
                 );
 
                 // Ensure prepared statement is on server
@@ -480,8 +489,8 @@ where
                     s.statement_name == server_name && s.target == ParseCompleteTarget::BindComplete
                 }) {
                     debug!(
-                        "[{}@{}] Describe follows skipped Parse for `{}`, adjusting synthetic ParseComplete position",
-                        self.username, self.pool_name, server_name
+                        "[{}@{} #c{}] Describe follows skipped Parse for `{}`, adjusting synthetic ParseComplete position",
+                        self.username, self.pool_name, self.connection_id, server_name
                     );
                     let insert_at_beginning = self.prepared.skipped_parses[idx].insert_at_beginning;
                     let has_bind = self.prepared.skipped_parses[idx].has_bind;
@@ -510,8 +519,8 @@ where
 
             None => {
                 warn!(
-                    "[{}@{}] Describe references unknown prepared statement `{}`",
-                    self.username, self.pool_name, client_given_name
+                    "[{}@{} #c{}] Describe references unknown prepared statement `{}`",
+                    self.username, self.pool_name, self.connection_id, client_given_name
                 );
 
                 error_response(

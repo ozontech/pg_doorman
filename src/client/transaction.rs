@@ -266,7 +266,7 @@ where
         let (process_id, secret_key, address, port) = {
             match self
                 .client_server_map
-                .get(&(self.process_id, self.secret_key))
+                .get(&(self.connection_id as i32, self.secret_key))
             {
                 // We found the server the client is using for its query
                 // that it wants to cancel.
@@ -328,16 +328,16 @@ where
                     let count = self.prepared.cache.len();
                     self.prepared.cache.clear();
                     info!(
-                        "[{}@{}] DEALLOCATE ALL: cleared {} entries from client prepared statement cache",
-                        self.username, self.pool_name, count
+                        "[{}@{} #c{}] DEALLOCATE ALL: cleared {} entries from client prepared statement cache",
+                        self.username, self.pool_name, self.connection_id, count
                     );
                 } else if !statement_part.is_empty() {
                     // DEALLOCATE <name> - remove specific statement from cache
                     let key = PreparedStatementKey::Named(statement_part.to_string());
                     if self.prepared.cache.pop(&key).is_some() {
                         debug!(
-                            "[{}@{}] DEALLOCATE {}: removed from client cache",
-                            self.username, self.pool_name, statement_part
+                            "[{}@{} #c{}] DEALLOCATE {}: removed from client cache",
+                            self.username, self.pool_name, self.connection_id, statement_part
                         );
                     }
                 }
@@ -399,9 +399,10 @@ where
             self.prepared.async_client = true;
             self.stats.set_async_client();
             debug!(
-                "[{}@{}] client {} entered async mode (Flush) pid={}",
+                "[{}@{} #c{}] client {} entered async mode (Flush) pid={}",
                 self.username,
                 self.pool_name,
+                self.connection_id,
                 self.addr,
                 server.get_process_id()
             );
@@ -421,8 +422,8 @@ where
             }
             server.set_expected_responses(expected);
             debug!(
-                "[{}@{}] flush: expecting {} responses from server",
-                self.username, self.pool_name, expected
+                "[{}@{} #c{}] flush: expecting {} responses from server",
+                self.username, self.pool_name, self.connection_id, expected
             );
 
             // If there are skipped Parse operations, send synthetic ParseComplete to client
@@ -434,8 +435,8 @@ where
             if !self.prepared.skipped_parses.is_empty() {
                 let count = self.prepared.skipped_parses.len();
                 debug!(
-                    "[{}@{}] flush: injecting {} synthetic ParseComplete for cached Parse",
-                    self.username, self.pool_name, count
+                    "[{}@{} #c{}] flush: injecting {} synthetic ParseComplete for cached Parse",
+                    self.username, self.pool_name, self.connection_id, count
                 );
                 let mut synthetic_response = BytesMut::with_capacity(count * 5);
                 for _ in 0..count {
@@ -565,16 +566,16 @@ where
             };
             if message[0] as char == 'X' {
                 debug!(
-                    "[{}@{}] client {} sent Terminate",
-                    self.username, self.pool_name, self.addr
+                    "[{}@{} #c{}] client {} sent Terminate",
+                    self.username, self.pool_name, self.connection_id, self.addr
                 );
                 self.stats.disconnect();
                 return Ok(());
             }
             if SHUTDOWN_IN_PROGRESS.load(Ordering::Relaxed) && !self.admin {
                 warn!(
-                    "[{}@{}] dropping client {}: shutting down",
-                    self.username, self.pool_name, self.addr
+                    "[{}@{} #c{}] dropping client {}: shutting down",
+                    self.username, self.pool_name, self.connection_id, self.addr
                 );
                 error_response_terminal(&mut self.write, "pooler is shut down now", "58006")
                     .await?;
@@ -603,8 +604,8 @@ where
             // reserves a connection which is wasteful if client is slow.
             if is_standalone_begin(&message) && self.client_pending_begin.is_none() {
                 debug!(
-                    "[{}@{}] deferring BEGIN for client {}",
-                    self.username, self.pool_name, self.addr
+                    "[{}@{} #c{}] deferring BEGIN for client {}",
+                    self.username, self.pool_name, self.connection_id, self.addr
                 );
 
                 // Send synthetic response: CommandComplete('BEGIN') + ReadyForQuery('T')
@@ -646,8 +647,8 @@ where
                                 Ok(()) => break conn,
                                 Err(err) => {
                                     warn!(
-                                        "[{}@{}] server cleanup error: {err}",
-                                        self.username, self.pool_name,
+                                        "[{}@{} #c{}] server cleanup error: {err}",
+                                        self.username, self.pool_name, self.connection_id,
                                     );
                                     continue;
                                 }
@@ -674,8 +675,8 @@ where
                             .await?;
 
                             error!(
-                                "[{}@{}] failed to get server connection: {err}",
-                                self.username, self.pool_name,
+                                "[{}@{} #c{}] failed to get server connection: {err}",
+                                self.username, self.pool_name, self.connection_id,
                             );
                             return Err(Error::AllServersDown);
                         }
@@ -691,7 +692,7 @@ where
 
                 // Server is assigned to the client in case the client wants to
                 // cancel a query later.
-                server.claim(self.process_id, self.secret_key);
+                server.claim(self.connection_id as i32, self.secret_key);
                 self.connected_to_server = true;
 
                 // RAII guard: increments CLIENTS_IN_TRANSACTIONS now,
@@ -703,9 +704,10 @@ where
                 self.last_server_stats = Some(server.stats.clone());
 
                 debug!(
-                    "[{}@{}] client {} acquired server pid={}",
+                    "[{}@{} #c{}] client {} acquired server pid={}",
                     self.username,
                     self.pool_name,
+                    self.connection_id,
                     self.addr,
                     server.get_process_id()
                 );
@@ -719,9 +721,10 @@ where
                 // Client already received synthetic response, so we discard the real server response
                 if let Some(begin_msg) = pending_begin {
                     debug!(
-                        "[{}@{}] sending deferred BEGIN to server pid={}",
+                        "[{}@{} #c{}] sending deferred BEGIN to server pid={}",
                         self.username,
                         self.pool_name,
+                        self.connection_id,
                         server.get_process_id()
                     );
 
@@ -780,9 +783,10 @@ where
                                 Ok(NextClientMessage::Message(msg)) => msg,
                                 Ok(NextClientMessage::ServerDead) => {
                                     warn!(
-                                        "[{}@{}] server died while idle in transaction pid={}",
+                                        "[{}@{} #c{}] server died while idle in transaction pid={}",
                                         self.username,
                                         self.pool_name,
+                                        self.connection_id,
                                         server.get_process_id()
                                     );
                                     server
@@ -895,8 +899,8 @@ where
                         // or this is not a Postgres client we're talking to.
                         _ => {
                             error!(
-                                "[{}@{}] unexpected message code '{}' (ASCII: {}) from client {}",
-                                self.username, self.pool_name, code, code as u8, self.addr
+                                "[{}@{} #c{}] unexpected message code '{}' (ASCII: {}) from client {}",
+                                self.username, self.pool_name, self.connection_id, code, code as u8, self.addr
                             );
                             TransactionAction::Continue
                         }
@@ -1050,9 +1054,10 @@ where
             self.stats.active_write();
             if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
                 warn!(
-                    "[{}@{}] write to client failed pid={}: {err_write}",
+                    "[{}@{} #c{}] write to client failed pid={}: {err_write}",
                     self.username,
                     self.pool_name,
+                    self.connection_id,
                     server.get_process_id()
                 );
                 server.wait_available().await;

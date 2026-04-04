@@ -379,7 +379,7 @@ where
     res.put(row_description(&columns));
     for (_, client) in new_map {
         let row = vec![
-            format!("{:#010X}", client.client_id()),
+            format!("#c{}", client.connection_id()),
             client.pool_name(),
             client.username(),
             client.application_name(),

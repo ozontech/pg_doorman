@@ -18,6 +18,7 @@ use super::startup::{get_startup, startup_tls, ClientConnectionType};
 pub struct ClientSessionInfo {
     pub username: String,
     pub pool_name: String,
+    pub connection_id: u64,
 }
 
 pub async fn client_entrypoint_too_many_clients_already(
@@ -77,6 +78,7 @@ pub async fn client_entrypoint(
     admin_only: bool,
     tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
     tls_rate_limiter: Option<RateLimiter>,
+    connection_id: u64,
 ) -> Result<Option<ClientSessionInfo>, Error> {
     let config = get_config();
     let log_client_connections = config.general.log_client_connections;
@@ -105,24 +107,34 @@ pub async fn client_entrypoint(
                 }
 
                 // Negotiate TLS.
-                match startup_tls(stream, client_server_map, admin_only, tls_acceptor).await {
+                match startup_tls(
+                    stream,
+                    client_server_map,
+                    admin_only,
+                    tls_acceptor,
+                    connection_id,
+                )
+                .await
+                {
                     Ok(mut client) => {
                         if log_client_connections {
                             info!(
-                                "[{}@{}] client connected from {addr} (TLS)",
-                                client.username, client.pool_name
+                                "[{}@{} #c{}] client connected from {addr} (TLS)",
+                                client.username, client.pool_name, client.connection_id
                             );
                         }
                         let session_info = ClientSessionInfo {
                             username: client.username.clone(),
                             pool_name: client.pool_name.clone(),
+                            connection_id: client.connection_id,
                         };
                         let result = client.handle().await;
                         if !client.is_admin() && result.is_err() {
                             warn!(
-                                "[{}@{}] client {} disconnected with error: {}",
+                                "[{}@{} #c{}] client {} disconnected with error: {}",
                                 client.username,
                                 client.pool_name,
+                                client.connection_id,
                                 addr,
                                 result.as_ref().unwrap_err()
                             );
@@ -155,19 +167,21 @@ pub async fn client_entrypoint(
                             client_server_map,
                             admin_only,
                             false,
+                            connection_id,
                         )
                         .await
                         {
                             Ok(mut client) => {
                                 if log_client_connections {
                                     info!(
-                                        "[{}@{}] client connected from {addr} (plain)",
-                                        client.username, client.pool_name
+                                        "[{}@{} #c{}] client connected from {addr} (plain)",
+                                        client.username, client.pool_name, client.connection_id
                                     );
                                 }
                                 let session_info = ClientSessionInfo {
                                     username: client.username.clone(),
                                     pool_name: client.pool_name.clone(),
+                                    connection_id: client.connection_id,
                                 };
                                 let result = client.handle().await;
                                 if !client.is_admin() && result.is_err() {
@@ -213,19 +227,21 @@ pub async fn client_entrypoint(
                 client_server_map,
                 admin_only,
                 false,
+                connection_id,
             )
             .await
             {
                 Ok(mut client) => {
                     if log_client_connections {
                         info!(
-                            "[{}@{}] client connected from {addr} (plain)",
-                            client.username, client.pool_name
+                            "[{}@{} #c{}] client connected from {addr} (plain)",
+                            client.username, client.pool_name, client.connection_id
                         );
                     }
                     let session_info = ClientSessionInfo {
                         username: client.username.clone(),
                         pool_name: client.pool_name.clone(),
+                        connection_id: client.connection_id,
                     };
                     let result = client.handle().await;
                     if !client.is_admin() && result.is_err() {

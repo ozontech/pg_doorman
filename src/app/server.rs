@@ -412,11 +412,11 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
                     configure_tcp_socket(&socket);
                     tokio::task::spawn(async move {
-                        TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+                        let connection_id = TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed) as u64 + 1;
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
                         // max clients.
                         if current_clients as u64 > max_connections {
-                            warn!("Client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
+                            warn!("#c{connection_id} Client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
                            match crate::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map).await {
                                 Ok(()) => (),
@@ -435,6 +435,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             admin_only,
                             tls_acceptor,
                             tls_rate_limiter,
+                            connection_id,
                         )
                         .await
                         {
@@ -446,8 +447,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                         &(Utc::now().naive_utc() - start),
                                     );
                                     let identity = match &session_info {
-                                        Some(si) => format!("[{}@{}]", si.username, si.pool_name),
-                                        None => String::new(),
+                                        Some(si) => format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id),
+                                        None => format!("#c{connection_id}"),
                                     };
                                     info!("{identity} client disconnected from {addr}, session={session}");
                                 }
