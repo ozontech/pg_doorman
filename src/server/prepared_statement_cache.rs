@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use log::warn;
+use log::info;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -170,9 +170,9 @@ impl PreparedStatementCache {
                 } else {
                     ""
                 };
-                warn!(
-                    "Prepared statement cache eviction: name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
-                    entry.parse.name, self.cache.len(), self.max_size,
+                info!(
+                    "Pool cache eviction: hash={:#x}, name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
+                    key, entry.parse.name, self.cache.len(), self.max_size,
                 );
             }
         }

@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use std::future::{poll_fn, Future};
 use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
@@ -327,8 +327,8 @@ where
                     // DEALLOCATE ALL - clear entire client cache
                     let count = self.prepared.cache.len();
                     self.prepared.cache.clear();
-                    debug!(
-                        "[{}@{}] DEALLOCATE ALL: cleared {} entries from client cache",
+                    info!(
+                        "[{}@{}] DEALLOCATE ALL: cleared {} entries from client prepared statement cache",
                         self.username, self.pool_name, count
                     );
                 } else if !statement_part.is_empty() {

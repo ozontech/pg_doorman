@@ -319,11 +319,13 @@ fn handle_command_complete(server: &mut Server, message: &BytesMut) {
     if message.len() == 12 && &message[..] == COMMAND_COMPLETE_BY_DISCARD_ALL {
         server.registering_prepared_statement.clear();
         if server.prepared_statement_cache.is_some() {
+            let cache_size = server.prepared_statement_cache.as_ref().unwrap().len();
             warn!(
-                "[{}@{}] clearing prepared statement cache pid={}: DISCARD ALL",
+                "[{}@{}] clearing prepared statement cache pid={}: DISCARD ALL ({} entries)",
                 server.address.username,
                 server.address.pool_name,
-                server.get_process_id()
+                server.get_process_id(),
+                cache_size
             );
             server.prepared_statement_cache.as_mut().unwrap().clear();
         }
@@ -331,11 +333,13 @@ fn handle_command_complete(server: &mut Server, message: &BytesMut) {
     if message.len() == 15 && &message[..] == COMMAND_COMPLETE_BY_DEALLOCATE_ALL {
         server.registering_prepared_statement.clear();
         if server.prepared_statement_cache.is_some() {
+            let cache_size = server.prepared_statement_cache.as_ref().unwrap().len();
             warn!(
-                "[{}@{}] clearing prepared statement cache pid={}: DEALLOCATE ALL",
+                "[{}@{}] clearing prepared statement cache pid={}: DEALLOCATE ALL ({} entries)",
                 server.address.username,
                 server.address.pool_name,
-                server.get_process_id()
+                server.get_process_id(),
+                cache_size
             );
             server.prepared_statement_cache.as_mut().unwrap().clear();
         }

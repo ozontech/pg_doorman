@@ -451,9 +451,10 @@ impl Server {
                 // flush prepared.
                 self.registering_prepared_statement.clear();
                 if self.prepared_statement_cache.is_some() {
-                    warn!(
-                        "[{}@{}] clearing prepared statement cache pid={}: session state reset",
-                        self.address.username, self.address.pool_name, self.process_id
+                    let cache_size = self.prepared_statement_cache.as_ref().unwrap().len();
+                    info!(
+                        "[{}@{}] clearing prepared statement cache pid={}: session state reset ({} entries)",
+                        self.address.username, self.address.pool_name, self.process_id, cache_size
                     );
                     self.prepared_statement_cache.as_mut().unwrap().clear();
                 }
