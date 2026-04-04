@@ -112,6 +112,10 @@ harness = false
 name = "log_benchmarks"
 harness = false
 
+[[bench]]
+name = "memory_benchmarks"
+harness = false
+
 [features]
 default = []
 pam = ["dep:pam-client"]
