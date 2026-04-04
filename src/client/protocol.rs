@@ -29,24 +29,26 @@ where
         let cached = self.prepared.cache.get(&key).cloned();
         match cached {
             Some(cached) => {
-                let query = cached.parse.query().replace(['\n', '\r'], " ");
-                let q: String = query.chars().take(80).collect();
-                let el = if query.chars().count() > 80 {
-                    "..."
-                } else {
-                    ""
-                };
-                debug!(
-                    "[{}@{} #c{}] client cache hit: {} query=\"{q}{el}\"",
-                    self.username,
-                    self.pool_name,
-                    self.connection_id,
-                    match &key {
-                        PreparedStatementKey::Named(name) => format!("name=`{name}`"),
-                        PreparedStatementKey::Anonymous(hash) =>
-                            format!("hash={hash:#x} (unnamed)"),
-                    }
-                );
+                if log::log_enabled!(log::Level::Debug) {
+                    let query = cached.parse.query().replace(['\n', '\r'], " ");
+                    let q: String = query.chars().take(80).collect();
+                    let el = if query.chars().count() > 80 {
+                        "..."
+                    } else {
+                        ""
+                    };
+                    debug!(
+                        "[{}@{} #c{}] client cache hit: {} query=\"{q}{el}\"",
+                        self.username,
+                        self.pool_name,
+                        self.connection_id,
+                        match &key {
+                            PreparedStatementKey::Named(name) => format!("name=`{name}`"),
+                            PreparedStatementKey::Anonymous(hash) =>
+                                format!("hash={hash:#x} (unnamed)"),
+                        }
+                    );
+                }
                 // Get the server-side name (may be async_name for async clients)
                 let server_name = cached.server_name().to_string();
                 // In this case we want to send the parse message to the server
@@ -179,7 +181,7 @@ where
             None
         };
 
-        {
+        if log::log_enabled!(log::Level::Debug) {
             let query = shared_parse.query().replace(['\n', '\r'], " ");
             let truncated: String = query.chars().take(80).collect();
             let ellipsis = if query.chars().count() > 80 {
