@@ -398,7 +398,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         }
                     };
                     if admin_only {
-                        warn!("Rejecting client {addr}: pooler shutting down");
+                        warn!("Rejecting connection from {addr}: pooler shutting down");
                         let _ = socket.shutdown().await;
                         continue;
                     }
@@ -416,12 +416,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
                         // max clients.
                         if current_clients as u64 > max_connections {
-                            warn!("#c{connection_id} Client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
+                            warn!("[#c{connection_id}] client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
                            match crate::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map).await {
                                 Ok(()) => (),
                                 Err(err) => {
-                                    error!("Client {addr} disconnected with error: {err}");
+                                    error!("[#c{connection_id}] client {addr} disconnected with error: {err}");
                                 }
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
@@ -448,7 +448,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                     );
                                     let identity = match &session_info {
                                         Some(si) => format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id),
-                                        None => format!("#c{connection_id}"),
+                                        None => format!("[#c{connection_id}]"),
                                     };
                                     info!("{identity} client disconnected from {addr}, session={session}");
                                 }
@@ -458,7 +458,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                 // Pre-auth failures: identity unknown, only connection_id available.
                                 // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
                                 let session = format_duration(&(Utc::now().naive_utc() - start));
-                                warn!("#c{connection_id} client {addr} disconnected with error: {err}, session={session}");
+                                warn!("[#c{connection_id}] client {addr} disconnected with error: {err}, session={session}");
                             }
                         };
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
