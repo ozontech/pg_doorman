@@ -535,7 +535,7 @@ impl ConnectionPool {
                         };
 
                         info!(
-                            "[{}@{}] auth_query shared pool",
+                            "[{}@{}] creating auth_query shared pool",
                             shared_user.username, pool_name
                         );
 
@@ -594,7 +594,7 @@ impl ConnectionPool {
 
                     Some(identifier)
                 } else {
-                    None // passthrough mode — not implemented yet
+                    None // passthrough mode — dynamic pool created on first client connection
                 };
 
                 auth_query_states.insert(

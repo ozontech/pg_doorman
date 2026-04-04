@@ -94,7 +94,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             if worker_cpu_affinity_pinning {
                 let core_id = thread_id.fetch_add(1, Ordering::SeqCst);
                 info!(
-                    "Affinity pin tokio thread {} on core: {}",
+                    "Pinning tokio worker thread {} to core {}",
                     core_id, core_ids[core_id].id
                 );
                 core_affinity::set_for_current(core_ids[core_id]);
@@ -421,7 +421,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                                 socket, client_server_map).await {
                                 Ok(()) => (),
                                 Err(err) => {
-                                    error!("Client {addr}: disconnected with error: {err}");
+                                    error!("Client {addr} disconnected with error: {err}");
                                 }
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);

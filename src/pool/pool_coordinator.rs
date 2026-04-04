@@ -107,7 +107,7 @@ impl Drop for ReserveGrant {
     fn drop(&mut self) {
         if let Some(coordinator) = &self.coordinator {
             debug!(
-                "[pool: {}] coordinator: unused reserve grant returned to pool",
+                "[pool: {}] coordinator: unused reserve grant returned to semaphore",
                 coordinator.database,
             );
             coordinator.reserve_semaphore.add_permits(1);

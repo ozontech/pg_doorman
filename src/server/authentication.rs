@@ -92,7 +92,10 @@ pub(crate) async fn handle_authentication(
         SASL_FINAL => {
             let mut sasl_final = vec![0u8; len as usize - 8];
             stream.read_exact(&mut sasl_final).await.map_err(|_| {
-                Error::ServerStartupError("sasl final message".into(), server_identifier.clone())
+                Error::ServerStartupError(
+                    "failed to read SASL final message from server".into(),
+                    server_identifier.clone(),
+                )
             })?;
 
             scram_client_auth

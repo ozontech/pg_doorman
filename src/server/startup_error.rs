@@ -24,8 +24,7 @@ pub(crate) async fn handle_startup_error(
         _ => {
             if (len as usize) < 2 * mem::size_of::<u32>() {
                 return Err(Error::ServerStartupError(
-                    "while create new connection to postgresql received error, but it's too small"
-                        .to_string(),
+                    "startup error message too short to parse".to_string(),
                     server_identifier.clone(),
                 ));
             }
@@ -33,7 +32,7 @@ pub(crate) async fn handle_startup_error(
             let mut error = vec![0u8; len as usize - 2 * mem::size_of::<u32>()];
             stream.read_exact(&mut error).await.map_err(|err| {
                 Error::ServerStartupError(
-                    format!("while create new connection to postgresql received error, but can't read it: {err:?}"),
+                    format!("failed to parse startup error details: {err:?}"),
                     server_identifier.clone(),
                 )
             })?;
@@ -59,7 +58,7 @@ pub(crate) async fn handle_startup_error(
                         server_identifier.username, server_identifier.pool_name
                     );
                     Err(Error::ServerStartupError(
-                        format!("while create new connection to postgresql received error, but can't read it: {err:?}"),
+                        format!("failed to parse startup error details: {err:?}"),
                         server_identifier.clone(),
                     ))
                 }

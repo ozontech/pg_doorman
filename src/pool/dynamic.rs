@@ -218,7 +218,7 @@ pub fn create_dynamic_pool(
             if created > 0 {
                 info!("[{un}@{pn}] prewarmed {created} dynamic server(s) (min_pool_size={min})");
             } else {
-                warn!("[{un}@{pn}] dynamic prewarm failed (min_pool_size={min})");
+                warn!("[{un}@{pn}] dynamic prewarm failed: 0 of {min} connections created");
             }
         });
     }

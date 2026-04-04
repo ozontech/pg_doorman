@@ -739,7 +739,7 @@ where
             if !auth_ok {
                 auth_fail!(aq_state);
                 warn!(
-                    "[{username}@{pool_name}] auth_query: MD5 auth failed (refetch didn't help or was rate-limited)"
+                    "[{username}@{pool_name}] auth_query: MD5 authentication failed (refetch did not match or was rate-limited)"
                 );
                 wrong_password(write, username).await?;
                 return Err(Error::AuthError(format!(

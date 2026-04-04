@@ -193,7 +193,7 @@ where
     fn ensure_copy_mode(&mut self, server: &mut Server) -> Result<(), Error> {
         if !server.in_copy_mode() {
             self.stats.disconnect();
-            server.mark_bad("client expects COPY mode, but server are not in");
+            server.mark_bad("client expects COPY mode but server is not in COPY mode");
             return Err(Error::ProtocolSyncError(
                 "server not in copy mode".to_string(),
             ));
@@ -528,7 +528,7 @@ where
                 server.wait_available().await;
                 server.mark_bad(
                     format!(
-                        "flush to client {} response after copy done: {:?}",
+                        "failed to flush CopyDone response to client {}: {:?}",
                         self.addr, err
                     )
                     .as_str(),
@@ -754,7 +754,7 @@ where
                                 }
                             }
                             Err(err) => {
-                                server.mark_bad(&format!("deferred BEGIN failed: {:?}", err));
+                                server.mark_bad(&format!("deferred BEGIN failed: {}", err));
                                 return Err(err);
                             }
                         }
@@ -895,8 +895,8 @@ where
                         // or this is not a Postgres client we're talking to.
                         _ => {
                             error!(
-                                "[{}@{}] unexpected message code: '{code}'",
-                                self.username, self.pool_name
+                                "[{}@{}] unexpected message code '{}' (ASCII: {}) from client {}",
+                                self.username, self.pool_name, code, code as u8, self.addr
                             );
                             TransactionAction::Continue
                         }
@@ -998,7 +998,11 @@ where
                     server.wait_available().await;
                     let mut msg = String::with_capacity(64);
                     use std::fmt::Write;
-                    let _ = write!(msg, "loop with client {}: {:?}", self.addr, err);
+                    let _ = write!(
+                        msg,
+                        "server recv failed during client {} roundtrip: {:?}",
+                        self.addr, err
+                    );
                     server.mark_bad(&msg);
                     return Err(err);
                 }
@@ -1054,7 +1058,11 @@ where
                 server.wait_available().await;
                 if server.is_async() || server.in_copy_mode() {
                     server.mark_bad(
-                        format!("flush to client {} {:?}", self.addr, err_write).as_str(),
+                        format!(
+                            "failed to flush response to client {}: {:?}",
+                            self.addr, err_write
+                        )
+                        .as_str(),
                     );
                     return Err(err_write);
                 }

@@ -279,7 +279,10 @@ where
             match self.prepared.last_anonymous_hash {
                 Some(hash) => Ok(PreparedStatementKey::Anonymous(hash)),
                 None => {
-                    warn!("anonymous prepared statement referenced but none registered");
+                    warn!(
+                        "[{}@{}] anonymous prepared statement referenced but none registered",
+                        self.username, self.pool_name
+                    );
                     error_response(
                         &mut self.write,
                         "prepared statement \"\" does not exist",
@@ -356,7 +359,10 @@ where
                 Ok(())
             }
             None => {
-                warn!("Bind references unknown prepared statement {client_given_name:?}");
+                warn!(
+                    "[{}@{}] Bind references unknown prepared statement {client_given_name:?}",
+                    self.username, self.pool_name
+                );
 
                 error_response(
                     &mut self.write,
@@ -474,7 +480,10 @@ where
             }
 
             None => {
-                warn!("Describe references unknown prepared statement {describe:?}");
+                warn!(
+                    "[{}@{}] Describe references unknown prepared statement {describe:?}",
+                    self.username, self.pool_name
+                );
 
                 error_response(
                     &mut self.write,

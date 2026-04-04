@@ -761,9 +761,9 @@ impl Server {
                 // Fall through to server_password if available; otherwise None
                 // (backend SASL auth will fail with a clear error).
                 warn!(
-                    "Backend connection to {} attempted before first client SCRAM auth (ScramPending). \
-                     Falling back to server_password.",
-                    address
+                    "[{}@{}] backend connection attempted before first client SCRAM auth (ScramPending), \
+                     falling back to server_password",
+                    address.username, address.pool_name
                 );
                 if let (Some(_), Some(server_password)) =
                     (&user.server_username, &user.server_password)
@@ -870,14 +870,14 @@ impl Server {
                     // The frontend must save these values if it wishes to be able to issue CancelRequest messages later.
                     process_id = stream.read_i32().await.map_err(|_| {
                         Error::ServerStartupError(
-                            "process id message".into(),
+                            "failed to read process ID during startup".into(),
                             server_identifier.clone(),
                         )
                     })?;
 
                     secret_key = stream.read_i32().await.map_err(|_| {
                         Error::ServerStartupError(
-                            "secret key message".into(),
+                            "failed to read secret key during startup".into(),
                             server_identifier.clone(),
                         )
                     })?;
@@ -930,7 +930,7 @@ impl Server {
 
                 // We have an unexpected message from the server during this exchange.
                 _ => {
-                    error!("Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.", code, code as u8);
+                    error!("[{}@{}] unexpected message code '{}' (ASCII: {}) during server startup to {}:{}", server_identifier.username, server_identifier.pool_name, code, code as u8, address.host, address.port);
                     return Err(Error::ProtocolSyncError(format!(
                         "Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.",
                         code, code as u8

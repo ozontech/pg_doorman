@@ -118,17 +118,20 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
             }
             debug!(
                 "[{}@{}] eviction: candidate skipped — \
-                 no idle connections older than {}ms (spare={})",
-                id.user, self.database, min_lifetime_ms, spare,
+                 no idle connections older than {} (spare={})",
+                id.user,
+                self.database,
+                crate::utils::format_duration_ms(min_lifetime_ms),
+                spare,
             );
         }
 
         debug!(
             "[{requesting_user}@{}] eviction: all {} candidate(s) had connections \
-             too young to evict (min_lifetime={}ms)",
+             too young to evict (min_lifetime={})",
             self.database,
             candidates.len(),
-            min_lifetime_ms,
+            crate::utils::format_duration_ms(min_lifetime_ms),
         );
         false
     }

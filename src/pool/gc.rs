@@ -84,5 +84,13 @@ fn gc_idle_dynamic_pools() {
     }
     DYNAMIC_POOLS.store(Arc::new(new_dynamic));
 
-    info!("GC: removed {} idle dynamic pool(s)", to_remove.len());
+    info!(
+        "GC: removed {} idle dynamic pool(s): {}",
+        to_remove.len(),
+        to_remove
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 }

@@ -63,7 +63,7 @@ pub(crate) async fn send_and_flush_timeout(
     match timeout(duration, send_and_flush(server, messages)).await {
         Ok(result) => result,
         Err(err) => {
-            server.mark_bad("flush timeout error");
+            server.mark_bad("flush timeout");
             error!(
                 "[{}@{}] flush timeout pid={}: {err}",
                 server.address.username,
@@ -97,7 +97,7 @@ pub(crate) async fn send_and_flush(server: &mut Server, messages: &BytesMut) -> 
                 server.address.pool_name,
                 server.get_process_id(),
             );
-            server.mark_bad("flush to server error");
+            server.mark_bad("failed to flush data to server");
             Err(err)
         }
     }
