@@ -238,7 +238,20 @@ where
                     }
                 };
                 let talos_token = match CStr::from_bytes_until_nul(talos_token_with_nul.as_ref()) {
-                    Ok(token) => token.to_str().unwrap().to_string(),
+                    Ok(token) => match token.to_str() {
+                        Ok(s) => s.to_string(),
+                        Err(_) => {
+                            error_response_terminal(
+                                &mut write,
+                                "Invalid Talos token: contains non-UTF-8 bytes.",
+                                "28000",
+                            )
+                            .await?;
+                            return Err(Error::AuthError(
+                                "Talos token contains non-UTF-8 bytes".to_string(),
+                            ));
+                        }
+                    },
                     Err(_) => {
                         error_response_terminal(
                             &mut write,
@@ -313,7 +326,10 @@ where
         }
 
         // Derive process_id for Cancel Protocol from monotonic connection_id.
-        // Secret key stays random for security.
+        // Wrapping is intentional: PostgreSQL uses 32-bit PIDs with the same
+        // wrapping behavior. Sequential values give fewer collisions than random
+        // at <50K concurrent clients. The random secret_key (below) provides
+        // collision resistance after wrap-around (~2^31 connections).
         let process_id: i32 = connection_id as i32;
         let secret_key: i32 = rand::random();
 

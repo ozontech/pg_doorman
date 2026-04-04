@@ -140,15 +140,14 @@ impl ClientStats {
     #[inline(always)]
     pub fn set_state(&self, state: u8) {
         let cur = self.state_wait.load(Ordering::Relaxed);
-        let wait = cur & 0x0F;
-        let new = Self::pack(state, wait);
+        let new = Self::pack(state, cur & 0x0F);
         self.state_wait.store(new, Ordering::Relaxed);
     }
 
     #[inline(always)]
     pub fn set_wait(&self, wait: u8) {
-        let state = self.state_wait.load(Ordering::Relaxed) >> 4;
-        let new = Self::pack(state, wait);
+        let cur = self.state_wait.load(Ordering::Relaxed);
+        let new = Self::pack(cur >> 4, wait);
         self.state_wait.store(new, Ordering::Relaxed);
     }
 

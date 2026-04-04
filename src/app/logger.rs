@@ -25,7 +25,16 @@ fn init(args: &Args, syslog_name: Option<String>) {
             process: syslog_name,
             pid: process::id(),
         };
-        let syslog_logger = syslog::unix(formatter).unwrap();
+        let syslog_logger = match syslog::unix(formatter) {
+            Ok(logger) => logger,
+            Err(err) => {
+                eprintln!("fatal: failed to open syslog socket (/dev/log): {err}");
+                eprintln!(
+                    "hint: disable syslog_prog_name in config or ensure /dev/log is available"
+                );
+                std::process::exit(1);
+            }
+        };
         let inner = Box::new(BasicLogger::new(syslog_logger));
         LogLevelController::new(inner, startup_level).register();
     } else {
@@ -130,12 +139,20 @@ impl Log for JsonLogger {
         // Escape JSON string manually to avoid serde overhead.
         // Message is the only field that can contain arbitrary user data.
         let msg_str = msg.to_string();
-        let escaped = msg_str
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
+        let mut escaped = String::with_capacity(msg_str.len());
+        for ch in msg_str.chars() {
+            match ch {
+                '\\' => escaped.push_str("\\\\"),
+                '"' => escaped.push_str("\\\""),
+                '\n' => escaped.push_str("\\n"),
+                '\r' => escaped.push_str("\\r"),
+                '\t' => escaped.push_str("\\t"),
+                c if c.is_control() => {
+                    escaped.push_str(&format!("\\u{:04x}", c as u32));
+                }
+                c => escaped.push(c),
+            }
+        }
 
         let _ = writeln!(
             std::io::stderr(),
