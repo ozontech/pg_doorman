@@ -128,6 +128,43 @@ pub async fn session_should_receive_cancel_error(
     );
 }
 
+#[when(regex = r#"^we send cancel request with process_id (\d+) and secret_key (\d+)$"#)]
+pub async fn send_cancel_request_with_fabricated_credentials(
+    world: &mut DoormanWorld,
+    process_id: i32,
+    secret_key: i32,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    PgConnection::send_cancel_request(&doorman_addr, process_id, secret_key)
+        .await
+        .expect("Failed to send cancel request");
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+}
+
+#[when(regex = r#"^we send cancel request for session "([^"]+)" with wrong secret_key (\d+)$"#)]
+pub async fn send_cancel_request_wrong_secret_key(
+    world: &mut DoormanWorld,
+    session_name: String,
+    wrong_secret_key: i32,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    let process_id = *world
+        .session_backend_pids
+        .get(&session_name)
+        .unwrap_or_else(|| panic!("No backend_pid stored for session '{}'", session_name));
+
+    PgConnection::send_cancel_request(&doorman_addr, process_id, wrong_secret_key)
+        .await
+        .expect("Failed to send cancel request");
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+}
+
 #[then(regex = r#"^session "([^"]+)" should complete without error$"#)]
 pub async fn session_should_complete_without_error(world: &mut DoormanWorld, session_name: String) {
     let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
