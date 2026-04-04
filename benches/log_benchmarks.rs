@@ -67,7 +67,9 @@ fn log_overhead(c: &mut Criterion) {
         b.iter(|| {
             log::info!(
                 "[{}@{}] client connected from {}",
-                username, pool_name, addr
+                username,
+                pool_name,
+                addr
             );
         });
     });
@@ -76,7 +78,8 @@ fn log_overhead(c: &mut Criterion) {
         b.iter(|| {
             log::warn!(
                 "[{}@{}] pool exhausted cl_waiting=15 sv_active=50",
-                username, pool_name
+                username,
+                pool_name
             );
         });
     });
