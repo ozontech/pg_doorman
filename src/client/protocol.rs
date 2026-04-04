@@ -165,19 +165,28 @@ where
             None
         };
 
-        debug!(
-            "[{}@{} #c{}] mapped client statement `{}` -> pool name `{}` (hash={:#x}{})",
-            self.username,
-            self.pool_name,
-            self.connection_id,
-            client_given_name,
-            shared_parse.name,
-            hash,
-            async_name
-                .as_ref()
-                .map(|n| format!(", async_name={n}"))
-                .unwrap_or_default()
-        );
+        {
+            let query = shared_parse.query().replace(['\n', '\r'], " ");
+            let truncated: String = query.chars().take(80).collect();
+            let ellipsis = if query.chars().count() > 80 {
+                "..."
+            } else {
+                ""
+            };
+            debug!(
+                "[{}@{} #c{}] mapped statement `{}` -> `{}` (hash={:#x}{}) query=\"{truncated}{ellipsis}\"",
+                self.username,
+                self.pool_name,
+                self.connection_id,
+                client_given_name,
+                shared_parse.name,
+                hash,
+                async_name
+                    .as_ref()
+                    .map(|n| format!(", async_name={n}"))
+                    .unwrap_or_default()
+            );
+        }
 
         // For anonymous prepared statements, use hash as key to avoid collisions
         // Save hash for anonymous prepared statement lookup
@@ -351,11 +360,15 @@ where
                 let message = Bind::rename(message, &server_name)?;
 
                 debug!(
-                    "[{}@{} #c{}] Bind: translated statement name `{}` -> `{}`",
+                    "[{}@{} #c{}] bind: rewrote statement `{}` -> `{}`",
                     self.username,
                     self.pool_name,
                     self.connection_id,
-                    client_given_name,
+                    if client_given_name.is_empty() {
+                        "<unnamed>"
+                    } else {
+                        &client_given_name
+                    },
                     server_name
                 );
 
@@ -442,7 +455,7 @@ where
         let describe: Describe = (&message).try_into()?;
         if describe.target == 'P' {
             debug!(
-                "[{}@{} #c{}] Describe targets portal, forwarding as-is",
+                "[{}@{} #c{}] describe portal (not statement), passing through",
                 self.username, self.pool_name, self.connection_id,
             );
             self.buffer.put(&message[..]);
