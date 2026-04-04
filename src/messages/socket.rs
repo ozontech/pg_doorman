@@ -190,6 +190,34 @@ where
     result
 }
 
+/// Read message body into a reusable buffer when header is already consumed.
+/// Used by server recv() loop where read_message_header() is called separately.
+/// Same zero-alloc semantics as read_message_reuse, but skips header read.
+#[inline]
+pub async fn read_message_body_reuse<S>(
+    stream: &mut S,
+    buf: &mut BytesMut,
+    code: u8,
+    len: i32,
+) -> Result<BytesMut, Error>
+where
+    S: tokio::io::AsyncRead + std::marker::Unpin,
+{
+    let total_len = len as usize + 1;
+    buf.clear();
+    buf.reserve(total_len);
+    buf.put_u8(code);
+    buf.put_i32(len);
+    buf.resize(total_len, 0);
+
+    match stream.read_exact(&mut buf[5..]).await {
+        Ok(_) => Ok(buf.split()),
+        Err(err) => Err(Error::SocketError(format!(
+            "Error reading message data from socket - Code: {code:?}, Error: {err:?}"
+        ))),
+    }
+}
+
 /// Copy data from one stream to another with a timeout.
 pub async fn proxy_copy_data_with_timeout<R, W>(
     duration: tokio::time::Duration,

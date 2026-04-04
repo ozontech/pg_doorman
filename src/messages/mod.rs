@@ -31,8 +31,9 @@ pub use protocol::{
     simple_query, ssl_request, startup, sync, wrong_password,
 };
 pub use socket::{
-    proxy_copy_data, proxy_copy_data_with_timeout, read_message, read_message_data,
-    read_message_header, read_message_reuse, write_all, write_all_flush, write_all_half,
+    proxy_copy_data, proxy_copy_data_with_timeout, read_message, read_message_body_reuse,
+    read_message_data, read_message_header, read_message_reuse, write_all, write_all_flush,
+    write_all_half,
 };
 pub use types::{vec_to_string, BytesMutReader, DataType};
 
