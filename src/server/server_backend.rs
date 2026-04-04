@@ -49,8 +49,11 @@ pub struct Server {
     pub(crate) stream: BufStream<StreamInner>,
 
     /// Response buffer for accumulating server messages before forwarding them to the client.
-    /// This allows batching multiple messages and reduces the number of write operations.
     pub(crate) buffer: BytesMut,
+
+    /// Reusable read buffer for message parsing. Avoids heap allocation per message —
+    /// clear()+reserve() reuses existing capacity. Cleared on checkin for defence-in-depth.
+    pub(crate) read_buf: BytesMut,
 
     /// Server runtime parameters received during startup (e.g., client_encoding, TimeZone, DateStyle).
     /// These parameters are tracked and synchronized with clients to maintain session consistency.
@@ -892,6 +895,7 @@ impl Server {
                         address: address.to_owned(),
                         stream: BufStream::new(stream),
                         buffer: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
+                        read_buf: BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD),
                         server_parameters,
                         process_id,
                         secret_key,

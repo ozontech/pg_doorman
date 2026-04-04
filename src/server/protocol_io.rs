@@ -28,7 +28,7 @@ use crate::errors::Error::MaxMessageSize;
 use crate::messages::PgErrorMsg;
 use crate::messages::MAX_MESSAGE_SIZE;
 use crate::messages::{
-    proxy_copy_data, proxy_copy_data_with_timeout, read_message_data, read_message_header,
+    proxy_copy_data, proxy_copy_data_with_timeout, read_message_header, read_message_reuse,
     write_all_flush, BytesMutReader,
 };
 
@@ -466,22 +466,25 @@ where
             return Err(MaxMessageSize);
         }
 
-        let mut message = match read_message_data(&mut server.stream, code_u8, message_len).await {
-            Ok(message) => {
-                server.stats.wait_idle();
-                message
-            }
-            Err(err) => {
-                error!(
-                    "[{}@{}] server connection terminated pid={}: {err}",
-                    server.address.username,
-                    server.address.pool_name,
-                    server.get_process_id(),
-                );
-                server.mark_bad(format!("Failed to read message data: {err}").as_str());
-                return Err(err);
-            }
-        };
+        // Read into per-connection reusable buffer to avoid per-message allocations.
+        // read_message_reuse: clear()+reserve() reuses capacity, split() returns owned data.
+        let mut message =
+            match read_message_reuse(&mut server.stream, &mut server.read_buf, u64::MAX).await {
+                Ok(message) => {
+                    server.stats.wait_idle();
+                    message
+                }
+                Err(err) => {
+                    error!(
+                        "[{}@{}] server connection terminated pid={}: {err}",
+                        server.address.username,
+                        server.address.pool_name,
+                        server.get_process_id(),
+                    );
+                    server.mark_bad(format!("Failed to read message data: {err}").as_str());
+                    return Err(err);
+                }
+            };
 
         // Buffer the message we'll forward to the client later.
         server.buffer.put(&message[..]);
