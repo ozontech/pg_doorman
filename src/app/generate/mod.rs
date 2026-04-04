@@ -4,8 +4,10 @@ pub mod docs;
 use std::error::Error;
 
 use crate::app::args::GenerateConfig;
-use crate::auth::hba::PgHba;
 use crate::config::{Config, PoolMode};
+
+#[cfg(not(test))]
+use crate::auth::hba::PgHba;
 
 #[cfg(not(test))]
 use native_tls::TlsConnector;
