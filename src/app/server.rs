@@ -455,8 +455,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             }
 
                             Err(err) => {
+                                // Pre-auth failures: identity unknown, only connection_id available.
+                                // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
                                 let session = format_duration(&(Utc::now().naive_utc() - start));
-                                warn!("client disconnected from {addr} with error: {err}, session={session}");
+                                warn!("#c{connection_id} client {addr} disconnected with error: {err}, session={session}");
                             }
                         };
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
