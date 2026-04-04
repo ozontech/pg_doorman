@@ -321,6 +321,10 @@ pub struct Client<S, T> {
     /// Address
     pub(crate) addr: std::net::SocketAddr,
 
+    /// Monotonic connection ID assigned at TCP accept. Used in log prefix as `#cN`.
+    /// Also serves as Cancel Protocol process_id (as `connection_id as i32`).
+    pub(crate) connection_id: u64,
+
     /// The client was started with the sole reason to cancel another running query.
     pub(crate) cancel_mode: bool,
 
@@ -328,8 +332,7 @@ pub struct Client<S, T> {
     /// Session mode has slightly higher throughput per client, but lower capacity.
     pub(crate) transaction_mode: bool,
 
-    /// For query cancellation, the client is given a random process ID and secret on startup.
-    pub(crate) process_id: i32,
+    /// For query cancellation, the client is given a random secret on startup.
     pub(crate) secret_key: i32,
 
     /// Clients are mapped to servers while they use them. This allows a client
@@ -427,14 +430,14 @@ where
     #[inline(always)]
     pub fn release(&self) {
         self.client_server_map
-            .remove(&(self.process_id, self.secret_key));
+            .remove(&(self.connection_id as i32, self.secret_key));
     }
 }
 
 impl<S, T> Drop for Client<S, T> {
     fn drop(&mut self) {
         self.client_server_map
-            .remove(&(self.process_id, self.secret_key));
+            .remove(&(self.connection_id as i32, self.secret_key));
 
         // Update server stats if the client was connected to a server
         if self.connected_to_server {

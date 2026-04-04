@@ -7,6 +7,9 @@ use crate::app::args::GenerateConfig;
 use crate::config::{Config, PoolMode};
 
 #[cfg(not(test))]
+use crate::auth::hba::PgHba;
+
+#[cfg(not(test))]
 use native_tls::TlsConnector;
 #[cfg(not(test))]
 use postgres::{Client, NoTls};
@@ -24,14 +27,16 @@ pub fn generate_config(config: &GenerateConfig) -> Result<Config, Box<dyn Error>
     result.general.server_tls = config.ssl;
 
     // Create connection string from the provided configuration
-    let connection_string = format!(
-        "host={} port={} user={} password={} dbname={}",
+    let mut connection_string = format!(
+        "host={} port={} user={} dbname={}",
         config.host.as_deref().unwrap_or("localhost"),
         config.port,
         config.user.as_deref().unwrap_or("postgres"),
-        config.password.as_deref().unwrap_or(""),
         config.database.as_deref().unwrap_or("postgres")
     );
+    if let Some(password) = &config.password {
+        connection_string.push_str(&format!(" password={password}"));
+    }
 
     // Connect to the PostgreSQL database
     // Use TLS if SSL is enabled in configuration
@@ -78,18 +83,20 @@ pub fn generate_config_with_client(
     result.general.host = "0.0.0.0".to_string();
     result.general.port = 6432; // Default port for pg_doorman
     result.general.server_tls = config.ssl;
+    // Default HBA: trust all local connections (matches typical dev/localhost setup)
+    result.general.pg_hba = Some(PgHba::from_content(
+        "host all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\nlocal all all trust",
+    ));
 
     // Store users with their authentication details
     let mut users = Vec::new();
     {
         // Query pg_shadow to get username and password hashes (requires superuser privileges)
-        let rows = client.query(
-            "SELECT usename, passwd FROM pg_shadow WHERE passwd is not null",
-            &[],
-        )?;
+        let rows = client.query("SELECT usename, passwd FROM pg_shadow", &[])?;
         for row in rows {
             let usename: String = row.get(0);
-            let passwd: String = row.get(1);
+            let passwd: Option<String> = row.get(1);
+            let passwd = passwd.unwrap_or_default();
             // Create user configuration for each PostgreSQL user
             let user = crate::config::User {
                 username: usename,

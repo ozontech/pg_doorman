@@ -150,6 +150,10 @@ pub struct Server {
     /// Large message header saved when recv() needs to return accumulated buffer first.
     /// The large DataRow/CopyData will be streamed on the next recv() call.
     pub(crate) pending_large_message: Option<(u8, i32)>,
+
+    /// Reason for closing this connection, set before dropping.
+    /// Used by Drop to produce a single log line with cause and effect.
+    pub(crate) close_reason: Option<String>,
 }
 
 impl std::fmt::Display for Server {
@@ -244,7 +248,10 @@ impl Server {
 
     /// Indicate that this server connection cannot be re-used and must be discarded.
     pub fn mark_bad(&mut self, reason: &str) {
-        error!("Server {self} marked bad, reason: {reason}");
+        error!(
+            "[{}@{}] server marked bad pid={}: {reason}",
+            self.address.username, self.address.pool_name, self.process_id
+        );
         self.bad = true;
     }
 
@@ -284,7 +291,10 @@ impl Server {
             self.stats.wait_idle();
             return;
         }
-        warn!("Reading available data from server: {self}");
+        warn!(
+            "[{}@{}] draining unread data from server pid={}",
+            self.address.username, self.address.pool_name, self.process_id
+        );
         loop {
             if !self.is_data_available() {
                 self.stats.wait_idle();
@@ -294,7 +304,10 @@ impl Server {
             match self.recv(&mut tokio::io::sink(), None).await {
                 Ok(_) => self.stats.wait_idle(),
                 Err(err_read_response) => {
-                    error!("Server {self} while reading available data: {err_read_response:?}");
+                    error!(
+                        "[{}@{}] server read error pid={}: {err_read_response}",
+                        self.address.username, self.address.pool_name, self.process_id
+                    );
                     break;
                 }
             }
@@ -349,7 +362,10 @@ impl Server {
     pub async fn checkin_cleanup(&mut self) -> Result<(), Error> {
         self.pending_large_message = None;
         if self.in_copy_mode() {
-            warn!("Server {self} returned while still in copy-mode");
+            warn!(
+                "[{}@{}] server returned in copy-mode pid={}",
+                self.address.username, self.address.pool_name, self.process_id
+            );
             self.mark_bad("returned in copy-mode");
             return Err(Error::ProtocolSyncError(format!(
                 "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool while still in COPY mode. This may indicate a client disconnected during a COPY operation.",
@@ -357,7 +373,10 @@ impl Server {
             )));
         }
         if self.is_data_available() {
-            warn!("Server {self} returned while still has data available");
+            warn!(
+                "[{}@{}] server returned with data available pid={}",
+                self.address.username, self.address.pool_name, self.process_id
+            );
             self.mark_bad("returned with data available");
             return Err(Error::ProtocolSyncError(format!(
                 "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool while still having data available. This may indicate a client disconnected before receiving all query results.",
@@ -365,7 +384,10 @@ impl Server {
             )));
         }
         if !self.buffer.is_empty() {
-            warn!("Server {self} returned while buffer is not empty");
+            warn!(
+                "[{}@{}] server returned with non-empty buffer pid={}",
+                self.address.username, self.address.pool_name, self.process_id
+            );
             self.mark_bad("returned with not-empty buffer");
             return Err(Error::ProtocolSyncError(format!(
                 "Protocol synchronization error: Server {} (database: {}, user: {}) was returned to the pool with a non-empty buffer. This may indicate a client disconnected before the server response was fully processed.",
@@ -377,7 +399,10 @@ impl Server {
         // server connection thrashing if clients repeatedly do this.
         // Instead, we ROLLBACK that transaction before putting the connection back in the pool
         if self.in_transaction() {
-            warn!("Server {self} returned while still in transaction, rolling back transaction",);
+            warn!(
+                "[{}@{}] server returned in transaction, rolling back pid={}",
+                self.address.username, self.address.pool_name, self.process_id
+            );
             self.small_simple_query("ROLLBACK").await?;
         }
 
@@ -404,8 +429,8 @@ impl Server {
         // it before each checkin.
         if self.cleanup_state.needs_cleanup() && self.cleanup_connections {
             info!(
-                "Server {} returned with session state altered, discarding state ({}) for application {}",
-                self, self.cleanup_state, self.application_name
+                "[{}@{}] session state cleanup pid={}: {}",
+                self.address.username, self.address.pool_name, self.process_id, self.cleanup_state
             );
             let mut reset_string = String::from("RESET ROLE;");
 
@@ -426,7 +451,11 @@ impl Server {
                 // flush prepared.
                 self.registering_prepared_statement.clear();
                 if self.prepared_statement_cache.is_some() {
-                    warn!("Cleanup server {self} prepared statements cache");
+                    let cache_size = self.prepared_statement_cache.as_ref().unwrap().len();
+                    info!(
+                        "[{}@{}] clearing prepared statement cache pid={}: session state reset ({} entries)",
+                        self.address.username, self.address.pool_name, self.process_id, cache_size
+                    );
                     self.prepared_statement_cache.as_mut().unwrap().clear();
                 }
             }
@@ -719,7 +748,8 @@ impl Server {
 
         let mut process_id: i32 = 0;
         let mut secret_key: i32 = 0;
-        let server_identifier = ServerIdentifier::new(username.clone(), database);
+        let server_identifier =
+            ServerIdentifier::new(username.clone(), database, &address.pool_name);
 
         let backend_auth_snapshot = address.backend_auth.as_ref().map(|ba| ba.read().clone());
 
@@ -732,9 +762,9 @@ impl Server {
                 // Fall through to server_password if available; otherwise None
                 // (backend SASL auth will fail with a clear error).
                 warn!(
-                    "Backend connection to {} attempted before first client SCRAM auth (ScramPending). \
-                     Falling back to server_password.",
-                    address
+                    "[{}@{}] backend connection attempted before first client SCRAM auth (ScramPending), \
+                     falling back to server_password",
+                    address.username, address.pool_name
                 );
                 if let (Some(_), Some(server_password)) =
                     (&user.server_username, &user.server_password)
@@ -813,9 +843,13 @@ impl Server {
                     let _ = msg.get_u8();
                     let _ = msg.get_i32();
                     if let Ok(msg) = PgErrorMsg::parse(&msg) {
-                        error!(
-                            "Server startup messages (severity: {} code: {} message: {})",
-                            msg.severity, msg.code, msg.message
+                        warn!(
+                            "[{}@{}] startup notice: severity={}, code={}, message={}",
+                            address.username,
+                            address.pool_name,
+                            msg.severity,
+                            msg.code,
+                            msg.message
                         )
                     };
                 }
@@ -837,14 +871,14 @@ impl Server {
                     // The frontend must save these values if it wishes to be able to issue CancelRequest messages later.
                     process_id = stream.read_i32().await.map_err(|_| {
                         Error::ServerStartupError(
-                            "process id message".into(),
+                            "failed to read process ID during startup".into(),
                             server_identifier.clone(),
                         )
                     })?;
 
                     secret_key = stream.read_i32().await.map_err(|_| {
                         Error::ServerStartupError(
-                            "secret key message".into(),
+                            "failed to read secret key during startup".into(),
                             server_identifier.clone(),
                         )
                     })?;
@@ -888,6 +922,7 @@ impl Server {
                         max_message_size: config.general.message_size_to_be_stream.as_bytes()
                             as i32,
                         pending_large_message: None,
+                        close_reason: None,
                     };
                     server.stats.update_process_id(process_id);
 
@@ -896,7 +931,7 @@ impl Server {
 
                 // We have an unexpected message from the server during this exchange.
                 _ => {
-                    error!("Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.", code, code as u8);
+                    error!("[{}@{}] unexpected message code '{}' (ASCII: {}) during server startup to {}:{}", server_identifier.username, server_identifier.pool_name, code, code as u8, address.host, address.port);
                     return Err(Error::ProtocolSyncError(format!(
                         "Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.",
                         code, code as u8
@@ -925,25 +960,34 @@ impl Drop for Server {
 
             match self.stream.get_mut().try_write(&bytes) {
                 Ok(5) => (),
-                Err(err) => warn!("Dirty server {self} shutdown: {err}"),
-                _ => warn!("Dirty server {self} shutdown"),
+                Err(err) => warn!(
+                    "[{}@{}] failed to send Terminate to server pid={}: {err}",
+                    self.address.username, self.address.pool_name, self.process_id
+                ),
+                _ => warn!(
+                    "[{}@{}] incomplete Terminate sent to server pid={}",
+                    self.address.username, self.address.pool_name, self.process_id
+                ),
             };
         }
 
         let now = chrono::offset::Utc::now().naive_utc();
         let duration = now - self.connected_at;
+        let session = crate::utils::format_duration(&duration);
 
-        let message = if self.bad {
-            "Server connection terminated"
-        } else {
-            "Server connection closed"
-        };
-
-        info!(
-            "{} {}, session duration: {}",
-            message,
-            self,
-            crate::utils::format_duration(&duration)
-        );
+        match (&self.close_reason, self.bad) {
+            (Some(reason), _) => info!(
+                "[{}@{}] server closed pid={}: {}, session={}",
+                self.address.username, self.address.pool_name, self.process_id, reason, session,
+            ),
+            (None, true) => info!(
+                "[{}@{}] server terminated pid={}, session={}",
+                self.address.username, self.address.pool_name, self.process_id, session,
+            ),
+            (None, false) => info!(
+                "[{}@{}] server closed pid={}, session={}",
+                self.address.username, self.address.pool_name, self.process_id, session,
+            ),
+        }
     }
 }

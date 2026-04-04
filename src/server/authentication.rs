@@ -45,7 +45,10 @@ pub(crate) async fn handle_authentication(
 
             let sasl_type = String::from_utf8_lossy(&sasl_auth[..sasl_len - 2]);
             if !sasl_type.contains(SCRAM_SHA_256) {
-                error!("Unsupported SCRAM version: {sasl_type}");
+                error!(
+                    "[{}@{}] unsupported SCRAM version: {sasl_type}",
+                    server_identifier.username, server_identifier.pool_name
+                );
                 return Err(Error::ServerAuthError(
                     format!("Unsupported SCRAM version: {sasl_type}"),
                     server_identifier.clone(),
@@ -89,7 +92,10 @@ pub(crate) async fn handle_authentication(
         SASL_FINAL => {
             let mut sasl_final = vec![0u8; len as usize - 8];
             stream.read_exact(&mut sasl_final).await.map_err(|_| {
-                Error::ServerStartupError("sasl final message".into(), server_identifier.clone())
+                Error::ServerStartupError(
+                    "failed to read SASL final message from server".into(),
+                    server_identifier.clone(),
+                )
             })?;
 
             scram_client_auth
@@ -103,8 +109,8 @@ pub(crate) async fn handle_authentication(
         AUTHENTICATION_CLEAR_PASSWORD => {
             if user.server_username.is_none() || user.server_password.is_none() {
                 error!(
-                    "authentication on server {}@{} with clear auth is not configured",
-                    server_identifier.username, server_identifier.database,
+                    "[{}@{}] clear password authentication requested by server but not configured",
+                    server_identifier.username, server_identifier.pool_name,
                 );
                 return Err(Error::ServerAuthError(
                     "server wants clear password authentication, but auth for this server is not configured".into(),
@@ -169,8 +175,8 @@ pub(crate) async fn handle_authentication(
                 // Static user: derive from server_username/server_password
                 if user.server_username.is_none() || user.server_password.is_none() {
                     error!(
-                        "authentication for server {}@{} with md5 auth is not configured",
-                        server_identifier.username, server_identifier.database,
+                        "[{}@{}] MD5 authentication requested by server but not configured",
+                        server_identifier.username, server_identifier.pool_name,
                     );
                     return Err(Error::ServerAuthError(
                             "server wants md5 authentication, but auth for this server is not configured"
@@ -203,8 +209,8 @@ pub(crate) async fn handle_authentication(
 
         _ => {
             error!(
-                "this type of authentication on the server {}@{} is not supported, auth code: {}",
-                server_identifier.username, server_identifier.database, auth_code
+                "[{}@{}] unsupported auth method: code={}",
+                server_identifier.username, server_identifier.pool_name, auth_code
             );
             Err(Error::ServerAuthError(
                 "authentication on the server is not supported".into(),

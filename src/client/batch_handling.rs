@@ -77,7 +77,10 @@ where
         }
 
         debug!(
-            "Reordering responses: operations={:?}, skipped_parses={}",
+            "[{}@{} #c{}] reordering responses: operations={}, skipped_parses={}",
+            self.username,
+            self.pool_name,
+            self.connection_id,
             self.prepared.batch_operations.len(),
             self.prepared.skipped_parses.len()
         );

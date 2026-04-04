@@ -1,3 +1,5 @@
+use log::error;
+
 use crate::errors::Error;
 use crate::messages::{configure_tcp_socket, configure_unix_socket, ssl_request};
 
@@ -102,9 +104,9 @@ pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<St
     let stream = match UnixStream::connect(&format!("{host}/.s.PGSQL.{port}")).await {
         Ok(s) => s,
         Err(err) => {
-            log::error!("Could not connect to server: {err}");
+            error!("Failed to connect to Unix socket {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
-                "Could not connect to server: {err}"
+                "Failed to connect to Unix socket {host}:{port}: {err}"
             )));
         }
     };
@@ -123,9 +125,9 @@ pub(crate) async fn create_tcp_stream_inner(
     let mut stream = match TcpStream::connect(&format!("{host}:{port}")).await {
         Ok(stream) => stream,
         Err(err) => {
-            log::error!("Could not connect to server: {err}");
+            error!("Failed to connect to TCP {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
-                "Could not connect to server: {err}"
+                "Could not connect to {host}:{port}: {err}"
             )));
         }
     };
@@ -149,7 +151,9 @@ pub(crate) async fn create_tcp_stream_inner(
         match response {
             // Server supports TLS
             'S' => {
-                log::error!("Connection to server via tls is not supported");
+                error!(
+                    "Server {host}:{port} requires TLS but TLS client support is not compiled in"
+                );
                 return Err(Error::SocketError("Server TLS is unsupported".to_string()));
             }
             // Server does not support TLS

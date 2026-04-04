@@ -61,7 +61,7 @@ where
             || client_identifier.hba_scram == CheckResult::Trust
         {
             info!(
-                "HBA trust for admin user: {username_from_parameters} from: {:?}.",
+                "HBA trust: admin user={username_from_parameters}, addr={}",
                 client_identifier.addr
             );
             return Ok((false, ServerParameters::admin(), false));
@@ -251,13 +251,23 @@ where
     if client_identifier.is_talos || hba_decision == CheckResult::Trust {
         // Pass, client already authenticated (talos) or HBA Trust
     } else if pool.settings.user.auth_pam_service.is_some() {
-        authenticate_with_pam(read, write, &pool, username_from_parameters).await?;
+        authenticate_with_pam(
+            read,
+            write,
+            &pool,
+            username_from_parameters,
+            pool_name,
+            &client_identifier.addr,
+        )
+        .await?;
     } else if pool_password.starts_with(SCRAM_SHA_256) {
         let client_key = authenticate_with_scram(
             read,
             write,
             pool_password.as_str(),
             username_from_parameters,
+            pool_name,
+            &client_identifier.addr,
         )
         .await?;
 
@@ -268,8 +278,7 @@ where
                 if needs_update {
                     *ba_lock.write() = BackendAuthMethod::ScramPassthrough(client_key.clone());
                     info!(
-                        "[pool: {}][user: {}] static passthrough: ClientKey stored after SCRAM auth",
-                        pool_name, username_from_parameters
+                        "[{username_from_parameters}@{pool_name}] static passthrough: ClientKey stored after SCRAM auth"
                     );
                 }
             }
@@ -281,6 +290,7 @@ where
             pool_password.as_str(),
             username_from_parameters,
             &pool,
+            &client_identifier.addr,
         )
         .await?;
     } else if pool_password.starts_with(JWT_PUB_KEY_PASSWORD_PREFIX) {
@@ -292,10 +302,12 @@ where
                 .unwrap()
                 .to_string(),
             username_from_parameters,
+            pool_name,
+            &client_identifier.addr,
         )
         .await?;
     } else {
-        warn!("Unsupported password type for user {username_from_parameters}: {pool_password}");
+        warn!("[{username_from_parameters}@{pool_name}] unsupported password type");
         error_response_terminal(
             write,
             "Authentication method not supported. Please contact your database administrator.",
@@ -313,7 +325,7 @@ where
     let server_parameters = match pool.get_server_parameters().await {
         Ok(params) => params,
         Err(err) => {
-            error!("Failed to retrieve server parameters for database {pool_name}, user {username_from_parameters}: {err:?}");
+            error!("[{username_from_parameters}@{pool_name}] failed to retrieve server parameters: {err}");
             error_response(
                 write,
                 &format!(
@@ -335,6 +347,8 @@ async fn authenticate_with_pam<S, T>(
     write: &mut T,
     pool: &ConnectionPool,
     username_from_parameters: &str,
+    pool_name: &str,
+    client_addr: &str,
 ) -> Result<(), Error>
 where
     S: AsyncReadExt + Unpin,
@@ -346,7 +360,7 @@ where
     let password_response = match vec_to_string(password_response) {
         Ok(p) => p,
         Err(err) => {
-            error!("Failed to read PAM password for user {username_from_parameters}: {err}");
+            error!("[{username_from_parameters}@{pool_name}] PAM: failed to read password from {client_addr}: {err}");
             error_response_terminal(
                 write,
                 "Invalid password format. Password must be valid UTF-8 text.",
@@ -365,7 +379,7 @@ where
         Ok(_) => (),
         Err(err) => {
             error!(
-                "Failed to authenticate user {username_from_parameters} via PAM service {service}: {err}"
+                "[{username_from_parameters}@{pool_name}] PAM authentication failed from {client_addr} (service={service}): {err}"
             );
             error_response_terminal(
                 write,
@@ -389,6 +403,8 @@ async fn authenticate_with_scram<S, T>(
     write: &mut T,
     pool_password: &str,
     username_from_parameters: &str,
+    pool_name: &str,
+    client_addr: &str,
 ) -> Result<Option<Vec<u8>>, Error>
 where
     S: AsyncReadExt + Unpin,
@@ -397,7 +413,7 @@ where
     let server_secret = match parse_server_secret(pool_password) {
         Ok(server_secret) => server_secret,
         Err(err) => {
-            warn!("Failed to parse SCRAM server secret for user {username_from_parameters}: {err}");
+            warn!("[{username_from_parameters}@{pool_name}] SCRAM: failed to parse server secret from {client_addr}: {err}");
             error_response_terminal(
                 write,
                 "Server authentication configuration error. Please contact your database administrator.",
@@ -416,7 +432,7 @@ where
     )) {
         Ok(client_first_message) => client_first_message,
         Err(err) => {
-            warn!("Failed to parse SCRAM client first message for user {username_from_parameters}: {err}");
+            warn!("[{username_from_parameters}@{pool_name}] SCRAM: client first message parse error from {client_addr}: {err}");
             error_response_terminal(
                     write,
                     "Authentication protocol error. Your client may not support SCRAM authentication properly.",
@@ -446,7 +462,7 @@ where
         Ok(client_final_message) => client_final_message,
         Err(err) => {
             warn!(
-                "Failed to parse SCRAM client final message for user {username_from_parameters}: {err}"
+                "[{username_from_parameters}@{pool_name}] SCRAM: client final message parse error from {client_addr}: {err}"
             );
             error_response_terminal(
                 write,
@@ -469,7 +485,7 @@ where
         Ok(result) => result,
         Err(err) => {
             warn!(
-                "Failed to prepare SCRAM server final message for user {username_from_parameters}: {err}"
+                "[{username_from_parameters}@{pool_name}] SCRAM: server final message error from {client_addr}: {err}"
             );
             error_response_terminal(
                 write,
@@ -494,6 +510,7 @@ async fn authenticate_with_md5<S, T>(
     pool_password: &str,
     username_from_parameters: &str,
     pool: &ConnectionPool,
+    client_addr: &str,
 ) -> Result<(), Error>
 where
     S: AsyncReadExt + Unpin,
@@ -505,8 +522,8 @@ where
     let except_md5_hash = md5_hash_second_pass(pool_password.strip_prefix("md5").unwrap(), &salt);
     if except_md5_hash != password_response {
         error!(
-            "MD5 authentication failed for user {} connecting to {}",
-            username_from_parameters, pool.address
+            "[{username_from_parameters}@{}] MD5 authentication failed from {client_addr}",
+            pool.address.pool_name
         );
         error_response_terminal(
             write,
@@ -528,6 +545,8 @@ async fn authenticate_with_jwt<S, T>(
     write: &mut T,
     jwt_pub_key: String,
     username_from_parameters: &str,
+    pool_name: &str,
+    client_addr: &str,
 ) -> Result<(), Error>
 where
     S: AsyncReadExt + Unpin,
@@ -539,7 +558,7 @@ where
     let jwt_token = match vec_to_string(jwt_token_response) {
         Ok(p) => p,
         Err(err) => {
-            error!("Failed to parse JWT token for user {username_from_parameters}: {err}");
+            error!("[{username_from_parameters}@{pool_name}] JWT: failed to parse token from {client_addr}: {err}");
             error_response_terminal(
                 write,
                 "Invalid JWT token format. Token must be valid UTF-8 text.",
@@ -554,7 +573,7 @@ where
     let jwt_user_name = match get_user_name_from_jwt(jwt_pub_key, jwt_token).await {
         Ok(u) => u,
         Err(err) => {
-            error!("Failed to validate JWT token for user {username_from_parameters}: {err:?}");
+            error!("[{username_from_parameters}@{pool_name}] JWT: validation failed from {client_addr}: {err}");
             error_response_terminal(
                 write,
                 "JWT token validation failed. Please provide a valid token.",
@@ -567,7 +586,7 @@ where
         }
     };
     if !jwt_user_name.eq(username_from_parameters) {
-        error!("JWT token username mismatch for user {username_from_parameters}: token contains username {jwt_user_name}");
+        error!("[{username_from_parameters}@{pool_name}] JWT: username mismatch from {client_addr} (token={jwt_user_name})");
         error_response_terminal(
             write,
             format!("JWT token username mismatch. Token contains username '{jwt_user_name}' but you're trying to connect as '{username_from_parameters}'.").as_str(),
@@ -634,7 +653,7 @@ where
     let cache = match aq_state.cache().await {
         Ok(cache) => cache,
         Err(err) => {
-            error!("[pool: {pool_name}] auth_query: executor initialization failed: {err}");
+            error!("[{username}@{pool_name}] auth_query: executor initialization failed: {err}");
             error_response(
                 write,
                 "Authentication service unavailable. Please try again later.",
@@ -651,16 +670,14 @@ where
         Ok(None) => {
             // User not found
             auth_fail!(aq_state);
-            warn!("[pool: {pool_name}] auth_query: user '{username}' not found");
+            warn!("[{username}@{pool_name}] auth_query: user not found");
             wrong_password(write, username).await?;
             return Err(Error::AuthError(format!(
                 "auth_query: user '{username}' not found in pool '{pool_name}'"
             )));
         }
         Err(err) => {
-            error!(
-                "[pool: {pool_name}] auth_query: failed to fetch password for '{username}': {err}"
-            );
+            error!("[{username}@{pool_name}] auth_query: failed to fetch password: {err}");
             error_response(
                 write,
                 "Authentication service unavailable. Please try again later.",
@@ -715,16 +732,14 @@ where
                     );
                     if new_expected == password_response {
                         auth_ok = true;
-                        info!(
-                            "[pool: {pool_name}] auth_query: re-fetched password for '{username}' matched"
-                        );
+                        info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
                     }
                 }
             }
             if !auth_ok {
                 auth_fail!(aq_state);
                 warn!(
-                    "[pool: {pool_name}] auth_query: MD5 auth failed for '{username}' (refetch didn't help or was rate-limited)"
+                    "[{username}@{pool_name}] auth_query: MD5 authentication failed (refetch did not match or was rate-limited)"
                 );
                 wrong_password(write, username).await?;
                 return Err(Error::AuthError(format!(
@@ -737,7 +752,9 @@ where
         let server_secret = match parse_server_secret(pool_password) {
             Ok(s) => s,
             Err(err) => {
-                error!("[pool: {pool_name}] auth_query: failed to parse SCRAM verifier for '{username}': {err}");
+                error!(
+                    "[{username}@{pool_name}] auth_query: failed to parse SCRAM verifier: {err}"
+                );
                 error_response_terminal(
                     write,
                     "Server authentication configuration error. Please contact your database administrator.",
@@ -755,7 +772,7 @@ where
         let client_first = match parse_client_first_message(String::from_utf8_lossy(&first_msg)) {
             Ok(msg) => msg,
             Err(err) => {
-                warn!("[pool: {pool_name}] auth_query: SCRAM client first message parse error for '{username}': {err}");
+                warn!("[{username}@{pool_name}] auth_query: SCRAM client first message parse error: {err}");
                 error_response_terminal(
                     write,
                     "Authentication protocol error. Your client may not support SCRAM authentication properly.",
@@ -780,7 +797,7 @@ where
         let client_final = match parse_client_final_message(String::from_utf8_lossy(&final_msg)) {
             Ok(msg) => msg,
             Err(err) => {
-                warn!("[pool: {pool_name}] auth_query: SCRAM client final message parse error for '{username}': {err}");
+                warn!("[{username}@{pool_name}] auth_query: SCRAM client final message parse error: {err}");
                 error_response_terminal(
                     write,
                     "Authentication protocol error. Your client sent an invalid SCRAM final message.",
@@ -814,7 +831,7 @@ where
                 auth_fail!(aq_state);
                 cache.invalidate(username);
                 error!(
-                    "[pool: {pool_name}] auth_query: SCRAM authentication failed for user '{username}', cache invalidated"
+                    "[{username}@{pool_name}] auth_query: SCRAM authentication failed, cache invalidated"
                 );
                 wrong_password(write, username).await?;
                 return Err(Error::AuthError(format!(
@@ -844,7 +861,7 @@ where
                 Some(pool) => pool,
                 None => {
                     error!(
-                        "[pool: {pool_name}] auth_query: shared pool {}@{} not found",
+                        "[{username}@{pool_name}] auth_query: shared pool {}@{} not found",
                         shared_pool_id.user, shared_pool_id.db
                     );
                     error_response(write, "Internal pool configuration error.", "58000").await?;
@@ -863,7 +880,7 @@ where
                 Ok(params) => params,
                 Err(err) => {
                     error!(
-                        "[pool: {pool_name}] auth_query: failed to get server parameters: {err:?}"
+                        "[{username}@{pool_name}] auth_query: failed to get server parameters: {err}"
                     );
                     error_response(
                         write,
@@ -877,7 +894,7 @@ where
 
             aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
             info!(
-                "[pool: {pool_name}] auth_query: user '{username}' authenticated, using shared pool '{}'",
+                "[{username}@{pool_name}] auth_query: authenticated, using shared pool '{}'",
                 shared_pool_id
             );
 
@@ -891,14 +908,13 @@ where
                 auth_client_key.map(BackendAuthMethod::ScramPassthrough)
             };
 
-            let mut pool = create_dynamic_pool(pool_name, username, backend_auth).map_err(
-                |err| {
+            let mut pool =
+                create_dynamic_pool(pool_name, username, backend_auth).map_err(|err| {
                     error!(
-                        "[pool: {pool_name}] auth_query: failed to create dynamic pool for '{username}': {err}"
+                        "[{username}@{pool_name}] auth_query: failed to create dynamic pool: {err}"
                     );
                     err
-                },
-            )?;
+                })?;
 
             // Do NOT change client_identifier.username — stay as the dynamic user
             // so that Client.username matches the pool's user for get_pool() lookups.
@@ -910,9 +926,7 @@ where
             let server_parameters = match pool.get_server_parameters().await {
                 Ok(params) => params,
                 Err(err) => {
-                    error!(
-                        "[pool: {pool_name}] auth_query: passthrough pool for '{username}' failed: {err:?}"
-                    );
+                    error!("[{username}@{pool_name}] auth_query: passthrough pool failed: {err}");
                     error_response(
                         write,
                         "Unable to connect to database server. Please try again later.",
@@ -924,9 +938,7 @@ where
             };
 
             aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
-            info!(
-                "[pool: {pool_name}] auth_query: user '{username}' authenticated (passthrough mode)"
-            );
+            info!("[{username}@{pool_name}] auth_query: authenticated (passthrough mode)");
 
             Ok((transaction_mode, server_parameters))
         }

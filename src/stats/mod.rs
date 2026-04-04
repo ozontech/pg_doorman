@@ -56,7 +56,7 @@ pub use socket::get_socket_states_count;
 // -----------------------------------------------------------------------------
 /// Type alias for the client statistics lookup table.
 /// Maps client IDs to their corresponding statistics objects.
-type ClientStatesLookup = HashMap<i32, Arc<ClientStats>>;
+type ClientStatesLookup = HashMap<u64, Arc<ClientStats>>;
 
 /// Type alias for the server statistics lookup table.
 /// Maps server IDs to their corresponding statistics objects.
@@ -119,11 +119,11 @@ impl Reporter {
     ///
     /// If a client with the same ID is already registered, a warning is logged and
     /// the registration is ignored to prevent overwriting existing statistics.
-    fn client_register(&self, client_id: i32, stats: Arc<ClientStats>) {
+    fn client_register(&self, client_id: u64, stats: Arc<ClientStats>) {
         use std::collections::hash_map::Entry;
         match CLIENT_STATS.write().entry(client_id) {
             Entry::Occupied(_) => {
-                warn!("Client {client_id:?} was double registered!");
+                warn!("Client stats: duplicate registration for client_id={client_id}");
             }
             Entry::Vacant(entry) => {
                 entry.insert(stats);
@@ -139,7 +139,7 @@ impl Reporter {
     /// # Arguments
     ///
     /// * `client_id` - Unique identifier for the client to unregister
-    fn client_disconnecting(&self, client_id: i32) {
+    fn client_disconnecting(&self, client_id: u64) {
         CLIENT_STATS.write().remove(&client_id);
     }
 
@@ -196,7 +196,7 @@ impl Collector {
     ///
     /// This method returns immediately after spawning the background task.
     pub async fn collect(&mut self) {
-        info!("Events reporter started");
+        info!("Stats reporter started");
 
         tokio::task::spawn(async move {
             // Create a periodic interval for statistics collection

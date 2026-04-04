@@ -84,9 +84,6 @@ pub struct PoolStats {
     /// Average wait time per transaction (microseconds)
     pub avg_wait_time: u64,
 
-    /// Average wait times per virtual pool (milliseconds)
-    pub avg_wait_time_vp_ms: Vec<f64>,
-
     /// Total bytes received from clients
     pub bytes_received: u64,
 
@@ -223,7 +220,6 @@ impl PoolStats {
             avg_query_count: 0,
             avg_xact_count: 0,
             avg_wait_time: 0,
-            avg_wait_time_vp_ms: Vec::new(),
             bytes_received: 0,
             bytes_sent: 0,
             xact_time: 0,
@@ -533,9 +529,6 @@ impl PoolStats {
             if current.avg_xact_count > 0 {
                 current.avg_wait_time =
                     address.averages.wait_time.load(Ordering::Relaxed) / current.avg_xact_count;
-                current
-                    .avg_wait_time_vp_ms
-                    .push(current.avg_wait_time as f64 / 1_000f64);
             }
 
             // Add the pool stats to the virtual map
@@ -556,7 +549,7 @@ impl PoolStats {
     /// * `server_map` - A reference to the map of server statistics
     fn update_client_server_states(
         pool_map: &mut HashMap<PoolIdentifier, PoolStats>,
-        client_map: &HashMap<i32, Arc<ClientStats>>,
+        client_map: &HashMap<u64, Arc<ClientStats>>,
         server_map: &HashMap<i32, Arc<ServerStats>>,
     ) {
         // Update client state counters
@@ -572,7 +565,12 @@ impl PoolStats {
                         CLIENT_STATE_ACTIVE => pool_stats.cl_active += 1,
                         CLIENT_STATE_IDLE => pool_stats.cl_idle += 1,
                         CLIENT_STATE_WAITING => pool_stats.cl_waiting += 1,
-                        _ => error!("unknown client state"),
+                        _ => error!(
+                            "[{}@{}] unknown client state: {}",
+                            client.username(),
+                            client.pool_name(),
+                            client.state()
+                        ),
                     };
 
                     // Update maximum wait time
@@ -586,7 +584,11 @@ impl PoolStats {
                         pool_stats.async_clients_count += 1;
                     }
                 }
-                None => debug!("Client from an obsolete pool"),
+                None => debug!(
+                    "[{}@{}] skipping client from obsolete pool",
+                    client.username(),
+                    client.pool_name()
+                ),
             }
         }
 
@@ -603,13 +605,22 @@ impl PoolStats {
                         SERVER_STATE_ACTIVE => pool_stats.sv_active += 1,
                         SERVER_STATE_IDLE => pool_stats.sv_idle += 1,
                         SERVER_STATE_LOGIN => pool_stats.sv_login += 1,
-                        _ => error!("unknown server state"),
+                        _ => error!(
+                            "[{}@{}] unknown server state: {}",
+                            server.username(),
+                            server.pool_name(),
+                            server.state()
+                        ),
                     }
                 }
                 // Benign race: server snapshot was taken before pool snapshot,
                 // and the dynamic pool was GC'd in between. The server is already
                 // gone; its stats were captured via address stats in initialize_pool_stats.
-                None => debug!("Server from an obsolete pool"),
+                None => debug!(
+                    "[{}@{}] skipping server from obsolete pool",
+                    server.pool_name(),
+                    server.username()
+                ),
             }
         }
     }

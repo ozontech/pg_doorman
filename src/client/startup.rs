@@ -92,6 +92,7 @@ pub async fn startup_tls(
     client_server_map: ClientServerMap,
     admin_only: bool,
     tls_acceptor: tokio_native_tls::TlsAcceptor,
+    connection_id: u64,
 ) -> Result<
     Client<
         ReadHalf<tokio_native_tls::TlsStream<TcpStream>>,
@@ -114,7 +115,7 @@ pub async fn startup_tls(
 
         // TLS negotiation failed.
         Err(err) => {
-            error!("TLS negotiation failed: {err:?}");
+            error!("TLS negotiation failed: {err}");
             return Err(Error::TlsError);
         }
     };
@@ -135,6 +136,7 @@ pub async fn startup_tls(
                 client_server_map,
                 admin_only,
                 true,
+                connection_id,
             )
             .await
         }
@@ -170,6 +172,7 @@ where
         client_server_map: ClientServerMap,
         admin_only: bool,
         use_tls: bool,
+        connection_id: u64,
     ) -> Result<Client<S, T>, Error> {
         let parameters = parse_startup(bytes)?;
 
@@ -235,7 +238,20 @@ where
                     }
                 };
                 let talos_token = match CStr::from_bytes_until_nul(talos_token_with_nul.as_ref()) {
-                    Ok(token) => token.to_str().unwrap().to_string(),
+                    Ok(token) => match token.to_str() {
+                        Ok(s) => s.to_string(),
+                        Err(_) => {
+                            error_response_terminal(
+                                &mut write,
+                                "Invalid Talos token: contains non-UTF-8 bytes.",
+                                "28000",
+                            )
+                            .await?;
+                            return Err(Error::AuthError(
+                                "Talos token contains non-UTF-8 bytes".to_string(),
+                            ));
+                        }
+                    },
                     Err(_) => {
                         error_response_terminal(
                             &mut write,
@@ -309,8 +325,12 @@ where
             )));
         }
 
-        // Generate random backend ID and secret key
-        let process_id: i32 = rand::random();
+        // Derive process_id for Cancel Protocol from monotonic connection_id.
+        // Wrapping is intentional: PostgreSQL uses 32-bit PIDs with the same
+        // wrapping behavior. Sequential values give fewer collisions than random
+        // at <50K concurrent clients. The random secret_key (below) provides
+        // collision resistance after wrap-around (~2^31 connections).
+        let process_id: i32 = connection_id as i32;
         let secret_key: i32 = rand::random();
 
         // Authenticate user
@@ -345,7 +365,7 @@ where
         write_all_flush(&mut write, &buf).await?;
 
         let stats = Arc::new(ClientStats::new(
-            process_id,
+            connection_id,
             client_identifier.application_name.as_str(),
             client_identifier.username.as_str(),
             &pool_name,
@@ -362,7 +382,7 @@ where
             buffer: PooledBuffer::new(),
             cancel_mode: false,
             transaction_mode,
-            process_id,
+            connection_id,
             secret_key,
             client_server_map,
             stats,
@@ -391,17 +411,18 @@ where
         mut bytes: BytesMut, // The rest of the startup message.
         client_server_map: ClientServerMap,
     ) -> Result<Client<S, T>, Error> {
-        let process_id = bytes.get_i32();
-        let secret_key = bytes.get_i32();
+        let target_process_id = bytes.get_i32();
+        let target_secret_key = bytes.get_i32();
+        // In cancel mode, connection_id stores the target's process_id for lookup.
         Ok(Client {
             read: BufReader::new(read),
             write,
             addr,
+            connection_id: target_process_id as u64,
             buffer: PooledBuffer::new(),
             cancel_mode: true,
             transaction_mode: false,
-            process_id,
-            secret_key,
+            secret_key: target_secret_key,
             client_server_map,
             stats: Arc::new(ClientStats::default()),
             admin: false,

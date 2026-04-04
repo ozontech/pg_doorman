@@ -23,6 +23,8 @@ fn test_jwt_authentication() {
             &mut writer,
             "jwt_pub_key".to_string(),
             "test_user",
+            "test_pool",
+            "127.0.0.1:5432",
         )
         .await;
 
@@ -43,6 +45,8 @@ fn test_jwt_authentication_failure() {
             &mut writer,
             "jwt_pub_key".to_string(),
             "test_user",
+            "test_pool",
+            "127.0.0.1:5432",
         )
         .await;
 
@@ -74,8 +78,15 @@ fn test_scram_authentication() {
 
         let server_secret = format!("{SCRAM_SHA_256}$4096:salt$storedkey:serverkey");
 
-        let result =
-            authenticate_with_scram(&mut reader, &mut writer, &server_secret, "test_user").await;
+        let result = authenticate_with_scram(
+            &mut reader,
+            &mut writer,
+            &server_secret,
+            "test_user",
+            "test_pool",
+            "127.0.0.1:5432",
+        )
+        .await;
         assert!(result.is_ok());
     });
 }

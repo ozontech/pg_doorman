@@ -5,7 +5,7 @@
 //! and garbage-collected when idle. On RELOAD, dynamic pools are dropped and recreated
 //! on the next client connection with fresh settings.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use log::{debug, info, warn};
@@ -37,7 +37,7 @@ pub fn create_dynamic_pool(
         // Update backend_auth (credentials may have changed)
         if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
             debug!(
-                "[pool: {pool_name}] auth_query: dynamic pool for '{username}' already exists, updating backend_auth"
+                "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
             );
             *ba_lock.write() = new_ba.clone();
         }
@@ -172,6 +172,7 @@ pub fn create_dynamic_pool(
             ))),
         },
         coordinator: get_coordinator(pool_name),
+        replenish_failures: Arc::new(AtomicU32::new(0)),
     };
 
     // Atomic insert into POOLS
@@ -201,9 +202,7 @@ pub fn create_dynamic_pool(
         }
         None => "none",
     };
-    info!(
-        "[pool: {pool_name}] auth_query: created dynamic passthrough pool for '{username}' (backend_auth={auth_method})"
-    );
+    info!("[{username}@{pool_name}] dynamic pool created (backend_auth={auth_method})");
     new_pools.insert(identifier.clone(), conn_pool.clone());
     POOLS.store(Arc::new(new_pools));
     register_dynamic_pool(&identifier);
@@ -217,11 +216,9 @@ pub fn create_dynamic_pool(
         tokio::spawn(async move {
             let created = pool_clone.database.replenish(min).await;
             if created > 0 {
-                info!(
-                    "[pool: {pn}][user: {un}] prewarmed {created} dynamic connection(s) (min_pool_size: {min})"
-                );
+                info!("[{un}@{pn}] prewarmed {created} dynamic server(s) (min_pool_size={min})");
             } else {
-                warn!("[pool: {pn}][user: {un}] dynamic prewarm failed (min_pool_size: {min})");
+                warn!("[{un}@{pn}] dynamic prewarm failed: 0 of {min} connections created");
             }
         });
     }

@@ -1,13 +1,12 @@
 extern crate log;
 
-use log::info;
-use log::LevelFilter;
+use log::{info, LevelFilter, Log, Metadata, Record};
+use std::io::Write;
 use std::process;
 use syslog::{BasicLogger, Facility, Formatter3164};
-use tracing_subscriber;
-use tracing_subscriber::EnvFilter;
 
 use super::args::{Args, LogFormat};
+use super::log_level::LogLevelController;
 use crate::config::{Config, VERSION};
 
 pub fn init_logging(args: &Args, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
@@ -17,6 +16,8 @@ pub fn init_logging(args: &Args, config: &Config) -> Result<(), Box<dyn std::err
 }
 
 fn init(args: &Args, syslog_name: Option<String>) {
+    let startup_level: LevelFilter = (&args.log_level).into();
+
     if let Some(syslog_name) = syslog_name {
         let formatter = Formatter3164 {
             facility: Facility::LOG_USER,
@@ -24,24 +25,147 @@ fn init(args: &Args, syslog_name: Option<String>) {
             process: syslog_name,
             pid: process::id(),
         };
-        let syslog_logger = syslog::unix(formatter).unwrap();
-        // max level in syslog mode is INFO (performance penalty for DEBUG).
-        log::set_boxed_logger(Box::new(BasicLogger::new(syslog_logger)))
-            .map(|()| log::set_max_level(LevelFilter::Info))
-            .unwrap();
-    } else {
-        // Iniitalize a default filter, and then override the builtin default "warning" with our
-        // commandline, (default: "info")
-        let filter = EnvFilter::from_default_env().add_directive(args.log_level.into());
-
-        let trace_sub = tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_ansi(!args.no_color);
-
-        match args.log_format {
-            LogFormat::Structured => trace_sub.json().init(),
-            LogFormat::Debug => trace_sub.pretty().init(),
-            _ => trace_sub.init(),
+        let syslog_logger = match syslog::unix(formatter) {
+            Ok(logger) => logger,
+            Err(err) => {
+                eprintln!("fatal: failed to open syslog socket (/dev/log): {err}");
+                eprintln!(
+                    "hint: disable syslog_prog_name in config or ensure /dev/log is available"
+                );
+                std::process::exit(1);
+            }
         };
+        let inner = Box::new(BasicLogger::new(syslog_logger));
+        LogLevelController::new(inner, startup_level).register();
+    } else {
+        let inner: Box<dyn Log> = match args.log_format {
+            LogFormat::Structured => Box::new(JsonLogger::new()),
+            _ => Box::new(TextLogger::new(!args.no_color)),
+        };
+
+        LogLevelController::new(inner, startup_level).register();
+    }
+}
+
+/// Direct text logger — no tracing bridge.
+/// Format: `2024-01-07T19:19:38.080Z  INFO pg_doorman::pool: message`
+struct TextLogger {
+    use_color: bool,
+}
+
+impl TextLogger {
+    fn new(use_color: bool) -> Self {
+        Self { use_color }
+    }
+}
+
+impl Log for TextLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true // LogLevelController handles filtering
+    }
+
+    fn log(&self, record: &Record) {
+        let now = chrono::Utc::now();
+        let level = record.level();
+        let file = record.file().unwrap_or("unknown");
+        let line = record.line().unwrap_or(0);
+
+        if self.use_color {
+            let level_color = match level {
+                log::Level::Error => "\x1b[31m", // red
+                log::Level::Warn => "\x1b[33m",  // yellow
+                log::Level::Info => "\x1b[32m",  // green
+                log::Level::Debug => "\x1b[36m", // cyan
+                log::Level::Trace => "\x1b[90m", // gray
+            };
+            let reset = "\x1b[0m";
+            let _ = writeln!(
+                std::io::stderr(),
+                "{} {}{:>5}{} {}:{}: {}",
+                now.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+                level_color,
+                level,
+                reset,
+                file,
+                line,
+                record.args()
+            );
+        } else {
+            let _ = writeln!(
+                std::io::stderr(),
+                "{} {:>5} {}:{}: {}",
+                now.format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+                level,
+                file,
+                line,
+                record.args()
+            );
+        }
+    }
+
+    fn flush(&self) {
+        let _ = std::io::stderr().flush();
+    }
+}
+
+/// Direct JSON logger — structured output without tracing overhead.
+struct JsonLogger;
+
+impl JsonLogger {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl Log for JsonLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &Record) {
+        let now = chrono::Utc::now();
+        let timestamp = now.format("%Y-%m-%dT%H:%M:%S%.3fZ");
+        let level = match record.level() {
+            log::Level::Error => "ERROR",
+            log::Level::Warn => "WARN",
+            log::Level::Info => "INFO",
+            log::Level::Debug => "DEBUG",
+            log::Level::Trace => "TRACE",
+        };
+        let file = record.file().unwrap_or("unknown");
+        let line = record.line().unwrap_or(0);
+        let msg = record.args();
+
+        // Escape JSON string manually to avoid serde overhead.
+        // Message is the only field that can contain arbitrary user data.
+        let msg_str = msg.to_string();
+        let mut escaped = String::with_capacity(msg_str.len());
+        for ch in msg_str.chars() {
+            match ch {
+                '\\' => escaped.push_str("\\\\"),
+                '"' => escaped.push_str("\\\""),
+                '\n' => escaped.push_str("\\n"),
+                '\r' => escaped.push_str("\\r"),
+                '\t' => escaped.push_str("\\t"),
+                c if c.is_control() => {
+                    escaped.push_str(&format!("\\u{:04x}", c as u32));
+                }
+                c => escaped.push(c),
+            }
+        }
+
+        let _ = writeln!(
+            std::io::stderr(),
+            r#"{{"timestamp":"{}","level":"{}","file":"{}","line":{},"message":"{}"}}"#,
+            timestamp,
+            level,
+            file,
+            line,
+            escaped,
+        );
+    }
+
+    fn flush(&self) {
+        let _ = std::io::stderr().flush();
     }
 }

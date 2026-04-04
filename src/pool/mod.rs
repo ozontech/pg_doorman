@@ -5,7 +5,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::config::{get_config, Address, BackendAuthMethod, General, PoolMode, User};
@@ -208,6 +208,10 @@ pub struct ConnectionPool {
     /// in the pool config, `None` otherwise (disabled, zero overhead).
     /// Shared across all user pools for the same database.
     pub(crate) coordinator: Option<Arc<pool_coordinator::PoolCoordinator>>,
+
+    /// Consecutive replenish failure counter for log noise suppression.
+    /// Reset to 0 on successful replenish.
+    pub(crate) replenish_failures: Arc<AtomicU32>,
 }
 
 impl ConnectionPool {
@@ -273,16 +277,13 @@ impl ConnectionPool {
                     // If the pool hasn't changed, get existing reference and insert it into the new_pools.
                     // We replace all pools at the end, but if the reference is kept, the pool won't get re-created (bb8).
                     if pool.config_hash == new_pool_hash_value {
-                        info!(
-                            "[pool: {}][user: {}] has not changed",
-                            pool_name, user.username
-                        );
+                        info!("[{}@{}] config unchanged", user.username, pool_name);
                         new_pools.insert(identifier.clone(), pool.clone());
                         continue;
                     }
                 }
 
-                info!("Creating new pool {}@{}", user.username, pool_name);
+                info!("[{}@{}] creating pool", user.username, pool_name);
 
                 // real database name on postgresql server.
                 let server_database = pool_config
@@ -301,8 +302,8 @@ impl ConnectionPool {
                         .starts_with(crate::messages::constants::MD5_PASSWORD_PREFIX)
                     {
                         info!(
-                            "[pool: {}][user: {}] static passthrough: MD5 pass-the-hash",
-                            pool_name, user.username
+                            "[{}@{}] static passthrough: MD5 pass-the-hash",
+                            user.username, pool_name
                         );
                         Some(Arc::new(RwLock::new(BackendAuthMethod::Md5PassTheHash(
                             user.password.clone(),
@@ -312,8 +313,8 @@ impl ConnectionPool {
                         .starts_with(crate::messages::constants::SCRAM_SHA_256)
                     {
                         info!(
-                            "[pool: {}][user: {}] static passthrough: SCRAM pending (ClientKey will be set after first client auth)",
-                            pool_name, user.username
+                            "[{}@{}] static passthrough: SCRAM pending",
+                            user.username, pool_name
                         );
                         Some(Arc::new(RwLock::new(BackendAuthMethod::ScramPending)))
                     } else {
@@ -374,8 +375,6 @@ impl ConnectionPool {
                     false => QueueMode::Lifo,
                 };
 
-                info!("[pool: {}][user: {}]", pool_name, user.username);
-
                 let mut builder_config = Pool::builder(manager)
                     .coordinator(coordinators.get(pool_name).cloned())
                     .pool_name(pool_name.clone())
@@ -421,6 +420,7 @@ impl ConnectionPool {
                         ))),
                     },
                     coordinator: coordinators.get(pool_name).cloned(),
+                    replenish_failures: Arc::new(AtomicU32::new(0)),
                 };
 
                 // There is one pool per database/user pair.
@@ -535,8 +535,8 @@ impl ConnectionPool {
                         };
 
                         info!(
-                            "[pool: {}][auth_query shared user: {}]",
-                            pool_name, shared_user.username
+                            "[{}@{}] creating auth_query shared pool",
+                            shared_user.username, pool_name
                         );
 
                         let pool = Pool::builder(manager)
@@ -586,6 +586,7 @@ impl ConnectionPool {
                                 ))),
                             },
                             coordinator: coordinators.get(pool_name).cloned(),
+                            replenish_failures: Arc::new(AtomicU32::new(0)),
                         };
 
                         new_pools.insert(identifier.clone(), conn_pool);
@@ -593,7 +594,7 @@ impl ConnectionPool {
 
                     Some(identifier)
                 } else {
-                    None // passthrough mode — not implemented yet
+                    None // passthrough mode — dynamic pool created on first client connection
                 };
 
                 auth_query_states.insert(
@@ -727,8 +728,8 @@ impl ConnectionPool {
             return Ok(guard.clone());
         }
         info!(
-            "Fetching new server parameters from server: {}",
-            self.address
+            "[{}@{}] fetching server parameters",
+            self.address.username, self.address.pool_name
         );
         {
             let conn = match self.database.get().await {

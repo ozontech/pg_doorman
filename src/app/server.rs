@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, error, info, warn};
+use chrono::Utc;
+use log::{error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpSocket;
 #[cfg(not(windows))]
@@ -93,7 +94,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             if worker_cpu_affinity_pinning {
                 let core_id = thread_id.fetch_add(1, Ordering::SeqCst);
                 info!(
-                    "Affinity pin tokio thread {} on core: {}",
+                    "Pinning tokio worker thread {} to core {}",
                     core_id, core_ids[core_id].id
                 );
                 core_affinity::set_for_current(core_ids[core_id]);
@@ -149,7 +150,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 match listen_socket.set_tos_v4(0x10) {
                     Ok(_) => (),
                     Err(err) => {
-                        warn!("Can't set IPTOS_LOWDELAY: {err:?}");
+                        warn!("Failed to set IPTOS_LOWDELAY on listener socket: {err}");
                     }
                 };
             };
@@ -163,7 +164,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             match listen_socket.listen(backlog) {
                 Ok(sock) => sock,
                 Err(err) => {
-                    error!("Listener socket error: {err:?}");
+                    error!("Listener socket error: {err}");
                     std::process::exit(exitcode::CONFIG);
                 }
             }
@@ -197,7 +198,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             match listen_socket.listen(backlog) {
                 Ok(sock) => sock,
                 Err(err) => {
-                    error!("Listener socket error: {err:?}");
+                    error!("Listener socket error: {err}");
                     std::process::exit(exitcode::CONFIG);
                 }
             }
@@ -218,7 +219,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         match ConnectionPool::from_config(client_server_map.clone()).await {
             Ok(_) => (),
             Err(err) => {
-                error!("Pool error: {err:?}");
+                error!("Failed to initialize connection pools: {err}");
                 std::process::exit(exitcode::CONFIG);
             }
         };
@@ -304,7 +305,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         // while still continuing the graceful shutdown process
         let mut listener = Some(listener);
 
-        info!("Waiting for dear clients");
+        info!("Accepting connections");
         loop {
             // Create upgrade signal future (SIGUSR2 on unix, never resolves on windows)
             let upgrade_future = async {
@@ -392,12 +393,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     let (mut socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),
                         Err(err) => {
-                            error!("accept error: {err:?}");
+                            error!("Failed to accept new connection: {err}");
                             continue;
                         }
                     };
                     if admin_only {
-                        error!("Accepting new client {addr} after shutdown");
+                        warn!("Rejecting connection from {addr}: pooler shutting down");
                         let _ = socket.shutdown().await;
                         continue;
                     }
@@ -411,22 +412,22 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
                     configure_tcp_socket(&socket);
                     tokio::task::spawn(async move {
-                        TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+                        let connection_id = TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed) as u64 + 1;
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
                         // max clients.
                         if current_clients as u64 > max_connections {
-                            warn!("Client {addr:?}: too many clients already");
+                            warn!("[#c{connection_id}] client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
                            match crate::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map).await {
                                 Ok(()) => (),
                                 Err(err) => {
-                                    error!("Client {addr:?}: disconnected with error: {err}");
+                                    error!("[#c{connection_id}] client {addr} disconnected with error: {err}");
                                 }
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
                             return
                         }
-                        let start = chrono::offset::Utc::now().naive_utc();
+                        let start = Utc::now().naive_utc();
 
                         match crate::client::client_entrypoint(
                             socket,
@@ -434,30 +435,30 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             admin_only,
                             tls_acceptor,
                             tls_rate_limiter,
+                            connection_id,
                         )
                         .await
                         {
-                            Ok(()) => {
-                                let duration = chrono::offset::Utc::now().naive_utc() - start;
-
-                                if log_client_disconnections {
-                                    info!(
-                                        "Client {:?} disconnected, session duration: {}",
-                                        addr,
-                                        format_duration(&duration)
+                            Ok(session_info) => {
+                                if log_client_disconnections
+                                    || log::log_enabled!(log::Level::Debug)
+                                {
+                                    let session = format_duration(
+                                        &(Utc::now().naive_utc() - start),
                                     );
-                                } else {
-                                    debug!(
-                                        "Client {:?} disconnected, session duration: {}",
-                                        addr,
-                                        format_duration(&duration)
-                                    );
+                                    let identity = match &session_info {
+                                        Some(si) => format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id),
+                                        None => format!("[#c{connection_id}]"),
+                                    };
+                                    info!("{identity} client disconnected from {addr}, session={session}");
                                 }
                             }
 
                             Err(err) => {
-                                let duration = chrono::offset::Utc::now().naive_utc() - start;
-                                warn!("Client {:?} disconnected with error {:?}, duration: {}", addr, err, format_duration(&duration));
+                                // Pre-auth failures: identity unknown, only connection_id available.
+                                // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
+                                let session = format_duration(&(Utc::now().naive_utc() - start));
+                                warn!("[#c{connection_id}] client {addr} disconnected with error: {err}, session={session}");
                             }
                         };
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);

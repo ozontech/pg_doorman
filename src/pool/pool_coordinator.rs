@@ -107,7 +107,7 @@ impl Drop for ReserveGrant {
     fn drop(&mut self) {
         if let Some(coordinator) = &self.coordinator {
             debug!(
-                "[pool: {}] coordinator: unused reserve grant returned to pool",
+                "[pool: {}] coordinator: unused reserve grant returned to semaphore",
                 coordinator.database,
             );
             coordinator.reserve_semaphore.add_permits(1);
@@ -230,10 +230,10 @@ impl PoolCoordinator {
         // Phase A: fast path — non-blocking semaphore acquire
         if let Some(permit) = self.try_acquire() {
             debug!(
-                "[pool: {}][user: {}] coordinator: permit acquired via fast path \
+                "[{}@{}] coordinator: permit acquired via fast path \
                  (active={}/{})",
-                database,
                 user,
+                database,
                 self.total_connections.load(Ordering::Relaxed),
                 max,
             );
@@ -242,9 +242,9 @@ impl PoolCoordinator {
 
         let active = self.total_connections.load(Ordering::Relaxed);
         debug!(
-            "[pool: {}][user: {}] coordinator: fast path unavailable \
+            "[{}@{}] coordinator: fast path unavailable \
              (active={}/{}), trying eviction",
-            database, user, active, max,
+            user, database, active, max,
         );
 
         // Phase B: try eviction — close an idle connection from another user
@@ -253,28 +253,28 @@ impl PoolCoordinator {
             self.evictions_total.fetch_add(1, Ordering::Relaxed);
             if let Some(permit) = self.try_acquire() {
                 debug!(
-                    "[pool: {}][user: {}] coordinator: eviction freed a slot, \
+                    "[{}@{}] coordinator: eviction freed a slot, \
                      permit acquired (active={}/{})",
-                    database,
                     user,
+                    database,
                     self.total_connections.load(Ordering::Relaxed),
                     max,
                 );
                 return Ok(permit);
             }
             debug!(
-                "[pool: {}][user: {}] coordinator: eviction freed a slot \
+                "[{}@{}] coordinator: eviction freed a slot \
                  but permit already taken by concurrent waiter (active={}/{})",
-                database,
                 user,
+                database,
                 self.total_connections.load(Ordering::Relaxed),
                 max,
             );
         } else {
             debug!(
-                "[pool: {}][user: {}] coordinator: eviction found no eligible \
+                "[{}@{}] coordinator: eviction found no eligible \
                  idle connections in other users' pools",
-                database, user,
+                user, database,
             );
         }
 
@@ -286,10 +286,10 @@ impl PoolCoordinator {
         let mut wait_wakeups = 0u32;
 
         debug!(
-            "[pool: {}][user: {}] coordinator: entering wait phase \
+            "[{}@{}] coordinator: entering wait phase \
              (timeout={}ms, active={}/{})",
-            database,
             user,
+            database,
             timeout_ms,
             self.total_connections.load(Ordering::Relaxed),
             max,
@@ -305,10 +305,10 @@ impl PoolCoordinator {
 
             if let Some(permit) = self.try_acquire() {
                 debug!(
-                    "[pool: {}][user: {}] coordinator: wait phase succeeded \
+                    "[{}@{}] coordinator: wait phase succeeded \
                      after {} wakeup(s), permit acquired (active={}/{})",
-                    database,
                     user,
+                    database,
                     wait_wakeups,
                     self.total_connections.load(Ordering::Relaxed),
                     max,
@@ -327,10 +327,10 @@ impl PoolCoordinator {
         }
 
         debug!(
-            "[pool: {}][user: {}] coordinator: wait phase exhausted \
+            "[{}@{}] coordinator: wait phase exhausted \
              after {} wakeup(s), timeout={}ms (active={}/{})",
-            database,
             user,
+            database,
             wait_wakeups,
             timeout_ms,
             self.total_connections.load(Ordering::Relaxed),
@@ -344,10 +344,10 @@ impl PoolCoordinator {
             let reserve_in_use = self.reserve_in_use.load(Ordering::Relaxed);
 
             debug!(
-                "[pool: {}][user: {}] coordinator: requesting reserve permit \
+                "[{}@{}] coordinator: requesting reserve permit \
                  (starving={}, queued_clients={}, reserve_in_use={}/{})",
-                database,
                 user,
+                database,
                 starving == 1,
                 queued,
                 reserve_in_use,
@@ -372,10 +372,10 @@ impl PoolCoordinator {
                     self.reserve_acquisitions_total
                         .fetch_add(1, Ordering::Relaxed);
                     info!(
-                        "[pool: {}][user: {}] coordinator: reserve permit granted \
+                        "[{}@{}] coordinator: reserve permit granted \
                          (active={}/{}, reserve_in_use={}/{})",
-                        database,
                         user,
+                        database,
                         self.total_connections.load(Ordering::Relaxed),
                         max,
                         self.reserve_in_use.load(Ordering::Relaxed),
@@ -386,11 +386,11 @@ impl PoolCoordinator {
             }
 
             debug!(
-                "[pool: {}][user: {}] coordinator: reserve request denied — \
+                "[{}@{}] coordinator: reserve request denied — \
                  no reserve permits available or arbiter timeout \
                  (reserve_in_use={}/{})",
-                database,
                 user,
+                database,
                 self.reserve_in_use.load(Ordering::Relaxed),
                 self.config.reserve_pool_size,
             );
@@ -398,9 +398,9 @@ impl PoolCoordinator {
             AcquirePhase::ReserveExhausted
         } else {
             debug!(
-                "[pool: {}][user: {}] coordinator: reserve pool not configured, \
+                "[{}@{}] coordinator: reserve pool not configured, \
                  skipping reserve phase",
-                database, user,
+                user, database,
             );
             AcquirePhase::NoReserve
         };
@@ -411,11 +411,11 @@ impl PoolCoordinator {
         let reserve_in_use = self.reserve_in_use.load(Ordering::Relaxed);
 
         warn!(
-            "[pool: {}][user: {}] coordinator: EXHAUSTED — all permits in use, \
+            "[{}@{}] coordinator: EXHAUSTED — all permits in use, \
              client will receive error (active={}/{}, reserve={}/{}, phase={:?}, \
              total_exhaustions={})",
-            database,
             user,
+            database,
             active,
             max,
             reserve_in_use,
@@ -532,9 +532,9 @@ async fn reserve_arbiter(
         // Collect new requests (non-blocking)
         while let Ok(req) = rx.try_recv() {
             debug!(
-                "[pool: {}] arbiter: received reserve request from '{}' \
+                "[{}@{}] arbiter: received reserve request \
                  (score=starving:{}, queued:{})",
-                coordinator.database, req.user, req.score.0, req.score.1,
+                req.user, coordinator.database, req.score.0, req.score.1,
             );
             pending.push(req);
         }
@@ -548,15 +548,15 @@ async fn reserve_arbiter(
                 let sent = req.response.send(grant);
                 if sent.is_ok() {
                     debug!(
-                        "[pool: {}] arbiter: granted reserve permit to '{}' \
+                        "[{}@{}] arbiter: granted reserve permit \
                          (score=starving:{}, queued:{})",
-                        coordinator.database, req.user, req.score.0, req.score.1,
+                        req.user, coordinator.database, req.score.0, req.score.1,
                     );
                 } else {
                     debug!(
-                        "[pool: {}] arbiter: grant to '{}' failed — \
+                        "[{}@{}] arbiter: grant failed — \
                          requester already timed out, permit returned",
-                        coordinator.database, req.user,
+                        req.user, coordinator.database,
                     );
                 }
             } else {

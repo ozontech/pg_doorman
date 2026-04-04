@@ -35,8 +35,9 @@ iota! {
 /// to the PostgreSQL connection pooler. It is used to provide information for the
 /// SHOW CLIENTS command and to track client activity for monitoring and diagnostics.
 pub struct ClientStats {
-    /// A random integer assigned to the client and used by stats to track the client
-    client_id: i32,
+    /// Monotonic connection ID assigned at TCP accept time. Used for log correlation
+    /// (`#cN` prefix), SHOW CLIENTS, and Cancel Protocol (as `connection_id as i32`).
+    connection_id: u64,
 
     /// Client metadata - these fields are set when the ClientStats is constructed and not modified after
     /// ------------------------------------------------------------------------------------------
@@ -89,7 +90,7 @@ pub struct ClientStats {
 /// Default implementation for ClientStats.
 ///
 /// Creates a new ClientStats instance with default values:
-/// - client_id: 0
+/// - connection_id: 0
 /// - Empty strings for application_name, username, pool_name, and ipaddr
 /// - Current time for connect_time
 /// - All counters initialized to 0
@@ -99,7 +100,7 @@ pub struct ClientStats {
 impl Default for ClientStats {
     fn default() -> Self {
         ClientStats {
-            client_id: 0,
+            connection_id: 0,
             connect_time: clock::now(),
             application_name: String::new(),
             username: String::new(),
@@ -139,15 +140,14 @@ impl ClientStats {
     #[inline(always)]
     pub fn set_state(&self, state: u8) {
         let cur = self.state_wait.load(Ordering::Relaxed);
-        let wait = cur & 0x0F;
-        let new = Self::pack(state, wait);
+        let new = Self::pack(state, cur & 0x0F);
         self.state_wait.store(new, Ordering::Relaxed);
     }
 
     #[inline(always)]
     pub fn set_wait(&self, wait: u8) {
-        let state = self.state_wait.load(Ordering::Relaxed) >> 4;
-        let new = Self::pack(state, wait);
+        let cur = self.state_wait.load(Ordering::Relaxed);
+        let new = Self::pack(cur >> 4, wait);
         self.state_wait.store(new, Ordering::Relaxed);
     }
 
@@ -163,7 +163,7 @@ impl ClientStats {
     ///
     /// # Arguments
     ///
-    /// * `client_id` - Unique identifier for the client
+    /// * `connection_id` - Unique identifier for the client
     /// * `application_name` - Name of the application connecting to the database
     /// * `username` - PostgreSQL username used for the connection
     /// * `pool_name` - Name of the connection pool this client is using
@@ -171,7 +171,7 @@ impl ClientStats {
     /// * `connect_time` - Timestamp when the client connected
     /// * `use_tls` - Whether the client is using TLS/SSL encryption
     pub fn new(
-        client_id: i32,
+        connection_id: u64,
         application_name: &str,
         username: &str,
         pool_name: &str,
@@ -180,7 +180,7 @@ impl ClientStats {
         use_tls: bool,
     ) -> Self {
         Self {
-            client_id,
+            connection_id,
             connect_time,
             application_name: application_name.to_string(),
             username: username.to_string(),
@@ -197,14 +197,14 @@ impl ClientStats {
 
     /// Registers a client with the stats system.
     ///
-    /// The stats system uses client_id to track and aggregate statistics from all sources
+    /// The stats system uses connection_id to track and aggregate statistics from all sources
     /// that relate to that client. This method should be called when a client connects.
     ///
     /// # Arguments
     ///
     /// * `stats` - Arc-wrapped ClientStats instance to register
     pub fn register(&self, stats: Arc<ClientStats>) {
-        self.reporter.client_register(self.client_id, stats);
+        self.reporter.client_register(self.connection_id, stats);
         self.set_state(CLIENT_STATE_IDLE);
     }
 
@@ -214,7 +214,7 @@ impl ClientStats {
     /// from the stats tracking system.
     #[inline(always)]
     pub fn disconnect(&self) {
-        self.reporter.client_disconnecting(self.client_id);
+        self.reporter.client_disconnecting(self.connection_id);
     }
 
     //
@@ -346,8 +346,8 @@ impl ClientStats {
 
     /// Returns the client's unique identifier.
     #[inline(always)]
-    pub fn client_id(&self) -> i32 {
-        self.client_id
+    pub fn connection_id(&self) -> u64 {
+        self.connection_id
     }
 
     /// Returns the name of the application that established the connection.
@@ -428,7 +428,7 @@ mod tests {
         let stats = ClientStats::default();
 
         // Check client metadata
-        assert_eq!(stats.client_id(), 0);
+        assert_eq!(stats.connection_id(), 0);
         assert_eq!(stats.application_name(), "");
         assert_eq!(stats.username(), "");
         assert_eq!(stats.pool_name(), "");
@@ -454,7 +454,7 @@ mod tests {
         // Test that ClientStats::new initializes with the provided values
         let now = clock::now();
         let stats = ClientStats::new(
-            42,          // client_id
+            42,          // connection_id
             "test_app",  // application_name
             "test_user", // username
             "test_pool", // pool_name
@@ -464,7 +464,7 @@ mod tests {
         );
 
         // Check client metadata
-        assert_eq!(stats.client_id(), 42);
+        assert_eq!(stats.connection_id(), 42);
         assert_eq!(stats.application_name(), "test_app");
         assert_eq!(stats.username(), "test_user");
         assert_eq!(stats.pool_name(), "test_pool");
@@ -484,11 +484,11 @@ mod tests {
 
     #[test]
     fn test_client_lifecycle_methods() {
-        // Create a ClientStats with a unique client_id
-        let client_id = 12345;
+        // Create a ClientStats with a unique connection_id
+        let connection_id = 12345;
         let now = clock::now();
         let stats = ClientStats::new(
-            client_id,
+            connection_id,
             "test_app",
             "test_user",
             "test_pool",
@@ -501,13 +501,13 @@ mod tests {
         let stats_arc = Arc::new(stats);
 
         // Check that the client is not in the global registry before registration
-        assert!(!get_client_stats().contains_key(&client_id));
+        assert!(!get_client_stats().contains_key(&connection_id));
 
         // Register the client
         stats_arc.register(Arc::clone(&stats_arc));
 
         // Check that the client was registered in the global registry
-        assert!(get_client_stats().contains_key(&client_id));
+        assert!(get_client_stats().contains_key(&connection_id));
 
         // Check that the state was set to IDLE
         assert_eq!(stats_arc.state(), CLIENT_STATE_IDLE);
@@ -516,7 +516,7 @@ mod tests {
         stats_arc.disconnect();
 
         // Check that the client was removed from the global registry
-        assert!(!get_client_stats().contains_key(&client_id));
+        assert!(!get_client_stats().contains_key(&connection_id));
     }
 
     #[test]
@@ -614,7 +614,7 @@ mod tests {
         // Create a ClientStats with specific values
         let now = clock::now();
         let stats = ClientStats::new(
-            42,          // client_id
+            42,          // connection_id
             "test_app",  // application_name
             "test_user", // username
             "test_pool", // pool_name
@@ -624,7 +624,7 @@ mod tests {
         );
 
         // Test accessor methods
-        assert_eq!(stats.client_id(), 42);
+        assert_eq!(stats.connection_id(), 42);
         assert_eq!(stats.application_name(), "test_app");
         assert_eq!(stats.username(), "test_user");
         assert_eq!(stats.pool_name(), "test_pool");

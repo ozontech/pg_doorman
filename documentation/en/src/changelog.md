@@ -1,5 +1,27 @@
 # Changelog
 
+### 3.4.1 <small>Apr 3, 2026</small>
+
+**Improvements:**
+
+- **Log readability overhaul.** All operational log messages use a consistent `[user@pool]` identity prefix with `pid=N` for server connections, replacing three different formats. Stats line switched to logfmt (`query_ms p50=... | xact_ms p50=...`). Durations formatted as `4m30s` instead of raw milliseconds or `0d 00:04:30.134`. PG error messages sanitized (newlines escaped) to prevent log line splitting.
+
+- **Auth failure logs include client IP.** SCRAM, MD5, JWT, and PAM authentication failures now show the source address, visible during brute-force attempts.
+
+- **Replenish failure noise suppression.** When `min_pool_size` replenish repeatedly fails (e.g., SCRAM user missing on a replica), only the first failure is logged at warn level. Subsequent failures are suppressed with a periodic reminder every ~10 minutes showing the consecutive failure count. Recovery is logged when replenish succeeds after a failure streak.
+
+- **Client disconnect logs include identity.** Disconnect messages show `[user@pool]` when the client completed authentication, not just the IP address.
+
+- **Prepared statement cache eviction log.** Shows truncated query text and current cache size (`size=99/100`) to help diagnose cache sizing issues.
+
+**New features:**
+
+- **Runtime log level control via admin `SET` command.** Change log level without restarting the pooler: `SET log_level = 'debug'` for global, `SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'` for per-module (RUST_LOG syntax). View current level with `SHOW LOG_LEVEL`. Changes are ephemeral (lost on restart). Zero overhead on the hot path at production log levels — filtering uses lock-free `ArcSwap` instead of `RwLock`.
+
+**Security:**
+
+- **Removed password hash from logs.** The "unsupported password type" warning no longer includes the password hash value.
+
 ### 3.4.0 <small>Apr 1, 2026</small>
 
 **New Features:**

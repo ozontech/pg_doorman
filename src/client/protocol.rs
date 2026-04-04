@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use log::debug;
+use log::{debug, warn};
 use std::convert::TryInto;
 use std::sync::Arc;
 
@@ -29,7 +29,26 @@ where
         let cached = self.prepared.cache.get(&key).cloned();
         match cached {
             Some(cached) => {
-                debug!("Prepared statement `{key:?}` found in cache");
+                if log::log_enabled!(log::Level::Debug) {
+                    let query = cached.parse.query().replace(['\n', '\r'], " ");
+                    let q: String = query.chars().take(80).collect();
+                    let el = if query.chars().count() > 80 {
+                        "..."
+                    } else {
+                        ""
+                    };
+                    debug!(
+                        "[{}@{} #c{}] client cache hit: {} query=\"{q}{el}\"",
+                        self.username,
+                        self.pool_name,
+                        self.connection_id,
+                        match &key {
+                            PreparedStatementKey::Named(name) => format!("name=`{name}`"),
+                            PreparedStatementKey::Anonymous(hash) =>
+                                format!("hash={hash:#x} (unnamed)"),
+                        }
+                    );
+                }
                 // Get the server-side name (may be async_name for async clients)
                 let server_name = cached.server_name().to_string();
                 // In this case we want to send the parse message to the server
@@ -48,7 +67,7 @@ where
                     Ok(_) => (),
                     Err(err) => match err {
                         Error::PreparedStatementError => {
-                            debug!("Removed {key:?} from client cache");
+                            warn!("[{}@{} #c{}] server rejected prepared statement {:?}, evicting from client cache", self.username, self.pool_name, self.connection_id, key);
                             self.prepared.cache.pop(&key);
                         }
 
@@ -92,7 +111,10 @@ where
         // We want to promote this in the pool's LRU
         pool.promote_prepared_statement_hash(hash);
 
-        debug!("Checking for prepared statement {}", server_name);
+        debug!(
+            "[{}@{} #c{}] checking server connection cache for statement `{}`",
+            self.username, self.pool_name, self.connection_id, server_name
+        );
 
         server
             .register_prepared_statement(parse, server_name, should_send_parse_to_server)
@@ -111,7 +133,10 @@ where
     ) -> Result<(), Error> {
         // Avoid parsing if prepared statements not enabled
         if !self.prepared.enabled {
-            debug!("Anonymous parse message");
+            debug!(
+                "[{}@{} #c{}] prepared statements disabled, forwarding Parse as-is",
+                self.username, self.pool_name, self.connection_id,
+            );
             let first_char_in_name = *message.get(5).unwrap_or(&0);
             if first_char_in_name != 0 {
                 // This is a named prepared statement while prepared statements are disabled
@@ -156,10 +181,28 @@ where
             None
         };
 
-        debug!(
-            "Renamed prepared statement `{}` to `{}` (async_name: {:?}) and saved to cache",
-            client_given_name, shared_parse.name, async_name
-        );
+        if log::log_enabled!(log::Level::Debug) {
+            let query = shared_parse.query().replace(['\n', '\r'], " ");
+            let truncated: String = query.chars().take(80).collect();
+            let ellipsis = if query.chars().count() > 80 {
+                "..."
+            } else {
+                ""
+            };
+            debug!(
+                "[{}@{} #c{}] mapped statement `{}` -> `{}` (hash={:#x}{}) query=\"{truncated}{ellipsis}\"",
+                self.username,
+                self.pool_name,
+                self.connection_id,
+                client_given_name,
+                shared_parse.name,
+                hash,
+                async_name
+                    .as_ref()
+                    .map(|n| format!(", async_name={n}"))
+                    .unwrap_or_default()
+            );
+        }
 
         // For anonymous prepared statements, use hash as key to avoid collisions
         // Save hash for anonymous prepared statement lookup
@@ -190,8 +233,8 @@ where
             // For async clients, always send Parse to get real ParseComplete from server
             if self.prepared.async_client {
                 debug!(
-                    "Async client: sending Parse `{}` to server even though cached",
-                    server_stmt_name
+                    "[{}@{} #c{}] async client: sending Parse `{}` (unique per-session name requires server roundtrip)",
+                    self.username, self.pool_name, self.connection_id, server_stmt_name
                 );
 
                 // Add parse message to buffer with the server statement name
@@ -203,8 +246,9 @@ where
                 // We don't want to send the parse message to the server
                 // Track this skipped Parse - ParseComplete will be inserted before BindComplete in response
                 debug!(
-                    "Parse skipped for `{}` (already on server), will insert ParseComplete later",
-                    server_stmt_name
+                    "[{}@{} #c{}] parse skipped for `{}`: already on server pid={}, synthetic ParseComplete queued",
+                    self.username, self.pool_name, self.connection_id,
+                    server_stmt_name, server.get_process_id()
                 );
                 // insert_at_beginning starts as false. It will be set to true later
                 // if a new Parse is sent to server AFTER this skipped Parse.
@@ -226,8 +270,8 @@ where
             }
         } else {
             debug!(
-                "Prepared statement `{}` not found in server cache",
-                server_stmt_name
+                "[{}@{} #c{}] statement `{}` not in server connection cache, sending Parse to backend",
+                self.username, self.pool_name, self.connection_id, server_stmt_name
             );
             // Register to server cache (this may send eviction close to server)
             self.register_parse_to_server_cache(
@@ -279,7 +323,10 @@ where
             match self.prepared.last_anonymous_hash {
                 Some(hash) => Ok(PreparedStatementKey::Anonymous(hash)),
                 None => {
-                    debug!("Got anonymous prepared statement reference but no anonymous prepared statement exists");
+                    warn!(
+                        "[{}@{} #c{}] anonymous prepared statement referenced but none registered",
+                        self.username, self.pool_name, self.connection_id,
+                    );
                     error_response(
                         &mut self.write,
                         "prepared statement \"\" does not exist",
@@ -306,7 +353,10 @@ where
     ) -> Result<(), Error> {
         // Avoid parsing if prepared statements not enabled
         if !self.prepared.enabled {
-            debug!("Anonymous bind message");
+            debug!(
+                "[{}@{} #c{}] prepared statements disabled, forwarding Bind as-is",
+                self.username, self.pool_name, self.connection_id,
+            );
             self.buffer.put(&message[..]);
             // Track operation for correct expected_responses calculation in Flush
             self.prepared.batch_operations.push(BatchOperation::Bind {
@@ -326,7 +376,18 @@ where
                 let server_name = cached.server_name().to_string();
                 let message = Bind::rename(message, &server_name)?;
 
-                debug!("Rewrote bind `{}` to `{}`", client_given_name, server_name);
+                debug!(
+                    "[{}@{} #c{}] bind: rewrote statement `{}` -> `{}`",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    if client_given_name.is_empty() {
+                        "<unnamed>"
+                    } else {
+                        &client_given_name
+                    },
+                    server_name
+                );
 
                 // Ensure prepared statement is on server
                 // For async clients, Parse may NOT be in buffer if client reuses cached prepared statement
@@ -356,7 +417,10 @@ where
                 Ok(())
             }
             None => {
-                debug!("Got bind for unknown prepared statement {client_given_name:?}");
+                warn!(
+                    "[{}@{} #c{}] Bind references unknown prepared statement {client_given_name:?}",
+                    self.username, self.pool_name, self.connection_id,
+                );
 
                 error_response(
                     &mut self.write,
@@ -382,7 +446,10 @@ where
     ) -> Result<(), Error> {
         // Avoid parsing if prepared statements not enabled
         if !self.prepared.enabled {
-            debug!("Anonymous describe message");
+            debug!(
+                "[{}@{} #c{}] prepared statements disabled, forwarding Describe as-is",
+                self.username, self.pool_name, self.connection_id,
+            );
             self.buffer.put(&message[..]);
             // Track operation for correct expected_responses calculation in Flush
             // Describe message format: 'D' + len(4) + target(1) + name + '\0'
@@ -404,7 +471,10 @@ where
 
         let describe: Describe = (&message).try_into()?;
         if describe.target == 'P' {
-            debug!("Portal describe message");
+            debug!(
+                "[{}@{} #c{}] describe portal (not statement), passing through",
+                self.username, self.pool_name, self.connection_id,
+            );
             self.buffer.put(&message[..]);
             // Track portal describe for correct ParseComplete insertion position
             self.prepared
@@ -426,8 +496,12 @@ where
                 let describe = describe.rename(&server_name);
 
                 debug!(
-                    "Rewrote describe `{}` to `{}`",
-                    client_given_name, describe.statement_name
+                    "[{}@{} #c{}] Describe: translated statement name `{}` -> `{}`",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    client_given_name,
+                    describe.statement_name
                 );
 
                 // Ensure prepared statement is on server
@@ -445,8 +519,8 @@ where
                     s.statement_name == server_name && s.target == ParseCompleteTarget::BindComplete
                 }) {
                     debug!(
-                        "Parse was skipped for `{}`, will insert ParseComplete before ParameterDescription",
-                        server_name
+                        "[{}@{} #c{}] Describe follows skipped Parse for `{}`, adjusting synthetic ParseComplete position",
+                        self.username, self.pool_name, self.connection_id, server_name
                     );
                     let insert_at_beginning = self.prepared.skipped_parses[idx].insert_at_beginning;
                     let has_bind = self.prepared.skipped_parses[idx].has_bind;
@@ -474,7 +548,10 @@ where
             }
 
             None => {
-                debug!("Got describe for unknown prepared statement {describe:?}");
+                warn!(
+                    "[{}@{} #c{}] Describe references unknown prepared statement `{}`",
+                    self.username, self.pool_name, self.connection_id, client_given_name
+                );
 
                 error_response(
                     &mut self.write,

@@ -5,6 +5,8 @@
 
 use log::{debug, info};
 
+use crate::utils::format_duration_ms;
+
 use super::pool_coordinator;
 use super::{get_pool, ConnectionPool, PoolIdentifier, POOLS};
 
@@ -53,17 +55,15 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
         if candidates.is_empty() {
             if all_other_users.is_empty() {
                 debug!(
-                    "[pool: {}] eviction: no other users' pools exist for this database \
-                     (requesting_user='{}')",
-                    self.database, requesting_user,
+                    "[{requesting_user}@{}] eviction: no other users' pools exist for this database",
+                    self.database,
                 );
             } else {
                 debug!(
-                    "[pool: {}] eviction: {} other user(s) checked, none have spare \
-                     connections above guaranteed minimum (requesting_user='{}', users: {})",
+                    "[{requesting_user}@{}] eviction: {} other user(s) checked, none have spare \
+                     connections above guaranteed minimum (users: {})",
                     self.database,
                     all_other_users.len(),
-                    requesting_user,
                     all_other_users
                         .iter()
                         .map(|(id, _, spare)| format!("{}(spare={})", id.user, spare))
@@ -78,11 +78,9 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
         candidates.sort_by(|a, b| b.2.cmp(&a.2));
 
         debug!(
-            "[pool: {}] eviction: {} candidate(s) with spare connections \
-             (requesting_user='{}', candidates: {})",
+            "[{requesting_user}@{}] eviction: {} candidate(s) with spare connections ({})",
             self.database,
             candidates.len(),
-            requesting_user,
             candidates
                 .iter()
                 .map(|(id, _, spare)| format!("{}(spare={})", id.user, spare))
@@ -102,34 +100,40 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
             let current_spare = pool.spare_above_min();
             if current_spare == 0 {
                 debug!(
-                    "[pool: {}][user: {}] eviction: skipped — spare dropped to 0 since snapshot \
+                    "[{}@{}] eviction: skipped — spare dropped to 0 since snapshot \
                      (was {}, requesting_user='{}')",
-                    self.database, id.user, spare, requesting_user,
+                    id.user, self.database, spare, requesting_user,
                 );
                 continue;
             }
             if pool.database.evict_one_idle(min_lifetime_ms) {
                 info!(
-                    "[pool: {}][user: {}] coordinator evicted idle connection \
-                     (spare={}, min_lifetime={}ms) to free slot for '{}'",
-                    self.database, id.user, spare, min_lifetime_ms, requesting_user,
+                    "[{}@{}] coordinator evicted idle connection \
+                     (spare={}, min_lifetime={}) to free slot for '{}'",
+                    id.user,
+                    self.database,
+                    spare,
+                    format_duration_ms(min_lifetime_ms),
+                    requesting_user,
                 );
                 return true;
             }
             debug!(
-                "[pool: {}][user: {}] eviction: candidate skipped — \
-                 no idle connections older than {}ms (spare={})",
-                self.database, id.user, min_lifetime_ms, spare,
+                "[{}@{}] eviction: candidate skipped — \
+                 no idle connections older than {} (spare={})",
+                id.user,
+                self.database,
+                format_duration_ms(min_lifetime_ms),
+                spare,
             );
         }
 
         debug!(
-            "[pool: {}] eviction: all {} candidate(s) had connections \
-             too young to evict (min_lifetime={}ms, requesting_user='{}')",
+            "[{requesting_user}@{}] eviction: all {} candidate(s) had connections \
+             too young to evict (min_lifetime={})",
             self.database,
             candidates.len(),
-            min_lifetime_ms,
-            requesting_user,
+            format_duration_ms(min_lifetime_ms),
         );
         false
     }

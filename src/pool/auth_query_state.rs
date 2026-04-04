@@ -74,6 +74,7 @@ impl AuthQueryState {
                 )
                 .await?;
                 Ok(AuthQueryCache::new(
+                    self.pool_name.clone(),
                     Arc::new(executor),
                     &self.config,
                     Some(self.stats.clone()),

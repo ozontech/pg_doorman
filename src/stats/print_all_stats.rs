@@ -17,38 +17,32 @@ pub fn print_all_stats() {
         if total_clients > 0 {
             clients_flag = true;
             info!(
-                "[{}@{}] \
-                {}qps/{}tps, \
-                {} clients [active: {}, idle: {}, waiting: {}], \
-                {} servers [active: {}, idle: {}], \
-                query/xact ms: [p99: {:.3}/{:.3} p95: {:.3}/{:.3} p90: {:.3}/{:.3} p50: {:.3}/{:.3}], \
-                avg_wait (per query): {:.5} {:?} ms.",
-
-                identifier.user, identifier.db,
-
+                "[{}@{}] qps={} tps={} \
+                | clients={} active={} idle={} wait={} \
+                | servers={} active={} idle={} \
+                | query_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
+                | xact_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
+                | avg_wait={:.3}ms",
+                identifier.user,
+                identifier.db,
                 pool_stats.avg_query_count,
                 pool_stats.avg_xact_count,
-
                 total_clients,
                 pool_stats.cl_active,
                 pool_stats.cl_idle,
                 pool_stats.cl_waiting,
-
                 total_servers,
                 pool_stats.sv_active,
                 pool_stats.sv_idle,
-
-                pool_stats.query_percentile.p99 as f64 / 1_000f64,
-                pool_stats.xact_percentile.p99 as f64 / 1_000f64,
-                pool_stats.query_percentile.p95 as f64 / 1_000f64,
-                pool_stats.xact_percentile.p95 as f64 / 1_000f64,
-                pool_stats.query_percentile.p90 as f64 / 1_000f64,
-                pool_stats.xact_percentile.p90 as f64 / 1_000f64,
                 pool_stats.query_percentile.p50 as f64 / 1_000f64,
+                pool_stats.query_percentile.p90 as f64 / 1_000f64,
+                pool_stats.query_percentile.p95 as f64 / 1_000f64,
+                pool_stats.query_percentile.p99 as f64 / 1_000f64,
                 pool_stats.xact_percentile.p50 as f64 / 1_000f64,
-
+                pool_stats.xact_percentile.p90 as f64 / 1_000f64,
+                pool_stats.xact_percentile.p95 as f64 / 1_000f64,
+                pool_stats.xact_percentile.p99 as f64 / 1_000f64,
                 pool_stats.avg_wait_time as f64 / 1_000f64,
-                pool_stats.avg_wait_time_vp_ms,
             );
         }
     });

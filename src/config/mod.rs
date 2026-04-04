@@ -18,6 +18,7 @@ use self::tls::{load_identity, TLSMode};
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
+use crate::utils::format_duration_ms;
 
 // Sub-modules
 mod address;
@@ -234,8 +235,14 @@ impl Config {
     /// Print current configuration.
     pub fn show(&self) {
         info!("Worker threads: {}", self.general.worker_threads);
-        info!("Connection timeout: {}ms", self.general.connect_timeout);
-        info!("Idle timeout: {}ms", self.general.idle_timeout);
+        info!(
+            "Connection timeout: {}",
+            format_duration_ms(self.general.connect_timeout.as_millis())
+        );
+        info!(
+            "Idle timeout: {}",
+            format_duration_ms(self.general.idle_timeout.as_millis())
+        );
         info!(
             "Log client connections: {}",
             self.general.log_client_connections
@@ -244,9 +251,12 @@ impl Config {
             "Log client disconnections: {}",
             self.general.log_client_disconnections
         );
-        info!("Shutdown timeout: {}ms", self.general.shutdown_timeout);
         info!(
-            "Message size to be steam: {}",
+            "Shutdown timeout: {}",
+            format_duration_ms(self.general.shutdown_timeout.as_millis())
+        );
+        info!(
+            "Message size to stream: {}",
             self.general.message_size_to_be_stream
         );
         info!(
@@ -254,12 +264,12 @@ impl Config {
             self.general.max_memory_usage
         );
         info!(
-            "Default max server lifetime: {}ms",
-            self.general.server_lifetime
+            "Default max server lifetime: {}",
+            format_duration_ms(self.general.server_lifetime.as_millis())
         );
         info!("Backlog: {}", self.general.backlog);
         info!("Max connections: {}", self.general.max_connections);
-        info!("Sever round robin: {}", self.general.server_round_robin);
+        info!("Server round robin: {}", self.general.server_round_robin);
         if self.general.hba.is_empty() {
             if let Some(pg_hba) = &self.general.pg_hba {
                 info!("HBA config:\n{pg_hba}\n");
@@ -293,22 +303,28 @@ impl Config {
                 pool_name, pool.cleanup_server_connections
             );
             info!(
-                "[pool: {}] Connect timeout: {}ms",
+                "[pool: {}] Connect timeout: {}",
                 pool_name,
-                pool.connect_timeout
-                    .unwrap_or(self.general.connect_timeout.as_millis())
+                format_duration_ms(
+                    pool.connect_timeout
+                        .unwrap_or(self.general.connect_timeout.as_millis())
+                )
             );
             info!(
-                "[pool: {}] Idle timeout: {}ms",
+                "[pool: {}] Idle timeout: {}",
                 pool_name,
-                pool.idle_timeout
-                    .unwrap_or(self.general.idle_timeout.as_millis())
+                format_duration_ms(
+                    pool.idle_timeout
+                        .unwrap_or(self.general.idle_timeout.as_millis())
+                )
             );
             info!(
-                "[pool: {}] Server lifetime: {}ms",
+                "[pool: {}] Server lifetime: {}",
                 pool_name,
-                pool.server_lifetime
-                    .unwrap_or(self.general.server_lifetime.as_millis())
+                format_duration_ms(
+                    pool.server_lifetime
+                        .unwrap_or(self.general.server_lifetime.as_millis())
+                )
             );
             for (user_index, user) in pool.users.iter().enumerate() {
                 info!(
@@ -524,7 +540,7 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     match parse(&old_config.path).await {
         Ok(()) => (),
         Err(err) => {
-            error!("Config reload error: {err:?}");
+            error!("Config reload error: {err}");
             return Err(Error::BadConfig(format!("Config reload error: {err:?}")));
         }
     };

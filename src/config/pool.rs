@@ -1,13 +1,13 @@
 //! Connection pool configuration.
 
+use crate::errors::Error;
+use log::warn;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-
-use crate::errors::Error;
 
 use super::{Duration, PoolMode, User};
 
@@ -263,7 +263,7 @@ impl Pool {
                     if guaranteed > 0 {
                         for user in &self.users {
                             if guaranteed > user.pool_size {
-                                log::warn!(
+                                warn!(
                                     "min_guaranteed_pool_size ({}) > pool_size ({}) for user '{}'; \
                                      user is immune to eviction but cannot reach the guarantee",
                                     guaranteed,

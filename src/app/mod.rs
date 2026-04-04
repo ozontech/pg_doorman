@@ -2,6 +2,7 @@ pub mod args;
 pub mod config;
 pub mod errors;
 pub mod generate;
+pub mod log_level;
 pub mod logger;
 pub mod panic;
 pub mod server;

@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::{error, info, warn};
 use std::sync::atomic::Ordering;
 use tokio::io::split;
 use tokio::net::TcpStream;
@@ -13,6 +13,13 @@ use crate::utils::rate_limit::RateLimiter;
 
 use super::core::Client;
 use super::startup::{get_startup, startup_tls, ClientConnectionType};
+
+/// Identity info returned from client_entrypoint for disconnect logging.
+pub struct ClientSessionInfo {
+    pub username: String,
+    pub pool_name: String,
+    pub connection_id: u64,
+}
 
 pub async fn client_entrypoint_too_many_clients_already(
     mut stream: TcpStream,
@@ -48,7 +55,7 @@ pub async fn client_entrypoint_too_many_clients_already(
             // Continue with cancel query request.
             return match Client::cancel(read, write, addr, bytes, client_server_map).await {
                 Ok(mut client) => {
-                    info!("Client {addr:?} issued a cancel query request");
+                    info!("Cancel request from {addr}");
                     let result = client.handle().await;
                     if !client.is_admin() && result.is_err() {
                         client.disconnect_stats();
@@ -64,14 +71,15 @@ pub async fn client_entrypoint_too_many_clients_already(
     Ok(())
 }
 
-/// Client entrypoint.
+/// Client entrypoint. Returns session identity on success for disconnect logging.
 pub async fn client_entrypoint(
     mut stream: TcpStream,
     client_server_map: ClientServerMap,
     admin_only: bool,
     tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
     tls_rate_limiter: Option<RateLimiter>,
-) -> Result<(), Error> {
+    connection_id: u64,
+) -> Result<Option<ClientSessionInfo>, Error> {
     let config = get_config();
     let log_client_connections = config.general.log_client_connections;
     let tls_mode = config.general.tls_mode.clone();
@@ -99,19 +107,40 @@ pub async fn client_entrypoint(
                 }
 
                 // Negotiate TLS.
-                match startup_tls(stream, client_server_map, admin_only, tls_acceptor).await {
+                match startup_tls(
+                    stream,
+                    client_server_map,
+                    admin_only,
+                    tls_acceptor,
+                    connection_id,
+                )
+                .await
+                {
                     Ok(mut client) => {
                         if log_client_connections {
-                            info!("Client {addr:?} connected (TLS)");
+                            info!(
+                                "[{}@{} #c{}] client connected from {addr} (TLS)",
+                                client.username, client.pool_name, client.connection_id
+                            );
                         }
-
+                        let session_info = ClientSessionInfo {
+                            username: client.username.clone(),
+                            pool_name: client.pool_name.clone(),
+                            connection_id: client.connection_id,
+                        };
                         let result = client.handle().await;
-
                         if !client.is_admin() && result.is_err() {
+                            warn!(
+                                "[{}@{} #c{}] client {} disconnected with error: {}",
+                                client.username,
+                                client.pool_name,
+                                client.connection_id,
+                                addr,
+                                result.as_ref().unwrap_err()
+                            );
                             client.disconnect_stats();
                         }
-
-                        result
+                        result.map(|_| Some(session_info))
                     }
                     Err(err) => Err(err),
                 }
@@ -138,21 +167,27 @@ pub async fn client_entrypoint(
                             client_server_map,
                             admin_only,
                             false,
+                            connection_id,
                         )
                         .await
                         {
                             Ok(mut client) => {
                                 if log_client_connections {
-                                    info!("Client {addr:?} connected (plain)");
+                                    info!(
+                                        "[{}@{} #c{}] client connected from {addr} (plain)",
+                                        client.username, client.pool_name, client.connection_id
+                                    );
                                 }
-
+                                let session_info = ClientSessionInfo {
+                                    username: client.username.clone(),
+                                    pool_name: client.pool_name.clone(),
+                                    connection_id: client.connection_id,
+                                };
                                 let result = client.handle().await;
-
                                 if !client.is_admin() && result.is_err() {
                                     client.disconnect_stats();
                                 }
-
-                                result
+                                result.map(|_| Some(session_info))
                             }
                             Err(err) => Err(err),
                         }
@@ -161,7 +196,7 @@ pub async fn client_entrypoint(
                     // Client probably disconnected rejecting our plain text connection.
                     Ok((ClientConnectionType::Tls, _))
                     | Ok((ClientConnectionType::CancelQuery, _)) => Err(Error::ProtocolSyncError(
-                        "Bad postgres client (plain)".into(),
+                        "Unexpected protocol message during plain-text startup negotiation".into(),
                     )),
 
                     Err(err) => Err(err),
@@ -192,21 +227,27 @@ pub async fn client_entrypoint(
                 client_server_map,
                 admin_only,
                 false,
+                connection_id,
             )
             .await
             {
                 Ok(mut client) => {
                     if log_client_connections {
-                        info!("Client {addr:?} connected (plain)");
+                        info!(
+                            "[{}@{} #c{}] client connected from {addr} (plain)",
+                            client.username, client.pool_name, client.connection_id
+                        );
                     }
-
+                    let session_info = ClientSessionInfo {
+                        username: client.username.clone(),
+                        pool_name: client.pool_name.clone(),
+                        connection_id: client.connection_id,
+                    };
                     let result = client.handle().await;
-
                     if !client.is_admin() && result.is_err() {
                         client.disconnect_stats();
                     }
-
-                    result
+                    result.map(|_| Some(session_info))
                 }
                 Err(err) => Err(err),
             }
@@ -226,14 +267,12 @@ pub async fn client_entrypoint(
             // Continue with cancel query request.
             match Client::cancel(read, write, addr, bytes, client_server_map).await {
                 Ok(mut client) => {
-                    info!("Cancel request received from {addr:?}; forwarding to the backend");
-
+                    info!("Cancel request from {addr}");
                     let result = client.handle().await;
-
                     if !client.is_admin() && result.is_err() {
                         client.disconnect_stats();
                     }
-                    result
+                    result.map(|_| None)
                 }
 
                 Err(err) => Err(err),
@@ -242,7 +281,7 @@ pub async fn client_entrypoint(
 
         // Something failed, probably the socket.
         Err(err) => {
-            error!("{err:?}");
+            error!("#c{connection_id} client {addr} startup failed: {err}");
             Err(err)
         }
     }

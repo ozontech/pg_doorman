@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use log::LevelFilter;
 use std::fmt;
-use tracing::Level;
 
 /// PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat).
 #[derive(Parser, Debug)]
@@ -12,8 +12,8 @@ pub struct Args {
     #[arg(default_value_t = String::from("pg_doorman.toml"), env)]
     pub config_file: String,
 
-    #[arg(short, long, default_value_t = tracing::Level::INFO, env)]
-    pub log_level: Level,
+    #[arg(short, long, default_value = "info", env)]
+    pub log_level: LogLevel,
 
     #[clap(short='F', long, value_enum, default_value_t=LogFormat::Text, env)]
     pub log_format: LogFormat,
@@ -126,6 +126,39 @@ pub struct GenerateConfig {
 
 pub fn parse() -> Args {
     Args::parse()
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl From<&LogLevel> for LevelFilter {
+    fn from(level: &LogLevel) -> Self {
+        match level {
+            LogLevel::Error => LevelFilter::Error,
+            LogLevel::Warn => LevelFilter::Warn,
+            LogLevel::Info => LevelFilter::Info,
+            LogLevel::Debug => LevelFilter::Debug,
+            LogLevel::Trace => LevelFilter::Trace,
+        }
+    }
+}
+
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LogLevel::Error => write!(f, "error"),
+            LogLevel::Warn => write!(f, "warn"),
+            LogLevel::Info => write!(f, "info"),
+            LogLevel::Debug => write!(f, "debug"),
+            LogLevel::Trace => write!(f, "trace"),
+        }
+    }
 }
 
 #[derive(ValueEnum, Clone, Debug)]

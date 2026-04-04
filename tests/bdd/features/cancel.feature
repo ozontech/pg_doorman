@@ -145,3 +145,118 @@ Feature: Cancel request (pqCancel) functionality
     And we sleep 3000ms
     # Verify that session C completed without error (cancel for B did not affect C)
     Then session "C" should complete without error
+
+  @cancel-idle-no-server
+  Scenario: Cancel when client is idle (no active transaction) is a silent no-op
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    # Execute a query — in transaction mode, server returns to pool after completion
+    And we send SimpleQuery "SELECT 1" to session "main"
+    # Client is now idle — no server mapping exists in ClientServerMap
+    And we send cancel request for session "main"
+    # Cancel was silently ignored; session should remain fully functional
+    And we send SimpleQuery "SELECT 42" to session "main" without waiting
+    Then we read SimpleQuery response from session "main" within 2000ms
+    Then session "main" should receive DataRow with "42"
+
+  @cancel-inside-transaction
+  Scenario: Cancel a long-running query inside an explicit transaction
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "BEGIN" to session "main"
+    And we send SimpleQuery "SELECT 1" to session "main"
+    # Start a long query inside the transaction
+    And we send SimpleQuery "SELECT pg_sleep(10)" to session "main" without waiting
+    And we sleep 500ms
+    And we send cancel request for session "main"
+    Then session "main" should receive cancel error containing "canceling"
+    # Transaction is in aborted state — ROLLBACK should work
+    When we send SimpleQuery "ROLLBACK" to session "main"
+    # Session should be usable after rollback
+    And we send SimpleQuery "SELECT 1" to session "main" without waiting
+    Then we read SimpleQuery response from session "main" within 2000ms
+    Then session "main" should receive DataRow with "1"
+
+  @cancel-already-completed
+  Scenario: Cancel arriving after query completed is harmless
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "SELECT pg_sleep(0.1)" to session "main" without waiting
+    # Wait long enough for query to complete
+    And we sleep 500ms
+    And we send cancel request for session "main"
+    # Read the result — should be success, not cancel error
+    Then session "main" should complete without error
+    # Session remains usable
+    When we send SimpleQuery "SELECT 1" to session "main" without waiting
+    Then we read SimpleQuery response from session "main" within 2000ms
+    Then session "main" should receive DataRow with "1"
+
+  @cancel-double-cancel
+  Scenario: Sending multiple cancel requests for the same query does not cause errors
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "SELECT pg_sleep(10)" to session "main" without waiting
+    And we sleep 500ms
+    # Send two cancel requests rapidly
+    And we send cancel request for session "main"
+    And we send cancel request for session "main"
+    # Should still receive exactly one cancellation error
+    Then session "main" should receive cancel error containing "canceling"
+
+  @cancel-recovery
+  Scenario: Session executes new queries normally after cancel
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "SELECT pg_sleep(10)" to session "main" without waiting
+    And we sleep 500ms
+    And we send cancel request for session "main"
+    Then session "main" should receive cancel error containing "canceling"
+    # Execute multiple queries to verify full recovery
+    When we send SimpleQuery "SELECT 42" to session "main" without waiting
+    Then we read SimpleQuery response from session "main" within 2000ms
+    Then session "main" should receive DataRow with "42"
+    When we send SimpleQuery "SELECT 'recovered'" to session "main" without waiting
+    Then we read SimpleQuery response from session "main" within 2000ms
+    Then session "main" should receive DataRow with "recovered"
+
+  @cancel-fabricated-credentials
+  Scenario: Cancel with completely fabricated process_id is silently ignored
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "main" without waiting
+    And we sleep 500ms
+    # Send cancel with a process_id that was never assigned
+    And we send cancel request with process_id 999999 and secret_key 999999
+    # The original query should NOT be cancelled
+    And we sleep 3000ms
+    Then session "main" should complete without error
+
+  @cancel-wrong-secret-key-direct
+  Scenario: Cancel with correct process_id but wrong secret_key is silently ignored
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "main" without waiting
+    And we sleep 500ms
+    # Use session's real process_id but a fabricated secret_key
+    And we send cancel request for session "main" with wrong secret_key 12345
+    And we sleep 3000ms
+    Then session "main" should complete without error
+
+  @cancel-stale-after-recycle
+  Scenario: Stale cancel after server recycled to another client does not affect new owner
+    When we create session "A" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    # Execute and complete a query — server returns to pool
+    And we send SimpleQuery "SELECT 1" to session "A"
+    # Session A is idle; create session B which gets a server from pool
+    And we create session "B" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "B" without waiting
+    And we sleep 500ms
+    # Session A tries cancel with its old credentials — mapping was removed by release()
+    And we send cancel request for session "A"
+    And we sleep 3000ms
+    # Session B should NOT be affected
+    Then session "B" should complete without error
+
+  @cancel-during-copy
+  Scenario: Cancel during COPY TO STDOUT terminates the copy
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    # Start a large COPY that will take some time
+    And we send SimpleQuery "COPY (SELECT generate_series(1, 10000000)) TO STDOUT" to session "main" without waiting
+    And we sleep 200ms
+    And we send cancel request for session "main"
+    # Should receive cancellation error
+    Then session "main" should receive cancel error containing "canceling"

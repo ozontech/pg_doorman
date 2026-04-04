@@ -11,6 +11,15 @@ use std::time::{Duration, SystemTime};
 
 use bytes::{Buf, BufMut, BytesMut};
 use log::{error, info, warn};
+
+/// Replace newlines and carriage returns to keep log lines single-line.
+fn sanitize_for_log(s: &str) -> String {
+    if s.contains(['\n', '\r']) {
+        s.replace('\n', "\\n").replace('\r', "\\r")
+    } else {
+        s.to_string()
+    }
+}
 use tokio::time::timeout;
 
 use crate::config::get_config;
@@ -54,13 +63,12 @@ pub(crate) async fn send_and_flush_timeout(
     match timeout(duration, send_and_flush(server, messages)).await {
         Ok(result) => result,
         Err(err) => {
-            server.mark_bad("flush timeout error");
+            server.mark_bad("flush timeout");
             error!(
-                "Flush timeout for server {} (database: {}, user: {}). Operation took longer than the configured timeout: {}",
-                server.address.host,
-                server.address.database,
+                "[{}@{}] flush timeout pid={}: {err}",
                 server.address.username,
-                err
+                server.address.pool_name,
+                server.get_process_id(),
             );
             Err(Error::FlushTimeout)
         }
@@ -84,10 +92,12 @@ pub(crate) async fn send_and_flush(server: &mut Server, messages: &BytesMut) -> 
         Err(err) => {
             server.stats.wait_idle();
             error!(
-                "Terminating connection to server {} (database: {}, user: {}) due to error: {}",
-                server.address.host, server.address.database, server.address.username, err
+                "[{}@{}] server connection terminated pid={}: {err}",
+                server.address.username,
+                server.address.pool_name,
+                server.get_process_id(),
             );
-            server.mark_bad("flush to server error");
+            server.mark_bad("failed to flush data to server");
             Err(err)
         }
     }
@@ -201,23 +211,22 @@ fn handle_ready_for_query(server: &mut Server, message: &mut BytesMut) -> Result
         'E' => {
             server.in_transaction = true;
             if let Ok(msg) = PgErrorMsg::parse(message) {
-                error!(
-                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Position: {}]",
-                    server.address.host,
-                    server.address.database,
-                    server.address.username,
-                    msg.severity,
-                    msg.code,
-                    msg.message,
-                    msg.hint.as_deref().unwrap_or("none"),
-                    msg.position.unwrap_or(0)
+                let mut details =
+                    format!(
+                    "[{}@{}] transaction rolled back pid={}: severity={}, code={}, message=\"{}\"",
+                    server.address.username, server.address.pool_name, server.get_process_id(),
+                    msg.severity, msg.code, sanitize_for_log(&msg.message),
                 );
+                if let Some(ref hint) = msg.hint {
+                    details.push_str(&format!(", hint=\"{}\"", sanitize_for_log(hint)));
+                }
+                error!("{details}");
             } else {
                 error!(
-                    "Transaction error on server {} (database: {}, user: {}). Transaction was rolled back. Could not parse error details.",
-                    server.address.host,
-                    server.address.database,
-                    server.address.username
+                    "[{}@{}] transaction error pid={}: could not parse error details",
+                    server.address.username,
+                    server.address.pool_name,
+                    server.get_process_id(),
                 );
             }
         }
@@ -250,37 +259,25 @@ fn handle_ready_for_query(server: &mut Server, message: &mut BytesMut) -> Result
 /// Logs the error and updates server state accordingly.
 fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
     if let Ok(msg) = PgErrorMsg::parse(message) {
-        let transaction_status = if server.in_transaction {
-            "in active transaction"
-        } else {
-            "not in transaction"
-        };
-        let copy_mode_status = if server.in_copy_mode {
-            "in COPY mode"
-        } else {
-            "not in COPY mode"
-        };
-
-        error!(
-            "PostgreSQL server error from {} (database: {}, user: {}). Status: [{}, {}]. Error details: [Severity: {}, Code: {}, Message: \"{}\", Hint: \"{}\", Detail: \"{}\", Position: {}]",
-            server.address.host,
-            server.address.database,
-            server.address.username,
-            transaction_status,
-            copy_mode_status,
-            msg.severity,
-            msg.code,
-            msg.message,
-            msg.hint.as_deref().unwrap_or("none"),
-            msg.detail.as_deref().unwrap_or("none"),
-            msg.position.unwrap_or(0)
+        let mut details = format!(
+            "[{}@{}] server error pid={}: severity={}, code={}, message=\"{}\", in_transaction={}, in_copy={}",
+            server.address.username, server.address.pool_name, server.get_process_id(),
+            msg.severity, msg.code, sanitize_for_log(&msg.message),
+            server.in_transaction, server.in_copy_mode,
         );
+        if let Some(ref hint) = msg.hint {
+            details.push_str(&format!(", hint=\"{}\"", sanitize_for_log(hint)));
+        }
+        if let Some(ref detail) = msg.detail {
+            details.push_str(&format!(", detail=\"{}\"", sanitize_for_log(detail)));
+        }
+        error!("{details}");
     } else {
         error!(
-            "PostgreSQL server error from {} (database: {}, user: {}). Could not parse error details.",
-            server.address.host,
-            server.address.database,
-            server.address.username
+            "[{}@{}] server error pid={}: could not parse error details",
+            server.address.username,
+            server.address.pool_name,
+            server.get_process_id(),
         );
     }
 
@@ -322,14 +319,28 @@ fn handle_command_complete(server: &mut Server, message: &BytesMut) {
     if message.len() == 12 && &message[..] == COMMAND_COMPLETE_BY_DISCARD_ALL {
         server.registering_prepared_statement.clear();
         if server.prepared_statement_cache.is_some() {
-            warn!("Cleanup server {server} prepared statements cache (DISCARD ALL)");
+            let cache_size = server.prepared_statement_cache.as_ref().unwrap().len();
+            warn!(
+                "[{}@{}] clearing prepared statement cache pid={}: DISCARD ALL ({} entries)",
+                server.address.username,
+                server.address.pool_name,
+                server.get_process_id(),
+                cache_size
+            );
             server.prepared_statement_cache.as_mut().unwrap().clear();
         }
     }
     if message.len() == 15 && &message[..] == COMMAND_COMPLETE_BY_DEALLOCATE_ALL {
         server.registering_prepared_statement.clear();
         if server.prepared_statement_cache.is_some() {
-            warn!("Cleanup server {server} prepared statements cache (DEALLOCATE ALL)");
+            let cache_size = server.prepared_statement_cache.as_ref().unwrap().len();
+            warn!(
+                "[{}@{}] clearing prepared statement cache pid={}: DEALLOCATE ALL ({} entries)",
+                server.address.username,
+                server.address.pool_name,
+                server.get_process_id(),
+                cache_size
+            );
             server.prepared_statement_cache.as_mut().unwrap().clear();
         }
     }
@@ -349,7 +360,12 @@ fn handle_parameter_status(
     if let Some(client_server_parameters) = client_server_parameters.as_mut() {
         client_server_parameters.set_param(&key, &value, false);
         if server.log_client_parameter_status_changes {
-            info!("Server {server}: client parameter status change: {key} = {value}")
+            info!(
+                "[{}@{}] parameter changed pid={}: {key}={value}",
+                server.address.username,
+                server.address.pool_name,
+                server.get_process_id()
+            )
         }
     }
 
@@ -434,12 +450,12 @@ where
 
         if message_len > MAX_MESSAGE_SIZE {
             error!(
-                "Message size limit exceeded for server connection to {} (database: {}, user: {}). Received message size: {} bytes, maximum allowed: {} bytes. Connection will be terminated.",
-                server.address.host,
-                server.address.database,
+                "[{}@{}] message size limit exceeded pid={}: received={} bytes, max={} bytes",
                 server.address.username,
+                server.address.pool_name,
+                server.get_process_id(),
                 message_len,
-                MAX_MESSAGE_SIZE
+                MAX_MESSAGE_SIZE,
             );
             server.mark_bad(
                 format!(
@@ -457,10 +473,10 @@ where
             }
             Err(err) => {
                 error!(
-                    "Terminating server connection to {} (database: {}, user: {}) while reading message data. Error details: {err}",
-                    server.address.host,
-                    server.address.database,
-                    server.address.username
+                    "[{}@{}] server connection terminated pid={}: {err}",
+                    server.address.username,
+                    server.address.pool_name,
+                    server.get_process_id(),
                 );
                 server.mark_bad(format!("Failed to read message data: {err}").as_str());
                 return Err(err);
