@@ -97,18 +97,14 @@ where
         )));
     }
 
-    let mut buf = BytesMut::with_capacity(len as usize + 1);
+    let total_len = len as usize + 1; // code(1) + len(4) + data
+    let mut buf = BytesMut::with_capacity(total_len);
     buf.put_u8(code);
     buf.put_i32(len);
+    buf.resize(total_len, 0);
 
-    let data_len = len as usize - 4;
-    let mut data = vec![0; data_len];
-
-    match stream.read_exact(&mut data).await {
-        Ok(_) => {
-            buf.put_slice(&data);
-            Ok(buf)
-        }
+    match stream.read_exact(&mut buf[5..]).await {
+        Ok(_) => Ok(buf),
         Err(err) => Err(Error::SocketError(format!(
             "Error reading message data from socket - Code: {code:?}, Error: {err:?}"
         ))),
@@ -128,6 +124,69 @@ where
     }
     let result = read_message_data(stream, code, len).await;
     CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+    result
+}
+
+/// Shrink threshold: buffers above this are replaced after small messages.
+const READ_BUF_SHRINK_THRESHOLD: usize = 65536; // 64 KB
+/// Default read buffer capacity.
+const READ_BUF_DEFAULT_CAPACITY: usize = 8192; // 8 KB
+
+/// Read a message into a reusable buffer. Returns owned BytesMut via split(),
+/// keeping the backing capacity in `buf` for the next call. Zero heap
+/// allocations for messages that fit in the existing capacity.
+///
+/// After a large message (>64KB), the buffer is replaced with a fresh 8KB
+/// allocation to prevent permanent bloat from a single oversized result.
+#[inline]
+pub async fn read_message_reuse<S>(
+    stream: &mut S,
+    buf: &mut BytesMut,
+    max_memory_usage: u64,
+) -> Result<BytesMut, Error>
+where
+    S: tokio::io::AsyncRead + std::marker::Unpin,
+{
+    let (code, len) = read_message_header(stream).await?;
+
+    if len < 4 {
+        return Err(Error::ProtocolSyncError(format!(
+            "Message length is too small: {len}"
+        )));
+    }
+    if len > MAX_MESSAGE_SIZE {
+        return Err(Error::ProtocolSyncError(format!(
+            "Message length is too large: {len}"
+        )));
+    }
+
+    let prev = CURRENT_MEMORY.fetch_add(len as i64, Ordering::Relaxed);
+    if (prev + len as i64) as u64 > max_memory_usage {
+        CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+        return Err(Error::CurrentMemoryUsage);
+    }
+
+    let total_len = len as usize + 1;
+    buf.clear();
+    buf.reserve(total_len);
+    buf.put_u8(code);
+    buf.put_i32(len);
+    buf.resize(total_len, 0);
+
+    let result = match stream.read_exact(&mut buf[5..]).await {
+        Ok(_) => Ok(buf.split()),
+        Err(err) => Err(Error::SocketError(format!(
+            "Error reading message data from socket - Code: {code:?}, Error: {err:?}"
+        ))),
+    };
+
+    CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
+
+    // Shrink oversized buffer after the data has been split off.
+    if buf.capacity() > READ_BUF_SHRINK_THRESHOLD && total_len < READ_BUF_DEFAULT_CAPACITY {
+        *buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
+    }
+
     result
 }
 

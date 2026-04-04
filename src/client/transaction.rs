@@ -16,7 +16,7 @@ use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, deallocate_response, error_response, error_response_terminal,
-    insert_close_complete_after_last_close_complete, read_message, write_all_flush,
+    insert_close_complete_after_last_close_complete, read_message_reuse, write_all_flush,
 };
 use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
@@ -227,7 +227,11 @@ where
     ///    `pg_terminate_backend`, `idle_in_transaction_session_timeout`) and
     ///    releases the pool slot early instead of holding it indefinitely.
     async fn wait_for_next_message(&mut self, server: &Server) -> Result<NextClientMessage, Error> {
-        let mut read_fut = std::pin::pin!(read_message(&mut self.read, self.max_memory_usage));
+        let mut read_fut = std::pin::pin!(read_message_reuse(
+            &mut self.read,
+            &mut self.read_buf,
+            self.max_memory_usage
+        ));
 
         let instant = poll_fn(|cx| match read_fut.as_mut().poll(cx) {
             Poll::Ready(result) => Poll::Ready(Some(result)),
@@ -560,10 +564,13 @@ where
         let mut query_start_at: quanta::Instant;
         loop {
             self.stats.idle_read();
-            let message = match read_message(&mut self.read, self.max_memory_usage).await {
-                Ok(message) => message,
-                Err(err) => return self.process_error(err).await,
-            };
+            let message =
+                match read_message_reuse(&mut self.read, &mut self.read_buf, self.max_memory_usage)
+                    .await
+                {
+                    Ok(message) => message,
+                    Err(err) => return self.process_error(err).await,
+                };
             if message[0] as char == 'X' {
                 debug!(
                     "[{}@{} #c{}] client {} sent Terminate",
