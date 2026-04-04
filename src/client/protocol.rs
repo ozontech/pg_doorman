@@ -29,9 +29,23 @@ where
         let cached = self.prepared.cache.get(&key).cloned();
         match cached {
             Some(cached) => {
+                let query = cached.parse.query().replace(['\n', '\r'], " ");
+                let q: String = query.chars().take(80).collect();
+                let el = if query.chars().count() > 80 {
+                    "..."
+                } else {
+                    ""
+                };
                 debug!(
-                    "[{}@{} #c{}] client cache hit for prepared statement {:?}",
-                    self.username, self.pool_name, self.connection_id, key
+                    "[{}@{} #c{}] client cache hit: {} query=\"{q}{el}\"",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    match &key {
+                        PreparedStatementKey::Named(name) => format!("name=`{name}`"),
+                        PreparedStatementKey::Anonymous(hash) =>
+                            format!("hash={hash:#x} (unnamed)"),
+                    }
                 );
                 // Get the server-side name (may be async_name for async clients)
                 let server_name = cached.server_name().to_string();
@@ -230,8 +244,9 @@ where
                 // We don't want to send the parse message to the server
                 // Track this skipped Parse - ParseComplete will be inserted before BindComplete in response
                 debug!(
-                    "[{}@{} #c{}] Parse skipped for `{}`: already prepared on server, synthetic ParseComplete queued",
-                    self.username, self.pool_name, self.connection_id, server_stmt_name
+                    "[{}@{} #c{}] parse skipped for `{}`: already on server pid={}, synthetic ParseComplete queued",
+                    self.username, self.pool_name, self.connection_id,
+                    server_stmt_name, server.get_process_id()
                 );
                 // insert_at_beginning starts as false. It will be set to true later
                 // if a new Parse is sent to server AFTER this skipped Parse.
