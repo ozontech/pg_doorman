@@ -880,7 +880,7 @@ where
                 Ok(params) => params,
                 Err(err) => {
                     error!(
-                        "[{username}@{pool_name}] auth_query: failed to get server parameters: {err:?}"
+                        "[{username}@{pool_name}] auth_query: failed to get server parameters: {err}"
                     );
                     error_response(
                         write,
@@ -926,7 +926,7 @@ where
             let server_parameters = match pool.get_server_parameters().await {
                 Ok(params) => params,
                 Err(err) => {
-                    error!("[{username}@{pool_name}] auth_query: passthrough pool failed: {err:?}");
+                    error!("[{username}@{pool_name}] auth_query: passthrough pool failed: {err}");
                     error_response(
                         write,
                         "Unable to connect to database server. Please try again later.",

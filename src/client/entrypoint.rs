@@ -55,7 +55,7 @@ pub async fn client_entrypoint_too_many_clients_already(
             // Continue with cancel query request.
             return match Client::cancel(read, write, addr, bytes, client_server_map).await {
                 Ok(mut client) => {
-                    info!("Client {addr} issued a cancel query request");
+                    info!("Cancel request from {addr}");
                     let result = client.handle().await;
                     if !client.is_admin() && result.is_err() {
                         client.disconnect_stats();
@@ -267,7 +267,7 @@ pub async fn client_entrypoint(
             // Continue with cancel query request.
             match Client::cancel(read, write, addr, bytes, client_server_map).await {
                 Ok(mut client) => {
-                    info!("Cancel request received from {addr}; forwarding to the backend");
+                    info!("Cancel request from {addr}");
                     let result = client.handle().await;
                     if !client.is_admin() && result.is_err() {
                         client.disconnect_stats();

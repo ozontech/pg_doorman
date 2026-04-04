@@ -150,7 +150,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 match listen_socket.set_tos_v4(0x10) {
                     Ok(_) => (),
                     Err(err) => {
-                        warn!("Failed to set IPTOS_LOWDELAY on listener socket: {err:?}");
+                        warn!("Failed to set IPTOS_LOWDELAY on listener socket: {err}");
                     }
                 };
             };
@@ -164,7 +164,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             match listen_socket.listen(backlog) {
                 Ok(sock) => sock,
                 Err(err) => {
-                    error!("Listener socket error: {err:?}");
+                    error!("Listener socket error: {err}");
                     std::process::exit(exitcode::CONFIG);
                 }
             }
@@ -198,7 +198,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             match listen_socket.listen(backlog) {
                 Ok(sock) => sock,
                 Err(err) => {
-                    error!("Listener socket error: {err:?}");
+                    error!("Listener socket error: {err}");
                     std::process::exit(exitcode::CONFIG);
                 }
             }
@@ -219,7 +219,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         match ConnectionPool::from_config(client_server_map.clone()).await {
             Ok(_) => (),
             Err(err) => {
-                error!("Failed to initialize connection pools: {err:?}");
+                error!("Failed to initialize connection pools: {err}");
                 std::process::exit(exitcode::CONFIG);
             }
         };

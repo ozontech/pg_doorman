@@ -115,7 +115,7 @@ pub async fn startup_tls(
 
         // TLS negotiation failed.
         Err(err) => {
-            error!("TLS negotiation failed: {err:?}");
+            error!("TLS negotiation failed: {err}");
             return Err(Error::TlsError);
         }
     };

@@ -13,6 +13,8 @@ use std::time::Instant;
 
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
+
+use crate::utils::format_duration_ms;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_postgres::{Client, NoTls};
@@ -162,11 +164,11 @@ impl AuthQueryExecutor {
                 "connection {index} to {server_host}:{server_port}/{database} as '{user}': {e}"
             ))
         })?;
-        let elapsed = start.elapsed();
+        let elapsed = format_duration_ms(start.elapsed().as_millis() as u64);
 
         info!(
             "[pool: {pool_name}] auth_query: executor connection {index} established \
-             to {server_host}:{server_port}/{database} as '{user}' ({elapsed:.1?})"
+             to {server_host}:{server_port}/{database} as '{user}' ({elapsed})"
         );
 
         let pool_name_owned = pool_name.to_string();
@@ -202,24 +204,25 @@ impl AuthQueryExecutor {
 
         let start = std::time::Instant::now();
         let result = self.execute_query(&client, username).await;
-        let elapsed = start.elapsed();
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let elapsed = format_duration_ms(elapsed_ms);
 
         match &result {
             Ok(Some(_)) => {
                 debug!(
-                    "[{username}@{}] auth_query: password found ({elapsed:.1?})",
+                    "[{username}@{}] auth_query: password found ({elapsed})",
                     self.pool_name
                 );
             }
             Ok(None) => {
                 debug!(
-                    "[{username}@{}] auth_query: user not found ({elapsed:.1?})",
+                    "[{username}@{}] auth_query: user not found ({elapsed})",
                     self.pool_name
                 );
             }
             Err(e) => {
                 error!(
-                    "[{username}@{}] auth_query: query failed ({elapsed:.1?}): {e}",
+                    "[{username}@{}] auth_query: query failed ({elapsed}): {e}",
                     self.pool_name
                 );
             }
@@ -561,8 +564,9 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
                 if last.elapsed() < self.min_interval.as_std() {
                     self.inc(|s| &s.cache_rate_limited);
                     warn!(
-                        "[{username}@{}] auth_query cache: refetch rate-limited ({:.1?} since last)",
-                        self.pool_name, last.elapsed()
+                        "[{username}@{}] auth_query cache: refetch rate-limited ({} since last)",
+                        self.pool_name,
+                        format_duration_ms(last.elapsed().as_millis() as u64)
                     );
                     return Ok(None); // Rate limited
                 }

@@ -540,7 +540,7 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
     match parse(&old_config.path).await {
         Ok(()) => (),
         Err(err) => {
-            error!("Config reload error: {err:?}");
+            error!("Config reload error: {err}");
             return Err(Error::BadConfig(format!("Config reload error: {err:?}")));
         }
     };
