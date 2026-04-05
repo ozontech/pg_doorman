@@ -484,9 +484,9 @@ fields:
 
     unix_socket_dir:
       config:
-        en: "Directory for Unix domain socket listener. When set, pg_doorman accepts connections via .s.PGSQL.<port> socket file."
-        ru: "Директория для Unix domain socket. При указании pg_doorman принимает подключения через файл .s.PGSQL.<port>."
-      doc: "Directory for Unix domain socket listener. Creates .s.PGSQL.<port> file for client connections. Compatible with pgbench -h <dir>."
+        en: "Directory for Unix socket listener. Creates .s.PGSQL.<port> file. Use psql -h <dir> or pgbench -h <dir> to connect."
+        ru: "Директория для Unix socket. Создаёт файл .s.PGSQL.<port>. Подключение: psql -h <dir> или pgbench -h <dir>."
+      doc: "Directory for Unix domain socket listener. Creates .s.PGSQL.<port> socket file for local client connections."
       default: "null"
 
     max_connections:

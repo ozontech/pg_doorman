@@ -303,7 +303,7 @@ pub async fn client_entrypoint(
     }
 }
 
-/// Unix socket client entrypoint. No TLS, no peer_addr — uses fake 127.0.0.1:0.
+/// Unix socket client entrypoint. Uses placeholder addr 127.0.0.1:0 (Unix sockets have no peer address).
 pub async fn client_entrypoint_unix(
     mut stream: UnixStream,
     client_server_map: ClientServerMap,

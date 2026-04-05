@@ -604,11 +604,7 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     write_field_desc(w, fi, "general", "unix_socket_dir");
     w.comment(
         fi,
-        "Directory for Unix domain socket listener (.s.PGSQL.<port>)",
-    );
-    w.comment(
-        fi,
-        "When set, pg_doorman also accepts connections via Unix socket.",
+        "When set, pg_doorman also accepts connections via Unix socket (.s.PGSQL.<port>).",
     );
     w.commented_kv(fi, "unix_socket_dir", &w.str_val("/var/run/pg_doorman"));
     w.blank();

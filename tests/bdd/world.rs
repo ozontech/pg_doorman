@@ -145,6 +145,11 @@ impl DoormanWorld {
             result = result.replace("${ODYSSEY_PORT}", &port.to_string());
         }
 
+        // Replace temp dir placeholder (for unix_socket_dir)
+        if let Some(ref tmp_dir) = self.pg_tmp_dir {
+            result = result.replace("${PG_TEMP_DIR}", tmp_dir.path().to_str().unwrap());
+        }
+
         // Replace file path placeholders
         if let Some(ref hba_file) = self.doorman_hba_file {
             result = result.replace("${DOORMAN_HBA_FILE}", hba_file.path().to_str().unwrap());

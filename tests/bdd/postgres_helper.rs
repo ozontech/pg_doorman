@@ -660,6 +660,99 @@ pub async fn store_password_hash(world: &mut DoormanWorld, pg_user: String, var_
     world.vars.insert(var_name, hash);
 }
 
+/// Build psql command connecting via Unix socket directory
+fn build_psql_via_doorman_unix(
+    socket_dir: &str,
+    port: u16,
+    user: &str,
+    database: &str,
+    query: &str,
+) -> Command {
+    let mut cmd = Command::new("psql");
+    cmd.args([
+        "-h",
+        socket_dir,
+        "-p",
+        &port.to_string(),
+        "-U",
+        user,
+        "-d",
+        database,
+        "-c",
+        query,
+    ]);
+    cmd.env("PGSSLMODE", "disable");
+    cmd.arg("-w");
+    cmd.env_remove("PGPASSWORD");
+    cmd
+}
+
+#[then(
+    expr = "psql connection to pg_doorman via unix socket as user {string} to database {string} succeeds"
+)]
+pub async fn psql_unix_connection_succeeds(
+    world: &mut DoormanWorld,
+    user: String,
+    database: String,
+) {
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let socket_dir = world
+        .pg_tmp_dir
+        .as_ref()
+        .expect("pg_tmp_dir not set")
+        .path()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let output = build_psql_via_doorman_unix(&socket_dir, port, &user, &database, "SELECT 1")
+        .output()
+        .expect("Failed to run psql");
+    assert!(
+        output.status.success(),
+        "psql unix socket connection failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[then(
+    expr = "psql query {string} via pg_doorman unix socket as user {string} to database {string} returns {string}"
+)]
+pub async fn psql_unix_query_returns(
+    world: &mut DoormanWorld,
+    query: String,
+    user: String,
+    database: String,
+    expected: String,
+) {
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let socket_dir = world
+        .pg_tmp_dir
+        .as_ref()
+        .expect("pg_tmp_dir not set")
+        .path()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let mut cmd = build_psql_via_doorman_unix(&socket_dir, port, &user, &database, &query);
+    cmd.args(["-t", "-A"]);
+    let output = cmd.output().expect("Failed to run psql");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "psql unix query failed: stderr: {}",
+        stderr,
+    );
+    assert!(
+        stdout.contains(&expected),
+        "Expected '{}', got: '{}' (stderr: {})",
+        expected,
+        stdout.trim(),
+        stderr.trim(),
+    );
+}
+
 /// Stop PostgreSQL and pg_doorman when the world is dropped
 impl Drop for DoormanWorld {
     fn drop(&mut self) {

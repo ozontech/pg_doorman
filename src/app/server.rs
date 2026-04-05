@@ -226,7 +226,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         info!("Running on {addr}");
 
-        // Optional Unix socket listener for benchmarking (bypasses TCP stack)
+        // Unix socket listener (when unix_socket_dir is set)
         let unix_listener = if let Some(ref dir) = config.general.unix_socket_dir {
             let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
             let _ = std::fs::remove_file(&path);
