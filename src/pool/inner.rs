@@ -1,4 +1,3 @@
-use bytes::BytesMut;
 use std::{
     collections::VecDeque,
     fmt,
@@ -582,21 +581,6 @@ impl Pool {
         let closed = len_before - guard.vec.len();
         guard.size -= closed;
         closed
-    }
-
-    /// Shrink oversized read buffers on idle server connections.
-    /// Runs during the retain cycle, not on the hot path.
-    /// Returns the number of buffers shrunk.
-    pub fn shrink_idle_read_bufs(&self, threshold: usize, default_capacity: usize) -> usize {
-        let mut guard = self.inner.slots.lock();
-        let mut shrunk = 0;
-        for obj in guard.vec.iter_mut() {
-            if obj.obj.read_buf.capacity() > threshold {
-                obj.obj.read_buf = BytesMut::with_capacity(default_capacity);
-                shrunk += 1;
-            }
-        }
-        shrunk
     }
 
     /// Get current timeout configuration.

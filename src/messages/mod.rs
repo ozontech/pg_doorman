@@ -33,7 +33,7 @@ pub use protocol::{
 pub use socket::{
     proxy_copy_data, proxy_copy_data_with_timeout, read_message, read_message_body_reuse,
     read_message_data, read_message_header, read_message_reuse, write_all, write_all_flush,
-    write_all_half, READ_BUF_DEFAULT_CAPACITY, READ_BUF_SHRINK_THRESHOLD,
+    write_all_half,
 };
 pub use types::{vec_to_string, BytesMutReader, DataType};
 

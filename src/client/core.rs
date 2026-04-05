@@ -328,10 +328,6 @@ pub struct Client<S, T> {
     /// reuses existing capacity. split() returns owned data to callers.
     pub(crate) read_buf: BytesMut,
 
-    /// Swap buffer for server recv(). Exchanged with server.buffer via mem::swap
-    /// to avoid O(n) clone on every response. Both buffers keep warm capacity.
-    pub(crate) response_buf: BytesMut,
-
     /// Monotonic connection ID assigned at TCP accept. Used in log prefix as `#cN`.
     /// Also serves as Cancel Protocol process_id (as `connection_id as i32`).
     pub(crate) connection_id: u64,

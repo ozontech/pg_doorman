@@ -184,9 +184,8 @@ impl Server {
         self.send_and_flush(&query).await?;
 
         let mut noop = tokio::io::sink();
-        let mut discard = BytesMut::new();
         loop {
-            match self.recv(&mut discard, &mut noop, None).await {
+            match self.recv(&mut noop, None).await {
                 Ok(_) => (),
                 Err(err) => return Err(err),
             }
@@ -208,9 +207,8 @@ impl Server {
         self.send_and_flush_timeout(&query, timeout).await?;
 
         let mut noop = tokio::io::sink();
-        let mut discard = BytesMut::new();
         loop {
-            match self.recv(&mut discard, &mut noop, None).await {
+            match self.recv(&mut noop, None).await {
                 Ok(_) => (),
                 Err(err) => return Err(err),
             }
@@ -242,14 +240,13 @@ impl Server {
     /// in order to receive all data the server has to offer.
     pub async fn recv<C>(
         &mut self,
-        output: &mut BytesMut,
         client_stream: C,
         client_server_parameters: Option<&mut ServerParameters>,
-    ) -> Result<(), Error>
+    ) -> Result<BytesMut, Error>
     where
         C: tokio::io::AsyncWrite + std::marker::Unpin,
     {
-        protocol_io::recv(self, output, client_stream, client_server_parameters).await
+        protocol_io::recv(self, client_stream, client_server_parameters).await
     }
 
     /// Indicate that this server connection cannot be re-used and must be discarded.
@@ -307,8 +304,7 @@ impl Server {
                 break;
             }
             self.stats.wait_reading();
-            let mut discard = BytesMut::new();
-            match self.recv(&mut discard, &mut tokio::io::sink(), None).await {
+            match self.recv(&mut tokio::io::sink(), None).await {
                 Ok(_) => self.stats.wait_idle(),
                 Err(err_read_response) => {
                     error!(
@@ -585,9 +581,8 @@ impl Server {
                 self.send_and_flush(&bytes).await?;
 
                 let mut noop = tokio::io::sink();
-                let mut discard = BytesMut::new();
                 loop {
-                    self.recv(&mut discard, &mut noop, None).await?;
+                    self.recv(&mut noop, None).await?;
 
                     if !self.is_data_available() {
                         break;
@@ -660,9 +655,8 @@ impl Server {
         self.send_and_flush(&bytes).await?;
 
         let mut noop = tokio::io::sink();
-        let mut discard = BytesMut::new();
         loop {
-            self.recv(&mut discard, &mut noop, None).await?;
+            self.recv(&mut noop, None).await?;
             if !self.is_data_available() {
                 break;
             }

@@ -1,11 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use log::{debug, info, warn};
+use log::{info, warn};
 use rand::seq::SliceRandom;
 
 use crate::config::get_config;
-use crate::messages::{READ_BUF_DEFAULT_CAPACITY, READ_BUF_SHRINK_THRESHOLD};
 use crate::utils::{format_duration_ms, format_elapsed};
 
 use super::{get_all_pools, ConnectionPool};
@@ -232,23 +231,6 @@ pub async fn retain_connections() {
                         }
                     }
                 }
-            }
-        }
-
-        // Shrink oversized read buffers on idle server connections.
-        // Prevents permanent memory bloat from one large query result.
-        for pool in &pool_refs {
-            let shrunk = pool
-                .database
-                .shrink_idle_read_bufs(READ_BUF_SHRINK_THRESHOLD, READ_BUF_DEFAULT_CAPACITY);
-            if shrunk > 0 {
-                debug!(
-                    "[{}@{}] shrunk {} oversized read buffer{}",
-                    pool.address.username,
-                    pool.address.pool_name,
-                    shrunk,
-                    if shrunk == 1 { "" } else { "s" },
-                );
             }
         }
     }

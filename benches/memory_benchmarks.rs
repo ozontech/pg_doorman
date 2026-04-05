@@ -171,41 +171,6 @@ fn shrink_policy(c: &mut Criterion) {
     group.finish();
 }
 
-fn swap_vs_clone(c: &mut Criterion) {
-    let mut group = c.benchmark_group("recv_return");
-    group.throughput(Throughput::Elements(1));
-
-    for &size in &[1024, 8192, 32768] {
-        let data = vec![42u8; size];
-
-        // Current: clone + clear (malloc + memcpy per cycle)
-        group.bench_with_input(BenchmarkId::new("clone_clear", size), &size, |b, _| {
-            let mut buf = BytesMut::with_capacity(size);
-            b.iter(|| {
-                buf.clear();
-                buf.extend_from_slice(&data);
-                let cloned = buf.clone();
-                buf.clear();
-                std::hint::black_box(cloned);
-            });
-        });
-
-        // Proposed: swap with warm spare (zero alloc in steady state)
-        group.bench_with_input(BenchmarkId::new("swap", size), &size, |b, _| {
-            let mut buf = BytesMut::with_capacity(size);
-            let mut spare = BytesMut::with_capacity(size);
-            b.iter(|| {
-                spare.clear();
-                spare.extend_from_slice(&data);
-                std::mem::swap(&mut buf, &mut spare);
-                std::hint::black_box(&buf);
-                buf.clear();
-            });
-        });
-    }
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bytesmut_allocation,
@@ -213,6 +178,5 @@ criterion_group!(
     read_message_simulation,
     clone_vs_split,
     shrink_policy,
-    swap_vs_clone,
 );
 criterion_main!(benches);
