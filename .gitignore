@@ -41,3 +41,6 @@ documentation/en/mermaid.min.js
 # Claude AI agent rules
 .clinerules
 .clauderules
+
+# Flamegraph profiling artifacts
+flamegraph-output/
