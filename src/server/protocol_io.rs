@@ -28,7 +28,7 @@ use crate::errors::Error::MaxMessageSize;
 use crate::messages::PgErrorMsg;
 use crate::messages::MAX_MESSAGE_SIZE;
 use crate::messages::{
-    proxy_copy_data, proxy_copy_data_with_timeout, read_message_data, read_message_header,
+    proxy_copy_data, proxy_copy_data_with_timeout, read_message_body_reuse, read_message_header,
     write_all_flush, BytesMutReader,
 };
 
@@ -466,7 +466,15 @@ where
             return Err(MaxMessageSize);
         }
 
-        let mut message = match read_message_data(&mut server.stream, code_u8, message_len).await {
+        // Read body into per-connection reusable buffer (header already consumed above).
+        let mut message = match read_message_body_reuse(
+            &mut server.stream,
+            &mut server.read_buf,
+            code_u8,
+            message_len,
+        )
+        .await
+        {
             Ok(message) => {
                 server.stats.wait_idle();
                 message

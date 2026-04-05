@@ -321,6 +321,13 @@ pub struct Client<S, T> {
     /// Address
     pub(crate) addr: std::net::SocketAddr,
 
+    /// Cached string representation of addr — avoids per-query allocation in debug logging.
+    pub(crate) addr_str: String,
+
+    /// Reusable read buffer. Avoids heap allocation per message — clear()+reserve()
+    /// reuses existing capacity. split() returns owned data to callers.
+    pub(crate) read_buf: BytesMut,
+
     /// Monotonic connection ID assigned at TCP accept. Used in log prefix as `#cN`.
     /// Also serves as Cancel Protocol process_id (as `connection_id as i32`).
     pub(crate) connection_id: u64,
