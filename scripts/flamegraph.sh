@@ -14,6 +14,61 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    cat <<'HELP'
+pg_doorman flamegraph profiler
+
+Starts PostgreSQL, builds pg_doorman with debug symbols, runs pgbench
+through the pooler, records perf data, and generates SVG flamegraphs.
+All processes are cleaned up automatically.
+
+USAGE:
+    make flamegraph
+    ./scripts/flamegraph.sh [--help]
+
+ENVIRONMENT VARIABLES:
+    FLAMEGRAPH_DURATION   Recording duration in seconds       (default: 60)
+    FLAMEGRAPH_CLIENTS    Number of pgbench clients           (default: 120)
+    FLAMEGRAPH_JOBS       pgbench worker threads              (default: 4)
+    FLAMEGRAPH_PROTOCOL   simple | extended | prepared        (default: extended)
+    FLAMEGRAPH_POOL_SIZE  pg_doorman pool size                (default: 40)
+    FLAMEGRAPH_WORKERS    pg_doorman worker_threads           (default: nproc)
+    FLAMEGRAPH_FREQ       perf sampling frequency in Hz       (default: 99)
+    FLAMEGRAPH_SCRIPT     pgbench script file                 (default: scripts/noop.sql)
+    FLAMEGRAPH_OFFCPU     Set to 1 for off-CPU flamegraph     (default: 0)
+                          Requires bcc-tools (offcputime)
+
+EXAMPLES:
+    # Quick 10-second profile
+    FLAMEGRAPH_DURATION=10 make flamegraph
+
+    # Prepared protocol, 500 clients
+    FLAMEGRAPH_PROTOCOL=prepared FLAMEGRAPH_CLIENTS=500 make flamegraph
+
+    # With off-CPU analysis (shows where pg_doorman waits)
+    FLAMEGRAPH_OFFCPU=1 make flamegraph
+
+OUTPUT (in flamegraph-output/<timestamp>/):
+    flamegraph.svg          Interactive CPU flamegraph (top-down)
+    flamegraph-reverse.svg  Reverse CPU flamegraph (bottom-up)
+    flamegraph-offcpu.svg   Off-CPU flamegraph (only with FLAMEGRAPH_OFFCPU=1)
+    profile.csv             Per-function: self + inclusive cost, category
+    summary.csv             CPU breakdown by category
+    perf.folded             Collapsed stacks (input for custom flamegraphs)
+    pgbench.log             pgbench output with TPS
+    pg_doorman.log          pg_doorman stderr
+    config.toml             pg_doorman config used
+
+DEPENDENCIES (auto-installed if missing):
+    perf, pgbench (postgresql-contrib), inferno (cargo install),
+    offcputime (bcc-tools, only for FLAMEGRAPH_OFFCPU=1)
+HELP
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Configuration (all overridable via environment)
 # ---------------------------------------------------------------------------
 DURATION="${FLAMEGRAPH_DURATION:-60}"
