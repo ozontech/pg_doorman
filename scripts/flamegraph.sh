@@ -6,6 +6,9 @@
 #   ./scripts/flamegraph.sh
 #   FLAMEGRAPH_DURATION=30 FLAMEGRAPH_CLIENTS=500 ./scripts/flamegraph.sh
 #
+# Off-CPU profiling (where pg_doorman waits — locks, I/O, pool):
+#   FLAMEGRAPH_OFFCPU=1 ./scripts/flamegraph.sh
+#
 # Artifacts are written to flamegraph-output/<timestamp>/
 
 set -euo pipefail
@@ -21,6 +24,7 @@ POOL_SIZE="${FLAMEGRAPH_POOL_SIZE:-40}"
 WORKERS="${FLAMEGRAPH_WORKERS:-$(nproc)}"
 PERF_FREQ="${FLAMEGRAPH_FREQ:-99}"
 PGBENCH_SCRIPT="${FLAMEGRAPH_SCRIPT:-scripts/noop.sql}"
+OFFCPU="${FLAMEGRAPH_OFFCPU:-0}"
 
 # ---------------------------------------------------------------------------
 # Resolve project root (script may be called from any directory)
@@ -36,6 +40,7 @@ PGBENCH_SCRIPT="$PROJECT_ROOT/$PGBENCH_SCRIPT"
 TMPDIR=""
 DOORMAN_PID=""
 PERF_PID=""
+OFFCPU_PID=""
 PG_PORT=""
 DOORMAN_PORT=""
 OUT_DIR=""
@@ -60,6 +65,12 @@ cleanup() {
         kill "$PERF_PID" 2>/dev/null
         wait "$PERF_PID" 2>/dev/null
         PERF_PID=""
+    fi
+
+    if [ -n "$OFFCPU_PID" ]; then
+        sudo kill "$OFFCPU_PID" 2>/dev/null
+        sudo wait "$OFFCPU_PID" 2>/dev/null || true
+        OFFCPU_PID=""
     fi
 
     if [ -n "$TMPDIR" ] && [ -d "$TMPDIR/db" ]; then
@@ -144,6 +155,15 @@ phase_preflight() {
         log "kernel.perf_event_paranoid=$paranoid (need <=1), lowering..."
         sudo sysctl -w kernel.perf_event_paranoid=1 \
             || die "Cannot set perf_event_paranoid. Run: sudo sysctl -w kernel.perf_event_paranoid=1"
+    fi
+
+    # offcputime (optional, only when FLAMEGRAPH_OFFCPU=1)
+    if [ "$OFFCPU" = "1" ]; then
+        if ! command -v offcputime-bpfcc >/dev/null 2>&1; then
+            log "offcputime-bpfcc not found, installing bcc-tools..."
+            sudo dnf install -y bcc-tools \
+                || die "Failed to install bcc-tools (provides offcputime-bpfcc)"
+        fi
     fi
 
     # pgbench script
@@ -276,10 +296,18 @@ phase_record() {
     perf record \
         -F "$PERF_FREQ" \
         -p "$DOORMAN_PID" \
-        -g --call-graph dwarf \
+        -g --call-graph dwarf,16384 \
         -o "$OUT_DIR/perf.data" \
         -- sleep "$DURATION" &
     PERF_PID=$!
+
+    # Start off-CPU recording if requested
+    if [ "$OFFCPU" = "1" ]; then
+        log "  off-CPU recording enabled (offcputime-bpfcc)"
+        sudo offcputime-bpfcc -df -p "$DOORMAN_PID" "$DURATION" \
+            > "$OUT_DIR/offcpu.stacks" 2>/dev/null &
+        OFFCPU_PID=$!
+    fi
 
     # Run pgbench as load driver (PGSSLMODE=disable mirrors bench.feature)
     PGSSLMODE=disable pgbench -n \
@@ -292,6 +320,12 @@ phase_record() {
     # Wait for perf to finish
     wait "$PERF_PID" 2>/dev/null || true
     PERF_PID=""
+
+    # Wait for off-CPU recording to finish
+    if [ -n "$OFFCPU_PID" ]; then
+        sudo wait "$OFFCPU_PID" 2>/dev/null || true
+        OFFCPU_PID=""
+    fi
 
     [ -f "$OUT_DIR/perf.data" ] || die "perf.data not created"
 }
@@ -319,12 +353,12 @@ phase_flamegraph() {
         < "$OUT_DIR/perf.folded" \
         > "$OUT_DIR/flamegraph-reverse.svg"
 
-    # Generate machine-readable CSV from folded stacks
+    # Generate machine-readable CSV with both self and inclusive cost
     python3 -c "
-import sys
 from collections import defaultdict
 
-counts = defaultdict(int)
+self_cost = defaultdict(int)
+inclusive_cost = defaultdict(int)
 total = 0
 
 for line in open('$OUT_DIR/perf.folded'):
@@ -338,40 +372,79 @@ for line in open('$OUT_DIR/perf.folded'):
     val = int(val_str)
     total += val
     frames = stack_str.split(';')
-    leaf = frames[-1]
-    counts[leaf] += val
+    self_cost[frames[-1]] += val
+    seen = set()
+    for f in frames:
+        if f not in seen:
+            inclusive_cost[f] += val
+            seen.add(f)
+
+if total == 0:
+    exit(0)
+
+def categorize(func):
+    if 'pg_doorman' in func:
+        return 'pg_doorman'
+    if 'tokio' in func:
+        return 'tokio'
+    if any(x in func for x in ['alloc', 'dealloc', 'malloc', 'free', 'jemalloc']):
+        return 'allocator'
+    if any(x in func for x in ['mio::', 'epoll']):
+        return 'mio'
+    if any(x in func for x in ['nft_', 'nf_', 'conntrack']):
+        return 'kernel_nftables'
+    if any(x in func for x in ['tcp_', 'ip_', 'skb_', '__dev_queue', 'net_rx', '__tcp_']):
+        return 'kernel_tcp'
+    if any(x in func for x in ['sched', 'enqueue_task', 'dequeue_task', 'update_curr', 'update_load', 'psi_group']):
+        return 'kernel_scheduler'
+    if any(x in func for x in ['do_syscall', 'entry_SYSCALL', 'syscall']):
+        return 'kernel_syscall'
+    return 'other'
+
+all_funcs = set(self_cost) | set(inclusive_cost)
 
 with open('$OUT_DIR/profile.csv', 'w') as f:
-    f.write('function,self_samples,self_pct,category\n')
-    for func, cnt in sorted(counts.items(), key=lambda x: -x[1]):
-        pct = round(cnt / total * 100, 4)
-        if 'pg_doorman' in func:
-            cat = 'pg_doorman'
-        elif 'tokio' in func:
-            cat = 'tokio'
-        elif any(x in func for x in ['alloc', 'dealloc', 'malloc', 'free', 'jemalloc']):
-            cat = 'allocator'
-        elif any(x in func for x in ['mio::', 'epoll']):
-            cat = 'mio'
-        elif any(x in func for x in ['nft_', 'nf_', 'conntrack']):
-            cat = 'kernel_nftables'
-        elif any(x in func for x in ['tcp_', 'ip_', 'skb_', '__dev_queue', 'net_rx', '__tcp_']):
-            cat = 'kernel_tcp'
-        elif any(x in func for x in ['sched', 'enqueue_task', 'dequeue_task', 'update_curr', 'update_load', 'psi_group']):
-            cat = 'kernel_scheduler'
-        else:
-            cat = 'other'
-        # Escape quotes in function names
+    f.write('function,self_samples,self_pct,inclusive_samples,inclusive_pct,category\n')
+    for func in sorted(all_funcs, key=lambda x: -inclusive_cost.get(x, 0)):
+        s = self_cost.get(func, 0)
+        i = inclusive_cost.get(func, 0)
+        sp = round(s / total * 100, 4)
+        ip = round(i / total * 100, 4)
+        cat = categorize(func)
         safe = func.replace('\"', '\"\"')
-        f.write(f'\"{ safe }\",{cnt},{pct},{cat}\n')
+        f.write(f'\"{ safe }\",{s},{sp},{i},{ip},{cat}\n')
+
+# Also generate a summary by category
+cats = defaultdict(int)
+for func, cnt in self_cost.items():
+    cats[categorize(func)] += cnt
+
+with open('$OUT_DIR/summary.csv', 'w') as f:
+    f.write('category,self_samples,self_pct\n')
+    for cat, cnt in sorted(cats.items(), key=lambda x: -x[1]):
+        f.write(f'{cat},{cnt},{round(cnt / total * 100, 2)}\n')
 " || log "  (CSV generation skipped — python3 not available)"
+
+    # Generate off-CPU flamegraph if offcputime data was collected
+    if [ "$OFFCPU" = "1" ] && [ -s "$OUT_DIR/offcpu.stacks" ]; then
+        log "  generating off-CPU flamegraph..."
+        inferno-flamegraph \
+            --color blue \
+            --title "$title (off-CPU: where pg_doorman waits)" \
+            < "$OUT_DIR/offcpu.stacks" \
+            > "$OUT_DIR/flamegraph-offcpu.svg"
+    fi
 
     # Save config for reproducibility
     cp "$TMPDIR/config.toml" "$OUT_DIR/config.toml"
 
     log "  flamegraph.svg:         $OUT_DIR/flamegraph.svg"
     log "  flamegraph-reverse.svg: $OUT_DIR/flamegraph-reverse.svg"
+    if [ "$OFFCPU" = "1" ] && [ -f "$OUT_DIR/flamegraph-offcpu.svg" ]; then
+        log "  flamegraph-offcpu.svg:  $OUT_DIR/flamegraph-offcpu.svg"
+    fi
     log "  profile.csv:            $OUT_DIR/profile.csv"
+    log "  summary.csv:            $OUT_DIR/summary.csv"
     log "  perf.folded:            $OUT_DIR/perf.folded"
     log "  pgbench.log:            $OUT_DIR/pgbench.log"
     log "  config.toml:            $OUT_DIR/config.toml"
@@ -385,6 +458,9 @@ main() {
     echo "pg_doorman flamegraph profiler"
     echo "  duration=$DURATION  clients=$CLIENTS  protocol=$PROTOCOL"
     echo "  pool_size=$POOL_SIZE  workers=$WORKERS  freq=$PERF_FREQ"
+    if [ "$OFFCPU" = "1" ]; then
+        echo "  off-CPU: enabled"
+    fi
     echo ""
 
     phase_preflight
