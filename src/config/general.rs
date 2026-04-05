@@ -55,6 +55,9 @@ pub struct General {
     #[serde(default = "General::default_unix_socket_buffer_size")]
     pub unix_socket_buffer_size: ByteSize,
 
+    #[serde(default)]
+    pub unix_socket_dir: Option<String>,
+
     #[serde(default)] // True
     pub log_client_connections: bool,
 
@@ -450,6 +453,7 @@ impl Default for General {
             tcp_no_delay: Self::default_tcp_no_delay(),
             tcp_user_timeout: Self::default_tcp_user_timeout(),
             unix_socket_buffer_size: Self::default_unix_socket_buffer_size(),
+            unix_socket_dir: None,
             log_client_connections: true,
             log_client_disconnections: true,
             sync_server_parameters: Self::default_sync_server_parameters(),

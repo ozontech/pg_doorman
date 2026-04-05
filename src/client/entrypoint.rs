@@ -3,7 +3,7 @@ use log::{error, info, warn};
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::Ordering;
 use tokio::io::split;
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UnixStream};
 
 use crate::config::get_config;
 use crate::errors::Error;
@@ -172,6 +172,7 @@ pub async fn client_entrypoint(
                             admin_only,
                             false,
                             connection_id,
+                            false,
                             #[cfg(unix)]
                             raw_fd,
                             #[cfg(all(unix, feature = "tls-migration"))]
@@ -238,6 +239,7 @@ pub async fn client_entrypoint(
                 admin_only,
                 false,
                 connection_id,
+                false,
                 #[cfg(unix)]
                 raw_fd,
                 #[cfg(all(unix, feature = "tls-migration"))]
@@ -296,6 +298,98 @@ pub async fn client_entrypoint(
         // Something failed, probably the socket.
         Err(err) => {
             error!("#c{connection_id} client {addr} startup failed: {err}");
+            Err(err)
+        }
+    }
+}
+
+/// Unix socket client entrypoint. No TLS, no peer_addr — uses fake 127.0.0.1:0.
+pub async fn client_entrypoint_unix(
+    mut stream: UnixStream,
+    client_server_map: ClientServerMap,
+    admin_only: bool,
+    connection_id: u64,
+) -> Result<Option<ClientSessionInfo>, Error> {
+    let fake_addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
+    let config = get_config();
+    let log_client_connections = config.general.log_client_connections;
+
+    match get_startup::<UnixStream>(&mut stream).await {
+        Ok((ClientConnectionType::Startup, bytes)) => {
+            PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let raw_fd = Some(stream.as_raw_fd());
+            let (read, write) = split(stream);
+
+            match Client::startup(
+                read,
+                write,
+                fake_addr,
+                bytes,
+                client_server_map,
+                admin_only,
+                false,
+                connection_id,
+                true,
+                #[cfg(unix)]
+                raw_fd,
+                #[cfg(all(unix, feature = "tls-migration"))]
+                None, // no SSL on Unix socket
+            )
+            .await
+            {
+                Ok(mut client) => {
+                    if log_client_connections {
+                        info!(
+                            "[{}@{} #c{}] client connected via unix socket",
+                            client.username, client.pool_name, client.connection_id
+                        );
+                    }
+                    let session_info = ClientSessionInfo {
+                        username: client.username.clone(),
+                        pool_name: client.pool_name.clone(),
+                        connection_id: client.connection_id,
+                    };
+                    let result = client.handle().await;
+                    if !client.is_admin() && result.is_err() {
+                        client.disconnect_stats();
+                    }
+                    result.map(|_| Some(session_info))
+                }
+                Err(err) => Err(err),
+            }
+        }
+
+        Ok((ClientConnectionType::Tls, _)) => {
+            error_response_terminal(
+                &mut stream,
+                "TLS is not supported on Unix socket connections",
+                "08P01",
+            )
+            .await?;
+            Err(Error::ProtocolSyncError(
+                "TLS requested on Unix socket".into(),
+            ))
+        }
+
+        Ok((ClientConnectionType::CancelQuery, bytes)) => {
+            CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let (read, write) = split(stream);
+
+            match Client::cancel(read, write, fake_addr, bytes, client_server_map).await {
+                Ok(mut client) => {
+                    info!("Cancel request via unix socket");
+                    let result = client.handle().await;
+                    if !client.is_admin() && result.is_err() {
+                        client.disconnect_stats();
+                    }
+                    result.map(|_| None)
+                }
+                Err(err) => Err(err),
+            }
+        }
+
+        Err(err) => {
+            error!("#c{connection_id} unix client startup failed: {err}");
             Err(err)
         }
     }

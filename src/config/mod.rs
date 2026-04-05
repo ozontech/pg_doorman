@@ -684,13 +684,18 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
 pub fn check_hba(
     ip: IpAddr,
     ssl: bool,
+    is_unix: bool,
     type_auth: &str,
     username: &str,
     database: &str,
 ) -> CheckResult {
     let config = get_config();
     if let Some(ref pg) = config.general.pg_hba {
-        return pg.check_hba(ip, ssl, type_auth, username, database);
+        return pg.check_hba(ip, ssl, is_unix, type_auth, username, database);
+    }
+    // Legacy hba list has no unix concept — allow all unix connections
+    if is_unix {
+        return CheckResult::Allow;
     }
     if config.general.hba.is_empty() {
         return CheckResult::Allow;

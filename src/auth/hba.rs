@@ -360,6 +360,7 @@ impl PgHba {
         &self,
         ip: IpAddr,
         ssl: bool,
+        is_unix: bool,
         type_auth: &str,
         username: &str,
         database: &str,
@@ -371,16 +372,26 @@ impl PgHba {
         };
 
         for rule in &self.rules {
-            // Skip local rules; they are intended only for unix-socket connections
-            if matches!(rule.host_type, HostType::Local) {
-                continue;
-            }
-            if !rule.host_type.matches_ssl(ssl) {
-                continue;
-            }
-            if let Some(net) = &rule.address {
-                if !net.contains(&ip) {
-                    continue;
+            match rule.host_type {
+                HostType::Local => {
+                    // local rules match only Unix socket connections
+                    if !is_unix {
+                        continue;
+                    }
+                }
+                _ => {
+                    // host/hostssl/hostnossl rules match only TCP connections
+                    if is_unix {
+                        continue;
+                    }
+                    if !rule.host_type.matches_ssl(ssl) {
+                        continue;
+                    }
+                    if let Some(net) = &rule.address {
+                        if !net.contains(&ip) {
+                            continue;
+                        }
+                    }
                 }
             }
             // Database and user must match as well (supporting keyword `all`).
@@ -461,29 +472,29 @@ hostnossl all all 127.0.0.1/32 trust
         // md5 allowed for 10.1.2.3 over non-ssl and ssl (host matches both)
         let ip = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
         assert_eq!(
-            hba.check_hba(ip, false, "md5", "alice", "app"),
+            hba.check_hba(ip, false, false, "md5", "alice", "app"),
             CheckResult::Allow
         );
         assert_eq!(
-            hba.check_hba(ip, true, "md5", "alice", "app"),
+            hba.check_hba(ip, true, false, "md5", "alice", "app"),
             CheckResult::Allow
         );
 
         // scram allowed for 192.168.1.10 only with ssl
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
         assert_eq!(
-            hba.check_hba(ip2, true, "scram-sha-256", "alice", "app"),
+            hba.check_hba(ip2, true, false, "scram-sha-256", "alice", "app"),
             CheckResult::Allow
         );
         assert_eq!(
-            hba.check_hba(ip2, false, "scram-sha-256", "alice", "app"),
+            hba.check_hba(ip2, false, false, "scram-sha-256", "alice", "app"),
             CheckResult::NotMatched
         );
 
         // trust on localhost without ssl
         let ip3 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         assert_eq!(
-            hba.check_hba(ip3, false, "md5", "alice", "app"),
+            hba.check_hba(ip3, false, false, "md5", "alice", "app"),
             CheckResult::Trust
         );
     }
@@ -509,13 +520,13 @@ hostnossl all all 127.0.0.1/32 trust
         // First rule trust for 127.0.0.1
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         assert_eq!(
-            cfg.hba.check_hba(ip, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(ip, false, false, "md5", "alice", "app"),
             CheckResult::Trust
         );
         // Second rule md5 for 10.1.2.3
         let ip2 = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
         assert_eq!(
-            cfg.hba.check_hba(ip2, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(ip2, false, false, "md5", "alice", "app"),
             CheckResult::Allow
         );
     }
@@ -528,11 +539,11 @@ hostnossl all all 127.0.0.1/32 trust
         let cfg: Wrapper = toml::from_str(toml_in).expect("toml parse map content");
         let ip = IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4));
         assert_eq!(
-            cfg.hba.check_hba(ip, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(ip, false, false, "md5", "alice", "app"),
             CheckResult::Allow
         );
         assert_eq!(
-            cfg.hba.check_hba(ip, true, "md5", "alice", "app"),
+            cfg.hba.check_hba(ip, true, false, "md5", "alice", "app"),
             CheckResult::Allow
         );
     }
@@ -555,7 +566,8 @@ hostnossl all all 127.0.0.1/32 trust
         let cfg: Wrapper = toml::from_str(&toml_in).expect("toml parse map path");
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
         assert_eq!(
-            cfg.hba.check_hba(ip, true, "scram-sha-256", "alice", "app"),
+            cfg.hba
+                .check_hba(ip, true, false, "scram-sha-256", "alice", "app"),
             CheckResult::Allow
         );
 
@@ -593,7 +605,7 @@ hostnossl all all 127.0.0.1/32 trust
         let cfg: Wrapper = toml::from_str(toml_in).expect("toml parse both fields");
         let ip = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
         assert_eq!(
-            cfg.hba.check_hba(ip, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(ip, false, false, "md5", "alice", "app"),
             CheckResult::Allow
         );
     }

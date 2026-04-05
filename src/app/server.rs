@@ -17,7 +17,7 @@ use tokio::{runtime::Builder, sync::mpsc};
 use crate::app::args::Args;
 use crate::config::{get_config, reload_config, Config};
 use crate::daemon;
-use crate::messages::configure_tcp_socket;
+use crate::messages::{configure_tcp_socket, configure_unix_socket};
 use crate::pool::{retain, ClientServerMap, ConnectionPool};
 use crate::prometheus::start_prometheus_server;
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
@@ -225,6 +225,24 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         };
 
         info!("Running on {addr}");
+
+        // Optional Unix socket listener for benchmarking (bypasses TCP stack)
+        let unix_listener = if let Some(ref dir) = config.general.unix_socket_dir {
+            let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
+            let _ = std::fs::remove_file(&path);
+            match tokio::net::UnixListener::bind(&path) {
+                Ok(l) => {
+                    info!("Unix socket listening on {path}");
+                    Some(l)
+                }
+                Err(err) => {
+                    error!("Failed to bind Unix socket {path}: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         config.show();
 
@@ -518,12 +536,84 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     });
                 }
 
+                // Unix socket client
+                new_unix = async {
+                    if let Some(ref l) = unix_listener {
+                        l.accept().await
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    let (socket, _unix_addr) = match new_unix {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            error!("Failed to accept Unix connection: {err}");
+                            continue;
+                        }
+                    };
+                    if admin_only {
+                        drop(socket);
+                        continue;
+                    }
+                    configure_unix_socket(&socket);
+                    let client_server_map = client_server_map.clone();
+                    let config = get_config();
+                    let log_client_disconnections = config.general.log_client_disconnections;
+                    let max_connections = config.general.max_connections;
+
+                    tokio::task::spawn(async move {
+                        let connection_id = TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed) as u64 + 1;
+                        let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
+                        if current_clients as u64 > max_connections {
+                            warn!("[#c{connection_id}] unix client rejected: too many clients (current={current_clients}, max={max_connections})");
+                            CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                            return;
+                        }
+                        let start = Utc::now().naive_utc();
+
+                        match crate::client::client_entrypoint_unix(
+                            socket,
+                            client_server_map,
+                            admin_only,
+                            connection_id,
+                        )
+                        .await
+                        {
+                            Ok(session_info) => {
+                                if log_client_disconnections {
+                                    let session = format_duration(&(Utc::now().naive_utc() - start));
+                                    let identity = match &session_info {
+                                        Some(si) => format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id),
+                                        None => format!("[#c{connection_id}]"),
+                                    };
+                                    info!("{identity} unix client disconnected, session={session}");
+                                }
+                            }
+                            Err(err) => {
+                                let session = format_duration(&(Utc::now().naive_utc() - start));
+                                warn!("[#c{connection_id}] unix client disconnected with error: {err}, session={session}");
+                            }
+                        };
+                        CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                    });
+                }
+
                 _ = exit_rx.recv() => {
                     break;
                 }
 
             }
         }
+        // Cleanup Unix socket file
+        if let Some(ref dir) = get_config().general.unix_socket_dir {
+            let path = format!("{dir}/.s.PGSQL.{}", get_config().general.port);
+            if let Err(err) = std::fs::remove_file(&path) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    warn!("Failed to remove Unix socket {path}: {err}");
+                }
+            }
+        }
+
         info!("Shutting down...");
 
         // Signal migration_sender_task to stop, then wait for it to

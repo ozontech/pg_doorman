@@ -151,6 +151,7 @@ pub async fn startup_tls(
                 admin_only,
                 true,
                 connection_id,
+                false,
                 #[cfg(unix)]
                 raw_fd,
                 #[cfg(all(unix, feature = "tls-migration"))]
@@ -191,6 +192,7 @@ where
         admin_only: bool,
         use_tls: bool,
         connection_id: u64,
+        is_unix: bool,
         #[cfg(unix)] raw_fd: Option<std::os::unix::io::RawFd>,
         #[cfg(all(unix, feature = "tls-migration"))] ssl_ptr: Option<super::core::SslRawPtr>,
     ) -> Result<Client<S, T>, Error> {
@@ -225,6 +227,7 @@ where
         client_identifier.hba_md5 = check_hba(
             addr.ip(),
             use_tls,
+            is_unix,
             "md5",
             username_from_parameters,
             &pool_name,
@@ -232,6 +235,7 @@ where
         client_identifier.hba_scram = check_hba(
             addr.ip(),
             use_tls,
+            is_unix,
             "scram-sha-256",
             username_from_parameters,
             &pool_name,

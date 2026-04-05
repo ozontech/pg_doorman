@@ -22,8 +22,8 @@ fn ci_from_hba(hba_text: &str, ssl: bool) -> ClientIdentifier {
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
     let username = "user";
     let database = "db";
-    let hba_scram = hba.check_hba(ip, ssl, "scram-sha-256", username, database);
-    let hba_md5 = hba.check_hba(ip, ssl, "md5", username, database);
+    let hba_scram = hba.check_hba(ip, ssl, false, "scram-sha-256", username, database);
+    let hba_md5 = hba.check_hba(ip, ssl, false, "md5", username, database);
     let mut ci = base_ci();
     ci.hba_scram = hba_scram;
     ci.hba_md5 = hba_md5;
