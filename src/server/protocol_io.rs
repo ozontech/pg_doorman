@@ -111,10 +111,11 @@ pub(crate) async fn send_and_flush(server: &mut Server, messages: &BytesMut) -> 
 /// Streams the message directly to the client without buffering.
 async fn handle_large_data_row<C>(
     server: &mut Server,
+    output: &mut BytesMut,
     client_stream: &mut C,
     code_u8: u8,
     message_len: i32,
-) -> Result<BytesMut, Error>
+) -> Result<(), Error>
 where
     C: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -150,19 +151,20 @@ where
         .data_received(server.buffer.len() + message_len as usize);
     server.last_activity = SystemTime::now();
     server.data_available = true;
-    server.buffer.clear();
+    std::mem::swap(&mut server.buffer, output);
     server.stats.wait_idle();
-    Ok(server.buffer.clone())
+    Ok(())
 }
 
 /// Handles large CopyData ('d') messages that exceed max_message_size.
 /// Streams the message directly to the client without buffering.
 async fn handle_large_copy_data<C>(
     server: &mut Server,
+    output: &mut BytesMut,
     client_stream: &mut C,
     code_u8: u8,
     message_len: i32,
-) -> Result<BytesMut, Error>
+) -> Result<(), Error>
 where
     C: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -186,9 +188,9 @@ where
         .stats
         .data_received(server.buffer.len() + message_len as usize);
     server.last_activity = SystemTime::now();
-    server.buffer.clear();
+    std::mem::swap(&mut server.buffer, output);
     server.stats.wait_idle();
-    Ok(server.buffer.clone())
+    Ok(())
 }
 
 /// Handles ReadyForQuery ('Z') message - indicates server is ready for a new query.
@@ -377,9 +379,10 @@ fn handle_parameter_status(
 /// Must be called multiple times while `server.is_data_available()` is true.
 pub(crate) async fn recv<C>(
     server: &mut Server,
+    output: &mut BytesMut,
     mut client_stream: C,
     mut client_server_parameters: Option<&mut ServerParameters>,
-) -> Result<BytesMut, Error>
+) -> Result<(), Error>
 where
     C: tokio::io::AsyncWrite + std::marker::Unpin,
 {
@@ -390,12 +393,24 @@ where
     if let Some((code_u8, message_len)) = server.pending_large_message.take() {
         match code_u8 as char {
             'D' => {
-                return handle_large_data_row(server, &mut client_stream, code_u8, message_len)
-                    .await
+                return handle_large_data_row(
+                    server,
+                    output,
+                    &mut client_stream,
+                    code_u8,
+                    message_len,
+                )
+                .await
             }
             'd' => {
-                return handle_large_copy_data(server, &mut client_stream, code_u8, message_len)
-                    .await
+                return handle_large_copy_data(
+                    server,
+                    output,
+                    &mut client_stream,
+                    code_u8,
+                    message_len,
+                )
+                .await
             }
             _ => unreachable!("pending_large_message should only contain 'D' or 'd'"),
         }
@@ -422,13 +437,13 @@ where
             if !server.buffer.is_empty() {
                 server.pending_large_message = Some((code_u8, message_len));
                 server.data_available = true;
-                let result = server.buffer.clone();
-                server.buffer.clear();
-                server.stats.data_received(result.len());
+                std::mem::swap(&mut server.buffer, output);
+                server.stats.data_received(output.len());
                 server.last_activity = SystemTime::now();
-                return Ok(result);
+                return Ok(());
             }
-            return handle_large_data_row(server, &mut client_stream, code_u8, message_len).await;
+            return handle_large_data_row(server, output, &mut client_stream, code_u8, message_len)
+                .await;
         }
 
         // Handle large CopyData messages that exceed max_message_size
@@ -439,13 +454,19 @@ where
             if !server.buffer.is_empty() {
                 server.pending_large_message = Some((code_u8, message_len));
                 server.data_available = true;
-                let result = server.buffer.clone();
-                server.buffer.clear();
-                server.stats.data_received(result.len());
+                std::mem::swap(&mut server.buffer, output);
+                server.stats.data_received(output.len());
                 server.last_activity = SystemTime::now();
-                return Ok(result);
+                return Ok(());
             }
-            return handle_large_copy_data(server, &mut client_stream, code_u8, message_len).await;
+            return handle_large_copy_data(
+                server,
+                output,
+                &mut client_stream,
+                code_u8,
+                message_len,
+            )
+            .await;
         }
 
         if message_len > MAX_MESSAGE_SIZE {
@@ -634,22 +655,13 @@ where
         };
     }
 
-    let bytes = server.buffer.clone();
+    // Swap buffers: output gets the accumulated data, server.buffer gets
+    // the caller's empty buffer (warm capacity from previous cycle).
+    // O(1) pointer swap — no clone, no allocation in steady state.
+    std::mem::swap(&mut server.buffer, output);
 
-    // Keep track of how much data we got from the server for stats.
-    server.stats.data_received(bytes.len());
-
-    // Clear the buffer for next query.
-    if server.buffer.len() > BUFFER_FLUSH_THRESHOLD {
-        server.buffer = BytesMut::with_capacity(BUFFER_FLUSH_THRESHOLD);
-    } else {
-        // Clear the buffer for next query.
-        server.buffer.clear();
-    }
-
-    // Successfully received data from server
+    server.stats.data_received(output.len());
     server.last_activity = SystemTime::now();
 
-    // Pass the data back to the client.
-    Ok(bytes)
+    Ok(())
 }

@@ -522,12 +522,16 @@ where
         // Clear the buffer
         self.buffer.clear();
 
-        let response = server
-            .recv(&mut self.write, Some(&mut self.server_parameters))
+        server
+            .recv(
+                &mut self.response_buf,
+                &mut self.write,
+                Some(&mut self.server_parameters),
+            )
             .await?;
 
         self.stats.active_write();
-        match write_all_flush(&mut self.write, &response).await {
+        match write_all_flush(&mut self.write, &self.response_buf).await {
             Ok(_) => self.stats.active_idle(),
             Err(err) => {
                 server.wait_available().await;
@@ -541,6 +545,7 @@ where
                 return Err(err);
             }
         };
+        self.response_buf.clear();
 
         if self.complete_transaction_if_needed(server, false) {
             return Ok(TransactionAction::Break);
@@ -753,12 +758,17 @@ where
 
                     // Receive and discard response (client already got synthetic response)
                     // Using sink() to avoid forwarding to client
+                    let mut discard_buf = BytesMut::new();
                     loop {
                         match server
-                            .recv(&mut tokio::io::sink(), Some(&mut self.server_parameters))
+                            .recv(
+                                &mut discard_buf,
+                                &mut tokio::io::sink(),
+                                Some(&mut self.server_parameters),
+                            )
                             .await
                         {
-                            Ok(_) => {
+                            Ok(()) => {
                                 if !server.is_data_available() {
                                     break;
                                 }
@@ -1000,24 +1010,25 @@ where
         // Read all data the server has to offer, which can be multiple messages
         // buffered in 8 KiB chunks.
         loop {
-            let mut response = match server
-                .recv(&mut self.write, Some(&mut self.server_parameters))
+            if let Err(err) = server
+                .recv(
+                    &mut self.response_buf,
+                    &mut self.write,
+                    Some(&mut self.server_parameters),
+                )
                 .await
             {
-                Ok(msg) => msg,
-                Err(err) => {
-                    server.wait_available().await;
-                    let mut msg = String::with_capacity(64);
-                    use std::fmt::Write;
-                    let _ = write!(
-                        msg,
-                        "server recv failed during client {} roundtrip: {:?}",
-                        self.addr, err
-                    );
-                    server.mark_bad(&msg);
-                    return Err(err);
-                }
-            };
+                server.wait_available().await;
+                let mut msg = String::with_capacity(64);
+                use std::fmt::Write;
+                let _ = write!(
+                    msg,
+                    "server recv failed during client {} roundtrip: {:?}",
+                    self.addr, err
+                );
+                server.mark_bad(&msg);
+                return Err(err);
+            }
 
             // Insert pending ParseComplete messages based on batch_operations order
             // This ensures ParseComplete messages are inserted in the correct position
@@ -1025,21 +1036,22 @@ where
             if !self.prepared.batch_operations.is_empty()
                 && !self.prepared.skipped_parses.is_empty()
             {
-                response = self.reorder_parse_complete_responses(response);
+                let buf = std::mem::take(&mut self.response_buf);
+                self.response_buf = self.reorder_parse_complete_responses(buf);
             }
 
             // Insert pending CloseComplete messages after last CloseComplete from server
             if self.prepared.pending_close_complete > 0 {
                 let (new_response, inserted) = insert_close_complete_after_last_close_complete(
-                    response,
+                    std::mem::take(&mut self.response_buf),
                     self.prepared.pending_close_complete,
                 );
-                response = new_response;
+                self.response_buf = new_response;
                 self.prepared.pending_close_complete -= inserted;
             }
 
             // Debug log: server -> client (after all modifications to show what client actually receives)
-            log_server_to_client(&self.addr_str, server.get_process_id(), &response);
+            log_server_to_client(&self.addr_str, server.get_process_id(), &self.response_buf);
 
             // Fast path: early release check before expensive operations
             // This is the most common case in transaction mode
@@ -1053,13 +1065,14 @@ where
                 && self.prepared.skipped_parses.is_empty()
                 && self.prepared.pending_close_complete == 0
             {
-                self.client_last_messages_in_tx.put(&response[..]);
+                self.client_last_messages_in_tx.put(&self.response_buf[..]);
+                self.response_buf.clear();
                 break;
             }
 
             // Write response to client
             self.stats.active_write();
-            if let Err(err_write) = write_all_flush(&mut self.write, &response).await {
+            if let Err(err_write) = write_all_flush(&mut self.write, &self.response_buf).await {
                 warn!(
                     "[{}@{} #c{}] write to client failed pid={}: {err_write}",
                     self.username,
@@ -1080,6 +1093,7 @@ where
                 }
             }
 
+            self.response_buf.clear();
             self.stats.active_idle();
 
             // Early exit check
