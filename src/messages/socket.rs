@@ -127,17 +127,12 @@ where
     result
 }
 
-/// Shrink threshold: buffers above this are replaced after small messages.
-const READ_BUF_SHRINK_THRESHOLD: usize = 65536; // 64 KB
-/// Default read buffer capacity.
-const READ_BUF_DEFAULT_CAPACITY: usize = 8192; // 8 KB
-
 /// Read a message into a reusable buffer. Returns owned BytesMut via split(),
-/// keeping the backing capacity in `buf` for the next call. Zero heap
-/// allocations for messages that fit in the existing capacity.
+/// keeping the backing capacity in `buf` for the next call.
 ///
-/// After a large message (>64KB), the buffer is replaced with a fresh 8KB
-/// allocation to prevent permanent bloat from a single oversized result.
+/// Amortized allocation cost: ~1 heap alloc per `8192 / msg_size` messages.
+/// split() hands off the filled region; reserve() reuses remaining capacity
+/// in the same backing allocation until exhausted, then allocates fresh 8KB.
 #[inline]
 pub async fn read_message_reuse<S>(
     stream: &mut S,
@@ -182,17 +177,12 @@ where
 
     CURRENT_MEMORY.fetch_sub(len as i64, Ordering::Relaxed);
 
-    // Shrink oversized buffer after the data has been split off.
-    if buf.capacity() > READ_BUF_SHRINK_THRESHOLD && total_len < READ_BUF_DEFAULT_CAPACITY {
-        *buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
-    }
-
     result
 }
 
 /// Read message body into a reusable buffer when header is already consumed.
 /// Used by server recv() loop where read_message_header() is called separately.
-/// Same zero-alloc semantics as read_message_reuse, but skips header read.
+/// Same amortized allocation semantics as read_message_reuse, but skips header read.
 #[inline]
 pub async fn read_message_body_reuse<S>(
     stream: &mut S,
@@ -203,6 +193,12 @@ pub async fn read_message_body_reuse<S>(
 where
     S: tokio::io::AsyncRead + std::marker::Unpin,
 {
+    if len < 4 {
+        return Err(Error::ProtocolSyncError(format!(
+            "Message length is too small: {len}"
+        )));
+    }
+
     let total_len = len as usize + 1;
     buf.clear();
     buf.reserve(total_len);
@@ -292,6 +288,8 @@ where
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    const READ_BUF_DEFAULT_CAPACITY: usize = 8192;
 
     /// Build a raw PG wire message: [code: u8][len: i32][body...]
     /// len includes itself (4 bytes) but not the code byte.
@@ -515,12 +513,11 @@ mod tests {
         assert!(cap_after_third <= READ_BUF_DEFAULT_CAPACITY);
     }
 
-    /// After split(), buffer capacity drops to near-zero (remainder of shared allocation).
-    /// The shrink logic at line 186 checks `buf.capacity() > 64KB` — but after split()
-    /// capacity is always small, so shrink NEVER fires. This test documents this behavior.
-    /// The buffer naturally stays small because reserve() allocates fresh for each message.
+    /// After a large message, split() hands the big allocation to the caller.
+    /// The reusable buf gets near-zero remaining capacity, so the next reserve()
+    /// allocates a fresh small buffer. No permanent bloat from a single large message.
     #[tokio::test]
-    async fn reuse_large_then_small_capacity_behavior() {
+    async fn reuse_large_then_small_no_bloat() {
         let large_body = vec![0u8; 100_000];
         let small_body = vec![0u8; 10];
 
@@ -537,22 +534,17 @@ mod tests {
             .unwrap();
         assert_eq!(large_msg.len(), 1 + 4 + 100_000);
 
-        // After split: buf has near-zero capacity (not the 100KB)
-        // This is expected: split() gives data to the returned BytesMut
-        let cap_after_split = buf.capacity();
-
         // Read small message — reserve() allocates fresh small buffer
         let small_msg = read_message_reuse(&mut stream, &mut buf, u64::MAX)
             .await
             .unwrap();
         assert_eq!(small_msg[0], b'Z');
 
-        // Buffer is now small — no permanent 100KB bloat
+        // Buffer capacity is small — no permanent 100KB bloat
         assert!(
-            buf.capacity() < READ_BUF_SHRINK_THRESHOLD,
-            "after split pattern, capacity should be small: got {} (post-split was {})",
+            buf.capacity() < 65536,
+            "capacity should be small after split pattern: got {}",
             buf.capacity(),
-            cap_after_split
         );
     }
 
@@ -592,6 +584,26 @@ mod tests {
 
         assert_eq!(result.len(), 5); // code(1) + len(4)
         assert_eq!(result[0], b'H');
+    }
+
+    /// len < 4 is a protocol violation — must return error, not panic.
+    #[tokio::test]
+    async fn body_reuse_len_less_than_4_returns_error() {
+        let mut stream = Cursor::new(Vec::<u8>::new());
+        let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
+
+        let result = read_message_body_reuse(&mut stream, &mut buf, b'D', 3).await;
+        assert!(result.is_err());
+    }
+
+    /// Negative length from corrupted TCP stream — must return error, not panic.
+    #[tokio::test]
+    async fn body_reuse_negative_len_returns_error() {
+        let mut stream = Cursor::new(Vec::<u8>::new());
+        let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
+
+        let result = read_message_body_reuse(&mut stream, &mut buf, b'D', -1).await;
+        assert!(result.is_err());
     }
 
     /// EOF during body read — simulates TCP connection reset from PostgreSQL.
