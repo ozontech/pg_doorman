@@ -159,11 +159,25 @@ phase_preflight() {
 
     # offcputime (optional, only when FLAMEGRAPH_OFFCPU=1)
     if [ "$OFFCPU" = "1" ]; then
-        if ! command -v offcputime-bpfcc >/dev/null 2>&1; then
-            log "offcputime-bpfcc not found, installing bcc-tools..."
+        # Fedora puts bcc tools in /usr/share/bcc/tools/, not in PATH
+        OFFCPUTIME=""
+        for path in \
+            "$(command -v offcputime 2>/dev/null)" \
+            "$(command -v offcputime-bpfcc 2>/dev/null)" \
+            "/usr/share/bcc/tools/offcputime"; do
+            if [ -n "$path" ] && [ -x "$path" ]; then
+                OFFCPUTIME="$path"
+                break
+            fi
+        done
+        if [ -z "$OFFCPUTIME" ]; then
+            log "offcputime not found, installing bcc-tools..."
             sudo dnf install -y bcc-tools \
-                || die "Failed to install bcc-tools (provides offcputime-bpfcc)"
+                || die "Failed to install bcc-tools (provides offcputime)"
+            OFFCPUTIME="/usr/share/bcc/tools/offcputime"
+            [ -x "$OFFCPUTIME" ] || die "offcputime not found after installing bcc-tools"
         fi
+        log "  offcputime: $OFFCPUTIME"
     fi
 
     # pgbench script
@@ -302,10 +316,10 @@ phase_record() {
     PERF_PID=$!
 
     # Start off-CPU recording if requested
-    if [ "$OFFCPU" = "1" ]; then
-        log "  off-CPU recording enabled (offcputime-bpfcc)"
-        sudo offcputime-bpfcc -df -p "$DOORMAN_PID" "$DURATION" \
-            > "$OUT_DIR/offcpu.stacks" 2>/dev/null &
+    if [ "$OFFCPU" = "1" ] && [ -n "$OFFCPUTIME" ]; then
+        log "  off-CPU recording enabled ($OFFCPUTIME)"
+        sudo "$OFFCPUTIME" -df -p "$DOORMAN_PID" "$DURATION" \
+            > "$OUT_DIR/offcpu.stacks" 2>"$OUT_DIR/offcpu.err" &
         OFFCPU_PID=$!
     fi
 
@@ -428,10 +442,12 @@ with open('$OUT_DIR/summary.csv', 'w') as f:
     # Generate off-CPU flamegraph if offcputime data was collected
     if [ "$OFFCPU" = "1" ] && [ -s "$OUT_DIR/offcpu.stacks" ]; then
         log "  generating off-CPU flamegraph..."
+        # Clean offcputime output: remove user/kernel separator '-' and [unknown] frames
+        sed 's/;-;/;/g; s/;\[unknown\]//g' "$OUT_DIR/offcpu.stacks" \
+            > "$OUT_DIR/offcpu.folded"
         inferno-flamegraph \
-            --color blue \
             --title "$title (off-CPU: where pg_doorman waits)" \
-            < "$OUT_DIR/offcpu.stacks" \
+            "$OUT_DIR/offcpu.folded" \
             > "$OUT_DIR/flamegraph-offcpu.svg"
     fi
 
