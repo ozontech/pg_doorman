@@ -989,7 +989,7 @@ where
         }
 
         // Debug log: client -> server
-        log_client_to_server(&self.addr.to_string(), server.get_process_id(), message);
+        log_client_to_server(&self.addr_str, server.get_process_id(), message);
 
         // Pre-calculate fast release conditions (avoids repeated checks)
         let can_fast_release = self.transaction_mode;
@@ -1039,7 +1039,7 @@ where
             }
 
             // Debug log: server -> client (after all modifications to show what client actually receives)
-            log_server_to_client(&self.addr.to_string(), server.get_process_id(), &response);
+            log_server_to_client(&self.addr_str, server.get_process_id(), &response);
 
             // Fast path: early release check before expensive operations
             // This is the most common case in transaction mode

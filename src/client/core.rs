@@ -321,6 +321,9 @@ pub struct Client<S, T> {
     /// Address
     pub(crate) addr: std::net::SocketAddr,
 
+    /// Cached string representation of addr — avoids per-query allocation in debug logging.
+    pub(crate) addr_str: String,
+
     /// Reusable read buffer. Avoids heap allocation per message — clear()+reserve()
     /// reuses existing capacity. split() returns owned data to callers.
     pub(crate) read_buf: BytesMut,

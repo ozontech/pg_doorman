@@ -356,42 +356,79 @@ impl TryFrom<Bind> for BytesMut {
 }
 
 impl Bind {
-    /// Gets the name of the prepared statement from the buffer
+    /// Gets the name of the prepared statement from the buffer.
     pub fn get_name(buf: &BytesMut) -> Result<String, Error> {
-        let mut cursor = std::io::Cursor::new(buf);
-        // Skip the code and length
-        cursor.advance(mem::size_of::<u8>() + mem::size_of::<i32>());
-        cursor.read_string()?;
-        cursor.read_string()
+        let data = &buf[..];
+        if data.len() < 5 {
+            return Err(Error::ParseBytesError("Bind message too short".to_string()));
+        }
+        let header_end = 5;
+        let portal_end = data[header_end..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| {
+                Error::ParseBytesError("Bind: missing portal null terminator".to_string())
+            })?
+            + header_end;
+        let stmt_start = portal_end + 1;
+        let stmt_end = data[stmt_start..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| {
+                Error::ParseBytesError("Bind: missing statement null terminator".to_string())
+            })?
+            + stmt_start;
+        Ok(String::from_utf8_lossy(&data[stmt_start..stmt_end]).into_owned())
     }
 
-    /// Renames the prepared statement to a new name
+    /// Renames the prepared statement to a new name.
+    /// Zero-copy: scans for null terminators in-place, no String/Vec/CString allocations.
     pub fn rename(buf: BytesMut, new_name: &str) -> Result<BytesMut, Error> {
-        let mut cursor = std::io::Cursor::new(&buf);
-        // Read basic data from the cursor
-        let code = cursor.get_u8();
-        let current_len = cursor.get_i32();
-        let portal = cursor.read_string()?;
-        let prepared_statement = cursor.read_string()?;
+        // Bind format: [B][len:i32][portal\0][statement\0][...params...]
+        if buf.len() < 5 {
+            return Err(Error::ParseBytesError("Bind message too short".to_string()));
+        }
+        let data = &buf[..];
+        let header_end = 5;
 
-        // Calculate new length
-        let new_len = current_len + new_name.len() as i32 - prepared_statement.len() as i32;
+        let portal_end = data[header_end..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| {
+                Error::ParseBytesError("Bind: missing portal null terminator".to_string())
+            })?
+            + header_end;
 
-        // Begin building the response buffer
-        let mut response_buf = BytesMut::with_capacity(new_len as usize + 1);
-        response_buf.put_u8(code);
-        response_buf.put_i32(new_len);
+        let stmt_start = portal_end + 1;
+        let stmt_end = data[stmt_start..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| {
+                Error::ParseBytesError("Bind: missing statement null terminator".to_string())
+            })?
+            + stmt_start;
 
-        // Put the portal and new name into the buffer
-        // Note: panic if the provided string contains null byte
-        response_buf.put_slice(CString::new(portal)?.as_bytes_with_nul());
-        response_buf.put_slice(CString::new(new_name)?.as_bytes_with_nul());
+        let old_stmt_len = stmt_end - stmt_start;
+        let params_start = stmt_end + 1;
 
-        // Add the remainder of the original buffer into the response
-        response_buf.put_slice(&buf[cursor.position() as usize..]);
+        let current_len = i32::from_be_bytes([data[1], data[2], data[3], data[4]]);
+        let new_len = current_len + new_name.len() as i32 - old_stmt_len as i32;
 
-        // Return the buffer
-        Ok(response_buf)
+        let mut out = BytesMut::with_capacity(
+            1 + 4
+                + (portal_end - header_end + 1)
+                + new_name.len()
+                + 1
+                + (data.len() - params_start),
+        );
+        out.put_u8(data[0]);
+        out.put_i32(new_len);
+        out.put_slice(&data[header_end..=portal_end]);
+        out.put_slice(new_name.as_bytes());
+        out.put_u8(0);
+        out.put_slice(&data[params_start..]);
+
+        Ok(out)
     }
 
     pub fn anonymous(&self) -> bool {
@@ -541,4 +578,146 @@ pub fn close_complete() -> BytesMut {
     bytes.put_u8(b'3');
     bytes.put_i32(4);
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_bind(portal: &str, statement: &str) -> BytesMut {
+        let body_len = portal.len() + 1 + statement.len() + 1 + 2 + 2 + 2;
+        let mut buf = BytesMut::with_capacity(1 + 4 + body_len);
+        buf.put_u8(b'B');
+        buf.put_i32((4 + body_len) as i32);
+        buf.put_slice(portal.as_bytes());
+        buf.put_u8(0);
+        buf.put_slice(statement.as_bytes());
+        buf.put_u8(0);
+        buf.put_i16(0);
+        buf.put_i16(0);
+        buf.put_i16(0);
+        buf
+    }
+
+    fn make_bind_with_params(portal: &str, statement: &str, params: &[&[u8]]) -> BytesMut {
+        let params_size: usize = params.iter().map(|p| 4 + p.len()).sum();
+        let body_len = portal.len() + 1 + statement.len() + 1 + 2 + 2 + params_size + 2;
+        let mut buf = BytesMut::with_capacity(1 + 4 + body_len);
+        buf.put_u8(b'B');
+        buf.put_i32((4 + body_len) as i32);
+        buf.put_slice(portal.as_bytes());
+        buf.put_u8(0);
+        buf.put_slice(statement.as_bytes());
+        buf.put_u8(0);
+        buf.put_i16(0);
+        buf.put_i16(params.len() as i16);
+        for p in params {
+            buf.put_i32(p.len() as i32);
+            buf.put_slice(p);
+        }
+        buf.put_i16(0);
+        buf
+    }
+
+    #[test]
+    fn test_bind_get_name_named() {
+        let buf = make_bind("", "my_stmt");
+        assert_eq!(Bind::get_name(&buf).unwrap(), "my_stmt");
+    }
+
+    #[test]
+    fn test_bind_get_name_anonymous() {
+        let buf = make_bind("", "");
+        assert_eq!(Bind::get_name(&buf).unwrap(), "");
+    }
+
+    #[test]
+    fn test_bind_get_name_with_portal() {
+        let buf = make_bind("portal1", "stmt1");
+        assert_eq!(Bind::get_name(&buf).unwrap(), "stmt1");
+    }
+
+    #[test]
+    fn test_bind_rename_same_length() {
+        let buf = make_bind("", "ABCD");
+        let renamed = Bind::rename(buf, "WXYZ").unwrap();
+        assert_eq!(Bind::get_name(&renamed).unwrap(), "WXYZ");
+    }
+
+    #[test]
+    fn test_bind_rename_shorter_to_longer() {
+        let buf = make_bind("", "a");
+        let renamed = Bind::rename(buf, "DOORMAN_123").unwrap();
+        assert_eq!(Bind::get_name(&renamed).unwrap(), "DOORMAN_123");
+    }
+
+    #[test]
+    fn test_bind_rename_longer_to_shorter() {
+        let buf = make_bind("", "very_long_statement_name");
+        let renamed = Bind::rename(buf, "D0").unwrap();
+        assert_eq!(Bind::get_name(&renamed).unwrap(), "D0");
+    }
+
+    #[test]
+    fn test_bind_rename_anonymous_to_named() {
+        let buf = make_bind("", "");
+        let renamed = Bind::rename(buf, "DOORMAN_0").unwrap();
+        assert_eq!(Bind::get_name(&renamed).unwrap(), "DOORMAN_0");
+    }
+
+    #[test]
+    fn test_bind_rename_preserves_portal() {
+        let buf = make_bind("my_portal", "old_stmt");
+        let renamed = Bind::rename(buf, "new_stmt").unwrap();
+        assert_eq!(Bind::get_name(&renamed).unwrap(), "new_stmt");
+        let data = &renamed[5..];
+        let portal_end = data.iter().position(|&b| b == 0).unwrap();
+        assert_eq!(&data[..portal_end], b"my_portal");
+    }
+
+    #[test]
+    fn test_bind_rename_preserves_params() {
+        let params: &[&[u8]] = &[b"hello", b"world"];
+        let buf = make_bind_with_params("", "old", params);
+        let original_len = buf.len();
+        let renamed = Bind::rename(buf, "DOORMAN_0").unwrap();
+        assert_eq!(Bind::get_name(&renamed).unwrap(), "DOORMAN_0");
+        let expected_len = original_len + "DOORMAN_0".len() - "old".len();
+        assert_eq!(renamed.len(), expected_len);
+    }
+
+    #[test]
+    fn test_bind_rename_message_length_field() {
+        let buf = make_bind("", "abc");
+        let old_len = i32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
+        let renamed = Bind::rename(buf, "DOORMAN_XYZ").unwrap();
+        let new_len = i32::from_be_bytes([renamed[1], renamed[2], renamed[3], renamed[4]]);
+        assert_eq!(
+            new_len - old_len,
+            "DOORMAN_XYZ".len() as i32 - "abc".len() as i32
+        );
+    }
+
+    #[test]
+    fn test_bind_rename_roundtrip_via_tryfrom() {
+        let params: &[&[u8]] = &[b"val1", b"val2", b"val3"];
+        let buf = make_bind_with_params("p", "original_stmt", params);
+        let renamed = Bind::rename(buf, "DOORMAN_42").unwrap();
+        let bind: Bind = (&renamed).try_into().unwrap();
+        assert_eq!(bind.prepared_statement, "DOORMAN_42");
+        assert_eq!(bind.portal, "p");
+        assert_eq!(bind.num_param_values, 3);
+    }
+
+    #[test]
+    fn test_bind_get_name_too_short() {
+        let buf = BytesMut::from(&[0u8; 3][..]);
+        assert!(Bind::get_name(&buf).is_err());
+    }
+
+    #[test]
+    fn test_bind_rename_too_short() {
+        let buf = BytesMut::from(&[0u8; 3][..]);
+        assert!(Bind::rename(buf, "test").is_err());
+    }
 }

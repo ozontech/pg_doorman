@@ -378,6 +378,7 @@ where
         Ok(Client {
             read: BufReader::new(read),
             write,
+            addr_str: addr.to_string(),
             addr,
             read_buf: BytesMut::with_capacity(8192),
             buffer: PooledBuffer::new(),
@@ -418,6 +419,7 @@ where
         Ok(Client {
             read: BufReader::new(read),
             write,
+            addr_str: addr.to_string(),
             addr,
             read_buf: BytesMut::with_capacity(8192),
             connection_id: target_process_id as u64,
