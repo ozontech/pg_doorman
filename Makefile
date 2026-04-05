@@ -30,3 +30,6 @@ generate:
 	cargo run --bin pg_doorman -- generate --reference -o pg_doorman.toml
 	cargo run --bin pg_doorman -- generate --reference -o pg_doorman.yaml
 	cargo run --bin pg_doorman -- generate-docs -o documentation/en/src/reference
+
+flamegraph: ## Generate CPU flamegraph (perf + pgbench load)
+	./scripts/flamegraph.sh
