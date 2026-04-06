@@ -1250,10 +1250,15 @@ impl Drop for UmaskGuard {
 #[cfg(test)]
 mod create_unix_listener_tests {
     use super::create_unix_listener;
+    use serial_test::serial;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
+    // Serialised because the umask_guard_tests in this crate flip the
+    // process umask to 0o777 while running; any concurrent tempdir-backed
+    // bind() would land on an inaccessible file and fail with EACCES.
     #[tokio::test]
+    #[serial]
     async fn binds_and_applies_mode() {
         let dir = tempdir().unwrap();
         let path = dir.path().join(".s.PGSQL.6432");
@@ -1270,6 +1275,7 @@ mod create_unix_listener_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn bind_fails_when_directory_missing() {
         // Directory we never created → bind must return a structured error
         // instead of panicking or exiting the process.
@@ -1287,6 +1293,7 @@ mod create_unix_listener_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn group_readable_mode_is_applied() {
         // 0660 exercises the path where set_permissions *loosens* the bits
         // the umask guard masked off; if we mess that up the file stays
@@ -1306,10 +1313,12 @@ mod create_unix_listener_tests {
 #[cfg(test)]
 mod unix_socket_ownership_tests {
     use super::{CleanupDecision, UnixSocketCleanup, UnixSocketOwnership};
+    use serial_test::serial;
     use std::os::unix::net::UnixListener;
     use tempfile::tempdir;
 
     #[test]
+    #[serial]
     fn capture_and_cleanup_round_trip() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("owned.sock");
@@ -1322,6 +1331,7 @@ mod unix_socket_ownership_tests {
     }
 
     #[test]
+    #[serial]
     fn cleanup_skips_replaced_inode() {
         // Linux is free to recycle a freed inode immediately on tmpfs/ext4,
         // so bind→remove→bind on the same path can land on the same ino on
@@ -1352,6 +1362,7 @@ mod unix_socket_ownership_tests {
     }
 
     #[test]
+    #[serial]
     fn cleanup_reports_missing_when_already_removed() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("gone.sock");
@@ -1363,6 +1374,7 @@ mod unix_socket_ownership_tests {
     }
 
     #[test]
+    #[serial]
     fn inspect_remove_on_exact_match() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("inspect.sock");
@@ -1376,6 +1388,7 @@ mod unix_socket_ownership_tests {
     }
 
     #[test]
+    #[serial]
     fn inspect_skip_on_mismatched_ino() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("inspect2.sock");
@@ -1393,6 +1406,7 @@ mod unix_socket_ownership_tests {
     }
 
     #[test]
+    #[serial]
     fn inspect_missing_when_no_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("nope.sock");
@@ -1406,10 +1420,12 @@ mod unix_socket_ownership_tests {
 #[cfg(test)]
 mod prepare_unix_socket_path_tests {
     use super::prepare_unix_socket_path;
+    use serial_test::serial;
     use std::os::unix::net::UnixListener;
     use tempfile::tempdir;
 
     #[test]
+    #[serial]
     fn missing_path_is_ok() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("missing.sock");
@@ -1417,6 +1433,7 @@ mod prepare_unix_socket_path_tests {
     }
 
     #[test]
+    #[serial]
     fn stale_file_is_removed() {
         // A regular file (not a live listener) simulates a post-crash leftover
         // — prepare_unix_socket_path should clean it up silently.
@@ -1430,6 +1447,7 @@ mod prepare_unix_socket_path_tests {
     }
 
     #[test]
+    #[serial]
     fn live_listener_is_preserved() {
         // Bind a real UnixListener in a temp dir; the helper must refuse to
         // touch it and return a descriptive error.

@@ -8,7 +8,6 @@ use log::{error, info, warn};
 use once_cell::sync::Lazy;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -18,6 +17,7 @@ use self::tls::{load_identity, TLSMode};
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
+use crate::transport::ClientTransport;
 use crate::utils::format_duration_ms;
 
 // Sub-modules
@@ -699,23 +699,13 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
 }
 
 pub fn check_hba(
-    ip: IpAddr,
-    ssl: bool,
-    is_unix: bool,
+    transport: &ClientTransport,
     type_auth: &str,
     username: &str,
     database: &str,
 ) -> CheckResult {
     let config = get_config();
-    check_hba_with_general(
-        &config.general,
-        ip,
-        ssl,
-        is_unix,
-        type_auth,
-        username,
-        database,
-    )
+    check_hba_with_general(&config.general, transport, type_auth, username, database)
 }
 
 /// True when the operator enabled a Unix listener alongside the legacy
@@ -729,27 +719,26 @@ pub(crate) fn legacy_hba_bypassed_by_unix_socket(general: &General) -> bool {
 /// Pure evaluation of HBA rules against an explicit [`General`] snapshot.
 ///
 /// Split out of [`check_hba`] so that unit tests can exercise the legacy
-/// `general.hba` branches — including the `is_unix` bypass — without
+/// `general.hba` branches — including the Unix-socket bypass — without
 /// touching the global config.
 pub(crate) fn check_hba_with_general(
     general: &General,
-    ip: IpAddr,
-    ssl: bool,
-    is_unix: bool,
+    transport: &ClientTransport,
     type_auth: &str,
     username: &str,
     database: &str,
 ) -> CheckResult {
     if let Some(ref pg) = general.pg_hba {
-        return pg.check_hba(ip, ssl, is_unix, type_auth, username, database);
+        return pg.check_hba(transport, type_auth, username, database);
     }
     // Legacy hba list has no unix concept — allow all unix connections
-    if is_unix {
+    if transport.is_unix() {
         return CheckResult::Allow;
     }
     if general.hba.is_empty() {
         return CheckResult::Allow;
     }
+    let ip = transport.hba_ip();
     if general.hba.iter().any(|net| net.contains(&ip)) {
         CheckResult::Allow
     } else {

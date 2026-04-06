@@ -16,5 +16,6 @@ pub mod pool;
 pub mod prometheus;
 pub mod server;
 pub mod stats;
+pub mod transport;
 pub mod utils;
 pub use config::tls;

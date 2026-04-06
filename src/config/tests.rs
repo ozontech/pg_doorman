@@ -1662,21 +1662,25 @@ async fn test_validate_reserve_pool_timeout_skipped_when_coordinator_disabled() 
     assert!(config.validate().await.is_ok());
 }
 
-// ---- check_hba_with_general: legacy general.hba + is_unix semantics ----
+// ---- check_hba_with_general: legacy general.hba + Unix socket semantics ----
+
+fn tcp_transport(ip: &str) -> ClientTransport {
+    let peer = std::net::SocketAddr::new(ip.parse().unwrap(), 12345);
+    ClientTransport::Tcp { peer, ssl: false }
+}
 
 #[test]
 fn check_hba_legacy_empty_allows_unix() {
     // Legacy branch, nothing configured: any transport is allowed. Kept as a
-    // baseline so the next two tests document what changes once `is_unix`
+    // baseline so the next two tests document what changes once Unix
     // enters the picture.
     let general = General::default();
-    let ip: IpAddr = "10.0.0.5".parse().unwrap();
     assert_eq!(
-        check_hba_with_general(&general, ip, false, true, "md5", "alice", "app"),
+        check_hba_with_general(&general, &ClientTransport::Unix, "md5", "alice", "app"),
         CheckResult::Allow
     );
     assert_eq!(
-        check_hba_with_general(&general, ip, false, false, "md5", "alice", "app"),
+        check_hba_with_general(&general, &tcp_transport("10.0.0.5"), "md5", "alice", "app"),
         CheckResult::Allow
     );
 }
@@ -1688,22 +1692,26 @@ fn check_hba_legacy_list_bypassed_for_unix() {
     // must still be allowed because the legacy list has no transport concept.
     let mut general = General::default();
     general.hba = vec!["10.0.0.0/8".parse().unwrap()];
-    let ip: IpAddr = "192.168.1.10".parse().unwrap();
 
     // Unix: Allow regardless of source IP
     assert_eq!(
-        check_hba_with_general(&general, ip, false, true, "md5", "alice", "app"),
+        check_hba_with_general(&general, &ClientTransport::Unix, "md5", "alice", "app"),
         CheckResult::Allow
     );
     // TCP from an IP outside the whitelist: NotMatched
     assert_eq!(
-        check_hba_with_general(&general, ip, false, false, "md5", "alice", "app"),
+        check_hba_with_general(
+            &general,
+            &tcp_transport("192.168.1.10"),
+            "md5",
+            "alice",
+            "app"
+        ),
         CheckResult::NotMatched
     );
     // TCP from an IP inside the whitelist: Allow
-    let ip_inside: IpAddr = "10.1.2.3".parse().unwrap();
     assert_eq!(
-        check_hba_with_general(&general, ip_inside, false, false, "md5", "alice", "app"),
+        check_hba_with_general(&general, &tcp_transport("10.1.2.3"), "md5", "alice", "app"),
         CheckResult::Allow
     );
 }
@@ -1716,10 +1724,9 @@ fn check_hba_pg_hba_takes_precedence_over_legacy_for_unix() {
     let mut general = General::default();
     general.hba = vec!["10.0.0.0/8".parse().unwrap()];
     general.pg_hba = Some(PgHba::from_content("local all all reject"));
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     assert_eq!(
-        check_hba_with_general(&general, ip, false, true, "md5", "alice", "app"),
+        check_hba_with_general(&general, &ClientTransport::Unix, "md5", "alice", "app"),
         CheckResult::Deny
     );
 }

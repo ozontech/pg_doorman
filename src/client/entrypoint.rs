@@ -13,6 +13,8 @@ use crate::pool::ClientServerMap;
 use crate::stats::{CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER};
 use crate::utils::rate_limit::RateLimiter;
 
+use crate::transport::ClientTransport;
+
 use super::core::Client;
 use super::startup::{get_startup, startup_tls, ClientConnectionType};
 
@@ -207,13 +209,14 @@ pub async fn client_entrypoint(
                         match Client::startup(
                             read,
                             write,
-                            addr,
+                            ClientTransport::Tcp {
+                                peer: addr,
+                                ssl: false,
+                            },
                             bytes,
                             client_server_map,
                             admin_only,
-                            false,
                             connection_id,
-                            false,
                             #[cfg(unix)]
                             raw_fd,
                             #[cfg(all(unix, feature = "tls-migration"))]
@@ -274,13 +277,14 @@ pub async fn client_entrypoint(
             match Client::startup(
                 read,
                 write,
-                addr,
+                ClientTransport::Tcp {
+                    peer: addr,
+                    ssl: false,
+                },
                 bytes,
                 client_server_map,
                 admin_only,
-                false,
                 connection_id,
-                false,
                 #[cfg(unix)]
                 raw_fd,
                 #[cfg(all(unix, feature = "tls-migration"))]
@@ -351,7 +355,6 @@ pub async fn client_entrypoint_unix(
     admin_only: bool,
     connection_id: u64,
 ) -> Result<Option<ClientSessionInfo>, Error> {
-    let fake_addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
     let config = get_config();
     let log_client_connections = config.general.log_client_connections;
 
@@ -364,13 +367,11 @@ pub async fn client_entrypoint_unix(
             match Client::startup(
                 read,
                 write,
-                fake_addr,
+                ClientTransport::Unix,
                 bytes,
                 client_server_map,
                 admin_only,
-                false,
                 connection_id,
-                true,
                 #[cfg(unix)]
                 raw_fd,
                 #[cfg(all(unix, feature = "tls-migration"))]
@@ -416,7 +417,14 @@ pub async fn client_entrypoint_unix(
             CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             let (read, write) = split(stream);
 
-            match Client::cancel(read, write, fake_addr, bytes, client_server_map).await {
+            // Unix clients have no peer addr; use the loopback sentinel the
+            // TCP path would have seen so Client::cancel can still do its
+            // client_server_map lookup by process_id + secret_key.
+            let sentinel_addr = std::net::SocketAddr::from((
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                0,
+            ));
+            match Client::cancel(read, write, sentinel_addr, bytes, client_server_map).await {
                 Ok(mut client) => {
                     info!("Cancel request via unix socket");
                     let result = client.handle().await;

@@ -1,8 +1,9 @@
-use std::net::IpAddr;
 use std::path::Path;
 use std::{fs, str::FromStr};
 
 use ipnet::IpNet;
+
+use crate::transport::ClientTransport;
 
 /// Authentication method supported by our checker.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,8 +347,8 @@ impl PgHba {
 
     /// Evaluate given connection parameters against parsed HBA rules.
     ///
-    /// - `ip`: client IP address
-    /// - `ssl`: whether the client connection is over SSL
+    /// - `transport`: how the client reached the pooler (TCP + SSL state,
+    ///   or a Unix socket). Drives `local` vs `host*` rule matching.
     /// - `type_auth`: requested auth method name, e.g. "md5" or "scram-sha-256"
     /// - `username`: database user name
     /// - `database`: target database name
@@ -358,9 +359,7 @@ impl PgHba {
     /// otherwise `CheckResult::NotMatched`.
     pub fn check_hba(
         &self,
-        ip: IpAddr,
-        ssl: bool,
-        is_unix: bool,
+        transport: &ClientTransport,
         type_auth: &str,
         username: &str,
         database: &str,
@@ -375,20 +374,20 @@ impl PgHba {
             match rule.host_type {
                 HostType::Local => {
                     // local rules match only Unix socket connections
-                    if !is_unix {
+                    if !transport.is_unix() {
                         continue;
                     }
                 }
                 _ => {
                     // host/hostssl/hostnossl rules match only TCP connections
-                    if is_unix {
+                    if transport.is_unix() {
                         continue;
                     }
-                    if !rule.host_type.matches_ssl(ssl) {
+                    if !rule.host_type.matches_ssl(transport.is_tls()) {
                         continue;
                     }
                     if let Some(net) = &rule.address {
-                        if !net.contains(&ip) {
+                        if !net.contains(&transport.hba_ip()) {
                             continue;
                         }
                     }
@@ -455,7 +454,7 @@ fn parse_address(token: &str) -> Option<IpNet> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     const SAMPLE: &str = r#"
 # comment
@@ -463,6 +462,17 @@ host all all 10.0.0.0/8 md5
 hostssl all all 192.168.0.0/16 scram-sha-256
 hostnossl all all 127.0.0.1/32 trust
 "#;
+
+    fn tcp(peer: IpAddr, ssl: bool) -> ClientTransport {
+        ClientTransport::Tcp {
+            peer: SocketAddr::new(peer, 54321),
+            ssl,
+        }
+    }
+
+    fn unix_transport() -> ClientTransport {
+        ClientTransport::Unix
+    }
 
     #[test]
     fn parse_and_check() {
@@ -472,29 +482,29 @@ hostnossl all all 127.0.0.1/32 trust
         // md5 allowed for 10.1.2.3 over non-ssl and ssl (host matches both)
         let ip = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
         assert_eq!(
-            hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            hba.check_hba(&tcp(ip, false), "md5", "alice", "app"),
             CheckResult::Allow
         );
         assert_eq!(
-            hba.check_hba(ip, true, false, "md5", "alice", "app"),
+            hba.check_hba(&tcp(ip, true), "md5", "alice", "app"),
             CheckResult::Allow
         );
 
         // scram allowed for 192.168.1.10 only with ssl
         let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
         assert_eq!(
-            hba.check_hba(ip2, true, false, "scram-sha-256", "alice", "app"),
+            hba.check_hba(&tcp(ip2, true), "scram-sha-256", "alice", "app"),
             CheckResult::Allow
         );
         assert_eq!(
-            hba.check_hba(ip2, false, false, "scram-sha-256", "alice", "app"),
+            hba.check_hba(&tcp(ip2, false), "scram-sha-256", "alice", "app"),
             CheckResult::NotMatched
         );
 
         // trust on localhost without ssl
         let ip3 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         assert_eq!(
-            hba.check_hba(ip3, false, false, "md5", "alice", "app"),
+            hba.check_hba(&tcp(ip3, false), "md5", "alice", "app"),
             CheckResult::Trust
         );
     }
@@ -520,13 +530,13 @@ hostnossl all all 127.0.0.1/32 trust
         // First rule trust for 127.0.0.1
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         assert_eq!(
-            cfg.hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(&tcp(ip, false), "md5", "alice", "app"),
             CheckResult::Trust
         );
         // Second rule md5 for 10.1.2.3
         let ip2 = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
         assert_eq!(
-            cfg.hba.check_hba(ip2, false, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(&tcp(ip2, false), "md5", "alice", "app"),
             CheckResult::Allow
         );
     }
@@ -539,11 +549,11 @@ hostnossl all all 127.0.0.1/32 trust
         let cfg: Wrapper = toml::from_str(toml_in).expect("toml parse map content");
         let ip = IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4));
         assert_eq!(
-            cfg.hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(&tcp(ip, false), "md5", "alice", "app"),
             CheckResult::Allow
         );
         assert_eq!(
-            cfg.hba.check_hba(ip, true, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(&tcp(ip, true), "md5", "alice", "app"),
             CheckResult::Allow
         );
     }
@@ -567,7 +577,7 @@ hostnossl all all 127.0.0.1/32 trust
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
         assert_eq!(
             cfg.hba
-                .check_hba(ip, true, false, "scram-sha-256", "alice", "app"),
+                .check_hba(&tcp(ip, true), "scram-sha-256", "alice", "app"),
             CheckResult::Allow
         );
 
@@ -605,7 +615,7 @@ hostnossl all all 127.0.0.1/32 trust
         let cfg: Wrapper = toml::from_str(toml_in).expect("toml parse both fields");
         let ip = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
         assert_eq!(
-            cfg.hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            cfg.hba.check_hba(&tcp(ip, false), "md5", "alice", "app"),
             CheckResult::Allow
         );
     }
@@ -618,20 +628,13 @@ hostnossl all all 127.0.0.1/32 trust
         assert_eq!(s, expected);
     }
 
-    // ---- is_unix semantics: local rules match Unix sockets, host* rules match TCP ----
-
-    // Placeholder IP supplied by the client entrypoint for Unix connections.
-    // `check_hba` ignores the IP entirely when `is_unix=true`, but callers still
-    // have to pass something; we document the convention here.
-    fn unix_ip() -> IpAddr {
-        IpAddr::V4(Ipv4Addr::LOCALHOST)
-    }
+    // ---- ClientTransport semantics: local rules match Unix, host* rules match TCP ----
 
     #[test]
     fn local_trust_matches_unix_client() {
         let hba = PgHba::from_content("local all all trust");
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::Trust
         );
     }
@@ -644,7 +647,7 @@ hostnossl all all 127.0.0.1/32 trust
         let hba = PgHba::from_content("local all all trust");
         let ip = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
         assert_eq!(
-            hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            hba.check_hba(&tcp(ip, false), "md5", "alice", "app"),
             CheckResult::NotMatched
         );
     }
@@ -655,19 +658,19 @@ hostnossl all all 127.0.0.1/32 trust
         // never be authenticated by them — only by `local` entries.
         let hba = PgHba::from_content("host all all 0.0.0.0/0 md5");
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::NotMatched
         );
     }
 
     #[test]
-    fn hostssl_rule_ignored_for_unix_even_when_ssl_true() {
-        // Defensive: the entrypoint never passes ssl=true together with
-        // is_unix=true, but the matcher should still reject the rule rather
-        // than honour it silently if that invariant ever leaks.
+    fn hostssl_rule_ignored_for_unix() {
+        // The ClientTransport enum makes it impossible to build a
+        // `Unix + ssl=true` state, so the matcher only needs to confirm the
+        // hostssl rule itself does not leak through for Unix transport.
         let hba = PgHba::from_content("hostssl all all 0.0.0.0/0 trust");
         assert_eq!(
-            hba.check_hba(unix_ip(), true, true, "scram-sha-256", "alice", "app"),
+            hba.check_hba(&unix_transport(), "scram-sha-256", "alice", "app"),
             CheckResult::NotMatched
         );
     }
@@ -678,11 +681,11 @@ hostnossl all all 127.0.0.1/32 trust
         // so bob is rejected while alice falls through to the trust rule.
         let hba = PgHba::from_content("local all bob reject\nlocal all all trust");
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "bob", "app"),
+            hba.check_hba(&unix_transport(), "md5", "bob", "app"),
             CheckResult::Deny
         );
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::Trust
         );
     }
@@ -691,7 +694,7 @@ hostnossl all all 127.0.0.1/32 trust
     fn local_md5_rule_allows_unix_md5_client() {
         let hba = PgHba::from_content("local all all md5");
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::Allow
         );
     }
@@ -703,7 +706,7 @@ hostnossl all all 127.0.0.1/32 trust
         // fall through to the next rule or deny.
         let hba = PgHba::from_content("local all all scram-sha-256");
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::NotMatched
         );
     }
@@ -714,11 +717,11 @@ hostnossl all all 127.0.0.1/32 trust
         let hba = PgHba::from_content("local all all trust\nhost all all 0.0.0.0/0 md5");
         let ip = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::Trust
         );
         assert_eq!(
-            hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            hba.check_hba(&tcp(ip, false), "md5", "alice", "app"),
             CheckResult::Allow
         );
     }
@@ -729,11 +732,11 @@ hostnossl all all 127.0.0.1/32 trust
         // for "admin" must not authenticate a client connecting to "app".
         let hba = PgHba::from_content("local admin all trust\nlocal all all reject");
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "admin"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "admin"),
             CheckResult::Trust
         );
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::Deny
         );
     }
@@ -744,7 +747,7 @@ hostnossl all all 127.0.0.1/32 trust
         // caller decides what to do, it should not be silently promoted.
         let hba = PgHba::from_content("");
         assert_eq!(
-            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            hba.check_hba(&unix_transport(), "md5", "alice", "app"),
             CheckResult::NotMatched
         );
     }
