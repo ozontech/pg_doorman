@@ -370,3 +370,36 @@ pub(crate) static COORDINATOR_TOTALS: Lazy<IntCounterVec> = Lazy::new(|| {
     REGISTRY.register(Box::new(counter.clone())).unwrap();
     counter
 });
+
+pub(crate) static POOL_SCALING_GAUGE: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pool_scaling",
+            "Per-pool gauges for the anticipation + bounded burst path. Types: \
+             inflight_creates (server creates currently being established).",
+        ),
+        &["type", "user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static POOL_SCALING_TOTALS: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_pool_scaling_total",
+            "Per-pool cumulative counters for the anticipation + bounded burst path. Types: \
+             creates_started (took a burst slot), \
+             burst_gate_waits (had to wait on a Notify), \
+             anticipation_wakes_notify (anticipation woke on idle return), \
+             anticipation_wakes_timeout (anticipation budget elapsed without return), \
+             create_fallback (anticipation did not avoid an allocation), \
+             replenish_deferred (background replenish skipped due to gate full).",
+        ),
+        &["type", "user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});

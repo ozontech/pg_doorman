@@ -638,6 +638,55 @@ where
     write_all_half(stream, &res).await
 }
 
+/// Show per-pool counters for the anticipation + bounded burst create path.
+/// Operators tune `scaling_max_anticipation_wait_ms` and `scaling_max_parallel_creates`
+/// against the relative motion of these counters between scrapes.
+pub async fn show_pool_scaling<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    let columns = vec![
+        ("user", DataType::Text),
+        ("database", DataType::Text),
+        ("inflight", DataType::Numeric),
+        ("creates", DataType::Numeric),
+        ("gate_waits", DataType::Numeric),
+        ("antic_notify", DataType::Numeric),
+        ("antic_timeout", DataType::Numeric),
+        ("create_fallback", DataType::Numeric),
+        ("replenish_def", DataType::Numeric),
+    ];
+
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    let mut entries: Vec<_> = get_all_pools()
+        .iter()
+        .map(|(id, pool)| (id.clone(), pool.database.scaling_stats()))
+        .collect();
+    entries.sort_by(|a, b| (&a.0.db, &a.0.user).cmp(&(&b.0.db, &b.0.user)));
+
+    for (id, snapshot) in entries {
+        res.put(data_row(&[
+            id.user.clone(),
+            id.db.clone(),
+            snapshot.inflight_creates.to_string(),
+            snapshot.creates_started.to_string(),
+            snapshot.burst_gate_waits.to_string(),
+            snapshot.anticipation_wakes_notify.to_string(),
+            snapshot.anticipation_wakes_timeout.to_string(),
+            snapshot.create_fallback.to_string(),
+            snapshot.replenish_deferred.to_string(),
+        ]));
+    }
+
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
 /// Show pool coordinator status per database.
 /// Displays connection limits, current usage, and cumulative counters.
 pub async fn show_pool_coordinator<T>(stream: &mut T) -> Result<(), Error>

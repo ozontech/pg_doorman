@@ -28,16 +28,32 @@ pool.get()
      }
    - On wake → re-try recycle
   ↓
-5. Bounded burst gate
+5. Coordinator permit (only if max_db_connections > 0)
+   - acquire() may evict idle from peer pools, wait for a return,
+     or fall back to a reserve permit
+  ↓
+6. Bounded burst gate
    - try_take_burst_slot(inflight_creates, max_parallel_creates)
    - If over cap → wait on select{create_done, idle_returned, BURST_BACKOFF}
      and retry recycle, then loop
    - If under cap → take slot (released on RAII guard drop)
   ↓
-6. Coordinator permit (only if max_db_connections > 0)
-  ↓
 7. server_pool.create() → install permit + return Object
 ```
+
+### Why coordinator before burst gate
+
+The two limiters cap different things and must be ordered so the slow one
+never holds the fast one. The coordinator can wait up to `wait_timeout` for
+a peer pool to return a connection or for an eviction to land. The burst
+gate is per-pool and woken in milliseconds by `return_object` or by a peer
+create completing.
+
+If the gate were taken first, two callers in one pool could grab the only
+two slots, both block on the coordinator for seconds, and the rest of the
+pool would starve waiting for those two — head-of-line blocking. With
+coordinator first, the gate caps **actual `connect()` calls**, not
+**waiting time on a peer pool**.
 
 ## Anticipation + Bounded Burst
 
@@ -103,6 +119,31 @@ gate are only touched on the new-connection path.
 - **idle_returned** — Notify woken by `return_object()` for anticipation
 - **inflight_creates** — AtomicUsize counter for the bounded burst gate
 - **create_done** — Notify woken by completed creates for queued waiters
+
+## Observability
+
+`SHOW POOL_SCALING` admin command and `pg_doorman_pool_scaling*` Prometheus
+metrics expose the per-pool counters used to tune the new path:
+
+| Counter | Meaning |
+|---|---|
+| `inflight_creates` | Gauge: server creates currently in `connect()` |
+| `creates_started` | Total creates that took a burst slot |
+| `burst_gate_waits` | Total times a caller waited for a slot |
+| `anticipation_wakes_notify` | Anticipation woke on a real `idle_returned` |
+| `anticipation_wakes_timeout` | Anticipation budget elapsed without a return |
+| `create_fallback` | Anticipation finished without avoiding the create |
+| `replenish_deferred` | Background replenish skipped due to gate full |
+
+Tuning rules of thumb:
+- High `burst_gate_waits` and low `replenish_deferred` → `max_parallel_creates`
+  is too low for the offered load.
+- High `anticipation_wakes_timeout` and low `anticipation_wakes_notify`
+  → `max_anticipation_wait_ms` is too low for query latency, or the pool is
+  genuinely under-sized.
+- Persistent non-zero `replenish_deferred` → `min_pool_size` cannot be sustained
+  under current load; expect new connections to be created on the request path
+  rather than prewarmed.
 
 ## Queue Modes
 
