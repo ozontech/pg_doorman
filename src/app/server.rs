@@ -227,57 +227,65 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         info!("Running on {addr}");
 
         // Unix socket listener (when unix_socket_dir is set)
-        let unix_listener = if let Some(ref dir) = config.general.unix_socket_dir {
-            let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
-            if let Err(err) = prepare_unix_socket_path(&path) {
-                error!("Cannot reuse Unix socket path {path}: {err}");
-                std::process::exit(exitcode::OSERR);
-            }
-            let mode = crate::config::General::parse_unix_socket_mode(
-                &config.general.unix_socket_mode,
-            )
-            .expect("unix_socket_mode validated at config load");
+        //
+        // `unix_socket_ownership` captures the dev/ino of the inode we
+        // create here so the shutdown path can tell our socket apart from
+        // one bound by a successor process (binary upgrade via SIGUSR2:
+        // the child re-creates the file before the parent reaches cleanup).
+        let (unix_listener, unix_socket_ownership) =
+            if let Some(ref dir) = config.general.unix_socket_dir {
+                let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
+                if let Err(err) = prepare_unix_socket_path(&path) {
+                    error!("Cannot reuse Unix socket path {path}: {err}");
+                    std::process::exit(exitcode::OSERR);
+                }
+                let mode = crate::config::General::parse_unix_socket_mode(
+                    &config.general.unix_socket_mode,
+                )
+                .expect("unix_socket_mode validated at config load");
 
-            // Clamp the umask so the socket inode created by bind() never
-            // exists with weaker permissions than `mode`. Without this a
-            // concurrent client connecting in the window between bind() and
-            // set_permissions() would land on the umask-derived rights
-            // (typically 0644) and bypass the configured restriction.
-            // set_permissions() still runs afterwards so callers can loosen
-            // the mode (e.g. 0660 with a group bit) — restrict is idempotent.
-            let restrict_bits = !(mode & 0o777) & 0o777;
-            let _umask_guard = UmaskGuard::restrict(restrict_bits as libc::mode_t);
+                // Clamp the umask so the socket inode created by bind() never
+                // exists with weaker permissions than `mode`. Without this a
+                // concurrent client connecting in the window between bind()
+                // and set_permissions() would land on the umask-derived
+                // rights (typically 0644) and bypass the configured
+                // restriction. set_permissions() still runs afterwards so
+                // callers can loosen the mode (e.g. 0660 with a group bit).
+                let restrict_bits = !(mode & 0o777) & 0o777;
+                let _umask_guard = UmaskGuard::restrict(restrict_bits as libc::mode_t);
 
-            match tokio::net::UnixListener::bind(&path) {
-                Ok(l) => {
-                    drop(_umask_guard);
-                    use std::os::unix::fs::PermissionsExt;
-                    match std::fs::set_permissions(
-                        &path,
-                        std::fs::Permissions::from_mode(mode),
-                    ) {
-                        Ok(()) => {
-                            info!(
-                                "Unix socket listening on {path} (mode={mode:#o})"
-                            );
-                        }
-                        Err(err) => {
+                match tokio::net::UnixListener::bind(&path) {
+                    Ok(l) => {
+                        drop(_umask_guard);
+                        use std::os::unix::fs::PermissionsExt;
+                        if let Err(err) =
+                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                        {
                             error!(
                                 "Failed to set mode {mode:#o} on Unix socket {path}: {err}"
                             );
                             std::process::exit(exitcode::OSERR);
                         }
+                        let ownership = match UnixSocketOwnership::capture(&path) {
+                            Ok(o) => o,
+                            Err(err) => {
+                                error!(
+                                    "Failed to stat Unix socket {path} after bind: {err}"
+                                );
+                                std::process::exit(exitcode::OSERR);
+                            }
+                        };
+                        info!("Unix socket listening on {path} (mode={mode:#o})");
+                        (Some(l), Some(ownership))
                     }
-                    Some(l)
+                    Err(err) => {
+                        error!("Failed to bind Unix socket {path}: {err}");
+                        (None, None)
+                    }
                 }
-                Err(err) => {
-                    error!("Failed to bind Unix socket {path}: {err}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+            } else {
+                (None, None)
+            };
 
         config.show();
 
@@ -647,12 +655,22 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
             }
         }
-        // Cleanup Unix socket file
-        if let Some(ref dir) = get_config().general.unix_socket_dir {
-            let path = format!("{dir}/.s.PGSQL.{}", get_config().general.port);
-            if let Err(err) = std::fs::remove_file(&path) {
-                if err.kind() != std::io::ErrorKind::NotFound {
-                    warn!("Failed to remove Unix socket {path}: {err}");
+        // Cleanup Unix socket file only if the inode on disk is still the
+        // one this process created. During a SIGUSR2 binary upgrade the
+        // successor rebinds the same path before we reach this point, so
+        // an unconditional unlink here would wipe out the new listener.
+        if let Some(ref ownership) = unix_socket_ownership {
+            match ownership.cleanup_if_ours() {
+                UnixSocketCleanup::Removed => {}
+                UnixSocketCleanup::Missing => {}
+                UnixSocketCleanup::Skipped { reason } => {
+                    info!(
+                        "Leaving Unix socket {} in place: {reason}",
+                        ownership.path
+                    );
+                }
+                UnixSocketCleanup::Failed { err } => {
+                    warn!("Failed to remove Unix socket {}: {err}", ownership.path);
                 }
             }
         }
@@ -1062,6 +1080,94 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
     });
 }
 
+/// Identity of a Unix socket file this process bound to, captured as
+/// `(dev, ino)` plus the original path. Used to decide at shutdown whether
+/// the inode on disk is still ours or has been replaced by a successor
+/// process during a binary upgrade.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct UnixSocketOwnership {
+    path: String,
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum UnixSocketCleanup {
+    /// The inode matched; the file has been removed.
+    Removed,
+    /// Nothing was on disk at the captured path.
+    Missing,
+    /// A different inode sits at the path — a successor rebound it.
+    Skipped { reason: String },
+    /// Removal was attempted but the syscall returned an error.
+    Failed { err: String },
+}
+
+#[cfg(unix)]
+impl UnixSocketOwnership {
+    /// Stat the path and remember `(dev, ino)` so future cleanup can verify
+    /// the inode has not been replaced.
+    fn capture(path: &str) -> Result<Self, std::io::Error> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path)?;
+        Ok(Self {
+            path: path.to_string(),
+            dev: meta.dev(),
+            ino: meta.ino(),
+        })
+    }
+
+    /// Remove the socket file only if the inode on disk still matches the
+    /// one captured at `capture` time.
+    fn cleanup_if_ours(&self) -> UnixSocketCleanup {
+        match Self::inspect(&self.path, self.dev, self.ino) {
+            CleanupDecision::Remove => match std::fs::remove_file(&self.path) {
+                Ok(()) => UnixSocketCleanup::Removed,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    UnixSocketCleanup::Missing
+                }
+                Err(err) => UnixSocketCleanup::Failed {
+                    err: err.to_string(),
+                },
+            },
+            CleanupDecision::Missing => UnixSocketCleanup::Missing,
+            CleanupDecision::Skip(reason) => UnixSocketCleanup::Skipped { reason },
+        }
+    }
+
+    /// Pure decision function: given a path and the expected `(dev, ino)`,
+    /// should the caller proceed to unlink the file? Split out so the logic
+    /// can be unit-tested without touching real filesystem state.
+    fn inspect(path: &str, expected_dev: u64, expected_ino: u64) -> CleanupDecision {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => {
+                let dev = meta.dev();
+                let ino = meta.ino();
+                if dev == expected_dev && ino == expected_ino {
+                    CleanupDecision::Remove
+                } else {
+                    CleanupDecision::Skip(format!(
+                        "inode changed (expected dev={expected_dev} ino={expected_ino}, found dev={dev} ino={ino}); another process owns the path now"
+                    ))
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => CleanupDecision::Missing,
+            Err(err) => CleanupDecision::Skip(format!("stat failed: {err}")),
+        }
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum CleanupDecision {
+    Remove,
+    Missing,
+    Skip(String),
+}
+
 /// Prepare a Unix socket path for bind() by clearing any stale file without
 /// clobbering a live peer.
 ///
@@ -1131,6 +1237,106 @@ impl Drop for UmaskGuard {
     fn drop(&mut self) {
         // SAFETY: same rationale as `restrict`; we only touch the umask.
         unsafe { libc::umask(self.previous) };
+    }
+}
+
+#[cfg(test)]
+mod unix_socket_ownership_tests {
+    use super::{CleanupDecision, UnixSocketCleanup, UnixSocketOwnership};
+    use std::os::unix::net::UnixListener;
+    use tempfile::tempdir;
+
+    #[test]
+    fn capture_and_cleanup_round_trip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("owned.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap())
+            .expect("capture must succeed right after bind");
+        assert_eq!(ownership.cleanup_if_ours(), UnixSocketCleanup::Removed);
+        assert!(!path.exists(), "our socket file must be removed");
+    }
+
+    #[test]
+    fn cleanup_skips_replaced_inode() {
+        // Linux is free to recycle a freed inode immediately on tmpfs/ext4,
+        // so bind→remove→bind on the same path can land on the same ino on
+        // CI runners. We forge the mismatch directly: a stale ownership
+        // claim against a live file is the same observable state the parent
+        // would see after a successor rebound the socket.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("shared.sock");
+        let live = UnixListener::bind(&path).unwrap();
+        let real = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+        let stale = UnixSocketOwnership {
+            path: real.path.clone(),
+            dev: real.dev,
+            ino: real.ino.wrapping_add(1),
+        };
+
+        match stale.cleanup_if_ours() {
+            UnixSocketCleanup::Skipped { reason } => {
+                assert!(
+                    reason.contains("inode changed"),
+                    "unexpected reason: {reason}"
+                );
+            }
+            other => panic!("expected Skipped, got {other:?}"),
+        }
+        assert!(path.exists(), "live socket file must be preserved");
+        drop(live);
+    }
+
+    #[test]
+    fn cleanup_reports_missing_when_already_removed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gone.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(ownership.cleanup_if_ours(), UnixSocketCleanup::Missing);
+    }
+
+    #[test]
+    fn inspect_remove_on_exact_match() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("inspect.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            UnixSocketOwnership::inspect(path.to_str().unwrap(), ownership.dev, ownership.ino),
+            CleanupDecision::Remove
+        );
+    }
+
+    #[test]
+    fn inspect_skip_on_mismatched_ino() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("inspect2.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+
+        // Pretend we captured a different inode to simulate replacement.
+        let fake_ino = ownership.ino.wrapping_add(1);
+        match UnixSocketOwnership::inspect(path.to_str().unwrap(), ownership.dev, fake_ino) {
+            CleanupDecision::Skip(reason) => {
+                assert!(reason.contains("inode changed"), "unexpected: {reason}");
+            }
+            other => panic!("expected Skip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inspect_missing_when_no_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nope.sock");
+        assert_eq!(
+            UnixSocketOwnership::inspect(path.to_str().unwrap(), 0, 0),
+            CleanupDecision::Missing
+        );
     }
 }
 
