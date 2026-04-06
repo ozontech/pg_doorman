@@ -695,17 +695,42 @@ pub fn check_hba(
     database: &str,
 ) -> CheckResult {
     let config = get_config();
-    if let Some(ref pg) = config.general.pg_hba {
+    check_hba_with_general(
+        &config.general,
+        ip,
+        ssl,
+        is_unix,
+        type_auth,
+        username,
+        database,
+    )
+}
+
+/// Pure evaluation of HBA rules against an explicit [`General`] snapshot.
+///
+/// Split out of [`check_hba`] so that unit tests can exercise the legacy
+/// `general.hba` branches — including the `is_unix` bypass — without
+/// touching the global config.
+pub(crate) fn check_hba_with_general(
+    general: &General,
+    ip: IpAddr,
+    ssl: bool,
+    is_unix: bool,
+    type_auth: &str,
+    username: &str,
+    database: &str,
+) -> CheckResult {
+    if let Some(ref pg) = general.pg_hba {
         return pg.check_hba(ip, ssl, is_unix, type_auth, username, database);
     }
     // Legacy hba list has no unix concept — allow all unix connections
     if is_unix {
         return CheckResult::Allow;
     }
-    if config.general.hba.is_empty() {
+    if general.hba.is_empty() {
         return CheckResult::Allow;
     }
-    if config.general.hba.iter().any(|net| net.contains(&ip)) {
+    if general.hba.iter().any(|net| net.contains(&ip)) {
         CheckResult::Allow
     } else {
         CheckResult::NotMatched

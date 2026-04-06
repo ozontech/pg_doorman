@@ -617,4 +617,135 @@ hostnossl all all 127.0.0.1/32 trust
         let expected = "host all all 10.0.0.0/8 md5\nhostssl all all 192.168.0.0/16 scram-sha-256\nhostnossl all all 127.0.0.1/32 trust";
         assert_eq!(s, expected);
     }
+
+    // ---- is_unix semantics: local rules match Unix sockets, host* rules match TCP ----
+
+    // Placeholder IP supplied by the client entrypoint for Unix connections.
+    // `check_hba` ignores the IP entirely when `is_unix=true`, but callers still
+    // have to pass something; we document the convention here.
+    fn unix_ip() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    }
+
+    #[test]
+    fn local_trust_matches_unix_client() {
+        let hba = PgHba::from_content("local all all trust");
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::Trust
+        );
+    }
+
+    #[test]
+    fn local_trust_does_not_match_tcp_client() {
+        // Complement to local_trust_matches_unix_client: the same rule must
+        // stay invisible to TCP clients so the existing hba_eval_tests remain
+        // correct and nobody can shadow host rules by adding a local entry.
+        let hba = PgHba::from_content("local all all trust");
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
+        assert_eq!(
+            hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            CheckResult::NotMatched
+        );
+    }
+
+    #[test]
+    fn host_rule_does_not_match_unix_client() {
+        // host* rules may contain a matching CIDR, but Unix connections must
+        // never be authenticated by them — only by `local` entries.
+        let hba = PgHba::from_content("host all all 0.0.0.0/0 md5");
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::NotMatched
+        );
+    }
+
+    #[test]
+    fn hostssl_rule_ignored_for_unix_even_when_ssl_true() {
+        // Defensive: the entrypoint never passes ssl=true together with
+        // is_unix=true, but the matcher should still reject the rule rather
+        // than honour it silently if that invariant ever leaks.
+        let hba = PgHba::from_content("hostssl all all 0.0.0.0/0 trust");
+        assert_eq!(
+            hba.check_hba(unix_ip(), true, true, "scram-sha-256", "alice", "app"),
+            CheckResult::NotMatched
+        );
+    }
+
+    #[test]
+    fn local_reject_blocks_named_user_via_unix() {
+        // Rule order matches PostgreSQL: the first rule that applies wins,
+        // so bob is rejected while alice falls through to the trust rule.
+        let hba = PgHba::from_content("local all bob reject\nlocal all all trust");
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "bob", "app"),
+            CheckResult::Deny
+        );
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::Trust
+        );
+    }
+
+    #[test]
+    fn local_md5_rule_allows_unix_md5_client() {
+        let hba = PgHba::from_content("local all all md5");
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::Allow
+        );
+    }
+
+    #[test]
+    fn local_scram_rule_returns_not_matched_for_md5_request() {
+        // A local rule with a stricter auth method must not grant access to a
+        // weaker requested method — we return NotMatched so the caller can
+        // fall through to the next rule or deny.
+        let hba = PgHba::from_content("local all all scram-sha-256");
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::NotMatched
+        );
+    }
+
+    #[test]
+    fn local_and_host_rules_are_independent_decisions() {
+        // Single file, both transports: unix follows `local`, TCP follows `host`.
+        let hba = PgHba::from_content("local all all trust\nhost all all 0.0.0.0/0 md5");
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::Trust
+        );
+        assert_eq!(
+            hba.check_hba(ip, false, false, "md5", "alice", "app"),
+            CheckResult::Allow
+        );
+    }
+
+    #[test]
+    fn local_database_filter_narrows_match() {
+        // Database scoping is orthogonal to the transport check: a local rule
+        // for "admin" must not authenticate a client connecting to "app".
+        let hba = PgHba::from_content("local admin all trust\nlocal all all reject");
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "admin"),
+            CheckResult::Trust
+        );
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::Deny
+        );
+    }
+
+    #[test]
+    fn empty_hba_returns_not_matched_for_unix() {
+        // A configured-but-empty PgHba must fall through — the upstream
+        // caller decides what to do, it should not be silently promoted.
+        let hba = PgHba::from_content("");
+        assert_eq!(
+            hba.check_hba(unix_ip(), false, true, "md5", "alice", "app"),
+            CheckResult::NotMatched
+        );
+    }
 }
