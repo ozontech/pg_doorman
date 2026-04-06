@@ -25,6 +25,70 @@ pub struct ClientSessionInfo {
     pub connection_id: u64,
 }
 
+/// Drive the authenticated-client lifecycle for any transport.
+///
+/// Three places (plain TCP startup, TCP plain-continue after rejected TLS,
+/// and Unix socket startup) used to inline the same sequence: call
+/// `Client::startup`, log "client connected", run `client.handle()`, and
+/// flush `disconnect_stats` on a late error. Centralising it here keeps
+/// the three call sites down to a single generic hop and removes ~90
+/// lines of copy-paste.
+#[allow(clippy::too_many_arguments)]
+async fn drive_authenticated_client<S, T>(
+    read: S,
+    write: T,
+    transport: ClientTransport,
+    bytes: bytes::BytesMut,
+    client_server_map: ClientServerMap,
+    admin_only: bool,
+    connection_id: u64,
+    #[cfg(unix)] raw_fd: Option<std::os::unix::io::RawFd>,
+    #[cfg(all(unix, feature = "tls-migration"))] ssl_ptr: Option<crate::client::core::SslRawPtr>,
+    log_client_connections: bool,
+    log_label: &'static str,
+) -> Result<Option<ClientSessionInfo>, Error>
+where
+    S: tokio::io::AsyncRead + Unpin + Send + 'static,
+    T: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let peer = transport.peer_display();
+    match Client::startup(
+        read,
+        write,
+        transport,
+        bytes,
+        client_server_map,
+        admin_only,
+        connection_id,
+        #[cfg(unix)]
+        raw_fd,
+        #[cfg(all(unix, feature = "tls-migration"))]
+        ssl_ptr,
+    )
+    .await
+    {
+        Ok(mut client) => {
+            if log_client_connections {
+                info!(
+                    "[{}@{} #c{}] client connected from {} ({})",
+                    client.username, client.pool_name, client.connection_id, peer, log_label,
+                );
+            }
+            let session_info = ClientSessionInfo {
+                username: client.username.clone(),
+                pool_name: client.pool_name.clone(),
+                connection_id: client.connection_id,
+            };
+            let result = client.handle().await;
+            if !client.is_admin() && result.is_err() {
+                client.disconnect_stats();
+            }
+            result.map(|_| Some(session_info))
+        }
+        Err(err) => Err(err),
+    }
+}
+
 pub async fn client_entrypoint_too_many_clients_already(
     mut stream: TcpStream,
     client_server_map: ClientServerMap,
@@ -204,9 +268,7 @@ pub async fn client_entrypoint(
                         #[cfg(unix)]
                         let raw_fd = Some(stream.as_raw_fd());
                         let (read, write) = split(stream);
-
-                        // Continue with regular startup.
-                        match Client::startup(
+                        drive_authenticated_client(
                             read,
                             write,
                             ClientTransport::Tcp {
@@ -221,29 +283,10 @@ pub async fn client_entrypoint(
                             raw_fd,
                             #[cfg(all(unix, feature = "tls-migration"))]
                             None, // no SSL for plain TCP
+                            log_client_connections,
+                            "plain",
                         )
                         .await
-                        {
-                            Ok(mut client) => {
-                                if log_client_connections {
-                                    info!(
-                                        "[{}@{} #c{}] client connected from {addr} (plain)",
-                                        client.username, client.pool_name, client.connection_id
-                                    );
-                                }
-                                let session_info = ClientSessionInfo {
-                                    username: client.username.clone(),
-                                    pool_name: client.pool_name.clone(),
-                                    connection_id: client.connection_id,
-                                };
-                                let result = client.handle().await;
-                                if !client.is_admin() && result.is_err() {
-                                    client.disconnect_stats();
-                                }
-                                result.map(|_| Some(session_info))
-                            }
-                            Err(err) => Err(err),
-                        }
                     }
 
                     // Client probably disconnected rejecting our plain text connection.
@@ -272,9 +315,7 @@ pub async fn client_entrypoint(
             #[cfg(unix)]
             let raw_fd = Some(stream.as_raw_fd());
             let (read, write) = split(stream);
-
-            // Continue with regular startup.
-            match Client::startup(
+            drive_authenticated_client(
                 read,
                 write,
                 ClientTransport::Tcp {
@@ -289,29 +330,10 @@ pub async fn client_entrypoint(
                 raw_fd,
                 #[cfg(all(unix, feature = "tls-migration"))]
                 None, // no SSL for plain TCP
+                log_client_connections,
+                "plain",
             )
             .await
-            {
-                Ok(mut client) => {
-                    if log_client_connections {
-                        info!(
-                            "[{}@{} #c{}] client connected from {addr} (plain)",
-                            client.username, client.pool_name, client.connection_id
-                        );
-                    }
-                    let session_info = ClientSessionInfo {
-                        username: client.username.clone(),
-                        pool_name: client.pool_name.clone(),
-                        connection_id: client.connection_id,
-                    };
-                    let result = client.handle().await;
-                    if !client.is_admin() && result.is_err() {
-                        client.disconnect_stats();
-                    }
-                    result.map(|_| Some(session_info))
-                }
-                Err(err) => Err(err),
-            }
         }
 
         // Client wants to cancel a query.
@@ -363,8 +385,7 @@ pub async fn client_entrypoint_unix(
             PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             let raw_fd = Some(stream.as_raw_fd());
             let (read, write) = split(stream);
-
-            match Client::startup(
+            drive_authenticated_client(
                 read,
                 write,
                 ClientTransport::Unix,
@@ -376,29 +397,10 @@ pub async fn client_entrypoint_unix(
                 raw_fd,
                 #[cfg(all(unix, feature = "tls-migration"))]
                 None, // no SSL on Unix socket
+                log_client_connections,
+                "unix",
             )
             .await
-            {
-                Ok(mut client) => {
-                    if log_client_connections {
-                        info!(
-                            "[{}@{} #c{}] client connected via unix socket",
-                            client.username, client.pool_name, client.connection_id
-                        );
-                    }
-                    let session_info = ClientSessionInfo {
-                        username: client.username.clone(),
-                        pool_name: client.pool_name.clone(),
-                        connection_id: client.connection_id,
-                    };
-                    let result = client.handle().await;
-                    if !client.is_admin() && result.is_err() {
-                        client.disconnect_stats();
-                    }
-                    result.map(|_| Some(session_info))
-                }
-                Err(err) => Err(err),
-            }
         }
 
         Ok((ClientConnectionType::Tls, _)) => {
