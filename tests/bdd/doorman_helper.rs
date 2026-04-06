@@ -510,6 +510,39 @@ async fn wait_for_daemon_port_ready(port: u16) {
 }
 
 /// Check if PID file contains correct daemon PID
+/// Assert the permission bits on the pg_doorman Unix socket file match the
+/// expected octal mode. Uses the temp dir + doorman port the world already
+/// knows to locate the socket, so the step works for any scenario that
+/// configured `unix_socket_dir = "${PG_TEMP_DIR}"`.
+#[then(regex = r#"pg_doorman unix socket file has mode "([0-7]{3,4})""#)]
+pub async fn verify_unix_socket_mode(world: &mut DoormanWorld, expected_mode: String) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = world
+        .pg_tmp_dir
+        .as_ref()
+        .expect("pg_tmp_dir must be set")
+        .path();
+    let port = world.doorman_port.expect("doorman_port must be set");
+    let path = dir.join(format!(".s.PGSQL.{port}"));
+
+    let metadata =
+        std::fs::metadata(&path).unwrap_or_else(|e| panic!("stat {}: {e}", path.display()));
+    let actual_mode = metadata.permissions().mode() & 0o777;
+
+    let expected = u32::from_str_radix(expected_mode.trim_start_matches('0'), 8)
+        .expect("expected mode must be a valid octal literal");
+
+    assert_eq!(
+        actual_mode,
+        expected,
+        "unix socket {} has mode {:#o}, expected {:#o}",
+        path.display(),
+        actual_mode,
+        expected
+    );
+}
+
 #[then(regex = r#"PID file "([^"]+)" should contain running daemon PID"#)]
 pub async fn verify_pid_file(_world: &mut DoormanWorld, pid_path: String) {
     let pid_content = std::fs::read_to_string(&pid_path).expect("Failed to read PID file");

@@ -230,15 +230,24 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         let unix_listener = if let Some(ref dir) = config.general.unix_socket_dir {
             let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
             let _ = std::fs::remove_file(&path);
+            let mode = crate::config::General::parse_unix_socket_mode(
+                &config.general.unix_socket_mode,
+            )
+            .expect("unix_socket_mode validated at config load");
+
+            // Clamp the umask so the socket inode created by bind() never
+            // exists with weaker permissions than `mode`. Without this a
+            // concurrent client connecting in the window between bind() and
+            // set_permissions() would land on the umask-derived rights
+            // (typically 0644) and bypass the configured restriction.
+            // set_permissions() still runs afterwards so callers can loosen
+            // the mode (e.g. 0660 with a group bit) — restrict is idempotent.
+            let restrict_bits = !(mode & 0o777) & 0o777;
+            let _umask_guard = UmaskGuard::restrict(restrict_bits as libc::mode_t);
+
             match tokio::net::UnixListener::bind(&path) {
                 Ok(l) => {
-                    // Apply the configured permission mode after bind so the socket
-                    // file does not depend on the process umask. The mode string was
-                    // already validated at config load time.
-                    let mode = crate::config::General::parse_unix_socket_mode(
-                        &config.general.unix_socket_mode,
-                    )
-                    .expect("unix_socket_mode validated at config load");
+                    drop(_umask_guard);
                     use std::os::unix::fs::PermissionsExt;
                     match std::fs::set_permissions(
                         &path,
@@ -246,14 +255,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     ) {
                         Ok(()) => {
                             info!(
-                                "Unix socket listening on {path} (mode={:#o})",
-                                mode
+                                "Unix socket listening on {path} (mode={mode:#o})"
                             );
                         }
                         Err(err) => {
                             error!(
-                                "Failed to set mode {:#o} on Unix socket {path}: {err}",
-                                mode
+                                "Failed to set mode {mode:#o} on Unix socket {path}: {err}"
                             );
                             std::process::exit(exitcode::OSERR);
                         }
@@ -1042,4 +1049,78 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
             }
         }
     });
+}
+
+/// Temporarily tighten the process umask for the lifetime of the guard.
+///
+/// The Unix listener startup needs the socket inode to be created with no
+/// weaker permissions than the configured `unix_socket_mode`. Since `bind()`
+/// applies `0666 & ~umask` at the moment the file appears in the filesystem,
+/// we ratchet the umask up, perform the bind, then restore the original
+/// value on drop. The guard is also safe to drop explicitly once the socket
+/// is in place and `set_permissions` has run.
+#[cfg(unix)]
+struct UmaskGuard {
+    previous: libc::mode_t,
+}
+
+#[cfg(unix)]
+impl UmaskGuard {
+    /// Ensure the process umask masks at least `additional_bits` on top of
+    /// whatever was already set.
+    fn restrict(additional_bits: libc::mode_t) -> Self {
+        // SAFETY: umask is a process-global knob; we snapshot the current
+        // value by setting a known mask, OR in our extra bits, and restore
+        // it on drop. No Rust invariants are touched.
+        let previous = unsafe { libc::umask(0o777) };
+        unsafe { libc::umask(previous | additional_bits) };
+        Self { previous }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UmaskGuard {
+    fn drop(&mut self) {
+        // SAFETY: same rationale as `restrict`; we only touch the umask.
+        unsafe { libc::umask(self.previous) };
+    }
+}
+
+#[cfg(test)]
+mod umask_guard_tests {
+    use super::UmaskGuard;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn restore_previous_umask_on_drop() {
+        let prior = unsafe { libc::umask(0o022) };
+        {
+            let _guard = UmaskGuard::restrict(0o077);
+            let inside = unsafe { libc::umask(0o777) };
+            unsafe { libc::umask(inside) };
+            assert_eq!(
+                inside & 0o077,
+                0o077,
+                "guard must ensure the restrict bits are set"
+            );
+        }
+        let after = unsafe { libc::umask(0o022) };
+        assert_eq!(after, 0o022, "drop must restore the original umask");
+        unsafe { libc::umask(prior) };
+    }
+
+    #[test]
+    #[serial]
+    fn restrict_preserves_existing_bits() {
+        let prior = unsafe { libc::umask(0o027) };
+        {
+            let _guard = UmaskGuard::restrict(0o050);
+            let inside = unsafe { libc::umask(0o777) };
+            unsafe { libc::umask(inside) };
+            // Prior bits (027) AND new bits (050) must both be present.
+            assert_eq!(inside & 0o077, 0o077);
+        }
+        unsafe { libc::umask(prior) };
+    }
 }
