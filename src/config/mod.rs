@@ -4,7 +4,7 @@
 //! for the connection pooler.
 
 use arc_swap::ArcSwap;
-use log::{error, info};
+use log::{error, info, warn};
 use once_cell::sync::Lazy;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -392,6 +392,18 @@ impl Config {
             ));
         }
 
+        // Legacy general.hba is an IP-based whitelist and has no transport
+        // concept, so Unix socket clients unconditionally fall through to
+        // Allow in check_hba_with_general. Warn the operator loudly rather
+        // than silently granting access to anyone with filesystem reach.
+        if legacy_hba_bypassed_by_unix_socket(&self.general) {
+            warn!(
+                "general.hba restricts TCP clients by CIDR but does not apply to Unix socket \
+                 clients — any local process able to connect to the socket file will bypass the \
+                 IP whitelist. Switch to pg_hba with explicit `local` rules to cover this path."
+            );
+        }
+
         // Validate prepared_statements
         if self.general.prepared_statements && self.general.prepared_statements_cache_size == 0 {
             return Err(Error::BadConfig("The value of prepared_statements_cache should be greater than 0 if prepared_statements are enabled".to_string()));
@@ -704,6 +716,14 @@ pub fn check_hba(
         username,
         database,
     )
+}
+
+/// True when the operator enabled a Unix listener alongside the legacy
+/// IP-based `general.hba` whitelist, without a `pg_hba` snippet to cover
+/// the `local` transport. In this shape Unix clients bypass the CIDR
+/// check entirely — see `check_hba_with_general`.
+pub(crate) fn legacy_hba_bypassed_by_unix_socket(general: &General) -> bool {
+    general.unix_socket_dir.is_some() && general.pg_hba.is_none() && !general.hba.is_empty()
 }
 
 /// Pure evaluation of HBA rules against an explicit [`General`] snapshot.

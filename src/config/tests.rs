@@ -1723,3 +1723,40 @@ fn check_hba_pg_hba_takes_precedence_over_legacy_for_unix() {
         CheckResult::Deny
     );
 }
+
+// ---- legacy_hba_bypassed_by_unix_socket: silent privilege expansion detector ----
+
+#[test]
+fn legacy_hba_bypass_detected_when_unix_dir_set_and_legacy_hba_present() {
+    let mut general = General::default();
+    general.unix_socket_dir = Some("/tmp".to_string());
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+    assert!(legacy_hba_bypassed_by_unix_socket(&general));
+}
+
+#[test]
+fn legacy_hba_bypass_quiet_without_unix_socket_dir() {
+    let mut general = General::default();
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+    // No unix listener → operator's CIDR whitelist applies to every client.
+    assert!(!legacy_hba_bypassed_by_unix_socket(&general));
+}
+
+#[test]
+fn legacy_hba_bypass_quiet_without_legacy_entries() {
+    let mut general = General::default();
+    general.unix_socket_dir = Some("/tmp".to_string());
+    // Empty legacy hba means there is no rule to bypass in the first place.
+    assert!(!legacy_hba_bypassed_by_unix_socket(&general));
+}
+
+#[test]
+fn legacy_hba_bypass_quiet_when_pg_hba_present() {
+    use crate::auth::hba::PgHba;
+    let mut general = General::default();
+    general.unix_socket_dir = Some("/tmp".to_string());
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+    general.pg_hba = Some(PgHba::from_content("local all all trust"));
+    // pg_hba takes precedence and has explicit local rules — no silent bypass.
+    assert!(!legacy_hba_bypassed_by_unix_socket(&general));
+}
