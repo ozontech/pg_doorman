@@ -237,6 +237,8 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "tcp_keepalives_interval",
         "tcp_user_timeout",
         "unix_socket_buffer_size",
+        "unix_socket_dir",
+        "unix_socket_mode",
         "admin_username",
         "admin_password",
         "prepared_statements",

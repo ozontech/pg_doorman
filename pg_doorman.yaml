@@ -156,6 +156,11 @@ general:
   # When set, pg_doorman also accepts connections via Unix socket (.s.PGSQL.<port>).
   # unix_socket_dir: "/var/run/pg_doorman"
 
+  # Permission mode applied to the .s.PGSQL.<port> socket file after bind.
+  # Octal string. Only the lowest 9 bits (0o777) are honored.
+  # Default: "0600"
+  unix_socket_mode: "0600"
+
   # --------------------------------------------------------------------------
   # Connection Limits
   # --------------------------------------------------------------------------

@@ -232,7 +232,32 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             let _ = std::fs::remove_file(&path);
             match tokio::net::UnixListener::bind(&path) {
                 Ok(l) => {
-                    info!("Unix socket listening on {path}");
+                    // Apply the configured permission mode after bind so the socket
+                    // file does not depend on the process umask. The mode string was
+                    // already validated at config load time.
+                    let mode = crate::config::General::parse_unix_socket_mode(
+                        &config.general.unix_socket_mode,
+                    )
+                    .expect("unix_socket_mode validated at config load");
+                    use std::os::unix::fs::PermissionsExt;
+                    match std::fs::set_permissions(
+                        &path,
+                        std::fs::Permissions::from_mode(mode),
+                    ) {
+                        Ok(()) => {
+                            info!(
+                                "Unix socket listening on {path} (mode={:#o})",
+                                mode
+                            );
+                        }
+                        Err(err) => {
+                            error!(
+                                "Failed to set mode {:#o} on Unix socket {path}: {err}",
+                                mode
+                            );
+                            std::process::exit(exitcode::OSERR);
+                        }
+                    }
                     Some(l)
                 }
                 Err(err) => {

@@ -58,6 +58,13 @@ pub struct General {
     #[serde(default)]
     pub unix_socket_dir: Option<String>,
 
+    /// Permission mode applied to the Unix socket file `.s.PGSQL.<port>` after bind.
+    /// Specified as an octal string (e.g. `"0600"`, `"0660"`, `"0666"`).
+    /// Only the lowest 9 bits (`0o777`) are honored.
+    /// Default: `"0600"` (owner read/write only).
+    #[serde(default = "General::default_unix_socket_mode")]
+    pub unix_socket_mode: String,
+
     #[serde(default)] // True
     pub log_client_connections: bool,
 
@@ -274,6 +281,38 @@ impl General {
         ByteSize::from_mb(1) // 1mb
     }
 
+    /// Default permission mode for the Unix socket file: `0600` (owner read/write only).
+    pub fn default_unix_socket_mode() -> String {
+        "0600".to_string()
+    }
+
+    /// Parse a Unix socket permission mode from its octal string form.
+    ///
+    /// Accepts strings like `"0600"`, `"600"`, `"0o660"`, `"0644"`. Only the lowest
+    /// 9 bits (`0o777`) are honored — extra bits are rejected because they would
+    /// silently enable setuid/setgid/sticky semantics on the socket file.
+    ///
+    /// Returns the parsed mode on success or a human-readable error otherwise.
+    pub fn parse_unix_socket_mode(raw: &str) -> Result<u32, String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err("unix_socket_mode must not be empty".to_string());
+        }
+        let digits = trimmed
+            .strip_prefix("0o")
+            .or_else(|| trimmed.strip_prefix("0O"))
+            .unwrap_or(trimmed);
+        let parsed = u32::from_str_radix(digits, 8).map_err(|err| {
+            format!("unix_socket_mode {raw:?} is not a valid octal number: {err}")
+        })?;
+        if parsed & !0o777 != 0 {
+            return Err(format!(
+                "unix_socket_mode {raw:?} sets bits outside 0o777; only standard rwx permissions are allowed"
+            ));
+        }
+        Ok(parsed)
+    }
+
     pub fn default_worker_cpu_affinity_pinning() -> bool {
         false
     }
@@ -454,6 +493,7 @@ impl Default for General {
             tcp_user_timeout: Self::default_tcp_user_timeout(),
             unix_socket_buffer_size: Self::default_unix_socket_buffer_size(),
             unix_socket_dir: None,
+            unix_socket_mode: Self::default_unix_socket_mode(),
             log_client_connections: true,
             log_client_disconnections: true,
             sync_server_parameters: Self::default_sync_server_parameters(),
@@ -490,5 +530,91 @@ impl Default for General {
             pooler_check_query_request_bytes: None,
             backlog: Self::default_backlog(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_unix_socket_mode_accepts_owner_only() {
+        assert_eq!(General::parse_unix_socket_mode("0600").unwrap(), 0o600);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_accepts_group_readable() {
+        assert_eq!(General::parse_unix_socket_mode("0660").unwrap(), 0o660);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_accepts_world_writable() {
+        assert_eq!(General::parse_unix_socket_mode("0666").unwrap(), 0o666);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_accepts_full_octal() {
+        assert_eq!(General::parse_unix_socket_mode("0777").unwrap(), 0o777);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_accepts_three_digit_form() {
+        assert_eq!(General::parse_unix_socket_mode("644").unwrap(), 0o644);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_accepts_zero() {
+        // Mode 0 is technically valid (no access for anyone). The kernel will reject
+        // any subsequent connect(), so this is a self-inflicted footgun, not a parser
+        // bug — accept it to keep the parser scope tight to syntax + bit checks.
+        assert_eq!(General::parse_unix_socket_mode("0000").unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_accepts_0o_prefix() {
+        assert_eq!(General::parse_unix_socket_mode("0o640").unwrap(), 0o640);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_default_matches_owner_only() {
+        let parsed = General::parse_unix_socket_mode(&General::default_unix_socket_mode()).unwrap();
+        assert_eq!(parsed, 0o600);
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_rejects_non_octal_digit() {
+        let err = General::parse_unix_socket_mode("0900").unwrap_err();
+        assert!(err.contains("octal"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_rejects_alphabetic() {
+        let err = General::parse_unix_socket_mode("abc").unwrap_err();
+        assert!(err.contains("octal"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_rejects_overflow_into_setuid_bit() {
+        // 01600 sets the setuid bit (0o4000 family is masked out by !0o777 → bit 0o1000 is rejected).
+        let err = General::parse_unix_socket_mode("01600").unwrap_err();
+        assert!(err.contains("0o777"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_rejects_far_overflow() {
+        let err = General::parse_unix_socket_mode("12345").unwrap_err();
+        assert!(err.contains("0o777"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_rejects_empty() {
+        let err = General::parse_unix_socket_mode("").unwrap_err();
+        assert!(err.contains("empty"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_unix_socket_mode_rejects_whitespace_only() {
+        let err = General::parse_unix_socket_mode("   ").unwrap_err();
+        assert!(err.contains("empty"), "unexpected error: {err}");
     }
 }

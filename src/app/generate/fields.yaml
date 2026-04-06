@@ -489,6 +489,20 @@ fields:
       doc: "Directory for Unix domain socket listener. Creates .s.PGSQL.<port> socket file for local client connections."
       default: "null"
 
+    unix_socket_mode:
+      config:
+        en: |
+          Permission mode applied to the .s.PGSQL.<port> socket file after bind.
+          Octal string. Only the lowest 9 bits (0o777) are honored.
+        ru: |
+          Права доступа на файл .s.PGSQL.<port>, выставляемые сразу после bind.
+          Восьмеричная строка. Учитываются только младшие 9 бит (0o777).
+      doc: |
+        Permission mode applied to the Unix domain socket file `.s.PGSQL.<port>` immediately after `bind()`. Specified as an octal string (e.g. `"0600"`, `"0660"`, `"0666"`). Only the lowest 9 bits are honored — setuid/setgid/sticky bits are rejected.
+
+        The default `"0600"` restricts socket access to the user running pg_doorman. To let other local users connect, set a more permissive mode such as `"0660"` (group access) or `"0666"` (any local user). When loosening the mode, ensure the parent directory permissions allow traversal by the intended group.
+      default: "\"0600\""
+
     max_connections:
       config:
         en: |

@@ -380,6 +380,11 @@ impl Config {
             ));
         }
 
+        // Validate unix_socket_mode upfront so misconfigurations fail at startup
+        // rather than at the moment the listener tries to chmod the socket file.
+        General::parse_unix_socket_mode(&self.general.unix_socket_mode)
+            .map_err(|err| Error::BadConfig(format!("general.{err}")))?;
+
         // Validate mutual exclusion for HBA settings
         if self.general.pg_hba.is_some() && !self.general.hba.is_empty() {
             return Err(Error::BadConfig(
