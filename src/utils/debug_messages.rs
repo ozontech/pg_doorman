@@ -720,7 +720,7 @@ mod tests {
 
         // Execute: E + len + portal + max_rows
         buf.push(b'E');
-        let e_len = (4 + 1 + 4) as i32; // len + empty portal + max_rows
+        let e_len: i32 = 4 + 1 + 4; // len + empty portal + max_rows
         buf.extend_from_slice(&e_len.to_be_bytes());
         buf.push(0); // empty portal
         buf.extend_from_slice(&0i32.to_be_bytes()); // max_rows = 0
@@ -741,8 +741,8 @@ mod tests {
         // Add 5 identical DataRow messages
         for _ in 0..5 {
             buf.push(b'D');
-            let len = 4 + 2 + 4 + 1; // len + num_cols + col_len + data
-            buf.extend_from_slice(&(len as i32).to_be_bytes());
+            let len: i32 = 4 + 2 + 4 + 1; // len + num_cols + col_len + data
+            buf.extend_from_slice(&len.to_be_bytes());
             buf.extend_from_slice(&1i16.to_be_bytes()); // 1 column
             buf.extend_from_slice(&1i32.to_be_bytes()); // col length = 1
             buf.push(b'X'); // data

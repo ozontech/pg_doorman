@@ -683,17 +683,12 @@ mod tests {
 
         // Start backend that keeps connection open
         let backend_task = tokio::spawn(async move {
-            loop {
-                match backend_listener.accept().await {
-                    Ok((mut stream, _)) => {
-                        // Keep connection open until it's closed
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_secs(60)).await;
-                            let _ = stream.shutdown().await;
-                        });
-                    }
-                    Err(_) => break,
-                }
+            while let Ok((mut stream, _)) = backend_listener.accept().await {
+                // Keep connection open until it's closed
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    let _ = stream.shutdown().await;
+                });
             }
         });
 
@@ -779,30 +774,20 @@ mod tests {
 
         // Start backends that keep connections open
         let backend1_task = tokio::spawn(async move {
-            loop {
-                match backend1_listener.accept().await {
-                    Ok((mut stream, _)) => {
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_secs(60)).await;
-                            let _ = stream.shutdown().await;
-                        });
-                    }
-                    Err(_) => break,
-                }
+            while let Ok((mut stream, _)) = backend1_listener.accept().await {
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    let _ = stream.shutdown().await;
+                });
             }
         });
 
         let backend2_task = tokio::spawn(async move {
-            loop {
-                match backend2_listener.accept().await {
-                    Ok((mut stream, _)) => {
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_secs(60)).await;
-                            let _ = stream.shutdown().await;
-                        });
-                    }
-                    Err(_) => break,
-                }
+            while let Ok((mut stream, _)) = backend2_listener.accept().await {
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    let _ = stream.shutdown().await;
+                });
             }
         });
 

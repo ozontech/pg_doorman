@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 use tempfile::NamedTempFile;
 
 /// The World struct holds the state shared across all steps in a scenario.
-#[derive(World)]
+#[derive(World, Default)]
 pub struct PatroniProxyWorld {
     /// patroni_proxy process handle
     pub proxy_process: Option<Child>,
@@ -29,23 +29,6 @@ pub struct PatroniProxyWorld {
     pub active_connections: HashMap<String, TcpStream>,
     /// Mock backend servers for ping-pong testing (port_name -> MockBackend)
     pub mock_backends: HashMap<String, crate::mock_backend_helper::MockBackend>,
-}
-
-impl Default for PatroniProxyWorld {
-    fn default() -> Self {
-        Self {
-            proxy_process: None,
-            proxy_config_file: None,
-            mock_patroni_shutdowns: HashMap::new(),
-            mock_patroni_ports: Vec::new(),
-            mock_patroni_names: HashMap::new(),
-            mock_patroni_responses: HashMap::new(),
-            proxy_listen_addresses: HashMap::new(),
-            api_listen_address: None,
-            active_connections: HashMap::new(),
-            mock_backends: HashMap::new(),
-        }
-    }
 }
 
 impl PatroniProxyWorld {

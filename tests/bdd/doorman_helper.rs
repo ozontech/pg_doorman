@@ -375,7 +375,6 @@ pub fn stop_doorman(child: &mut Child) {
             // Process already exited, just clean up pipes
             drop(child.stdout.take());
             drop(child.stderr.take());
-            return;
         }
         Ok(None) => {
             // Process still running, stop it

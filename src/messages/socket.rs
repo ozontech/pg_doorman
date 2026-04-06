@@ -310,7 +310,7 @@ mod tests {
     /// DBA sees this after every successful query. Must parse correctly.
     #[tokio::test]
     async fn reuse_ready_for_query() {
-        let data = wire_msg(b'Z', &[b'I']);
+        let data = wire_msg(b'Z', b"I");
         let mut stream = Cursor::new(data);
         let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
 
@@ -438,7 +438,7 @@ mod tests {
     /// Uses delta instead of absolute value to avoid races with parallel tests.
     #[tokio::test]
     async fn reuse_memory_counter_balanced_on_success() {
-        let data = wire_msg(b'Z', &[b'I']);
+        let data = wire_msg(b'Z', b"I");
         let mut stream = Cursor::new(data);
         let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
 
@@ -486,9 +486,9 @@ mod tests {
     /// This is the steady-state: after warmup, zero allocations per message.
     #[tokio::test]
     async fn reuse_sequential_messages_stable_capacity() {
-        let msg1 = wire_msg(b'Z', &[b'I']);
+        let msg1 = wire_msg(b'Z', b"I");
         let msg2 = wire_msg(b'C', b"SELECT 1\0");
-        let msg3 = wire_msg(b'Z', &[b'T']);
+        let msg3 = wire_msg(b'Z', b"T");
 
         let mut all = Vec::new();
         all.extend_from_slice(&msg1);
