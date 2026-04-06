@@ -12,7 +12,8 @@ mod util;
 
 pub use core::Client;
 pub use entrypoint::{
-    client_entrypoint, client_entrypoint_too_many_clients_already, client_entrypoint_unix,
+    client_entrypoint, client_entrypoint_too_many_clients_already,
+    client_entrypoint_too_many_clients_already_unix, client_entrypoint_unix,
 };
 pub use startup::startup_tls;
 pub use util::PREPARED_STATEMENT_COUNTER;

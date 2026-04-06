@@ -73,6 +73,47 @@ pub async fn client_entrypoint_too_many_clients_already(
     Ok(())
 }
 
+/// Reject an inbound Unix socket client with a proper PostgreSQL ErrorResponse.
+///
+/// The TCP rejection path above also handles TLS and cancel-request startups,
+/// neither of which applies here: Unix sockets do not negotiate TLS, and
+/// cancel requests through Unix are not forwarded to a backend at startup
+/// time because they carry no addr to pair with the running client. We still
+/// consume the startup bytes so the client reads our ErrorResponse instead
+/// of seeing a bare EOF — the symptom the operator saw in the max_connections
+/// regression.
+pub async fn client_entrypoint_too_many_clients_already_unix(
+    mut stream: UnixStream,
+    connection_id: u64,
+) -> Result<(), Error> {
+    match get_startup::<UnixStream>(&mut stream).await {
+        Ok((ClientConnectionType::Tls, _)) => {
+            // Unix sockets never negotiate TLS; mirror the main Unix entrypoint
+            // and refuse the SSL request with the same error message.
+            error_response_terminal(
+                &mut stream,
+                "TLS is not supported on Unix socket connections",
+                "08P01",
+            )
+            .await?;
+            return Ok(());
+        }
+        Ok((ClientConnectionType::Startup, _)) => (),
+        Ok((ClientConnectionType::CancelQuery, _)) => {
+            // A cancel request arriving while the server is at capacity is a
+            // no-op: we have no worker slot to forward it to. Report back the
+            // same "too many clients" error so the client sees a structured
+            // response instead of EOF.
+        }
+        Err(err) => {
+            warn!("[#c{connection_id}] unix client bad startup: {err}");
+            return Err(err);
+        }
+    }
+    error_response_terminal(&mut stream, "sorry, too many clients already", "53300").await?;
+    Ok(())
+}
+
 /// Client entrypoint. Returns session identity on success for disconnect logging.
 pub async fn client_entrypoint(
     mut stream: TcpStream,

@@ -601,6 +601,14 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
                         if current_clients as u64 > max_connections {
                             warn!("[#c{connection_id}] unix client rejected: too many clients (current={current_clients}, max={max_connections})");
+                            if let Err(err) = crate::client::client_entrypoint_too_many_clients_already_unix(
+                                socket,
+                                connection_id,
+                            )
+                            .await
+                            {
+                                warn!("[#c{connection_id}] unix client rejection response failed: {err}");
+                            }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
                             return;
                         }
