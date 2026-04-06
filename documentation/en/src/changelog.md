@@ -1,6 +1,20 @@
 # Changelog
 
-### 3.4.1 <small>Apr 3, 2026</small>
+### 3.4.0 <small>Apr 1, 2026</small>
+
+**New Features:**
+
+- **Pool Coordinator — database-level connection limits.** New `max_db_connections` setting caps total server connections per database across all user pools. When the limit is reached, the coordinator evicts idle connections from users with the largest surplus (respecting `min_guaranteed_pool_size`), then waits for a connection to be returned, and falls back to a reserve pool as last resort. Disabled by default (`max_db_connections = 0`) — zero overhead when not configured. Five new pool-level config fields: `max_db_connections`, `min_connection_lifetime` (eviction age threshold), `reserve_pool_size` (extra slots beyond the limit), `reserve_pool_timeout` (wait before using reserve), `min_guaranteed_pool_size` (per-user eviction protection independent of `min_pool_size`).
+
+- **`SHOW POOL_COORDINATOR` admin command.** Displays per-database coordinator status: configured limits, current connection count, reserve usage, cumulative evictions, reserve acquisitions, and client exhaustion errors.
+
+- **Pool Coordinator Prometheus metrics.** Seven new metrics under `pg_doorman_pool_coordinator{type, database}`: `connections` (current), `reserve_in_use` (current), `max_connections` (configured limit), `reserve_pool_size` (configured reserve), `evictions_total`, `reserve_acquisitions_total`, `exhaustions_total` (client errors from full exhaustion — primary pager signal).
+
+- **Reserve pressure relief.** Idle reserve connections (created under `max_db_connections` pressure) are closed early by the retain cycle once idle longer than `min_connection_lifetime`, returning reserve capacity before the regular `idle_timeout` fires.
+
+- **Runtime log level control via admin `SET` command.** Change log level without restarting the pooler: `SET log_level = 'debug'` for global, `SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'` for per-module (RUST_LOG syntax). View current level with `SHOW LOG_LEVEL`. Changes are ephemeral (lost on restart). Zero overhead on the hot path at production log levels — filtering uses lock-free `ArcSwap` instead of `RwLock`.
+
+- **Anticipation + bounded burst for connection creation.** Replaces the per-task blind cooldown sleep with two coordinated mechanisms that suppress thundering-herd backend connects under load. (1) Returns to the idle pool now signal a `tokio::sync::Notify`, so callers waiting in the cooldown zone wake event-driven and exactly one waiter is woken per return — no more N-task polling races after a `sleep(10ms)`. (2) Concurrent server creates per pool are capped by an atomic burst gate; overflow callers wait for either an idle return or a peer create completion before retrying recycle. The legacy `scaling_cooldown_sleep` knob is replaced by `scaling_max_anticipation_wait_ms` (default `100ms`, the upper bound on the event-driven idle wait) and `scaling_max_parallel_creates` (default `2`, the per-pool create cap). Both are global; per-pool overrides for these are intentionally not supported. The retain-loop replenish path also respects the burst cap so background replenishment does not compete with client-driven creates during a load spike. Hot-path overhead is ~3 ns on the burst gate atomic and ~104 ns on a buffered notify wake.
 
 **Improvements:**
 
@@ -14,25 +28,9 @@
 
 - **Prepared statement cache eviction log.** Shows truncated query text and current cache size (`size=99/100`) to help diagnose cache sizing issues.
 
-**New features:**
-
-- **Runtime log level control via admin `SET` command.** Change log level without restarting the pooler: `SET log_level = 'debug'` for global, `SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'` for per-module (RUST_LOG syntax). View current level with `SHOW LOG_LEVEL`. Changes are ephemeral (lost on restart). Zero overhead on the hot path at production log levels — filtering uses lock-free `ArcSwap` instead of `RwLock`.
-
 **Security:**
 
 - **Removed password hash from logs.** The "unsupported password type" warning no longer includes the password hash value.
-
-### 3.4.0 <small>Apr 1, 2026</small>
-
-**New Features:**
-
-- **Pool Coordinator — database-level connection limits.** New `max_db_connections` setting caps total server connections per database across all user pools. When the limit is reached, the coordinator evicts idle connections from users with the largest surplus (respecting `min_guaranteed_pool_size`), then waits for a connection to be returned, and falls back to a reserve pool as last resort. Disabled by default (`max_db_connections = 0`) — zero overhead when not configured. Five new pool-level config fields: `max_db_connections`, `min_connection_lifetime` (eviction age threshold), `reserve_pool_size` (extra slots beyond the limit), `reserve_pool_timeout` (wait before using reserve), `min_guaranteed_pool_size` (per-user eviction protection independent of `min_pool_size`).
-
-- **`SHOW POOL_COORDINATOR` admin command.** Displays per-database coordinator status: configured limits, current connection count, reserve usage, cumulative evictions, reserve acquisitions, and client exhaustion errors.
-
-- **Pool Coordinator Prometheus metrics.** Seven new metrics under `pg_doorman_pool_coordinator{type, database}`: `connections` (current), `reserve_in_use` (current), `max_connections` (configured limit), `reserve_pool_size` (configured reserve), `evictions_total`, `reserve_acquisitions_total`, `exhaustions_total` (client errors from full exhaustion — primary pager signal).
-
-- **Reserve pressure relief.** Idle reserve connections (created under `max_db_connections` pressure) are closed early by the retain cycle once idle longer than `min_connection_lifetime`, returning reserve capacity before the regular `idle_timeout` fires.
 
 ### 3.3.5 <small>Mar 31, 2026</small>
 
