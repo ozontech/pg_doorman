@@ -229,7 +229,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         // Unix socket listener (when unix_socket_dir is set)
         let unix_listener = if let Some(ref dir) = config.general.unix_socket_dir {
             let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
-            let _ = std::fs::remove_file(&path);
+            if let Err(err) = prepare_unix_socket_path(&path) {
+                error!("Cannot reuse Unix socket path {path}: {err}");
+                std::process::exit(exitcode::OSERR);
+            }
             let mode = crate::config::General::parse_unix_socket_mode(
                 &config.general.unix_socket_mode,
             )
@@ -1051,6 +1054,43 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
     });
 }
 
+/// Prepare a Unix socket path for bind() by clearing any stale file without
+/// clobbering a live peer.
+///
+/// The previous implementation called `remove_file` unconditionally, which
+/// meant pointing pg_doorman at a shared directory like `/var/run/postgresql`
+/// could silently delete another process's live socket. This helper instead:
+///
+/// 1. Returns Ok if nothing exists at the path.
+/// 2. Attempts a connect — if it succeeds, a live peer owns the socket and
+///    we refuse to touch it so the caller can fail loudly.
+/// 3. Otherwise removes the stale inode (typical case after a crash).
+///
+/// Errors are returned as strings with enough context for the caller to log
+/// and exit; unit tests exercise the three branches without touching the
+/// process umask or the real server bring-up.
+#[cfg(unix)]
+fn prepare_unix_socket_path(path: &str) -> Result<(), String> {
+    use std::os::unix::net::UnixStream;
+
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(format!("stat failed: {err}")),
+    }
+
+    // Short probe: a local Unix connect that would succeed does so in
+    // microseconds. If it refuses, the socket is stale (no listener bound to
+    // the inode) and we can reclaim it.
+    match UnixStream::connect(path) {
+        Ok(_) => Err(format!(
+            "another process is already listening on {path}; refusing to remove it"
+        )),
+        Err(_) => std::fs::remove_file(path)
+            .map_err(|err| format!("failed to remove stale socket {path}: {err}")),
+    }
+}
+
 /// Temporarily tighten the process umask for the lifetime of the guard.
 ///
 /// The Unix listener startup needs the socket inode to be created with no
@@ -1083,6 +1123,47 @@ impl Drop for UmaskGuard {
     fn drop(&mut self) {
         // SAFETY: same rationale as `restrict`; we only touch the umask.
         unsafe { libc::umask(self.previous) };
+    }
+}
+
+#[cfg(test)]
+mod prepare_unix_socket_path_tests {
+    use super::prepare_unix_socket_path;
+    use std::os::unix::net::UnixListener;
+    use tempfile::tempdir;
+
+    #[test]
+    fn missing_path_is_ok() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing.sock");
+        assert!(prepare_unix_socket_path(path.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn stale_file_is_removed() {
+        // A regular file (not a live listener) simulates a post-crash leftover
+        // — prepare_unix_socket_path should clean it up silently.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stale.sock");
+        std::fs::write(&path, b"leftover").unwrap();
+        assert!(path.exists());
+
+        prepare_unix_socket_path(path.to_str().unwrap()).expect("stale file must be removable");
+        assert!(!path.exists(), "stale socket file must be removed");
+    }
+
+    #[test]
+    fn live_listener_is_preserved() {
+        // Bind a real UnixListener in a temp dir; the helper must refuse to
+        // touch it and return a descriptive error.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("live.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+
+        let err = prepare_unix_socket_path(path.to_str().unwrap())
+            .expect_err("live socket must trigger an error");
+        assert!(err.contains("already listening"), "unexpected error: {err}");
+        assert!(path.exists(), "live socket file must stay on disk");
     }
 }
 
