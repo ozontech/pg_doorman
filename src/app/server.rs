@@ -226,66 +226,33 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         info!("Running on {addr}");
 
-        // Unix socket listener (when unix_socket_dir is set)
+        // Unix socket listener (when unix_socket_dir is set).
         //
-        // `unix_socket_ownership` captures the dev/ino of the inode we
-        // create here so the shutdown path can tell our socket apart from
-        // one bound by a successor process (binary upgrade via SIGUSR2:
-        // the child re-creates the file before the parent reaches cleanup).
-        let (unix_listener, unix_socket_ownership) =
-            if let Some(ref dir) = config.general.unix_socket_dir {
+        // Delegated to `create_unix_listener` so tests can exercise the
+        // bind/chmod/ownership pipeline in a tempdir. `unix_socket_ownership`
+        // captures the (dev, ino) of the inode we create here so the
+        // shutdown path can tell our socket apart from one bound by a
+        // successor process during a SIGUSR2 binary upgrade.
+        let (unix_listener, unix_socket_ownership) = match config.general.unix_socket_dir {
+            Some(ref dir) => {
                 let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
-                if let Err(err) = prepare_unix_socket_path(&path) {
-                    error!("Cannot reuse Unix socket path {path}: {err}");
-                    std::process::exit(exitcode::OSERR);
-                }
                 let mode = crate::config::General::parse_unix_socket_mode(
                     &config.general.unix_socket_mode,
                 )
                 .expect("unix_socket_mode validated at config load");
-
-                // Clamp the umask so the socket inode created by bind() never
-                // exists with weaker permissions than `mode`. Without this a
-                // concurrent client connecting in the window between bind()
-                // and set_permissions() would land on the umask-derived
-                // rights (typically 0644) and bypass the configured
-                // restriction. set_permissions() still runs afterwards so
-                // callers can loosen the mode (e.g. 0660 with a group bit).
-                let restrict_bits = !(mode & 0o777) & 0o777;
-                let _umask_guard = UmaskGuard::restrict(restrict_bits as libc::mode_t);
-
-                match tokio::net::UnixListener::bind(&path) {
-                    Ok(l) => {
-                        drop(_umask_guard);
-                        use std::os::unix::fs::PermissionsExt;
-                        if let Err(err) =
-                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
-                        {
-                            error!(
-                                "Failed to set mode {mode:#o} on Unix socket {path}: {err}"
-                            );
-                            std::process::exit(exitcode::OSERR);
-                        }
-                        let ownership = match UnixSocketOwnership::capture(&path) {
-                            Ok(o) => o,
-                            Err(err) => {
-                                error!(
-                                    "Failed to stat Unix socket {path} after bind: {err}"
-                                );
-                                std::process::exit(exitcode::OSERR);
-                            }
-                        };
+                match create_unix_listener(&path, mode) {
+                    Ok((listener, ownership)) => {
                         info!("Unix socket listening on {path} (mode={mode:#o})");
-                        (Some(l), Some(ownership))
+                        (Some(listener), Some(ownership))
                     }
                     Err(err) => {
-                        error!("Failed to bind Unix socket {path}: {err}");
-                        (None, None)
+                        error!("{err}");
+                        std::process::exit(exitcode::OSERR);
                     }
                 }
-            } else {
-                (None, None)
-            };
+            }
+            None => (None, None),
+        };
 
         config.show();
 
@@ -1168,6 +1135,46 @@ enum CleanupDecision {
     Skip(String),
 }
 
+/// Create a Tokio Unix socket listener at `path` with the given permission
+/// `mode`.
+///
+/// This is the whole bring-up sequence the pooler runs at startup, factored
+/// out of `run_server` so unit tests can reproduce the failure modes (stale
+/// file, dead-end directory, chmod failure) in a tempdir without launching a
+/// full server. On success the returned [`UnixSocketOwnership`] records the
+/// (dev, ino) of the inode so the shutdown path can decide whether the
+/// successor of a binary upgrade has already replaced it.
+#[cfg(unix)]
+fn create_unix_listener(
+    path: &str,
+    mode: u32,
+) -> Result<(tokio::net::UnixListener, UnixSocketOwnership), String> {
+    prepare_unix_socket_path(path)
+        .map_err(|err| format!("Cannot reuse Unix socket path {path}: {err}"))?;
+
+    // Clamp the umask so the socket inode created by bind() never exists with
+    // weaker permissions than `mode`. Without this a concurrent client
+    // connecting in the window between bind() and set_permissions() would
+    // land on the umask-derived rights (typically 0644) and bypass the
+    // configured restriction. set_permissions() still runs afterwards so
+    // callers can loosen the mode (e.g. 0660 with a group bit).
+    let restrict_bits = !(mode & 0o777) & 0o777;
+    let _umask_guard = UmaskGuard::restrict(restrict_bits as libc::mode_t);
+
+    let listener = tokio::net::UnixListener::bind(path)
+        .map_err(|err| format!("Failed to bind Unix socket {path}: {err}"))?;
+    drop(_umask_guard);
+
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .map_err(|err| format!("Failed to set mode {mode:#o} on Unix socket {path}: {err}"))?;
+
+    let ownership = UnixSocketOwnership::capture(path)
+        .map_err(|err| format!("Failed to stat Unix socket {path} after bind: {err}"))?;
+
+    Ok((listener, ownership))
+}
+
 /// Prepare a Unix socket path for bind() by clearing any stale file without
 /// clobbering a live peer.
 ///
@@ -1237,6 +1244,62 @@ impl Drop for UmaskGuard {
     fn drop(&mut self) {
         // SAFETY: same rationale as `restrict`; we only touch the umask.
         unsafe { libc::umask(self.previous) };
+    }
+}
+
+#[cfg(test)]
+mod create_unix_listener_tests {
+    use super::create_unix_listener;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn binds_and_applies_mode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".s.PGSQL.6432");
+        let path_str = path.to_str().unwrap();
+
+        let (listener, ownership) =
+            create_unix_listener(path_str, 0o600).expect("bind must succeed in empty tempdir");
+
+        let meta = std::fs::metadata(path_str).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(ownership.path, path_str);
+
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn bind_fails_when_directory_missing() {
+        // Directory we never created → bind must return a structured error
+        // instead of panicking or exiting the process.
+        let dir = tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("does")
+            .join("not")
+            .join("exist")
+            .join(".s.PGSQL.6432");
+
+        let err = create_unix_listener(path.to_str().unwrap(), 0o600)
+            .expect_err("bind must fail when parent directory is missing");
+        assert!(err.contains("Failed to bind"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn group_readable_mode_is_applied() {
+        // 0660 exercises the path where set_permissions *loosens* the bits
+        // the umask guard masked off; if we mess that up the file stays
+        // owner-only and client groups lose access silently.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".s.PGSQL.6432");
+
+        let (listener, _ownership) =
+            create_unix_listener(path.to_str().unwrap(), 0o660).expect("bind must succeed");
+
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o660);
+        drop(listener);
     }
 }
 
