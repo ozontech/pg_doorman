@@ -10,11 +10,27 @@ on:
         description: 'ECS task ID (the UUID part, e.g. 8f1d948c60c74239998e8be8dee87ea7)'
         required: true
         type: string
+      filter_pattern:
+        description: 'CloudWatch Logs filter pattern (empty = no filter, e.g. "?ERROR ?pgbench ?Scenario")'
+        required: false
+        default: ''
+        type: string
+      start_minute:
+        description: 'Skip first N minutes after task start (helps avoid setup spam)'
+        required: false
+        default: '0'
+        type: string
+      end_minute:
+        description: 'Stop fetching after N minutes from task start (0 = no limit)'
+        required: false
+        default: '0'
+        type: string
 
 jobs:
   fetch-logs:
     name: Fetch CloudWatch Logs
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -23,8 +39,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Download full log stream from CloudWatch
+      - name: Download log stream from CloudWatch
+        env:
+          FILTER_PATTERN: ${{ inputs.filter_pattern }}
+          START_MINUTE: ${{ inputs.start_minute }}
+          END_MINUTE: ${{ inputs.end_minute }}
         run: |
+          set -euo pipefail
+
           CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
           TASK_ID="${{ inputs.task_id }}"
           LOG_GROUP="/ecs/${CLUSTER}"
@@ -36,35 +58,88 @@ jobs:
 
           echo "Fetching ${LOG_GROUP}/${LOG_STREAM}"
 
+          # Find the timestamp of the first event in the stream so start/end offsets
+          # are interpreted relative to "task start" rather than wall-clock epoch.
+          FIRST_TS=$(aws logs get-log-events \
+            --log-group-name "${LOG_GROUP}" \
+            --log-stream-name "${LOG_STREAM}" \
+            --start-from-head \
+            --limit 1 \
+            --output json | jq '.events[0].timestamp // 0')
+          if [ "${FIRST_TS}" = "0" ]; then
+            echo "❌ Log stream is empty or unreachable"
+            exit 1
+          fi
+          echo "First event timestamp: ${FIRST_TS} ($(date -u -d @$((FIRST_TS / 1000)) +%FT%TZ))"
+
+          START_TS=$((FIRST_TS + START_MINUTE * 60 * 1000))
+          if [ "${END_MINUTE}" -gt 0 ]; then
+            END_TS=$((FIRST_TS + END_MINUTE * 60 * 1000))
+            END_ARG=(--end-time "${END_TS}")
+            echo "Window: [+${START_MINUTE}min, +${END_MINUTE}min] (start=${START_TS}, end=${END_TS})"
+          else
+            END_ARG=()
+            echo "Window: [+${START_MINUTE}min, end] (start=${START_TS})"
+          fi
+
+          # Use filter-log-events when a pattern is supplied — it pre-filters on the
+          # AWS side, so we don't pull half a gigabyte of odyssey spam through the
+          # paginator. Without a pattern, fall back to filter-log-events with no
+          # pattern, which still respects the time window.
           NEXT_TOKEN=""
           PAGE_NUM=0
+          TOTAL=0
           while :; do
-            if [ -z "${NEXT_TOKEN}" ]; then
-              PAGE=$(aws logs get-log-events \
-                --log-group-name "${LOG_GROUP}" \
-                --log-stream-name "${LOG_STREAM}" \
-                --start-from-head \
-                --output json)
+            if [ -n "${NEXT_TOKEN}" ]; then
+              if [ -n "${FILTER_PATTERN}" ]; then
+                PAGE=$(aws logs filter-log-events \
+                  --log-group-name "${LOG_GROUP}" \
+                  --log-stream-names "${LOG_STREAM}" \
+                  --start-time "${START_TS}" \
+                  "${END_ARG[@]}" \
+                  --filter-pattern "${FILTER_PATTERN}" \
+                  --next-token "${NEXT_TOKEN}" \
+                  --output json)
+              else
+                PAGE=$(aws logs filter-log-events \
+                  --log-group-name "${LOG_GROUP}" \
+                  --log-stream-names "${LOG_STREAM}" \
+                  --start-time "${START_TS}" \
+                  "${END_ARG[@]}" \
+                  --next-token "${NEXT_TOKEN}" \
+                  --output json)
+              fi
             else
-              PAGE=$(aws logs get-log-events \
-                --log-group-name "${LOG_GROUP}" \
-                --log-stream-name "${LOG_STREAM}" \
-                --start-from-head \
-                --next-token "${NEXT_TOKEN}" \
-                --output json)
+              if [ -n "${FILTER_PATTERN}" ]; then
+                PAGE=$(aws logs filter-log-events \
+                  --log-group-name "${LOG_GROUP}" \
+                  --log-stream-names "${LOG_STREAM}" \
+                  --start-time "${START_TS}" \
+                  "${END_ARG[@]}" \
+                  --filter-pattern "${FILTER_PATTERN}" \
+                  --output json)
+              else
+                PAGE=$(aws logs filter-log-events \
+                  --log-group-name "${LOG_GROUP}" \
+                  --log-stream-names "${LOG_STREAM}" \
+                  --start-time "${START_TS}" \
+                  "${END_ARG[@]}" \
+                  --output json)
+              fi
             fi
             EVENTS=$(echo "${PAGE}" | jq '.events | length')
             echo "${PAGE}" | jq -r '.events[] | "\(.timestamp) \(.message)"' >> "${OUT}"
-            NEW_TOKEN=$(echo "${PAGE}" | jq -r '.nextForwardToken')
-            PAGE_NUM=$((PAGE_NUM+1))
-            echo "page ${PAGE_NUM}: +${EVENTS} events (total $(wc -l < "${OUT}"))"
-            if [ "${EVENTS}" -eq 0 ] || [ "${NEW_TOKEN}" = "${NEXT_TOKEN}" ]; then
+            TOTAL=$((TOTAL + EVENTS))
+            PAGE_NUM=$((PAGE_NUM + 1))
+            echo "page ${PAGE_NUM}: +${EVENTS} events (total ${TOTAL})"
+            NEW_TOKEN=$(echo "${PAGE}" | jq -r '.nextToken // empty')
+            if [ -z "${NEW_TOKEN}" ]; then
               break
             fi
             NEXT_TOKEN="${NEW_TOKEN}"
           done
 
-          echo "Downloaded $(wc -l < "${OUT}") log lines into ${OUT}"
+          echo "Downloaded ${TOTAL} log lines into ${OUT}"
           echo "File size: $(du -h "${OUT}" | cut -f1)"
 
       - name: Upload logs as artifact
