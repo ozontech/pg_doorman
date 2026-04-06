@@ -1,0 +1,75 @@
+name: Fetch Fargate Logs
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: 'ECS task ID (the UUID part, e.g. 8f1d948c60c74239998e8be8dee87ea7)'
+        required: true
+        type: string
+
+jobs:
+  fetch-logs:
+    name: Fetch CloudWatch Logs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Download full log stream from CloudWatch
+        run: |
+          CLUSTER="${{ secrets.ECS_CLUSTER_NAME }}"
+          TASK_ID="${{ inputs.task_id }}"
+          LOG_GROUP="/ecs/${CLUSTER}"
+          LOG_STREAM="benchmark/benchmark-container/${TASK_ID}"
+
+          mkdir -p logs
+          OUT="logs/${TASK_ID}.log"
+          : > "${OUT}"
+
+          echo "Fetching ${LOG_GROUP}/${LOG_STREAM}"
+
+          NEXT_TOKEN=""
+          PAGE_NUM=0
+          while :; do
+            if [ -z "${NEXT_TOKEN}" ]; then
+              PAGE=$(aws logs get-log-events \
+                --log-group-name "${LOG_GROUP}" \
+                --log-stream-name "${LOG_STREAM}" \
+                --start-from-head \
+                --output json)
+            else
+              PAGE=$(aws logs get-log-events \
+                --log-group-name "${LOG_GROUP}" \
+                --log-stream-name "${LOG_STREAM}" \
+                --start-from-head \
+                --next-token "${NEXT_TOKEN}" \
+                --output json)
+            fi
+            EVENTS=$(echo "${PAGE}" | jq '.events | length')
+            echo "${PAGE}" | jq -r '.events[] | "\(.timestamp) \(.message)"' >> "${OUT}"
+            NEW_TOKEN=$(echo "${PAGE}" | jq -r '.nextForwardToken')
+            PAGE_NUM=$((PAGE_NUM+1))
+            echo "page ${PAGE_NUM}: +${EVENTS} events (total $(wc -l < "${OUT}"))"
+            if [ "${EVENTS}" -eq 0 ] || [ "${NEW_TOKEN}" = "${NEXT_TOKEN}" ]; then
+              break
+            fi
+            NEXT_TOKEN="${NEW_TOKEN}"
+          done
+
+          echo "Downloaded $(wc -l < "${OUT}") log lines into ${OUT}"
+          echo "File size: $(du -h "${OUT}" | cut -f1)"
+
+      - name: Upload logs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fargate-logs-${{ inputs.task_id }}
+          path: logs/
+          retention-days: 30
