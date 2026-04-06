@@ -1197,7 +1197,8 @@ general:
   admin_password: "admin_password"
   scaling_warm_pool_ratio: 30
   scaling_fast_retries: 20
-  scaling_cooldown_sleep: 5
+  scaling_max_anticipation_wait_ms: 50
+  scaling_max_parallel_creates: 4
 
 pools:
   mydb:
@@ -1218,10 +1219,8 @@ pools:
     let config = get_config();
     assert_eq!(config.general.scaling_warm_pool_ratio, 30);
     assert_eq!(config.general.scaling_fast_retries, 20);
-    assert_eq!(
-        config.general.scaling_cooldown_sleep,
-        Duration::from_millis(5)
-    );
+    assert_eq!(config.general.scaling_max_anticipation_wait_ms, 50);
+    assert_eq!(config.general.scaling_max_parallel_creates, 4);
 }
 
 /// Test 2: Parsing defaults when scaling fields omitted
@@ -1254,15 +1253,12 @@ pools:
     let config = get_config();
     assert_eq!(config.general.scaling_warm_pool_ratio, 20);
     assert_eq!(config.general.scaling_fast_retries, 10);
-    assert_eq!(
-        config.general.scaling_cooldown_sleep,
-        Duration::from_millis(10)
-    );
+    assert_eq!(config.general.scaling_max_anticipation_wait_ms, 100);
+    assert_eq!(config.general.scaling_max_parallel_creates, 2);
     // Pool-level should be None
     let pool = &config.pools["mydb"];
     assert_eq!(pool.scaling_warm_pool_ratio, None);
     assert_eq!(pool.scaling_fast_retries, None);
-    assert_eq!(pool.scaling_cooldown_sleep, None);
 }
 
 /// Test 3: Pool-level override parsing
@@ -1305,12 +1301,10 @@ pools:
     let overridden = &config.pools["overridden_db"];
     assert_eq!(overridden.scaling_warm_pool_ratio, Some(50));
     assert_eq!(overridden.scaling_fast_retries, Some(5));
-    assert_eq!(overridden.scaling_cooldown_sleep, None);
 
     let default = &config.pools["default_db"];
     assert_eq!(default.scaling_warm_pool_ratio, None);
     assert_eq!(default.scaling_fast_retries, None);
-    assert_eq!(default.scaling_cooldown_sleep, None);
 }
 
 /// Test 4: resolve_scaling_config() — pool override wins
@@ -1319,15 +1313,19 @@ async fn test_resolve_scaling_config_pool_override() {
     let mut general = General::default();
     general.scaling_warm_pool_ratio = 20;
     general.scaling_fast_retries = 10;
-    general.scaling_cooldown_sleep = Duration::from_millis(10);
+    general.scaling_max_anticipation_wait_ms = 100;
+    general.scaling_max_parallel_creates = 2;
 
-    let mut pool = Pool::default();
-    pool.scaling_warm_pool_ratio = Some(50);
+    let pool = Pool {
+        scaling_warm_pool_ratio: Some(50),
+        ..Pool::default()
+    };
 
     let scaling = pool.resolve_scaling_config(&general);
     assert!((scaling.warm_pool_ratio - 0.5).abs() < f32::EPSILON);
     assert_eq!(scaling.fast_retries, 10); // general default
-    assert_eq!(scaling.cooldown_sleep_ms, 10); // general default
+    assert_eq!(scaling.max_anticipation_wait_ms, 100); // global only
+    assert_eq!(scaling.max_parallel_creates, 2); // global only
 }
 
 /// Test 5: resolve_scaling_config() — general fallback
@@ -1336,14 +1334,44 @@ async fn test_resolve_scaling_config_general_fallback() {
     let mut general = General::default();
     general.scaling_warm_pool_ratio = 30;
     general.scaling_fast_retries = 15;
-    general.scaling_cooldown_sleep = Duration::from_millis(20);
+    general.scaling_max_anticipation_wait_ms = 200;
+    general.scaling_max_parallel_creates = 3;
 
     let pool = Pool::default(); // all scaling fields are None
 
     let scaling = pool.resolve_scaling_config(&general);
     assert!((scaling.warm_pool_ratio - 0.3).abs() < f32::EPSILON);
     assert_eq!(scaling.fast_retries, 15);
-    assert_eq!(scaling.cooldown_sleep_ms, 20);
+    assert_eq!(scaling.max_anticipation_wait_ms, 200);
+    assert_eq!(scaling.max_parallel_creates, 3);
+}
+
+/// Test 5b: Validation rejects max_parallel_creates = 0 (would deadlock create path)
+#[tokio::test]
+async fn test_validate_scaling_max_parallel_creates_zero_rejected() {
+    let mut config = Config::default();
+    config.general.scaling_max_parallel_creates = 0;
+    let result = config.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("scaling_max_parallel_creates"));
+    } else {
+        panic!("Expected BadConfig error about scaling_max_parallel_creates");
+    }
+}
+
+/// Test 5c: Validation caps anticipation wait at 60 seconds
+#[tokio::test]
+async fn test_validate_scaling_max_anticipation_wait_ms_capped() {
+    let mut config = Config::default();
+    config.general.scaling_max_anticipation_wait_ms = 60_001;
+    let result = config.validate().await;
+    assert!(result.is_err());
+    if let Err(Error::BadConfig(msg)) = result {
+        assert!(msg.contains("scaling_max_anticipation_wait_ms"));
+    } else {
+        panic!("Expected BadConfig error about scaling_max_anticipation_wait_ms");
+    }
 }
 
 /// Test 6: Validation — general warm_pool_ratio > 100
@@ -1364,13 +1392,15 @@ async fn test_validate_scaling_warm_pool_ratio_general_out_of_range() {
 #[tokio::test]
 async fn test_validate_scaling_warm_pool_ratio_pool_out_of_range() {
     let mut config = Config::default();
-    let mut pool = Pool::default();
-    pool.scaling_warm_pool_ratio = Some(101);
-    pool.users.push(User {
-        username: "user1".to_string(),
-        password: "pass1".to_string(),
-        ..User::default()
-    });
+    let pool = Pool {
+        scaling_warm_pool_ratio: Some(101),
+        users: vec![User {
+            username: "user1".to_string(),
+            password: "pass1".to_string(),
+            ..User::default()
+        }],
+        ..Pool::default()
+    };
     config.pools.insert("testdb".to_string(), pool);
 
     let result = config.validate().await;
@@ -1408,7 +1438,8 @@ admin_username = "admin"
 admin_password = "admin_password"
 scaling_warm_pool_ratio = 40
 scaling_fast_retries = 15
-scaling_cooldown_sleep = 25
+scaling_max_anticipation_wait_ms = 75
+scaling_max_parallel_creates = 3
 
 [pools.mydb]
 server_host = "localhost"
@@ -1430,15 +1461,12 @@ pool_size = 10
     let config = get_config();
     assert_eq!(config.general.scaling_warm_pool_ratio, 40);
     assert_eq!(config.general.scaling_fast_retries, 15);
-    assert_eq!(
-        config.general.scaling_cooldown_sleep,
-        Duration::from_millis(25)
-    );
+    assert_eq!(config.general.scaling_max_anticipation_wait_ms, 75);
+    assert_eq!(config.general.scaling_max_parallel_creates, 3);
 
     let pool = &config.pools["mydb"];
     assert_eq!(pool.scaling_warm_pool_ratio, Some(60));
     assert_eq!(pool.scaling_fast_retries, None);
-    assert_eq!(pool.scaling_cooldown_sleep, None);
 }
 
 /// Test 10: Edge case — warm_pool_ratio = 0 and 100

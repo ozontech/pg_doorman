@@ -120,6 +120,10 @@ harness = false
 name = "memory_benchmarks"
 harness = false
 
+[[bench]]
+name = "pool_anticipation_benchmarks"
+harness = false
+
 [features]
 default = []
 pam = ["dep:pam-client"]

@@ -87,9 +87,18 @@ pub struct General {
     #[serde(default = "General::default_scaling_fast_retries")]
     pub scaling_fast_retries: u32,
 
-    /// Sleep duration after fast retries during connection creation (0 = disabled).
-    #[serde(default = "General::default_scaling_cooldown_sleep")]
-    pub scaling_cooldown_sleep: Duration,
+    /// Maximum time (milliseconds) to wait for an idle connection to be returned by
+    /// another task before creating a new one. The wait is event-driven via Notify
+    /// and is woken by return_object().
+    #[serde(default = "General::default_scaling_max_anticipation_wait_ms")]
+    pub scaling_max_anticipation_wait_ms: u64,
+
+    /// Hard cap on concurrent server connection creates per pool.
+    /// Tasks above this limit wait for either an idle return or a create completion.
+    /// Anti-thundering-herd: prevents N parallel timeout_get callers from each
+    /// independently issuing a connect() under load. Must be >= 1.
+    #[serde(default = "General::default_scaling_max_parallel_creates")]
+    pub scaling_max_parallel_creates: u32,
 
     #[serde(default = "General::default_server_lifetime")]
     pub server_lifetime: Duration,
@@ -265,9 +274,14 @@ impl General {
         10
     }
 
-    /// Default cooldown sleep: 10ms (matches ScalingConfig::DEFAULT_COOLDOWN_SLEEP_MS).
-    pub fn default_scaling_cooldown_sleep() -> Duration {
-        Duration::from_millis(10)
+    /// Default anticipation wait: 100ms (matches ScalingConfig::DEFAULT_MAX_ANTICIPATION_WAIT_MS).
+    pub fn default_scaling_max_anticipation_wait_ms() -> u64 {
+        100
+    }
+
+    /// Default max parallel creates per pool: 2 (matches ScalingConfig::DEFAULT_MAX_PARALLEL_CREATES).
+    pub fn default_scaling_max_parallel_creates() -> u32 {
+        2
     }
 
     pub fn default_backlog() -> u32 {
@@ -404,7 +418,8 @@ impl Default for General {
             max_concurrent_creates: Self::default_max_concurrent_creates(),
             scaling_warm_pool_ratio: Self::default_scaling_warm_pool_ratio(),
             scaling_fast_retries: Self::default_scaling_fast_retries(),
-            scaling_cooldown_sleep: Self::default_scaling_cooldown_sleep(),
+            scaling_max_anticipation_wait_ms: Self::default_scaling_max_anticipation_wait_ms(),
+            scaling_max_parallel_creates: Self::default_scaling_max_parallel_creates(),
             worker_threads: Self::default_worker_threads(),
             worker_cpu_affinity_pinning: Self::default_worker_cpu_affinity_pinning(),
             worker_stack_size: None,

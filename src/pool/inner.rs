@@ -14,7 +14,7 @@ use crate::utils::clock;
 
 use parking_lot::Mutex;
 
-use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
+use tokio::sync::{Notify, Semaphore, SemaphorePermit, TryAcquireError};
 
 use super::errors::{PoolError, RecycleError, TimeoutType};
 use super::pool_coordinator;
@@ -23,6 +23,12 @@ use super::ServerPool;
 use crate::server::Server;
 
 const MAX_FAST_RETRY: i32 = 10;
+
+/// Fallback wake interval for tasks queued behind the bounded burst limiter.
+/// Used as a safety net in case neither `idle_returned` nor `create_done`
+/// fires within the expected window — guarantees forward progress without
+/// busy-spinning.
+const BURST_BACKOFF: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Internal object wrapper with metrics.
 /// The `coordinator_permit` is held for the entire lifetime of the connection:
@@ -113,6 +119,18 @@ struct PoolInner {
     pool_name: String,
     /// Username for this pool, used in coordinator error messages.
     username: String,
+    /// Anticipation signal: woken when an Object is returned to the idle pool.
+    /// Used by the cooldown zone in `timeout_get` to wait event-driven for a
+    /// recyclable connection instead of polling after a blind sleep.
+    idle_returned: Notify,
+    /// Number of server connection creates currently in-flight on this pool.
+    /// Bounded by `config.scaling.max_parallel_creates` to suppress thundering
+    /// herd when N parallel callers all miss the idle pool simultaneously.
+    inflight_creates: AtomicUsize,
+    /// Wake signal for tasks queued behind the bounded burst limiter.
+    /// Notified once when an in-flight create completes (success or failure),
+    /// so the next waiting task can attempt its own create or recycle.
+    create_done: Notify,
 }
 
 enum RecycleOutcome {
@@ -171,6 +189,9 @@ impl PoolInner {
             }
             drop(slots);
             self.semaphore.add_permits(1);
+            // Wake one task waiting in the cooldown anticipation zone
+            // or behind the bounded burst limiter.
+            self.idle_returned.notify_one();
             return;
         }
         // Slow path: wait for lock
@@ -181,6 +202,7 @@ impl PoolInner {
         }
         drop(slots);
         self.semaphore.add_permits(1);
+        self.idle_returned.notify_one();
     }
 }
 
@@ -233,6 +255,9 @@ impl Pool {
                 coordinator: builder.coordinator,
                 pool_name: builder.pool_name,
                 username: builder.username,
+                idle_returned: Notify::new(),
+                inflight_creates: AtomicUsize::new(0),
+                create_done: Notify::new(),
             }),
         }
     }
@@ -319,8 +344,8 @@ impl Pool {
             });
         }
 
-        // No connection available - check if we should use cooldown zone logic
-        let should_use_cooldown = {
+        // No connection available - check if we should use the anticipation zone
+        let should_anticipate = {
             let slots = self.inner.slots.lock();
             let warm_threshold = std::cmp::max(
                 1,
@@ -329,7 +354,12 @@ impl Pool {
             slots.size >= warm_threshold
         };
 
-        if should_use_cooldown {
+        // Non-blocking checkout (wait_timeout == 0) skips anticipation entirely:
+        // the caller wants either an immediate idle hit or a fresh create, no waits.
+        let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
+
+        if should_anticipate {
+            // Phase A: yield_now spin — catches microsecond races without sleeping.
             let fast_retries = self.inner.config.scaling.fast_retries;
             for _ in 0..fast_retries {
                 if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
@@ -346,16 +376,47 @@ impl Pool {
                 tokio::task::yield_now().await;
             }
 
-            let cooldown_sleep_ms = self.inner.config.scaling.cooldown_sleep_ms;
-            if cooldown_sleep_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(cooldown_sleep_ms)).await;
+            // Phase B: event-driven anticipation wait. Instead of a blind sleep,
+            // wait on `idle_returned` so a single `return_object` wakes exactly
+            // one queued task. Bounded by both the configured anticipation
+            // window and the caller's remaining wait budget so the client never
+            // blows past its own wait_timeout.
+            if !non_blocking {
+                let max_wait_ms = self.inner.config.scaling.max_anticipation_wait_ms;
+                if max_wait_ms > 0 {
+                    let budget = compute_anticipation_budget(timeouts.wait, max_wait_ms);
+                    if !budget.is_zero() {
+                        // Register the notification BEFORE re-checking the slots:
+                        // if a return_object fires between the check and the await,
+                        // the notification is buffered and `notified().await` returns
+                        // immediately rather than missing the wake.
+                        let notified = self.inner.idle_returned.notified();
 
-                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(*inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
+                        if let RecycleOutcome::Reused(inner) =
+                            self.inner.try_recycle_one(timeouts).await
+                        {
+                            permit.forget();
+                            return Ok(Object {
+                                inner: Some(*inner),
+                                pool: Arc::downgrade(&self.inner),
+                            });
+                        }
+
+                        tokio::select! {
+                            _ = notified => {}
+                            _ = tokio::time::sleep(budget) => {}
+                        }
+
+                        if let RecycleOutcome::Reused(inner) =
+                            self.inner.try_recycle_one(timeouts).await
+                        {
+                            permit.forget();
+                            return Ok(Object {
+                                inner: Some(*inner),
+                                pool: Arc::downgrade(&self.inner),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -374,6 +435,66 @@ impl Pool {
                 RecycleOutcome::Empty => break,
             }
         }
+
+        // Bounded burst gate: cap the number of concurrent server creates per
+        // pool. Without this gate, N parallel callers that all miss the idle
+        // pool each independently issue a backend connect, producing
+        // thundering-herd bursts under load. With the cap, only `max_parallel_creates`
+        // creates run concurrently; the rest wait on a Notify woken by either
+        // an idle return or a peer create completion, then re-check recycle.
+        let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
+        let _create_gate = loop {
+            if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
+                // Got a create slot — guard releases it on drop, no matter
+                // whether create() succeeds, fails, or unwinds.
+                break scopeguard::guard((), |_| {
+                    self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
+                    self.inner.create_done.notify_one();
+                });
+            }
+
+            if non_blocking {
+                // Non-blocking caller: one last recycle attempt, then fail.
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
+                }
+                return Err(PoolError::Timeout(TimeoutType::Wait));
+            }
+
+            // Register both wake sources BEFORE re-checking recycle, so a
+            // peer create finishing or an idle return between the check and
+            // the await is captured rather than missed.
+            let on_create = self.inner.create_done.notified();
+            let on_idle = self.inner.idle_returned.notified();
+
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(*inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
+            }
+
+            tokio::select! {
+                _ = on_create => {}
+                _ = on_idle => {}
+                _ = tokio::time::sleep(BURST_BACKOFF) => {}
+            }
+
+            // After wake — try recycle once before retrying the gate.
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(*inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
+            }
+            // Loop back to retry the gate.
+        };
 
         // Acquire coordinator permit before creating a new connection.
         // Only the NEW CONNECTION path goes through the coordinator —
@@ -593,6 +714,7 @@ impl Pool {
     /// Returns the number of connections successfully created.
     /// Stops on the first creation failure to avoid hammering a failing server.
     pub async fn replenish(&self, count: usize) -> usize {
+        let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
         let mut created = 0;
         for _ in 0..count {
             // Check if there's still room in the pool
@@ -602,6 +724,30 @@ impl Pool {
                     break;
                 }
             }
+
+            // Respect the bounded burst gate. Replenish runs in the background
+            // retain loop, so when client traffic is already saturating the
+            // create slots there is no value in queueing here — leave the work
+            // for the next retain cycle and let `timeout_get` callers own the
+            // budget. Going through `try_take_burst_slot` (rather than a raw
+            // load) keeps the gate semantics symmetric with the client path.
+            if !try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
+                log::debug!(
+                    "[{}@{}] replenish: bounded burst at limit, deferring to next cycle",
+                    self.inner.username,
+                    self.inner.pool_name
+                );
+                break;
+            }
+            // Slot is taken — guard releases it on every exit path (success,
+            // error, panic) and wakes any task waiting at the bounded burst
+            // gate so it can retry recycle or take the slot.
+            let _create_gate = scopeguard::guard((), |_| {
+                self.inner
+                    .inflight_creates
+                    .fetch_sub(1, Ordering::Release);
+                self.inner.create_done.notify_one();
+            });
 
             // Acquire coordinator permit (non-blocking). If the coordinator
             // limit is reached, skip and retry on the next retain cycle.
@@ -784,5 +930,247 @@ impl fmt::Debug for PoolBuilder {
         f.debug_struct("PoolBuilder")
             .field("config", &self.config)
             .finish()
+    }
+}
+
+/// Try to take a slot from the bounded burst counter.
+///
+/// Optimistically increments the counter and validates it stayed below `max`.
+/// If the slot is available, returns `true` and leaves the counter incremented
+/// (caller is responsible for releasing it). If the cap was already reached,
+/// rolls back the increment and returns `false`.
+///
+/// This intentionally tolerates brief over-shoot when many tasks race the
+/// `fetch_add`: the next observation will reflect the corrected value once
+/// rollback completes. The cap is a soft burst smoother, not a hard fence,
+/// and a 1-2 transient excess is acceptable for this purpose.
+#[inline]
+fn try_take_burst_slot(counter: &AtomicUsize, max: usize) -> bool {
+    let prev = counter.fetch_add(1, Ordering::AcqRel);
+    if prev < max {
+        return true;
+    }
+    counter.fetch_sub(1, Ordering::Release);
+    false
+}
+
+/// Compute how long the anticipation phase may wait for an idle return.
+///
+/// The budget is bounded by two independent limits:
+///
+/// 1. `max_wait_ms` — the operator-configured upper bound on event-driven
+///    waiting before falling through to creating a new connection.
+/// 2. The caller's remaining `wait_timeout` — anticipation must never burn
+///    the entire client budget, since after a miss the caller still needs
+///    time to actually create a connection. Half of the remaining timeout
+///    is reserved for the create path.
+///
+/// When `wait_timeout` is `None` the caller has no deadline at all and the
+/// full `max_wait_ms` is used. A computed budget below 1ms is rounded up so
+/// the wait actually has a chance to register a notification.
+fn compute_anticipation_budget(
+    wait_timeout: Option<std::time::Duration>,
+    max_wait_ms: u64,
+) -> std::time::Duration {
+    let max = std::time::Duration::from_millis(max_wait_ms);
+    let bounded = match wait_timeout {
+        None => max,
+        Some(remaining) => {
+            // Reserve half the caller's budget for the create path.
+            let half = remaining / 2;
+            std::cmp::min(half, max)
+        }
+    };
+    if bounded.is_zero() {
+        std::time::Duration::ZERO
+    } else {
+        std::cmp::max(bounded, std::time::Duration::from_millis(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn anticipation_budget_uses_full_max_when_no_wait_timeout() {
+        let budget = compute_anticipation_budget(None, 100);
+        assert_eq!(budget, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn anticipation_budget_caps_at_half_of_wait_timeout() {
+        // remaining wait = 50ms → half = 25ms; max = 100ms → result = 25ms
+        let budget = compute_anticipation_budget(Some(Duration::from_millis(50)), 100);
+        assert_eq!(budget, Duration::from_millis(25));
+    }
+
+    #[test]
+    fn anticipation_budget_caps_at_max_when_half_is_larger() {
+        // remaining wait = 1000ms → half = 500ms; max = 100ms → result = 100ms
+        let budget = compute_anticipation_budget(Some(Duration::from_secs(1)), 100);
+        assert_eq!(budget, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn anticipation_budget_returns_zero_for_non_blocking_caller() {
+        // remaining wait = 0 → half = 0 → bounded = 0 → ZERO (do not wait)
+        let budget = compute_anticipation_budget(Some(Duration::ZERO), 100);
+        assert_eq!(budget, Duration::ZERO);
+    }
+
+    #[test]
+    fn anticipation_budget_rounds_tiny_budget_up_to_one_ms() {
+        // remaining wait = 1ms → half = 500us → bounded = 500us → rounded to 1ms
+        let budget = compute_anticipation_budget(Some(Duration::from_millis(1)), 100);
+        assert_eq!(budget, Duration::from_millis(1));
+    }
+
+    #[test]
+    fn anticipation_budget_zero_max_yields_zero() {
+        // max_wait_ms = 0 → operator disabled anticipation entirely
+        let budget = compute_anticipation_budget(None, 0);
+        assert_eq!(budget, Duration::ZERO);
+    }
+
+    // ------------------------------------------------------------------
+    // try_take_burst_slot — soft burst limiter
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn burst_slot_taken_when_under_cap() {
+        let counter = AtomicUsize::new(0);
+        assert!(try_take_burst_slot(&counter, 2));
+        assert_eq!(counter.load(Ordering::Acquire), 1);
+        assert!(try_take_burst_slot(&counter, 2));
+        assert_eq!(counter.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn burst_slot_rejected_at_cap_and_counter_rolled_back() {
+        let counter = AtomicUsize::new(2);
+        assert!(!try_take_burst_slot(&counter, 2));
+        // Roll-back must restore the counter exactly.
+        assert_eq!(counter.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn burst_slot_rejected_when_already_above_cap() {
+        // Brief transient over-shoot from a racing peer should also reject
+        // and roll back, never grow further.
+        let counter = AtomicUsize::new(5);
+        assert!(!try_take_burst_slot(&counter, 2));
+        assert_eq!(counter.load(Ordering::Acquire), 5);
+    }
+
+    #[test]
+    fn burst_slot_zero_cap_always_rejects() {
+        let counter = AtomicUsize::new(0);
+        assert!(!try_take_burst_slot(&counter, 0));
+        assert_eq!(counter.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn burst_slot_concurrent_acquire_caps_within_one_of_max() {
+        // Stress: many threads racing the gate must never end with more than
+        // `max + (threads - max)` rolled-back observations. The gate is a
+        // soft cap, so we tolerate up to `max` accepted slots; everyone else
+        // must observe rejection and leave the counter at exactly `max`.
+        use std::sync::Arc;
+        use std::thread;
+
+        const THREADS: usize = 32;
+        const MAX: usize = 4;
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::with_capacity(THREADS);
+        for _ in 0..THREADS {
+            let counter = Arc::clone(&counter);
+            let accepted = Arc::clone(&accepted);
+            handles.push(thread::spawn(move || {
+                if try_take_burst_slot(&counter, MAX) {
+                    accepted.fetch_add(1, Ordering::Relaxed);
+                    // Hold the slot briefly so peers race rejection.
+                    thread::yield_now();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let final_count = counter.load(Ordering::Acquire);
+        let final_accepted = accepted.load(Ordering::Acquire);
+        // No leak: every accepted slot is still in the counter, every
+        // rejected attempt rolled back.
+        assert_eq!(final_count, final_accepted);
+        // Hard upper bound — burst gate must never accept more than MAX.
+        assert!(
+            final_accepted <= MAX,
+            "burst gate accepted {} > MAX {}",
+            final_accepted,
+            MAX
+        );
+        // Sanity — at least one thread must have made progress.
+        assert!(final_accepted >= 1);
+    }
+
+    // ------------------------------------------------------------------
+    // Notify register-before-check pattern
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn notify_one_buffered_when_registered_before_signal() {
+        // The cooldown anticipation zone relies on this property:
+        // notified() registered before notify_one() must wake immediately,
+        // even if the await happens after the signal.
+        let notify = std::sync::Arc::new(Notify::new());
+        let n2 = std::sync::Arc::clone(&notify);
+
+        let notified = notify.notified();
+        n2.notify_one();
+        // notify happened before await — must still wake.
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .expect("notified() must resolve when notify_one fired before await");
+    }
+
+    #[tokio::test]
+    async fn notify_one_wakes_exactly_one_waiter() {
+        // Anti-thundering-herd guarantee: a single return_object must wake
+        // exactly one cooldown-zone waiter, not all of them.
+        use std::sync::Arc;
+
+        let notify = Arc::new(Notify::new());
+        let woken = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..5 {
+            let n = Arc::clone(&notify);
+            let w = Arc::clone(&woken);
+            handles.push(tokio::spawn(async move {
+                n.notified().await;
+                w.fetch_add(1, Ordering::Relaxed);
+            }));
+        }
+
+        // Allow all waiters to register.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        notify.notify_one();
+
+        // Give the woken task a chance to run.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(woken.load(Ordering::Acquire), 1);
+
+        // Cleanup: wake the rest so spawned tasks finish.
+        for _ in 0..4 {
+            notify.notify_one();
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
     }
 }

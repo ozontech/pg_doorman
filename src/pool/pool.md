@@ -5,7 +5,7 @@
 Connection pool manages PostgreSQL connections with:
 - Bounded concurrency via semaphore
 - Connection reuse through queue (LIFO/FIFO)
-- Gradual scaling with cooldown to avoid connection spikes
+- Event-driven anticipation + bounded burst create to avoid thundering-herd
 
 ## Connection Acquisition Flow
 
@@ -14,47 +14,95 @@ pool.get()
   ↓
 1. Acquire semaphore permit (limit concurrent operations)
   ↓
-2. Try pop_front() - HOT PATH
+2. Try pop_front() — HOT PATH
    └─ If available → recycle → return (fast!)
   ↓
-3. If queue empty → check cooldown zone
-   └─ size < warm_threshold (20%) → create immediately
-   └─ size >= warm_threshold → try wait
+3. If queue empty → check anticipation zone
+   └─ size < warm_threshold (20%) → skip anticipation, go to create
+   └─ size >= warm_threshold → enter anticipation zone
   ↓
-4. Cooldown retries (if in zone):
-   - Phase 1: 10 fast retries with yield_now (~100-500μs)
-   - Phase 2: sleep 10ms, try again
+4. Anticipation zone (Phase A → Phase B):
+   - Phase A: 10 fast retries with yield_now (~10-50μs)
+   - Phase B: register `idle_returned.notified()` then await with select{
+       notified, sleep(min(max_anticipation_wait_ms, wait_timeout/2))
+     }
+   - On wake → re-try recycle
   ↓
-5. Create new connection
+5. Bounded burst gate
+   - try_take_burst_slot(inflight_creates, max_parallel_creates)
+   - If over cap → wait on select{create_done, idle_returned, BURST_BACKOFF}
+     and retry recycle, then loop
+   - If under cap → take slot (released on RAII guard drop)
+  ↓
+6. Coordinator permit (only if max_db_connections > 0)
+  ↓
+7. server_pool.create() → install permit + return Object
 ```
 
-## Gradual Scaling
+## Anticipation + Bounded Burst
 
 ```rust
 ScalingConfig {
-    warm_pool_ratio: 0.2,      // 0-20% of max_size: instant creation
-    fast_retries: 10,          // Retry count with yield
-    cooldown_sleep_ms: 10,     // Sleep before final retry
+    warm_pool_ratio: 0.2,            // 0-20% of max_size: instant creation
+    fast_retries: 10,                // yield_now spin retry count
+    max_anticipation_wait_ms: 100,   // upper bound on event-driven idle wait
+    max_parallel_creates: 2,         // hard cap on concurrent creates per pool
 }
 ```
 
-**Example (max_size=40):**
-- Connections 0-8: create immediately (warm)
-- Connections 9-40: try wait before creating (cooldown)
+**Why it exists.** Without bounded burst, N parallel `timeout_get` callers
+that all miss the idle pool simultaneously each issue an independent backend
+connect, producing thundering-herd bursts (5+ concurrent server connects)
+under load. The legacy `cooldown_sleep_ms` was a per-task blind sleep that
+neither coordinated waiters nor reacted to returns within the sleep window.
+
+The new mechanism has two layers:
+
+1. **Anticipation wait** (Phase B in the acquisition flow). When the pool is
+   above the warm threshold and no idle connection is available, the caller
+   waits on a `tokio::sync::Notify` woken by `return_object()`. Exactly one
+   waiter is woken per return, which serializes recycle naturally and avoids
+   waking all queued tasks at once. The wait is bounded by both the operator
+   `max_anticipation_wait_ms` and half of the caller's remaining `wait_timeout`,
+   so anticipation never burns the entire client deadline.
+
+2. **Bounded burst gate** (Phase 5). A per-pool `AtomicUsize` caps how many
+   `server_pool.create()` calls run concurrently. Excess callers wait on
+   either `create_done` (a peer create finished) or `idle_returned` (a peer
+   returned an idle connection), with a 5 ms safety-net sleep so progress is
+   guaranteed even if both signals are missed. On wake the caller retries
+   recycle before retrying the gate.
+
+**Non-blocking checkout** (`wait_timeout = 0`) skips both layers — the
+caller wants either an immediate idle hit or a fresh create with no waits.
+
+**Replenish** (the retain-loop background task) defers when the gate is at
+capacity rather than queueing — there is no value in client-traffic-driven
+creates competing with replenish during a load spike.
 
 ## Performance
 
-Production benchmark (pool_size=40, 1000 concurrent):
-- **Throughput:** 2.14M ops/sec (+0.3% vs without scaling)
-- **Latency p50:** 833ns (+25%)
-- **Hot path:** near-zero overhead
+Microbenchmarks of the new code path (`benches/pool_anticipation_benchmarks.rs`):
+
+| Operation                              | Cost     |
+|----------------------------------------|----------|
+| `try_take_burst_slot` happy path       | ~3 ns    |
+| `try_take_burst_slot` cap rejection    | ~3 ns    |
+| Buffered notify (`notify_one` → await) | ~104 ns  |
+| 32 tasks contending cap=2 burst gate   | ~27 µs   |
+
+Hot path (idle reuse) is unchanged — the coordinator permit and the burst
+gate are only touched on the new-connection path.
 
 ## Components
 
-- **Pool** - Cloneable handle (Arc internally)
-- **Object** - RAII wrapper, returns connection on drop
-- **Slots** - Mutex-protected VecDeque of connections
-- **ScalingConfig** - Cooldown behavior configuration
+- **Pool** — Cloneable handle (Arc internally)
+- **Object** — RAII wrapper, returns connection on drop
+- **Slots** — Mutex-protected VecDeque of connections
+- **ScalingConfig** — anticipation + bounded burst tuning
+- **idle_returned** — Notify woken by `return_object()` for anticipation
+- **inflight_creates** — AtomicUsize counter for the bounded burst gate
+- **create_done** — Notify woken by completed creates for queued waiters
 
 ## Queue Modes
 
