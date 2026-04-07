@@ -808,3 +808,110 @@ Feature: Pool Coordinator — database-level connection limit
     When we create admin session "admin" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
     Then admin session "admin" column "current" should be between 0 and 2
+
+  @coordinator-phase-c-idle-return-wake
+  Scenario: Phase C waiter wakes on peer idle return and acquires via eviction
+    # Regression for the case where Phase C slept through peer idle-return events.
+    #
+    # Setup:
+    #   - max_db_connections = 2, reserve_pool_size = 0 (no fallback).
+    #   - min_connection_lifetime = 50 ms (so returned connections are evictable
+    #     almost immediately).
+    #   - reserve_pool_timeout = 800 ms (Phase C wait budget). Short enough that
+    #     this scenario fails fast if the fix regresses.
+    #
+    # Before the fix:
+    #   1. user1 pins both coordinator slots with open transactions.
+    #   2. user2 sends a query → Phase B finds nothing in user1's vec (both
+    #      connections are checked out, not in the idle queue) → Phase C waits
+    #      on connection_returned. That Notify only fires on permit drop.
+    #   3. user1 commits one transaction → Pool::return_object pushes the
+    #      backend into user1's slots.vec — no permit drop, no Notify.
+    #   4. user2 sleeps until reserve_pool_timeout (800 ms) → reserve_pool_size
+    #      is 0 → client receives "all server connections to database ... in
+    #      use" error. Test fails.
+    #
+    # After the fix:
+    #   1-2 as above.
+    #   3. user1 commits one transaction → Pool::return_object calls
+    #      coordinator.notify_idle_returned() → Phase C wakes, re-runs
+    #      try_evict_one against user1, finds the freshly returned idle in
+    #      user1's vec (older than min_connection_lifetime), drops its permit.
+    #   4. user2's try_acquire succeeds, the SELECT completes well within
+    #      reserve_pool_timeout. Test passes.
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      max_db_connections = 2
+      min_connection_lifetime = 50
+      reserve_pool_size = 0
+      reserve_pool_timeout = 800
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 2
+      min_pool_size = 0
+
+      [[pools.example_db.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 2
+      min_pool_size = 0
+      """
+    # Warm-up: postgres user has never authenticated before, so its
+    # original_server_parameters cache is empty. The first auth has to call
+    # `database.get()` to fetch parameters from a real backend session,
+    # which itself goes through the coordinator. With reserve_pool_size = 0
+    # and the slots about to be pinned by user1, that fetch would fail.
+    # Run a throwaway query as postgres now to populate the cache; the
+    # cache persists across the warm-up session's drop and survives the
+    # later eviction of the postgres backend.
+    When we create session "u2_warmup" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_warmup"
+    When we close session "u2_warmup"
+    # user1 pins both coordinator slots via open transactions (conn is checked
+    # out to the client session, not in slots.vec). The first user1 session
+    # may need to evict the postgres warm-up connection — sleep 80 ms first
+    # so it is past min_connection_lifetime and eligible.
+    When we sleep for 80 milliseconds
+    When we create session "u1_s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "u1_s1"
+    And we send SimpleQuery "SELECT 1" to session "u1_s1"
+    When we create session "u1_s2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "BEGIN" to session "u1_s2"
+    And we send SimpleQuery "SELECT 1" to session "u1_s2"
+    # Wait past min_connection_lifetime so the user1 connections become
+    # evictable as soon as they hit the idle queue.
+    When we sleep for 80 milliseconds
+    # user2 starts a query — Phase A fails (no idle in postgres user),
+    # Phase B finds nothing evictable in user1's vec, Phase C begins to wait.
+    When we create session "u2_s1" to pg_doorman as "postgres" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "u2_s1" without waiting
+    # Give user2 a head start so it is parked in Phase C before user1 commits.
+    When we sleep for 100 milliseconds
+    # user1 commits one transaction → Pool::return_object fires
+    # notify_idle_returned → Phase C wakes → eviction succeeds → user2 gets
+    # the slot. Total wall time user2 → response should be well under the
+    # 800 ms reserve_pool_timeout.
+    When we send SimpleQuery "COMMIT" to session "u1_s1"
+    Then we read SimpleQuery response from session "u2_s1" within 600ms
+    Then session "u2_s1" should receive DataRow with "1"
+    # Verify observability — exactly the expected counter changes.
+    When we create admin session "admin" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOL_COORDINATOR" on admin session "admin" and store response
+    # At least one eviction happened (Phase C retry). Upper bound is loose
+    # because the BDD step only supports "between A and B".
+    Then admin session "admin" column "evictions" should be between 1 and 999999
+    # No reserve grants, no client exhaustion errors.
+    And admin session "admin" column "reserve_acq" should be between 0 and 0
+    And admin session "admin" column "exhaustions" should be between 0 and 0
