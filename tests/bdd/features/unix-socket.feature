@@ -170,6 +170,74 @@ Feature: Unix socket connections
       """
     Then psql connection to pg_doorman via unix socket as user "postgres" to database "postgres" fails
 
+  Scenario: HBA local md5 authenticates Unix socket clients with the right password
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all   all   trust
+      host    all   all   127.0.0.1/32   trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman hba file contains:
+      """
+      local all all md5
+      host all all 0.0.0.0/0 md5
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      unix_socket_dir = "${PG_TEMP_DIR}"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = "md58a67a0c805a5ee0384ea28e0dea557b6"
+      pool_size = 10
+      """
+    Then psql query "SELECT 1" via pg_doorman unix socket as user "example_user_1" to database "example_db" with password "test" returns "1"
+
+  Scenario: HBA local md5 rejects Unix socket clients with the wrong password
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all   all   trust
+      host    all   all   127.0.0.1/32   trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman hba file contains:
+      """
+      local all all md5
+      host all all 0.0.0.0/0 md5
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      unix_socket_dir = "${PG_TEMP_DIR}"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = "md58a67a0c805a5ee0384ea28e0dea557b6"
+      pool_size = 10
+      """
+    Then psql connection to pg_doorman via unix socket as user "example_user_1" to database "example_db" with password "wrong-password" fails
+
   Scenario: only_ssl_connections does not block Unix socket clients
     # only_ssl_connections rejects plain TCP, but Unix sockets are inherently
     # local-only and should never be subject to the TLS-required check.
