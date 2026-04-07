@@ -1492,9 +1492,21 @@ minimum</strong>, and close one of its idle connections older than
 <code>min_connection_lifetime</code>. The evicted permit drops synchronously,
 freeing the slot. Re-try the semaphore acquire. If two callers race,
 the loser falls through to the next phase.</p>
-<p><strong>Phase C — Wait.</strong> Register a <code>Notify</code> woken when any in-use
-connection is returned to the coordinator. Wait up to
-<code>reserve_pool_timeout</code> (default 3000 ms) for the notify or the
+<p><strong>Phase C — Wait.</strong> Register a <code>Notify</code> woken on two events:</p>
+<ol>
+<li>A <code>CoordinatorPermit</code> was dropped — a peer's server connection was
+physically destroyed (<code>server_lifetime</code> expiry, <code>recycle</code> error,
+<code>RECONNECT</code>), and a semaphore slot is now free.</li>
+<li>A peer pool returned a connection to its idle queue via
+<code>Pool::return_object</code> — the slot is NOT free, but the peer's
+<code>spare_above_min</code> may have just grown.</li>
+</ol>
+<p>On every wake, Phase C re-runs <code>try_evict_one</code> against peer pools
+before re-running <code>try_acquire</code>. This is how a peer's freshly returned
+idle connection becomes available to the waiting caller: the second
+eviction attempt finds the spare that did not exist a moment ago and
+drops the peer's permit, which frees the semaphore slot.</p>
+<p>Wait up to <code>reserve_pool_timeout</code> (default 3000 ms) for a wake or the
 deadline. <strong>This timeout applies even when <code>reserve_pool_size = 0</code></strong>:
 it is the wait-phase budget, not just the reserve gating window. If
 your <code>query_wait_timeout</code> is shorter than <code>reserve_pool_timeout</code>, the
