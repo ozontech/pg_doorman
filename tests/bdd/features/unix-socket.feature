@@ -101,3 +101,110 @@ Feature: Unix socket connections
       pool_size = 10
       """
     Then pg_doorman unix socket file has mode "0660"
+
+  Scenario: HBA local reject blocks Unix socket connection
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all   all   trust
+      host    all   all   127.0.0.1/32   trust
+      """
+    And pg_doorman hba file contains:
+      """
+      local all all reject
+      host all all 0.0.0.0/0 trust
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      unix_socket_dir = "${PG_TEMP_DIR}"
+
+      [pools.postgres]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [[pools.postgres.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 10
+      """
+    Then psql connection to pg_doorman via unix socket as user "postgres" to database "postgres" fails
+
+  Scenario: HBA host rule does not match Unix socket connection
+    # Only a `host` rule for 127.0.0.1 — Unix clients have no peer IP, so
+    # this rule must NOT authenticate them. Without a `local` rule the
+    # connection should be rejected by the matcher.
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all   all   trust
+      host    all   all   127.0.0.1/32   trust
+      """
+    And pg_doorman hba file contains:
+      """
+      host all all 127.0.0.1/32 trust
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      unix_socket_dir = "${PG_TEMP_DIR}"
+
+      [pools.postgres]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [[pools.postgres.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 10
+      """
+    Then psql connection to pg_doorman via unix socket as user "postgres" to database "postgres" fails
+
+  Scenario: only_ssl_connections does not block Unix socket clients
+    # only_ssl_connections rejects plain TCP, but Unix sockets are inherently
+    # local-only and should never be subject to the TLS-required check.
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      local   all   all   trust
+      host    all   all   127.0.0.1/32   trust
+      """
+    And self-signed SSL certificates are generated
+    And pg_doorman hba file contains:
+      """
+      local all all trust
+      hostssl all all 0.0.0.0/0 trust
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba = {path = "${DOORMAN_HBA_FILE}"}
+      tls_private_key = "${DOORMAN_SSL_KEY}"
+      tls_certificate = "${DOORMAN_SSL_CERT}"
+      tls_mode = "require"
+      unix_socket_dir = "${PG_TEMP_DIR}"
+
+      [pools.postgres]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      pool_mode = "transaction"
+
+      [[pools.postgres.users]]
+      username = "postgres"
+      password = ""
+      pool_size = 10
+      """
+    Then psql query "SELECT 1" via pg_doorman unix socket as user "postgres" to database "postgres" returns "1"

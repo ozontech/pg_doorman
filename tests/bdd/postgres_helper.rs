@@ -753,6 +753,71 @@ pub async fn psql_unix_query_returns(
     );
 }
 
+/// Verify that a Unix socket psql connection fails — without checking the
+/// exact error string. Used by feature scenarios that rely on HBA reject
+/// or "no rule matched" wording, both of which produce different error
+/// codes depending on which auth method the matcher fell through to.
+#[then(
+    expr = "psql connection to pg_doorman via unix socket as user {string} to database {string} fails"
+)]
+pub async fn psql_unix_connection_fails(world: &mut DoormanWorld, user: String, database: String) {
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let socket_dir = world
+        .pg_tmp_dir
+        .as_ref()
+        .expect("pg_tmp_dir not set")
+        .path()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let output = build_psql_via_doorman_unix(&socket_dir, port, &user, &database, "SELECT 1")
+        .output()
+        .expect("Failed to run psql");
+    assert!(
+        !output.status.success(),
+        "psql unix socket connection unexpectedly succeeded: stdout={}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+}
+
+/// Verify a Unix socket psql connection fails AND its stderr contains a
+/// substring. Used to assert that pg_doorman replies with a structured
+/// PostgreSQL ErrorResponse and not a bare connection drop.
+#[then(
+    expr = "psql connection to pg_doorman via unix socket as user {string} to database {string} fails with {string}"
+)]
+pub async fn psql_unix_connection_fails_with(
+    world: &mut DoormanWorld,
+    user: String,
+    database: String,
+    expected_error: String,
+) {
+    let port = world.doorman_port.expect("pg_doorman not started");
+    let socket_dir = world
+        .pg_tmp_dir
+        .as_ref()
+        .expect("pg_tmp_dir not set")
+        .path()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let output = build_psql_via_doorman_unix(&socket_dir, port, &user, &database, "SELECT 1")
+        .output()
+        .expect("Failed to run psql");
+    assert!(
+        !output.status.success(),
+        "psql unix socket connection unexpectedly succeeded: stdout={}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&expected_error),
+        "expected stderr to contain '{}', got: {}",
+        expected_error,
+        stderr,
+    );
+}
+
 /// Stop PostgreSQL and pg_doorman when the world is dropped
 impl Drop for DoormanWorld {
     fn drop(&mut self) {
