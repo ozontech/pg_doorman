@@ -495,22 +495,17 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     tokio::task::spawn(async move {
                         let connection_id = TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed) as u64 + 1;
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
-                        // max clients.
                         if current_clients as u64 > max_connections {
                             warn!("[#c{connection_id}] client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
-                           match crate::client::client_entrypoint_too_many_clients_already(
+                            if let Err(err) = crate::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map).await {
-                                Ok(()) => (),
-                                Err(err) => {
-                                    error!("[#c{connection_id}] client {addr} disconnected with error: {err}");
-                                }
+                                error!("[#c{connection_id}] client {addr} disconnected with error: {err}");
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
-                            return
+                            return;
                         }
                         let start = Utc::now().naive_utc();
-
-                        match crate::client::client_entrypoint(
+                        let result = crate::client::client_entrypoint(
                             socket,
                             client_server_map,
                             admin_only,
@@ -518,30 +513,14 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             tls_rate_limiter,
                             connection_id,
                         )
-                        .await
-                        {
-                            Ok(session_info) => {
-                                if log_client_disconnections
-                                    || log::log_enabled!(log::Level::Debug)
-                                {
-                                    let session = format_duration(
-                                        &(Utc::now().naive_utc() - start),
-                                    );
-                                    let identity = match &session_info {
-                                        Some(si) => format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id),
-                                        None => format!("[#c{connection_id}]"),
-                                    };
-                                    info!("{identity} client disconnected from {addr}, session={session}");
-                                }
-                            }
-
-                            Err(err) => {
-                                // Pre-auth failures: identity unknown, only connection_id available.
-                                // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
-                                let session = format_duration(&(Utc::now().naive_utc() - start));
-                                warn!("[#c{connection_id}] client {addr} disconnected with error: {err}, session={session}");
-                            }
-                        };
+                        .await;
+                        log_session_end(
+                            result,
+                            connection_id,
+                            &addr.to_string(),
+                            start,
+                            log_client_disconnections,
+                        );
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
                     });
                 }
@@ -588,30 +567,20 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             return;
                         }
                         let start = Utc::now().naive_utc();
-
-                        match crate::client::client_entrypoint_unix(
+                        let result = crate::client::client_entrypoint_unix(
                             socket,
                             client_server_map,
                             admin_only,
                             connection_id,
                         )
-                        .await
-                        {
-                            Ok(session_info) => {
-                                if log_client_disconnections {
-                                    let session = format_duration(&(Utc::now().naive_utc() - start));
-                                    let identity = match &session_info {
-                                        Some(si) => format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id),
-                                        None => format!("[#c{connection_id}]"),
-                                    };
-                                    info!("{identity} unix client disconnected, session={session}");
-                                }
-                            }
-                            Err(err) => {
-                                let session = format_duration(&(Utc::now().naive_utc() - start));
-                                warn!("[#c{connection_id}] unix client disconnected with error: {err}, session={session}");
-                            }
-                        };
+                        .await;
+                        log_session_end(
+                            result,
+                            connection_id,
+                            "unix:",
+                            start,
+                            log_client_disconnections,
+                        );
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
                     });
                 }
@@ -1133,6 +1102,39 @@ enum CleanupDecision {
     Remove,
     Missing,
     Skip(String),
+}
+
+/// Log the end of a client session using a shared format string. Both the
+/// TCP and Unix accept branches used to inline the same match on
+/// `Result<Option<ClientSessionInfo>, Error>` — same identity string,
+/// same elapsed-time rendering, same warn vs info split. Centralising
+/// it keeps the two remaining accept sites down to a single call.
+fn log_session_end(
+    result: Result<Option<crate::client::ClientSessionInfo>, crate::errors::Error>,
+    connection_id: u64,
+    peer_label: &str,
+    session_start: chrono::NaiveDateTime,
+    log_disconnections: bool,
+) {
+    let session = format_duration(&(Utc::now().naive_utc() - session_start));
+    match result {
+        Ok(session_info) => {
+            if log_disconnections || log::log_enabled!(log::Level::Debug) {
+                let identity = match &session_info {
+                    Some(si) => {
+                        format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id)
+                    }
+                    None => format!("[#c{connection_id}]"),
+                };
+                info!("{identity} client disconnected from {peer_label}, session={session}");
+            }
+        }
+        Err(err) => {
+            // Pre-auth failures: identity unknown, only connection_id available.
+            // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
+            warn!("[#c{connection_id}] client {peer_label} disconnected with error: {err}, session={session}");
+        }
+    }
 }
 
 /// Create a Tokio Unix socket listener at `path` with the given permission
