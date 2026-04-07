@@ -23,10 +23,13 @@ pool.get()
   ↓
 4. Anticipation zone (Phase A → Phase B):
    - Phase A: 10 fast retries with yield_now (~10-50μs)
-   - Phase B: register `idle_returned.notified()` then await with select{
-       notified, sleep(min(max_anticipation_wait_ms, wait_timeout/2))
-     }
-   - On wake → re-try recycle
+   - Phase B: LOOP until deadline or recycle succeeds:
+       register `idle_returned.notified()` → recycle → select{
+         notified, sleep(remaining)
+       } → recycle → (race loss? loop back)
+   - Deadline = `start + wait_timeout - 500ms` where `start` is captured
+     at the top of `timeout_get`, so Phase 1/2 semaphore wait and Phase B
+     share a single budget and cannot cumulatively exceed `wait_timeout`
   ↓
 5. Coordinator permit (only if max_db_connections > 0)
    - acquire() may evict idle from peer pools, wait for a return,
@@ -76,11 +79,17 @@ The new mechanism has two layers:
 
 1. **Anticipation wait** (Phase B in the acquisition flow). When the pool is
    above the warm threshold and no idle connection is available, the caller
-   waits on a `tokio::sync::Notify` woken by `return_object()`. Exactly one
-   waiter is woken per return, which serializes recycle naturally and avoids
-   waking all queued tasks at once. The wait is bounded by both the operator
-   `max_anticipation_wait_ms` and half of the caller's remaining `wait_timeout`,
-   so anticipation never burns the entire client deadline.
+   enters a loop that waits on a `tokio::sync::Notify` woken by
+   `return_object()`, retries `try_recycle_one`, and loops back on a race
+   loss (another waiter popped the returned item first). The loop is
+   bounded by the caller's `wait_timeout` minus a 500 ms reserve for the
+   fall-through create path. Phase 1/2 semaphore wait already consumes
+   from the same budget via a shared `start` timestamp, so anticipation
+   cannot push the client past its own `wait_timeout`. Operators who set
+   `scaling_max_anticipation_wait_ms` to a small value to cap tail latency
+   should note that this knob now only applies when `wait_timeout` is
+   unset — with a wait timeout set, the loop's total budget is the
+   caller's remaining wait, not the operator cap.
 
 2. **Bounded burst gate** (Phase 5). A per-pool `AtomicUsize` caps how many
    `server_pool.create()` calls run concurrently. Excess callers wait on

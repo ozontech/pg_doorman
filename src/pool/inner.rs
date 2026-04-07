@@ -6,6 +6,7 @@ use std::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Weak,
     },
+    time::Duration,
 };
 
 use log::debug;
@@ -348,6 +349,11 @@ impl Pool {
             self.inner.users.fetch_sub(1, Ordering::Relaxed);
         }
 
+        // Single deadline for the whole acquire path. Phase 1/2 semaphore wait
+        // and Phase 4 anticipation loop both consume from this deadline so
+        // their cumulative time cannot exceed the caller's `wait_timeout`.
+        let start = tokio::time::Instant::now();
+
         // PAUSE check: wait for resume or timeout.
         // IMPORTANT: `resume_notified()` must be called BEFORE `is_paused()` to avoid
         // a race condition where RESUME fires between the two calls and the notification
@@ -449,18 +455,57 @@ impl Pool {
                 tokio::task::yield_now().await;
             }
 
-            // Phase B: event-driven anticipation wait. Instead of a blind sleep,
-            // wait on `idle_returned` so a single `return_object` wakes exactly
-            // one queued task. Bounded by both the configured anticipation
-            // window and the caller's remaining wait budget so the client never
-            // blows past its own wait_timeout.
+            // Phase B: event-driven anticipation loop. Wait on `idle_returned`
+            // so a single `return_object` wakes exactly one queued task, then
+            // retry recycle. Bounded by `timeouts.wait` (the caller's budget)
+            // minus a small reserve for the create path. Falls through to the
+            // create path only when the deadline is reached — not on a single
+            // race loss.
+            //
+            // Why a loop instead of one-shot wait-then-recycle:
+            //   return_object() bumps both `idle_returned` AND `semaphore`
+            //   permits. A waiter parked in Phase 1/2 blocking semaphore
+            //   acquire wakes at the same instant as this Phase B waiter, and
+            //   races into Phase 3's hot-path recycle. Under multi-threaded
+            //   scheduling the fresh Phase 1/2 waiter frequently wins the race,
+            //   popping the just-returned item from `slots.vec` before the
+            //   Phase B waiter can reach its post-await recycle. Without the
+            //   loop every such race loss became a wasted `server_pool.create()`
+            //   even though another return would have arrived within the next
+            //   few milliseconds. The loop retries until the caller's deadline.
             if !non_blocking {
+                const CREATE_RESERVE: Duration = Duration::from_millis(500);
                 let max_wait_ms = self.inner.config.scaling.max_anticipation_wait_ms;
-                if max_wait_ms > 0 {
-                    let budget = compute_anticipation_budget(timeouts.wait, max_wait_ms);
-                    if !budget.is_zero() {
-                        // Register the notification BEFORE re-checking the slots:
-                        // if a return_object fires between the check and the await,
+
+                // Remaining time from the caller's wait_timeout minus the
+                // reserve we leave for the create path. `start` was captured
+                // at the top of `timeout_get`, so whatever Phase 1/2 spent
+                // waiting on the semaphore is already accounted for. The
+                // anticipation loop cannot push the caller past its own
+                // `wait_timeout` because we share the same deadline.
+                let total_budget = match timeouts.wait {
+                    Some(wait) => wait
+                        .saturating_sub(start.elapsed())
+                        .saturating_sub(CREATE_RESERVE),
+                    None => Duration::from_millis(max_wait_ms),
+                };
+
+                if !total_budget.is_zero() {
+                    let deadline = tokio::time::Instant::now() + total_budget;
+
+                    loop {
+                        let remaining =
+                            deadline.saturating_duration_since(tokio::time::Instant::now());
+                        if remaining.is_zero() {
+                            self.inner
+                                .scaling_stats
+                                .anticipation_wakes_timeout
+                                .fetch_add(1, Ordering::Relaxed);
+                            break;
+                        }
+
+                        // Register the notification BEFORE re-checking the slots.
+                        // If a return_object fires between the check and the await,
                         // the notification is buffered and `notified().await` returns
                         // immediately rather than missing the wake.
                         let notified = self.inner.idle_returned.notified();
@@ -477,7 +522,7 @@ impl Pool {
 
                         let woken_by_notify = tokio::select! {
                             _ = notified => true,
-                            _ = tokio::time::sleep(budget) => false,
+                            _ = tokio::time::sleep(remaining) => false,
                         };
                         if woken_by_notify {
                             self.inner
@@ -489,6 +534,7 @@ impl Pool {
                                 .scaling_stats
                                 .anticipation_wakes_timeout
                                 .fetch_add(1, Ordering::Relaxed);
+                            break;
                         }
 
                         if let RecycleOutcome::Reused(inner) =
@@ -500,12 +546,18 @@ impl Pool {
                                 pool: Arc::downgrade(&self.inner),
                             });
                         }
+                        // Race loss: another task popped the vec between our
+                        // wake-up and the post-await recycle. Loop back and
+                        // wait for the next return instead of falling through
+                        // to `server_pool.create()` — the create would grow
+                        // the pool for no reason when returns are flowing.
                     }
                 }
             }
 
-            // Anticipation either timed out or its wake-recycle missed.
-            // Either way we are about to allocate a new backend connection.
+            // Anticipation either was skipped (non_blocking / zero budget) or
+            // its loop exhausted the deadline without finding a recyclable
+            // connection. Fall through to the create path.
             self.inner
                 .scaling_stats
                 .create_fallback
@@ -1199,85 +1251,10 @@ fn try_take_burst_slot(counter: &AtomicUsize, max: usize) -> bool {
     false
 }
 
-/// Compute how long the anticipation phase may wait for an idle return.
-///
-/// The budget is bounded by two independent limits:
-///
-/// 1. `max_wait_ms` — the operator-configured upper bound on event-driven
-///    waiting before falling through to creating a new connection.
-/// 2. The caller's remaining `wait_timeout` — anticipation must never burn
-///    the entire client budget, since after a miss the caller still needs
-///    time to actually create a connection. Half of the remaining timeout
-///    is reserved for the create path.
-///
-/// When `wait_timeout` is `None` the caller has no deadline at all and the
-/// full `max_wait_ms` is used. A computed budget below 1ms is rounded up so
-/// the wait actually has a chance to register a notification.
-fn compute_anticipation_budget(
-    wait_timeout: Option<std::time::Duration>,
-    max_wait_ms: u64,
-) -> std::time::Duration {
-    let max = std::time::Duration::from_millis(max_wait_ms);
-    let bounded = match wait_timeout {
-        None => max,
-        Some(remaining) => {
-            // Reserve half the caller's budget for the create path.
-            let half = remaining / 2;
-            std::cmp::min(half, max)
-        }
-    };
-    if bounded.is_zero() {
-        std::time::Duration::ZERO
-    } else {
-        std::cmp::max(bounded, std::time::Duration::from_millis(1))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
-
-    #[test]
-    fn anticipation_budget_uses_full_max_when_no_wait_timeout() {
-        let budget = compute_anticipation_budget(None, 100);
-        assert_eq!(budget, Duration::from_millis(100));
-    }
-
-    #[test]
-    fn anticipation_budget_caps_at_half_of_wait_timeout() {
-        // remaining wait = 50ms → half = 25ms; max = 100ms → result = 25ms
-        let budget = compute_anticipation_budget(Some(Duration::from_millis(50)), 100);
-        assert_eq!(budget, Duration::from_millis(25));
-    }
-
-    #[test]
-    fn anticipation_budget_caps_at_max_when_half_is_larger() {
-        // remaining wait = 1000ms → half = 500ms; max = 100ms → result = 100ms
-        let budget = compute_anticipation_budget(Some(Duration::from_secs(1)), 100);
-        assert_eq!(budget, Duration::from_millis(100));
-    }
-
-    #[test]
-    fn anticipation_budget_returns_zero_for_non_blocking_caller() {
-        // remaining wait = 0 → half = 0 → bounded = 0 → ZERO (do not wait)
-        let budget = compute_anticipation_budget(Some(Duration::ZERO), 100);
-        assert_eq!(budget, Duration::ZERO);
-    }
-
-    #[test]
-    fn anticipation_budget_rounds_tiny_budget_up_to_one_ms() {
-        // remaining wait = 1ms → half = 500us → bounded = 500us → rounded to 1ms
-        let budget = compute_anticipation_budget(Some(Duration::from_millis(1)), 100);
-        assert_eq!(budget, Duration::from_millis(1));
-    }
-
-    #[test]
-    fn anticipation_budget_zero_max_yields_zero() {
-        // max_wait_ms = 0 → operator disabled anticipation entirely
-        let budget = compute_anticipation_budget(None, 0);
-        assert_eq!(budget, Duration::ZERO);
-    }
 
     // ------------------------------------------------------------------
     // try_take_burst_slot — soft burst limiter

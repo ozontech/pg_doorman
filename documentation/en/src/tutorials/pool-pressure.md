@@ -142,17 +142,31 @@ finished its query in the same microsecond range and is about to push
 the connection back. Total cost is around 10–50 microseconds. No sleep,
 no blocking I/O.
 
-**Phase 4 — Anticipation wait.** If the spin did not catch a return,
-register a `Notify` future that wakes when *any* client returns a
-connection. Wait on that future, bounded by:
+**Phase 4 — Anticipation loop.** If the spin did not catch a return,
+enter a loop that waits on a `Notify` future woken by any
+`return_object()`. Each iteration re-registers the future, runs
+`try_recycle_one` before the wait (to catch a buffered return), awaits
+the notify or a deadline-bounded sleep, then runs `try_recycle_one`
+again after the wake. On a race loss — another waiter popped the
+returned item first — the loop re-registers and waits for the next
+return. The loop exits on a successful recycle, a sleep-driven wake
+(no notify arrived), or when the deadline is reached.
 
-- `scaling_max_anticipation_wait_ms` (default 100 ms), and
-- half of the client's remaining `query_wait_timeout` budget.
+The deadline is the client's `query_wait_timeout` minus a 500 ms reserve
+for the fall-through create path, computed against a `start` timestamp
+captured at the top of `timeout_get`. Phase 1/2 semaphore wait consumes
+from the same budget, so anticipation cannot push the caller past its
+own `query_wait_timeout`. When `query_wait_timeout` is unset, the loop
+falls back to `scaling_max_anticipation_wait_ms` (default 100 ms) as
+its total budget. Operators who previously tuned
+`scaling_max_anticipation_wait_ms` to cap tail latency should note that
+this knob is now effectively bypassed when `query_wait_timeout` is set
+— the loop uses the full remaining wait budget so race losses can be
+recovered before the backend connect is paid for.
 
-The lower of the two is used, with a 1 ms floor so the wait has a chance
-to register. If a return fires during the wait, exactly **one** task
-wakes, never all of them at once. If the wait elapses without a return,
-drop through to phase 5.
+If a return fires during the wait, exactly **one** task wakes, never
+all of them at once. If the loop's deadline elapses without a
+successful recycle, it drops through to phase 5.
 
 **Phase 5 — Bounded burst gate.** Try to take one of
 `scaling_max_parallel_creates` slots (default 2) for in-flight backend
@@ -493,7 +507,7 @@ are not supported.
 |---|---|---|---|
 | `scaling_warm_pool_ratio` | `20` (percent) | `general`, per-pool | Threshold below which connections are created without anticipation. Below `pool_size × ratio / 100`, every new connection request goes straight to `connect()`. |
 | `scaling_fast_retries` | `10` | `general`, per-pool | Number of `yield_now` spin retries in the anticipation phase before falling through to the event-driven wait. |
-| `scaling_max_anticipation_wait_ms` | `100` (ms) | `general` | Upper bound on the event-driven wait for an idle return before falling through to backend connect. Capped at half the client's remaining `query_wait_timeout`. |
+| `scaling_max_anticipation_wait_ms` | `100` (ms) | `general` | Fallback budget for the anticipation loop when `query_wait_timeout` is unset. When `query_wait_timeout` is set (the common case), the loop uses the client's remaining wait budget minus a 500 ms reserve for the create path, and this knob is effectively bypassed. Raising it is only useful for long-lived client sessions without a wait deadline. |
 | `scaling_max_parallel_creates` | `2` | `general` | Hard cap on concurrent backend `connect()` calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be `>= 1`. |
 | `max_db_connections` | unset (disabled) | per-pool | Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist. |
 | `min_connection_lifetime` | `5000` (ms) | per-pool | Minimum age of an idle connection before the coordinator may evict it for another pool. Lower bound on connection churn. |
