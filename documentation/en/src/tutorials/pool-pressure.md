@@ -121,9 +121,15 @@ walks through the following phases. Each phase either returns a
 connection or hands off to the next phase.
 
 **Phase 1 — Hot path recycle.** Pop the front of the idle queue. If a
-connection is there and passes the recycle check (rollback, validity,
-epoch), return it. A healthy steady-state pool only takes this path.
-Cost: a mutex acquire and a recycle check.
+connection is there and passes the recycle check, return it. The recycle
+check rolls back any open transaction, runs a liveness probe if the
+connection has been idle longer than `server_idle_check_timeout`, and
+verifies that the connection's reconnect epoch matches the pool's
+current epoch. The pool bumps its reconnect epoch on the `RECONNECT`
+admin command and after detected backend failures; connections from
+before the bump fail this check and are dropped instead of being
+returned. A healthy steady-state pool only takes this path. Cost: a
+mutex acquire and the recycle check.
 
 **Phase 2 — Warm zone gate.** If the pool size is below the warm
 threshold, skip anticipation and jump straight to creating a new backend
