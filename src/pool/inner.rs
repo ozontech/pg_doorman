@@ -239,29 +239,10 @@ impl PoolInner {
             }
             drop(slots);
             self.semaphore.add_permits(1);
-            // Wake one task waiting in the cooldown anticipation zone
-            // or behind the bounded burst limiter.
-            self.idle_returned.notify_one();
-            // Wake one Phase C waiter in a peer pool's coordinator path.
-            // The connection just landed in our `slots.vec`, so the next
-            // `evict_one_idle` scan over our pool can find and drop it —
-            // freeing the semaphore slot a peer pool needs. Before this
-            // signal, Phase C only reacted to permit drops, so a peer
-            // waiter would sleep until our connection aged out via
-            // `server_lifetime` instead of picking up the freshly idle one.
-            //
-            // Note: `spare_above_min` is NOT what changes here. It tracks
-            // `slots.size - effective_min` and `slots.size` is the allocated
-            // count, not `vec.len()`; `return_object` leaves `slots.size`
-            // unchanged. What changes is the *evictable set* scanned by
-            // `retain_oldest_first` inside `evict_one_idle` — the returned
-            // connection is now visible there.
-            if let Some(ref coordinator) = self.coordinator {
-                coordinator.notify_idle_returned();
-            }
+            self.notify_return_observers();
             return;
         }
-        // Slow path: wait for lock. Same notify semantics as the fast path.
+        // Slow path: wait for lock.
         let mut slots = self.slots.lock();
         match self.config.queue_mode {
             QueueMode::Fifo => slots.vec.push_back(inner),
@@ -269,8 +250,29 @@ impl PoolInner {
         }
         drop(slots);
         self.semaphore.add_permits(1);
+        self.notify_return_observers();
+    }
+
+    /// Wake observers of an idle return: the same-pool cooldown anticipation
+    /// waiter and any peer-pool Phase C waiter on the coordinator. Both fire
+    /// on the same event (a connection landed in `slots.vec`) but consume by
+    /// different waiters:
+    /// - `idle_returned` is for callers in this pool's bounded-burst /
+    ///   cooldown anticipation zone, who will recycle the returned object.
+    /// - `coordinator.notify_idle_returned()` is for callers in *peer* user
+    ///   pools waiting on `PoolCoordinator` Phase C; they will scan this
+    ///   pool's idle vec via `evict_one_idle` and drop the returned
+    ///   connection to free a coordinator slot.
+    ///
+    /// Note: `spare_above_min` is NOT what changes here. It tracks
+    /// `slots.size - effective_min`, and `slots.size` is the allocated count,
+    /// not `vec.len()`; `return_object` leaves `slots.size` unchanged. What
+    /// changes is the *evictable set* scanned by `retain_oldest_first` inside
+    /// `evict_one_idle` — the returned connection is now visible there.
+    #[inline(always)]
+    fn notify_return_observers(&self) {
         self.idle_returned.notify_one();
-        if let Some(ref coordinator) = self.coordinator {
+        if let Some(coordinator) = self.coordinator.as_ref() {
             coordinator.notify_idle_returned();
         }
     }
@@ -564,6 +566,28 @@ impl Pool {
             None
         };
 
+        // The coordinator wait above can run for up to `reserve_pool_timeout_ms`
+        // (default 3000 ms). During that wait a sibling caller in this same
+        // user pool may have finished a query and pushed its connection back
+        // into `slots.vec`. The coordinator has no visibility into the local
+        // pool — it could not have consumed that return on our behalf — so we
+        // re-check the local idle vec here, before paying the cost of a fresh
+        // backend connect. If we find a recyclable idle, drop the coordinator
+        // permit (its slot returns to the cross-pool semaphore and any peer
+        // Phase C waiter can take it) and hand the recycled object to the
+        // caller. The connect cost is saved; an eviction the coordinator may
+        // have already performed is unrecoverable, but the damage stops at
+        // one peer backend instead of cascading into a wasted local create.
+        if coordinator_permit.is_some() {
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(*inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
+            }
+        }
+
         // Bounded burst gate: cap the number of concurrent server creates per
         // pool. Without this gate, N parallel callers that all miss the idle
         // pool each independently issue a backend connect, producing
@@ -713,70 +737,119 @@ impl Pool {
     }
 
     /// Retains only the objects specified by the given function.
+    ///
+    /// Evicted `ObjectInner`s are extracted into a local Vec and dropped
+    /// **after** `slots.lock()` is released. The drop chain on each evicted
+    /// object runs `Server::drop` (a `Terminate` syscall to PG) plus
+    /// `CoordinatorPermit::drop` (a tokio `Notify::notify_one` that itself
+    /// briefly takes an internal mutex). Holding `slots.lock()` across these
+    /// blocks any peer caller trying to recycle from the same pool.
     pub fn retain(&self, f: impl Fn(&Server, Metrics) -> bool) {
-        let mut guard = self.inner.slots.lock();
-        let len_before = guard.vec.len();
-        guard.vec.retain_mut(|obj| f(&obj.obj, obj.metrics));
-        guard.size -= len_before - guard.vec.len();
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
+            // Common case on a healthy retain cycle: nothing to evict.
+            // Skip the partition + allocation pair entirely.
+            if guard.vec.iter().all(|obj| f(&obj.obj, obj.metrics)) {
+                return;
+            }
+            let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+            let mut evicted = Vec::new();
+            for obj in guard.vec.drain(..) {
+                if f(&obj.obj, obj.metrics) {
+                    keep.push_back(obj);
+                } else {
+                    evicted.push(obj);
+                }
+            }
+            guard.vec = keep;
+            guard.size -= evicted.len();
+            evicted
+        };
+        // Lock released here. Syscalls and notify_one fire below, off-lock.
+        drop(evicted);
     }
 
     /// Retains connections, closing oldest first when max limit is set.
     /// If max is 0, behaves like regular retain (closes all matching).
     /// If max > 0, closes at most `max` connections, prioritizing oldest by creation time.
     /// Returns the number of connections closed.
+    ///
+    /// As with [`retain`], evicted objects are extracted under the lock and
+    /// dropped only after the lock is released, so peer callers do not block
+    /// on PG `Terminate` syscalls or coordinator wake-ups.
     pub fn retain_oldest_first(
         &self,
         should_close: impl Fn(&Server, &Metrics) -> bool,
         max_to_close: usize,
     ) -> usize {
-        let mut guard = self.inner.slots.lock();
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
 
-        if max_to_close == 0 {
-            // Unlimited - close all matching connections
-            let len_before = guard.vec.len();
-            guard
-                .vec
-                .retain_mut(|obj| !should_close(&obj.obj, &obj.metrics));
-            let closed = len_before - guard.vec.len();
-            guard.size -= closed;
-            return closed;
-        }
+            if max_to_close == 0 {
+                // Early exit when nothing matches — avoid the partition
+                // allocation in the frequent "retain cycle sees no stale
+                // connections" case.
+                if !guard
+                    .vec
+                    .iter()
+                    .any(|obj| should_close(&obj.obj, &obj.metrics))
+                {
+                    return 0;
+                }
+                // Unlimited — partition every matching object out of the vec.
+                let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+                let mut evicted = Vec::new();
+                for obj in guard.vec.drain(..) {
+                    if should_close(&obj.obj, &obj.metrics) {
+                        evicted.push(obj);
+                    } else {
+                        keep.push_back(obj);
+                    }
+                }
+                guard.vec = keep;
+                guard.size -= evicted.len();
+                evicted
+            } else {
+                // Pre-walk to identify the oldest `max_to_close` candidates.
+                // We do not extract here — only collect (index, age) pairs.
+                let mut candidates: Vec<(usize, u128)> = guard
+                    .vec
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, obj)| should_close(&obj.obj, &obj.metrics))
+                    .map(|(idx, obj)| (idx, obj.metrics.age().as_millis()))
+                    .collect();
 
-        // Collect indices of connections that should be closed with their ages
-        let mut candidates: Vec<(usize, u128)> = guard
-            .vec
-            .iter()
-            .enumerate()
-            .filter(|(_, obj)| should_close(&obj.obj, &obj.metrics))
-            .map(|(idx, obj)| (idx, obj.metrics.age().as_millis()))
-            .collect();
+                if candidates.is_empty() {
+                    return 0;
+                }
 
-        if candidates.is_empty() {
-            return 0;
-        }
+                // Sort by age descending (oldest first — highest age value)
+                candidates.sort_by(|a, b| b.1.cmp(&a.1));
 
-        // Sort by age descending (oldest first - highest age value)
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+                let to_close: std::collections::HashSet<usize> = candidates
+                    .into_iter()
+                    .take(max_to_close)
+                    .map(|(idx, _)| idx)
+                    .collect();
 
-        // Take at most max_to_close oldest connections
-        let to_close: std::collections::HashSet<usize> = candidates
-            .into_iter()
-            .take(max_to_close)
-            .map(|(idx, _)| idx)
-            .collect();
-
-        // Remove selected connections by rebuilding the vec
-        let len_before = guard.vec.len();
-        let mut new_vec = VecDeque::with_capacity(guard.vec.capacity());
-        for (idx, obj) in guard.vec.drain(..).enumerate() {
-            if !to_close.contains(&idx) {
-                new_vec.push_back(obj);
+                let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+                let mut evicted = Vec::with_capacity(to_close.len());
+                for (idx, obj) in guard.vec.drain(..).enumerate() {
+                    if to_close.contains(&idx) {
+                        evicted.push(obj);
+                    } else {
+                        keep.push_back(obj);
+                    }
+                }
+                guard.vec = keep;
+                guard.size -= evicted.len();
+                evicted
             }
-        }
-        guard.vec = new_vec;
-
-        let closed = len_before - guard.vec.len();
-        guard.size -= closed;
+        };
+        let closed = evicted.len();
+        // Lock released here. Drops below run off-lock.
+        drop(evicted);
         closed
     }
 
@@ -802,23 +875,53 @@ impl Pool {
     /// This runs as part of the retain cycle to gradually relieve reserve pressure.
     ///
     /// Returns the number of reserve connections closed.
+    ///
+    /// Same off-lock drop discipline as [`retain`] / [`retain_oldest_first`]:
+    /// closed objects are extracted under the lock and dropped after the lock
+    /// is released, so the peer pool's eviction syscalls and coordinator
+    /// notifications do not stall concurrent recyclers.
     pub fn close_idle_reserve_connections(&self, min_lifetime_ms: u64) -> usize {
-        let mut guard = self.inner.slots.lock();
-        let len_before = guard.vec.len();
-        guard.vec.retain(|obj| {
-            let is_reserve = obj
-                .coordinator_permit
-                .as_ref()
-                .is_some_and(|p| p.is_reserve);
-            if !is_reserve {
-                return true;
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
+            // Common case on pools with `reserve_pool_size = 0` or with
+            // reserve connections still within `min_connection_lifetime`:
+            // nothing to close. Skip the partition allocation.
+            let has_stale_reserve = guard.vec.iter().any(|obj| {
+                let is_reserve = obj
+                    .coordinator_permit
+                    .as_ref()
+                    .is_some_and(|p| p.is_reserve);
+                is_reserve && obj.metrics.last_used().as_millis() >= u128::from(min_lifetime_ms)
+            });
+            if !has_stale_reserve {
+                return 0;
             }
-            // Close reserve connections idle longer than min_connection_lifetime
-            let idle = obj.metrics.last_used().as_millis();
-            idle < u128::from(min_lifetime_ms)
-        });
-        let closed = len_before - guard.vec.len();
-        guard.size -= closed;
+            let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+            let mut evicted = Vec::new();
+            for obj in guard.vec.drain(..) {
+                let is_reserve = obj
+                    .coordinator_permit
+                    .as_ref()
+                    .is_some_and(|p| p.is_reserve);
+                if !is_reserve {
+                    keep.push_back(obj);
+                    continue;
+                }
+                // Close reserve connections idle longer than min_connection_lifetime
+                let idle = obj.metrics.last_used().as_millis();
+                if idle < u128::from(min_lifetime_ms) {
+                    keep.push_back(obj);
+                } else {
+                    evicted.push(obj);
+                }
+            }
+            guard.vec = keep;
+            guard.size -= evicted.len();
+            evicted
+        };
+        let closed = evicted.len();
+        // Lock released here. Reserve permit drops fire below.
+        drop(evicted);
         closed
     }
 
@@ -1396,5 +1499,169 @@ mod tests {
             "a Notified future created AFTER the buffered permit was consumed \
              must NOT wake without a fresh notify_one"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // notify_return_observers — covers both fast and slow return_object
+    // ------------------------------------------------------------------
+
+    /// Builds a `Pool` whose `ServerPool` is never asked to `create()`.
+    /// Address/User defaults are fine because the test never opens a
+    /// real backend connection — it only exercises the in-memory notify
+    /// machinery on the resulting `PoolInner`.
+    fn test_pool_with_coordinator(coord: Arc<pool_coordinator::PoolCoordinator>) -> Pool {
+        use crate::config::{Address, User};
+        use dashmap::DashMap;
+
+        let server_pool = ServerPool::new(
+            Address::default(),
+            User::default(),
+            "test_db",
+            Arc::new(DashMap::new()),
+            false,
+            false,
+            0,
+            "test_app".to_string(),
+            1,
+            60_000,
+            60_000,
+            60_000,
+            Duration::from_secs(5),
+            false,
+        );
+        Pool::builder(server_pool)
+            .coordinator(Some(coord))
+            .pool_name("test_db".to_string())
+            .username("test_user".to_string())
+            .build()
+    }
+
+    /// Both fast and slow paths of `return_object` funnel through
+    /// `notify_return_observers`. This test pins the helper's contract:
+    /// it wakes the same-pool `idle_returned` waiter AND the peer-pool
+    /// coordinator Phase C waiter from a single call. A regression that
+    /// drops one of the two notify calls inside the helper would fail
+    /// this test even though `return_object` itself is not invoked,
+    /// because the helper is the single point that both code paths share.
+    #[tokio::test]
+    async fn notify_return_observers_wakes_phase_c_waiter_and_idle_returned() {
+        use std::sync::atomic::AtomicU64;
+        use std::sync::atomic::Ordering as AOrdering;
+
+        use pool_coordinator::{CoordinatorConfig, EvictionSource, PoolCoordinator};
+
+        // Counts how many times Phase C asks for an eviction. Phase B
+        // and the first iteration of Phase C each call try_evict_one
+        // exactly once before parking, so the baseline before any wake
+        // is exactly 2.
+        struct CountingEviction {
+            calls: Arc<AtomicU64>,
+        }
+        impl EvictionSource for CountingEviction {
+            fn try_evict_one(&self, _user: &str) -> bool {
+                self.calls.fetch_add(1, AOrdering::Relaxed);
+                false
+            }
+            fn queued_clients(&self, _user: &str) -> usize {
+                0
+            }
+            fn is_starving(&self, _user: &str) -> bool {
+                false
+            }
+        }
+
+        // Single-slot coordinator, slot pinned so Phase C never finishes
+        // via try_acquire — the only thing that can move the counter is
+        // a fresh notify_one on `connection_returned`.
+        let coord = PoolCoordinator::new(
+            "test_db".to_string(),
+            CoordinatorConfig {
+                max_db_connections: 1,
+                min_connection_lifetime_ms: 5000,
+                reserve_pool_size: 0,
+                reserve_pool_timeout_ms: 2000,
+            },
+        );
+        let _pinned = coord.try_acquire().expect("first slot is free");
+
+        let pool = test_pool_with_coordinator(coord.clone());
+
+        // Park a Phase C waiter on the coordinator's connection_returned.
+        let coord_w = coord.clone();
+        let calls = Arc::new(AtomicU64::new(0));
+        let calls_w = Arc::clone(&calls);
+        let phase_c_waiter = tokio::spawn(async move {
+            let eviction = CountingEviction { calls: calls_w };
+            coord_w.acquire("test_db", "u", &eviction).await
+        });
+
+        // Park an idle-return observer on the same pool's idle_returned.
+        // Pin + enable so the wake cannot race a late first poll.
+        let inner = Arc::clone(&pool.inner);
+        let idle_observer = tokio::spawn(async move {
+            let fut = inner.idle_returned.notified();
+            tokio::pin!(fut);
+            fut.as_mut().enable();
+            fut.await;
+        });
+
+        // Wait until both observers are parked. Phase C is observable
+        // through its eviction-call counter (baseline = 2 calls). The
+        // idle-return observer is observable indirectly: the test will
+        // either wake it via notify_return_observers or hang.
+        let parked = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if calls.load(AOrdering::Relaxed) >= 2 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(parked.is_ok(), "Phase C waiter never parked");
+        let baseline = calls.load(AOrdering::Relaxed);
+        assert_eq!(
+            baseline, 2,
+            "Phase B and the first Phase C iteration each call try_evict_one once",
+        );
+
+        // Single helper call: must wake both observers from one event.
+        pool.inner.notify_return_observers();
+
+        // The idle-return observer wakes within a generous budget. If the
+        // helper forgot the `idle_returned.notify_one()` call, this hangs
+        // until the timeout fires and the test fails.
+        tokio::time::timeout(Duration::from_secs(1), idle_observer)
+            .await
+            .expect("idle_returned waiter must wake from notify_return_observers")
+            .expect("idle_returned task must not panic");
+
+        // The Phase C waiter wakes, runs try_evict_one once more
+        // (baseline + 1) and parks again. If the helper forgot the
+        // `coordinator.notify_idle_returned()` call, the counter never
+        // moves above the baseline.
+        let woke = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if calls.load(AOrdering::Relaxed) > baseline {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            woke.is_ok(),
+            "Phase C waiter must wake on coordinator.notify_idle_returned",
+        );
+        assert_eq!(
+            calls.load(AOrdering::Relaxed),
+            baseline + 1,
+            "exactly one Phase C wake → exactly one extra try_evict_one",
+        );
+
+        // Cleanup: let the Phase C waiter eventually time out so the
+        // spawned task does not leak past the test.
+        phase_c_waiter.abort();
+        let _ = phase_c_waiter.await;
     }
 }
