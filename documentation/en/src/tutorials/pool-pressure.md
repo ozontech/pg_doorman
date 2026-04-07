@@ -5,9 +5,7 @@ connection at the same time when the idle pool is empty. Two mechanisms
 decide who gets a connection, who waits, who triggers a fresh backend
 connect, and who is rejected: per-pool **anticipation + bounded burst**
 inside each `(database, user)` pool, and the cross-pool **coordinator**
-that caps total backend connections per database. This document covers
-both, the order in which they fire, and the metrics and tuning knobs to
-keep them healthy.
+that caps total backend connections per database.
 
 Audience: DBA or production operator who already knows PgBouncer and
 wants to understand how pg_doorman differs and what to watch.
