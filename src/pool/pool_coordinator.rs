@@ -258,6 +258,25 @@ impl PoolCoordinator {
             user, database, active, max,
         );
 
+        // A peer pool may have dropped its permit between Phase A's
+        // `try_acquire` and now (any concurrent `CoordinatorPermit::drop`
+        // bumps `db_semaphore` without going through this path). Re-check
+        // the cheap fast path before incurring an eviction: closing a peer
+        // backend that didn't need to be closed is unrecoverable damage,
+        // and a single extra atomic CAS is essentially free compared to
+        // the alternative.
+        if let Some(permit) = self.try_acquire() {
+            debug!(
+                "[{}@{}] coordinator: permit became free between Phase A and Phase B, \
+                 eviction avoided (active={}/{})",
+                user,
+                database,
+                self.total_connections.load(Ordering::Relaxed),
+                max,
+            );
+            return Ok(permit);
+        }
+
         // Phase B: try eviction — close an idle connection from another user
         let evicted = eviction_source.try_evict_one(user);
         if evicted {
@@ -318,37 +337,16 @@ impl PoolCoordinator {
             // `Pool::timeout_get`.
             let notified = self.connection_returned.notified();
 
-            // Opportunistic eviction retry. The wake-up may have come from
-            // `Pool::return_object` on a peer pool, which made a previously
-            // checked-out connection visible in that peer's idle vec without
-            // destroying any permit. A previous Phase B attempt may have
-            // found nothing evictable because the candidate was checked out,
-            // but the state has now changed.
-            //
-            // We call `try_evict_one` on every loop iteration, not just
-            // after a notify, because:
-            //   - The wake source is indistinguishable from a permit drop.
-            //   - The scan is cheap compared to a `reserve_pool_timeout`
-            //     wait that ends in a reserve grant or a client error.
-            //   - The retry is what lets symmetric peer-pool traffic resolve
-            //     in milliseconds. Without it, a Phase C waiter would only
-            //     react to physical permit drops (server_lifetime expiry,
-            //     recycle errors, reconnect epoch) and would sleep through
-            //     every plain `return_object` even though peers were
-            //     constantly recycling idle connections it could evict.
-            if eviction_source.try_evict_one(user) {
-                self.evictions_total.fetch_add(1, Ordering::Relaxed);
-                debug!(
-                    "[{}@{}] coordinator: wait phase evicted idle from peer \
-                     (wakeups={})",
-                    user, database, wait_wakeups,
-                );
-            }
-
+            // Cheap path first: a previous wake (or any concurrent
+            // `CoordinatorPermit::drop`) may have already left a free permit
+            // in the semaphore. `try_evict_one` would close a peer connection
+            // for nothing in that case — the slot is already there for the
+            // taking. The atomic CAS is roughly five nanoseconds; an avoided
+            // eviction saves a peer backend.
             if let Some(permit) = self.try_acquire() {
                 debug!(
-                    "[{}@{}] coordinator: wait phase succeeded \
-                     after {} wakeup(s), permit acquired (active={}/{})",
+                    "[{}@{}] coordinator: wait phase acquired free permit \
+                     without eviction after {} wakeup(s) (active={}/{})",
                     user,
                     database,
                     wait_wakeups,
@@ -356,6 +354,40 @@ impl PoolCoordinator {
                     max,
                 );
                 return Ok(permit);
+            }
+
+            // Opportunistic eviction retry. The wake-up may have come from
+            // `Pool::return_object` on a peer pool, which made a previously
+            // checked-out connection visible in that peer's idle vec without
+            // destroying any permit. A previous Phase B attempt may have
+            // found nothing evictable because the candidate was checked out,
+            // but the state has now changed.
+            //
+            // The scan runs on every iteration, not only after a notify,
+            // because the wake source is indistinguishable from a permit
+            // drop and the scan is much cheaper than a `reserve_pool_timeout`
+            // wait that ends in a reserve grant or a client error. The
+            // try_acquire above means we only reach this point when the
+            // semaphore is genuinely empty — eviction is the only way out.
+            if eviction_source.try_evict_one(user) {
+                self.evictions_total.fetch_add(1, Ordering::Relaxed);
+                debug!(
+                    "[{}@{}] coordinator: wait phase evicted idle from peer \
+                     (wakeups={})",
+                    user, database, wait_wakeups,
+                );
+                if let Some(permit) = self.try_acquire() {
+                    debug!(
+                        "[{}@{}] coordinator: wait phase succeeded \
+                         after {} wakeup(s), permit acquired (active={}/{})",
+                        user,
+                        database,
+                        wait_wakeups,
+                        self.total_connections.load(Ordering::Relaxed),
+                        max,
+                    );
+                    return Ok(permit);
+                }
             }
 
             tokio::select! {
@@ -1191,6 +1223,98 @@ mod tests {
                 .unwrap();
             assert!(r.is_err());
         }
+    }
+
+    /// Regression for the cheap-path-first invariant: when Phase C wakes
+    /// from a real `CoordinatorPermit::drop` (semaphore actually has a free
+    /// slot now), the waiter must take that slot via `try_acquire` WITHOUT
+    /// running another `try_evict_one`. Closing a peer backend to free a
+    /// slot that is already free is wasted damage on the peer.
+    ///
+    /// Before the fix, Phase C ran `try_evict_one` unconditionally at the
+    /// top of every loop iteration. With a peer that had spare capacity,
+    /// the wake from a `CoordinatorPermit::drop` would still close a peer
+    /// connection for nothing.
+    ///
+    /// The test pins the new ordering: `try_acquire → try_evict_one`. The
+    /// eviction-call counter must NOT advance past the parking baseline
+    /// when the wake comes from a permit drop.
+    #[tokio::test]
+    async fn phase_c_wake_from_permit_drop_skips_eviction() {
+        use std::sync::atomic::{AtomicU64, Ordering as AOrdering};
+
+        #[derive(Clone)]
+        struct CountingEviction {
+            calls: std::sync::Arc<AtomicU64>,
+        }
+        impl EvictionSource for CountingEviction {
+            fn try_evict_one(&self, _user: &str) -> bool {
+                // Counts every call. Always returns false so a successful
+                // eviction never confounds the wake-source attribution.
+                self.calls.fetch_add(1, AOrdering::Relaxed);
+                false
+            }
+            fn queued_clients(&self, _user: &str) -> usize {
+                0
+            }
+            fn is_starving(&self, _user: &str) -> bool {
+                false
+            }
+        }
+
+        // Single-slot coordinator. We pin the slot, park a Phase C waiter
+        // on it, then drop the pin to let the waiter take the freed permit.
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 0));
+        let p = coord.try_acquire().expect("first slot is free");
+
+        let calls = std::sync::Arc::new(AtomicU64::new(0));
+        let coord_w = coord.clone();
+        let calls_w = std::sync::Arc::clone(&calls);
+        let waiter = tokio::spawn(async move {
+            let eviction = CountingEviction { calls: calls_w };
+            coord_w.acquire("testdb", "waiter", &eviction).await
+        });
+
+        // Let the waiter reach Phase C. The cheap-path-first ordering means
+        // each of Phase B and the first Phase C iteration runs the cheap
+        // `try_acquire` first (fails — slot is pinned) and then `try_evict_one`
+        // exactly once. Baseline counter == 2.
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let baseline = calls.load(AOrdering::Relaxed);
+        assert_eq!(
+            baseline, 2,
+            "baseline must be Phase B + first Phase C try_evict_one calls",
+        );
+
+        // Drop the pinned permit: semaphore +1, `connection_returned.notify_one`
+        // fires from `CoordinatorPermit::drop`. The waiter wakes, sees a free
+        // slot, and must take it via the new try_acquire-first path.
+        drop(p);
+
+        let result = tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter should complete after permit drop")
+            .expect("waiter task must not panic");
+        assert!(
+            result.is_ok(),
+            "Phase C waiter must acquire the freed permit, not time out",
+        );
+        assert!(!result.unwrap().is_reserve);
+
+        // The invariant: no extra eviction call ran on the wake. Without the
+        // cheap-path-first reordering the counter would be 3 (Phase B + first
+        // Phase C iter + wake-driven extra `try_evict_one`).
+        let final_calls = calls.load(AOrdering::Relaxed);
+        assert_eq!(
+            final_calls, baseline,
+            "wake from permit drop must take the cheap path; counter advanced {} → {}",
+            baseline, final_calls,
+        );
+        assert_eq!(
+            coord.stats().evictions_total,
+            0,
+            "permit-drop path must not record any successful eviction",
+        );
     }
 
     /// Negative guard: a bare `notify_idle_returned` call that does not

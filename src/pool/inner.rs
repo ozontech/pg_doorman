@@ -566,6 +566,28 @@ impl Pool {
             None
         };
 
+        // The coordinator wait above can run for up to `reserve_pool_timeout_ms`
+        // (default 3000 ms). During that wait a sibling caller in this same
+        // user pool may have finished a query and pushed its connection back
+        // into `slots.vec`. The coordinator has no visibility into the local
+        // pool — it could not have consumed that return on our behalf — so we
+        // re-check the local idle vec here, before paying the cost of a fresh
+        // backend connect. If we find a recyclable idle, drop the coordinator
+        // permit (its slot returns to the cross-pool semaphore and any peer
+        // Phase C waiter can take it) and hand the recycled object to the
+        // caller. The connect cost is saved; an eviction the coordinator may
+        // have already performed is unrecoverable, but the damage stops at
+        // one peer backend instead of cascading into a wasted local create.
+        if coordinator_permit.is_some() {
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(*inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
+            }
+        }
+
         // Bounded burst gate: cap the number of concurrent server creates per
         // pool. Without this gate, N parallel callers that all miss the idle
         // pool each independently issue a backend connect, producing
@@ -715,70 +737,119 @@ impl Pool {
     }
 
     /// Retains only the objects specified by the given function.
+    ///
+    /// Evicted `ObjectInner`s are extracted into a local Vec and dropped
+    /// **after** `slots.lock()` is released. The drop chain on each evicted
+    /// object runs `Server::drop` (a `Terminate` syscall to PG) plus
+    /// `CoordinatorPermit::drop` (a tokio `Notify::notify_one` that itself
+    /// briefly takes an internal mutex). Holding `slots.lock()` across these
+    /// blocks any peer caller trying to recycle from the same pool.
     pub fn retain(&self, f: impl Fn(&Server, Metrics) -> bool) {
-        let mut guard = self.inner.slots.lock();
-        let len_before = guard.vec.len();
-        guard.vec.retain_mut(|obj| f(&obj.obj, obj.metrics));
-        guard.size -= len_before - guard.vec.len();
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
+            // Common case on a healthy retain cycle: nothing to evict.
+            // Skip the partition + allocation pair entirely.
+            if guard.vec.iter().all(|obj| f(&obj.obj, obj.metrics)) {
+                return;
+            }
+            let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+            let mut evicted = Vec::new();
+            for obj in guard.vec.drain(..) {
+                if f(&obj.obj, obj.metrics) {
+                    keep.push_back(obj);
+                } else {
+                    evicted.push(obj);
+                }
+            }
+            guard.vec = keep;
+            guard.size -= evicted.len();
+            evicted
+        };
+        // Lock released here. Syscalls and notify_one fire below, off-lock.
+        drop(evicted);
     }
 
     /// Retains connections, closing oldest first when max limit is set.
     /// If max is 0, behaves like regular retain (closes all matching).
     /// If max > 0, closes at most `max` connections, prioritizing oldest by creation time.
     /// Returns the number of connections closed.
+    ///
+    /// As with [`retain`], evicted objects are extracted under the lock and
+    /// dropped only after the lock is released, so peer callers do not block
+    /// on PG `Terminate` syscalls or coordinator wake-ups.
     pub fn retain_oldest_first(
         &self,
         should_close: impl Fn(&Server, &Metrics) -> bool,
         max_to_close: usize,
     ) -> usize {
-        let mut guard = self.inner.slots.lock();
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
 
-        if max_to_close == 0 {
-            // Unlimited - close all matching connections
-            let len_before = guard.vec.len();
-            guard
-                .vec
-                .retain_mut(|obj| !should_close(&obj.obj, &obj.metrics));
-            let closed = len_before - guard.vec.len();
-            guard.size -= closed;
-            return closed;
-        }
+            if max_to_close == 0 {
+                // Early exit when nothing matches — avoid the partition
+                // allocation in the frequent "retain cycle sees no stale
+                // connections" case.
+                if !guard
+                    .vec
+                    .iter()
+                    .any(|obj| should_close(&obj.obj, &obj.metrics))
+                {
+                    return 0;
+                }
+                // Unlimited — partition every matching object out of the vec.
+                let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+                let mut evicted = Vec::new();
+                for obj in guard.vec.drain(..) {
+                    if should_close(&obj.obj, &obj.metrics) {
+                        evicted.push(obj);
+                    } else {
+                        keep.push_back(obj);
+                    }
+                }
+                guard.vec = keep;
+                guard.size -= evicted.len();
+                evicted
+            } else {
+                // Pre-walk to identify the oldest `max_to_close` candidates.
+                // We do not extract here — only collect (index, age) pairs.
+                let mut candidates: Vec<(usize, u128)> = guard
+                    .vec
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, obj)| should_close(&obj.obj, &obj.metrics))
+                    .map(|(idx, obj)| (idx, obj.metrics.age().as_millis()))
+                    .collect();
 
-        // Collect indices of connections that should be closed with their ages
-        let mut candidates: Vec<(usize, u128)> = guard
-            .vec
-            .iter()
-            .enumerate()
-            .filter(|(_, obj)| should_close(&obj.obj, &obj.metrics))
-            .map(|(idx, obj)| (idx, obj.metrics.age().as_millis()))
-            .collect();
+                if candidates.is_empty() {
+                    return 0;
+                }
 
-        if candidates.is_empty() {
-            return 0;
-        }
+                // Sort by age descending (oldest first — highest age value)
+                candidates.sort_by(|a, b| b.1.cmp(&a.1));
 
-        // Sort by age descending (oldest first - highest age value)
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+                let to_close: std::collections::HashSet<usize> = candidates
+                    .into_iter()
+                    .take(max_to_close)
+                    .map(|(idx, _)| idx)
+                    .collect();
 
-        // Take at most max_to_close oldest connections
-        let to_close: std::collections::HashSet<usize> = candidates
-            .into_iter()
-            .take(max_to_close)
-            .map(|(idx, _)| idx)
-            .collect();
-
-        // Remove selected connections by rebuilding the vec
-        let len_before = guard.vec.len();
-        let mut new_vec = VecDeque::with_capacity(guard.vec.capacity());
-        for (idx, obj) in guard.vec.drain(..).enumerate() {
-            if !to_close.contains(&idx) {
-                new_vec.push_back(obj);
+                let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+                let mut evicted = Vec::with_capacity(to_close.len());
+                for (idx, obj) in guard.vec.drain(..).enumerate() {
+                    if to_close.contains(&idx) {
+                        evicted.push(obj);
+                    } else {
+                        keep.push_back(obj);
+                    }
+                }
+                guard.vec = keep;
+                guard.size -= evicted.len();
+                evicted
             }
-        }
-        guard.vec = new_vec;
-
-        let closed = len_before - guard.vec.len();
-        guard.size -= closed;
+        };
+        let closed = evicted.len();
+        // Lock released here. Drops below run off-lock.
+        drop(evicted);
         closed
     }
 
@@ -804,23 +875,53 @@ impl Pool {
     /// This runs as part of the retain cycle to gradually relieve reserve pressure.
     ///
     /// Returns the number of reserve connections closed.
+    ///
+    /// Same off-lock drop discipline as [`retain`] / [`retain_oldest_first`]:
+    /// closed objects are extracted under the lock and dropped after the lock
+    /// is released, so the peer pool's eviction syscalls and coordinator
+    /// notifications do not stall concurrent recyclers.
     pub fn close_idle_reserve_connections(&self, min_lifetime_ms: u64) -> usize {
-        let mut guard = self.inner.slots.lock();
-        let len_before = guard.vec.len();
-        guard.vec.retain(|obj| {
-            let is_reserve = obj
-                .coordinator_permit
-                .as_ref()
-                .is_some_and(|p| p.is_reserve);
-            if !is_reserve {
-                return true;
+        let evicted: Vec<ObjectInner> = {
+            let mut guard = self.inner.slots.lock();
+            // Common case on pools with `reserve_pool_size = 0` or with
+            // reserve connections still within `min_connection_lifetime`:
+            // nothing to close. Skip the partition allocation.
+            let has_stale_reserve = guard.vec.iter().any(|obj| {
+                let is_reserve = obj
+                    .coordinator_permit
+                    .as_ref()
+                    .is_some_and(|p| p.is_reserve);
+                is_reserve && obj.metrics.last_used().as_millis() >= u128::from(min_lifetime_ms)
+            });
+            if !has_stale_reserve {
+                return 0;
             }
-            // Close reserve connections idle longer than min_connection_lifetime
-            let idle = obj.metrics.last_used().as_millis();
-            idle < u128::from(min_lifetime_ms)
-        });
-        let closed = len_before - guard.vec.len();
-        guard.size -= closed;
+            let mut keep = VecDeque::with_capacity(guard.vec.capacity());
+            let mut evicted = Vec::new();
+            for obj in guard.vec.drain(..) {
+                let is_reserve = obj
+                    .coordinator_permit
+                    .as_ref()
+                    .is_some_and(|p| p.is_reserve);
+                if !is_reserve {
+                    keep.push_back(obj);
+                    continue;
+                }
+                // Close reserve connections idle longer than min_connection_lifetime
+                let idle = obj.metrics.last_used().as_millis();
+                if idle < u128::from(min_lifetime_ms) {
+                    keep.push_back(obj);
+                } else {
+                    evicted.push(obj);
+                }
+            }
+            guard.vec = keep;
+            guard.size -= evicted.len();
+            evicted
+        };
+        let closed = evicted.len();
+        // Lock released here. Reserve permit drops fire below.
+        drop(evicted);
         closed
     }
 
