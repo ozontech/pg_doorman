@@ -239,29 +239,10 @@ impl PoolInner {
             }
             drop(slots);
             self.semaphore.add_permits(1);
-            // Wake one task waiting in the cooldown anticipation zone
-            // or behind the bounded burst limiter.
-            self.idle_returned.notify_one();
-            // Wake one Phase C waiter in a peer pool's coordinator path.
-            // The connection just landed in our `slots.vec`, so the next
-            // `evict_one_idle` scan over our pool can find and drop it —
-            // freeing the semaphore slot a peer pool needs. Before this
-            // signal, Phase C only reacted to permit drops, so a peer
-            // waiter would sleep until our connection aged out via
-            // `server_lifetime` instead of picking up the freshly idle one.
-            //
-            // Note: `spare_above_min` is NOT what changes here. It tracks
-            // `slots.size - effective_min` and `slots.size` is the allocated
-            // count, not `vec.len()`; `return_object` leaves `slots.size`
-            // unchanged. What changes is the *evictable set* scanned by
-            // `retain_oldest_first` inside `evict_one_idle` — the returned
-            // connection is now visible there.
-            if let Some(ref coordinator) = self.coordinator {
-                coordinator.notify_idle_returned();
-            }
+            self.notify_return_observers();
             return;
         }
-        // Slow path: wait for lock. Same notify semantics as the fast path.
+        // Slow path: wait for lock.
         let mut slots = self.slots.lock();
         match self.config.queue_mode {
             QueueMode::Fifo => slots.vec.push_back(inner),
@@ -269,8 +250,29 @@ impl PoolInner {
         }
         drop(slots);
         self.semaphore.add_permits(1);
+        self.notify_return_observers();
+    }
+
+    /// Wake observers of an idle return: the same-pool cooldown anticipation
+    /// waiter and any peer-pool Phase C waiter on the coordinator. Both fire
+    /// on the same event (a connection landed in `slots.vec`) but consume by
+    /// different waiters:
+    /// - `idle_returned` is for callers in this pool's bounded-burst /
+    ///   cooldown anticipation zone, who will recycle the returned object.
+    /// - `coordinator.notify_idle_returned()` is for callers in *peer* user
+    ///   pools waiting on `PoolCoordinator` Phase C; they will scan this
+    ///   pool's idle vec via `evict_one_idle` and drop the returned
+    ///   connection to free a coordinator slot.
+    ///
+    /// Note: `spare_above_min` is NOT what changes here. It tracks
+    /// `slots.size - effective_min`, and `slots.size` is the allocated count,
+    /// not `vec.len()`; `return_object` leaves `slots.size` unchanged. What
+    /// changes is the *evictable set* scanned by `retain_oldest_first` inside
+    /// `evict_one_idle` — the returned connection is now visible there.
+    #[inline(always)]
+    fn notify_return_observers(&self) {
         self.idle_returned.notify_one();
-        if let Some(ref coordinator) = self.coordinator {
+        if let Some(coordinator) = self.coordinator.as_ref() {
             coordinator.notify_idle_returned();
         }
     }
@@ -1396,5 +1398,169 @@ mod tests {
             "a Notified future created AFTER the buffered permit was consumed \
              must NOT wake without a fresh notify_one"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // notify_return_observers — covers both fast and slow return_object
+    // ------------------------------------------------------------------
+
+    /// Builds a `Pool` whose `ServerPool` is never asked to `create()`.
+    /// Address/User defaults are fine because the test never opens a
+    /// real backend connection — it only exercises the in-memory notify
+    /// machinery on the resulting `PoolInner`.
+    fn test_pool_with_coordinator(coord: Arc<pool_coordinator::PoolCoordinator>) -> Pool {
+        use crate::config::{Address, User};
+        use dashmap::DashMap;
+
+        let server_pool = ServerPool::new(
+            Address::default(),
+            User::default(),
+            "test_db",
+            Arc::new(DashMap::new()),
+            false,
+            false,
+            0,
+            "test_app".to_string(),
+            1,
+            60_000,
+            60_000,
+            60_000,
+            Duration::from_secs(5),
+            false,
+        );
+        Pool::builder(server_pool)
+            .coordinator(Some(coord))
+            .pool_name("test_db".to_string())
+            .username("test_user".to_string())
+            .build()
+    }
+
+    /// Both fast and slow paths of `return_object` funnel through
+    /// `notify_return_observers`. This test pins the helper's contract:
+    /// it wakes the same-pool `idle_returned` waiter AND the peer-pool
+    /// coordinator Phase C waiter from a single call. A regression that
+    /// drops one of the two notify calls inside the helper would fail
+    /// this test even though `return_object` itself is not invoked,
+    /// because the helper is the single point that both code paths share.
+    #[tokio::test]
+    async fn notify_return_observers_wakes_phase_c_waiter_and_idle_returned() {
+        use std::sync::atomic::AtomicU64;
+        use std::sync::atomic::Ordering as AOrdering;
+
+        use pool_coordinator::{CoordinatorConfig, EvictionSource, PoolCoordinator};
+
+        // Counts how many times Phase C asks for an eviction. Phase B
+        // and the first iteration of Phase C each call try_evict_one
+        // exactly once before parking, so the baseline before any wake
+        // is exactly 2.
+        struct CountingEviction {
+            calls: Arc<AtomicU64>,
+        }
+        impl EvictionSource for CountingEviction {
+            fn try_evict_one(&self, _user: &str) -> bool {
+                self.calls.fetch_add(1, AOrdering::Relaxed);
+                false
+            }
+            fn queued_clients(&self, _user: &str) -> usize {
+                0
+            }
+            fn is_starving(&self, _user: &str) -> bool {
+                false
+            }
+        }
+
+        // Single-slot coordinator, slot pinned so Phase C never finishes
+        // via try_acquire — the only thing that can move the counter is
+        // a fresh notify_one on `connection_returned`.
+        let coord = PoolCoordinator::new(
+            "test_db".to_string(),
+            CoordinatorConfig {
+                max_db_connections: 1,
+                min_connection_lifetime_ms: 5000,
+                reserve_pool_size: 0,
+                reserve_pool_timeout_ms: 2000,
+            },
+        );
+        let _pinned = coord.try_acquire().expect("first slot is free");
+
+        let pool = test_pool_with_coordinator(coord.clone());
+
+        // Park a Phase C waiter on the coordinator's connection_returned.
+        let coord_w = coord.clone();
+        let calls = Arc::new(AtomicU64::new(0));
+        let calls_w = Arc::clone(&calls);
+        let phase_c_waiter = tokio::spawn(async move {
+            let eviction = CountingEviction { calls: calls_w };
+            coord_w.acquire("test_db", "u", &eviction).await
+        });
+
+        // Park an idle-return observer on the same pool's idle_returned.
+        // Pin + enable so the wake cannot race a late first poll.
+        let inner = Arc::clone(&pool.inner);
+        let idle_observer = tokio::spawn(async move {
+            let fut = inner.idle_returned.notified();
+            tokio::pin!(fut);
+            fut.as_mut().enable();
+            fut.await;
+        });
+
+        // Wait until both observers are parked. Phase C is observable
+        // through its eviction-call counter (baseline = 2 calls). The
+        // idle-return observer is observable indirectly: the test will
+        // either wake it via notify_return_observers or hang.
+        let parked = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if calls.load(AOrdering::Relaxed) >= 2 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(parked.is_ok(), "Phase C waiter never parked");
+        let baseline = calls.load(AOrdering::Relaxed);
+        assert_eq!(
+            baseline, 2,
+            "Phase B and the first Phase C iteration each call try_evict_one once",
+        );
+
+        // Single helper call: must wake both observers from one event.
+        pool.inner.notify_return_observers();
+
+        // The idle-return observer wakes within a generous budget. If the
+        // helper forgot the `idle_returned.notify_one()` call, this hangs
+        // until the timeout fires and the test fails.
+        tokio::time::timeout(Duration::from_secs(1), idle_observer)
+            .await
+            .expect("idle_returned waiter must wake from notify_return_observers")
+            .expect("idle_returned task must not panic");
+
+        // The Phase C waiter wakes, runs try_evict_one once more
+        // (baseline + 1) and parks again. If the helper forgot the
+        // `coordinator.notify_idle_returned()` call, the counter never
+        // moves above the baseline.
+        let woke = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if calls.load(AOrdering::Relaxed) > baseline {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            woke.is_ok(),
+            "Phase C waiter must wake on coordinator.notify_idle_returned",
+        );
+        assert_eq!(
+            calls.load(AOrdering::Relaxed),
+            baseline + 1,
+            "exactly one Phase C wake → exactly one extra try_evict_one",
+        );
+
+        // Cleanup: let the Phase C waiter eventually time out so the
+        // spawned task does not leak past the test.
+        phase_c_waiter.abort();
+        let _ = phase_c_waiter.await;
     }
 }

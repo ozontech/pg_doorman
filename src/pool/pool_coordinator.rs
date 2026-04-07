@@ -126,8 +126,9 @@ pub struct PoolCoordinator {
     ///    physically destroyed and its semaphore slot is free.
     /// 2. A `Pool::return_object` fired on a peer pool — the connection went
     ///    back to that pool's idle queue without being destroyed. The slot is
-    ///    NOT free, but the peer's `spare_above_min` may have just grown, so a
-    ///    Phase C waiter should re-run `try_evict_one` against that peer.
+    ///    NOT free, but the peer's idle `vec` has a new entry, so the next
+    ///    `retain_oldest_first` scan inside `evict_one_idle` can find an
+    ///    eligible eviction candidate that wasn't visible a moment ago.
     ///
     /// Phase C handles both cases uniformly: on every wake it retries
     /// `eviction_source.try_evict_one(user)` before `try_acquire()`.
@@ -318,20 +319,23 @@ impl PoolCoordinator {
             let notified = self.connection_returned.notified();
 
             // Opportunistic eviction retry. The wake-up may have come from
-            // `Pool::return_object` on a peer pool, which increased that
-            // peer's `spare_above_min` without destroying any permit. A
-            // previous Phase B attempt may have found nothing to evict
-            // because peers had no spare, but the state has now changed.
+            // `Pool::return_object` on a peer pool, which made a previously
+            // checked-out connection visible in that peer's idle vec without
+            // destroying any permit. A previous Phase B attempt may have
+            // found nothing evictable because the candidate was checked out,
+            // but the state has now changed.
             //
             // We call `try_evict_one` on every loop iteration, not just
             // after a notify, because:
             //   - The wake source is indistinguishable from a permit drop.
             //   - The scan is cheap compared to a `reserve_pool_timeout`
             //     wait that ends in a reserve grant or a client error.
-            //   - Without this retry, symmetric traffic between peer pools
-            //     produces long waits and unnecessary reserve usage, since
-            //     `connection_returned` only fires on physical permit drops
-            //     (server_lifetime expiry, recycle errors, reconnect epoch).
+            //   - The retry is what lets symmetric peer-pool traffic resolve
+            //     in milliseconds. Without it, a Phase C waiter would only
+            //     react to physical permit drops (server_lifetime expiry,
+            //     recycle errors, reconnect epoch) and would sleep through
+            //     every plain `return_object` even though peers were
+            //     constantly recycling idle connections it could evict.
             if eviction_source.try_evict_one(user) {
                 self.evictions_total.fetch_add(1, Ordering::Relaxed);
                 debug!(
@@ -476,15 +480,16 @@ impl PoolCoordinator {
     /// Called by `Pool::return_object` when a server connection goes back
     /// into a peer pool's idle queue without being destroyed. Wakes one
     /// Phase C waiter so it can re-run `eviction_source.try_evict_one` —
-    /// the peer's `spare_above_min` may have just grown and a slot that was
-    /// impossible to free a moment ago is now evictable.
+    /// the returned connection is now visible to `retain_oldest_first`, so
+    /// an eviction candidate that didn't exist a moment ago is now scannable.
     ///
-    /// Without this signal, Phase C only reacts to physical permit drops
-    /// (`CoordinatorPermit::drop`), so a busy peer that constantly recycles
-    /// its own idle queue would keep a waiter sleeping until `server_lifetime`
-    /// ages a connection out — the waiter would then timeout into Phase D
-    /// even though the cross-pool system had headroom every few milliseconds.
-    pub fn notify_idle_returned(&self) {
+    /// Without this signal, Phase C would only react to physical permit
+    /// drops (`CoordinatorPermit::drop`), so a busy peer that constantly
+    /// recycles its own idle queue would keep a waiter sleeping until
+    /// `server_lifetime` ages a connection out — the waiter would then
+    /// timeout into Phase D even though the cross-pool system had headroom
+    /// every few milliseconds.
+    pub(crate) fn notify_idle_returned(&self) {
         self.connection_returned.notify_one();
     }
 
