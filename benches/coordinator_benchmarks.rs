@@ -250,6 +250,77 @@ fn pool_checkout_without_coordinator(c: &mut Criterion) {
     group.finish();
 }
 
+/// Isolated cost of `PoolCoordinator::notify_idle_returned` — a single
+/// `tokio::sync::Notify::notify_one()` call behind an `Arc` deref. This is
+/// the full overhead added to `Pool::return_object` when the pool has a
+/// coordinator and the fix for Phase C reactivity to peer idle returns is
+/// active. Bench target: ~10-20 ns, small enough to be invisible on the
+/// return_object hot path.
+fn notify_idle_returned_standalone(c: &mut Criterion) {
+    let rt = runtime();
+    let mut group = c.benchmark_group("notify_idle_returned");
+    group.throughput(Throughput::Elements(1));
+
+    let coord =
+        rt.block_on(async { PoolCoordinator::new("bench_db".to_string(), make_config(100)) });
+
+    group.bench_function("no_waiters", |b| {
+        b.iter(|| {
+            coord.notify_idle_returned();
+        });
+    });
+
+    group.finish();
+}
+
+/// Simulates `Pool::return_object` with and without the coordinator notify
+/// the fix introduces. Both variants do the same VecDeque push and semaphore
+/// add_permits; the "with_coordinator_notify" variant additionally calls
+/// `coordinator.notify_idle_returned()` the way `return_object` does now.
+/// The delta between them is the added hot-path cost of the fix.
+fn return_object_with_coordinator_notify(c: &mut Criterion) {
+    use std::collections::VecDeque;
+
+    let rt = runtime();
+    let mut group = c.benchmark_group("return_object_hot_path");
+    group.throughput(Throughput::Elements(1));
+
+    // Baseline: just push + add_permits, no coordinator. Matches pool with
+    // `max_db_connections = 0` (coordinator disabled).
+    group.bench_function("without_coordinator_notify", |b| {
+        let sem = Arc::new(Semaphore::new(10));
+        let slots = Arc::new(parking_lot::Mutex::new(VecDeque::from([1u64, 2, 3, 4, 5])));
+
+        b.iter(|| {
+            let mut guard = slots.lock();
+            let conn = guard.pop_front().unwrap();
+            guard.push_back(conn);
+            drop(guard);
+            sem.add_permits(1);
+        });
+    });
+
+    // With the fix: after push + add_permits, notify the coordinator so
+    // Phase C waiters can opportunistically retry eviction.
+    group.bench_function("with_coordinator_notify", |b| {
+        let sem = Arc::new(Semaphore::new(10));
+        let slots = Arc::new(parking_lot::Mutex::new(VecDeque::from([1u64, 2, 3, 4, 5])));
+        let coord =
+            rt.block_on(async { PoolCoordinator::new("bench_db".to_string(), make_config(100)) });
+
+        b.iter(|| {
+            let mut guard = slots.lock();
+            let conn = guard.pop_front().unwrap();
+            guard.push_back(conn);
+            drop(guard);
+            sem.add_permits(1);
+            coord.notify_idle_returned();
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     baseline_semaphore,
@@ -258,5 +329,7 @@ criterion_group!(
     coordinator_contention,
     coordinator_async_acquire,
     pool_checkout_without_coordinator,
+    notify_idle_returned_standalone,
+    return_object_with_coordinator_notify,
 );
 criterion_main!(benches);

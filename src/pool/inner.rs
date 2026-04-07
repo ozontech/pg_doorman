@@ -242,9 +242,26 @@ impl PoolInner {
             // Wake one task waiting in the cooldown anticipation zone
             // or behind the bounded burst limiter.
             self.idle_returned.notify_one();
+            // Wake one Phase C waiter in a peer pool's coordinator path.
+            // The connection just landed in our `slots.vec`, so the next
+            // `evict_one_idle` scan over our pool can find and drop it —
+            // freeing the semaphore slot a peer pool needs. Before this
+            // signal, Phase C only reacted to permit drops, so a peer
+            // waiter would sleep until our connection aged out via
+            // `server_lifetime` instead of picking up the freshly idle one.
+            //
+            // Note: `spare_above_min` is NOT what changes here. It tracks
+            // `slots.size - effective_min` and `slots.size` is the allocated
+            // count, not `vec.len()`; `return_object` leaves `slots.size`
+            // unchanged. What changes is the *evictable set* scanned by
+            // `retain_oldest_first` inside `evict_one_idle` — the returned
+            // connection is now visible there.
+            if let Some(ref coordinator) = self.coordinator {
+                coordinator.notify_idle_returned();
+            }
             return;
         }
-        // Slow path: wait for lock
+        // Slow path: wait for lock. Same notify semantics as the fast path.
         let mut slots = self.slots.lock();
         match self.config.queue_mode {
             QueueMode::Fifo => slots.vec.push_back(inner),
@@ -253,6 +270,9 @@ impl PoolInner {
         drop(slots);
         self.semaphore.add_permits(1);
         self.idle_returned.notify_one();
+        if let Some(ref coordinator) = self.coordinator {
+            coordinator.notify_idle_returned();
+        }
     }
 }
 
