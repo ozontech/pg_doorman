@@ -484,21 +484,31 @@ The threshold itself defaults to 1 MB.</p>
 <p>Default: <code>1048576 (1 MB)</code>.</p>
 <h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
 <p>Warm pool ratio as a percentage (0-100). When the pool size is below this threshold
-of <code>max_size</code>, new connections are created immediately without backpressure.
-Above this threshold, the pool applies fast retries and cooldown sleep to avoid
-overwhelming the PostgreSQL server during connection storms.</p>
+of <code>max_size</code>, new connections are created immediately. Above this threshold, the
+pool first spins via fast retries, then waits up to <code>scaling_max_anticipation_wait_ms</code>
+for an idle connection to be returned by another task before creating a new one.</p>
 <p>Default: <code>20</code>.</p>
 <h3 id="scaling_fast_retries"><a class="header" href="#scaling_fast_retries">scaling_fast_retries</a></h3>
-<p>Number of fast retries using <code>yield_now()</code> for low-latency waiting when creating
+<p>Number of fast retries using <code>yield_now()</code> for low-latency waiting when checking out
 connections above the warm pool threshold. Each retry takes approximately 1-5μs.
-After exhausting fast retries, the pool falls back to <code>scaling_cooldown_sleep</code>.</p>
+After exhausting fast retries, the pool waits on a Notify until either an idle
+connection is returned or <code>scaling_max_anticipation_wait_ms</code> elapses.</p>
 <p>Default: <code>10</code>.</p>
-<h3 id="scaling_cooldown_sleep"><a class="header" href="#scaling_cooldown_sleep">scaling_cooldown_sleep</a></h3>
-<p>Sleep duration after fast retries are exhausted during connection
-creation above the warm pool threshold. This provides backpressure to prevent
-overwhelming the PostgreSQL server. Set to <code>0</code> to disable (not recommended).
-Accepts duration strings like <code>"10ms"</code>, <code>"1s"</code>, or plain numbers (milliseconds).</p>
-<p>Default: <code>"10ms"</code>.</p>
+<h3 id="scaling_max_anticipation_wait_ms"><a class="header" href="#scaling_max_anticipation_wait_ms">scaling_max_anticipation_wait_ms</a></h3>
+<p>Upper bound on event-driven anticipation wait when the pool is above the warm
+threshold. Replaces the legacy blind sleep with a Notify-based wait that wakes
+immediately when another task returns a connection to the idle pool. The actual
+wait is <code>min(this value, remaining client wait_timeout)</code>. Set lower for snappier
+create decisions, higher to amortize more bursts onto existing connections.</p>
+<p>Default: <code>100</code>.</p>
+<h3 id="scaling_max_parallel_creates"><a class="header" href="#scaling_max_parallel_creates">scaling_max_parallel_creates</a></h3>
+<p>Bounded burst limiter for connection creation. Without this cap, N parallel
+<code>timeout_get</code> callers that miss the idle pool each independently issue a backend
+connect, producing thundering-herd bursts under load. With the cap, only this
+many creates run concurrently per pool; the rest wait briefly on a Notify and
+then either pick up a freshly returned idle connection or take the next create
+slot. Default <code>2</code> is a compromise between throughput and burst smoothing.</p>
+<p>Default: <code>2</code>.</p>
 <h3 id="max_memory_usage"><a class="header" href="#max_memory_usage">max_memory_usage</a></h3>
 <p>Total memory budget for internal buffers holding in-flight query data across all client connections.
 When this limit is reached, pg_doorman rejects new queries with an error until existing queries complete

@@ -1,0 +1,1092 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Pool Pressure - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/pool-pressure.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="pool-pressure"><a class="header" href="#pool-pressure">Pool pressure</a></h1>
+<p>Pool pressure is how pg_doorman handles many clients asking for a backend
+connection at the same time when the idle pool is empty. Two mechanisms
+decide who gets a connection, who waits, who triggers a fresh backend
+connect, and who is rejected: per-pool <strong>anticipation + bounded burst</strong>
+inside each <code>(database, user)</code> pool, and the cross-pool <strong>coordinator</strong>
+that caps total backend connections per database.</p>
+<p>Audience: DBA or production operator who already knows PgBouncer and
+wants to understand how pg_doorman differs and what to watch.</p>
+<h2 id="why-pool-pressure-exists"><a class="header" href="#why-pool-pressure-exists">Why pool pressure exists</a></h2>
+<p>Take a pool with <code>pool_size = 40</code> and a workload of 200 short transactions
+arriving in the same millisecond. The pool has 4 idle connections. In a
+naive pooler the first 4 clients pick the idle connections, and the
+remaining 196 each independently call <code>connect()</code> against PostgreSQL.
+PostgreSQL receives 196 simultaneous TCP connect attempts, each followed
+by SCRAM authentication and parameter negotiation, only to discover that
+the pool allows 36 more. Backend <code>pg_authid</code> lookups spike, the
+<code>max_connections</code> ceiling is hit, the kernel <code>accept()</code> queue saturates,
+and tail latency for already-connected clients climbs because the
+PostgreSQL postmaster is spawning backends instead of running queries.
+This is the <strong>thundering herd</strong> problem.</p>
+<pre><code>Time:  -----------------------------------------&gt;
+
+Client_1   -[idle hit]--[query]-----[done]
+Client_2   -[idle hit]--[query]-----[done]
+Client_3   -[idle hit]--[query]-----[done]
+Client_4   -[idle hit]--[query]-----[done]
+Client_5   -[connect]-[auth]-[query]-[done]
+Client_6   -[connect]-[auth]-[query]-[done]
+   .             ^
+   .             196 backend connect()s
+   .             fired in the same instant
+Client_200 -[connect]-[auth]-[query]-[done]
+
+PostgreSQL: 196 spawning backends + 4 running queries
+</code></pre>
+<p>Pool pressure suppresses this. pg_doorman makes most of those 196 callers
+reuse a connection that another client is about to release, or wait a few
+milliseconds behind a small number of in-flight backend connects. The
+<code>connect()</code> rate against PostgreSQL stays bounded even when client arrival
+is bursty.</p>
+<h2 id="plain-pool-mode"><a class="header" href="#plain-pool-mode">Plain pool mode</a></h2>
+<p>This runs when <code>max_db_connections</code> is not configured. Pools are
+independent, no cross-pool coordination, and pressure is managed inside
+each <code>(database, user)</code> pool. This is the default, and most deployments
+live here.</p>
+<h3 id="pool-growth-from-cold"><a class="header" href="#pool-growth-from-cold">Pool growth from cold</a></h3>
+<p>A pool with <code>pool_size = 40</code> and <code>min_pool_size = 0</code> starts with zero
+connections. The first client to arrive does not wait: pg_doorman creates
+a backend connection immediately. The second does the same, the third
+does the same, until the pool reaches the <strong>warm threshold</strong>.</p>
+<p>The warm threshold is <code>pool_size × scaling_warm_pool_ratio / 100</code>. With
+the default ratio of 20% and <code>pool_size = 40</code>, the threshold is 8
+connections. Below it, pg_doorman creates connections without hesitation:
+the pool is cold, the cost of a wait is higher than the cost of a
+connect, and clients cannot contend for idle connections that do not
+exist.</p>
+<p>Above the threshold, the <strong>anticipation zone</strong> activates. When a client
+misses the idle pool, pg_doorman first tries to catch a connection that
+another client is about to return.</p>
+<p>A third zone overlays both: at any pool size, if <code>inflight_creates</code>
+reaches <code>scaling_max_parallel_creates</code> (default 2), the pool enters the
+<strong>burst-capped state</strong> for new creates. Additional callers wait for a
+slot regardless of how many idle connections exist.</p>
+<pre><code>                        Three pressure zones
+                        --------------------
+
+Pool size:  0 ----------- 8 ---------------------------- 40
+            ^             ^                              ^
+            |             |                              |
+            |  WARM ZONE  |  ANTICIPATION ZONE           |
+            |             |                              |
+            |  size &lt;     |  size &gt;= warm_threshold      |
+            |  warm_thr   |                              |
+            |             |                              |
+            |  Skip       |  Phase 3: fast spin          |
+            |  phases 3   |  Phase 4: Notify wait        |
+            |  and 4.     |   (&lt;= scaling_max_           |
+            |  Go straight|      anticipation_wait_ms)   |
+            |  to phase 5 |  Then phase 5                |
+            |  (burst gate|                              |
+            |  + connect) |                              |
+
+                  Burst-capped state (orthogonal)
+                  -------------------------------
+
+inflight_creates: 0 ---- 1 ---- 2 (= scaling_max_parallel_creates)
+                                ^
+                                |  At cap: any caller reaching the
+                                |  burst gate waits on a Notify
+                                |  for either an idle return or
+                                |  a peer create completion.
+</code></pre>
+<p>The warm/anticipation zones track <em>current pool size</em>. The burst-capped
+state tracks <em>concurrent backend creates</em>. A pool can be in the
+anticipation zone and the burst-capped state at the same time; this is
+the common case under load. A pool below the warm threshold can also
+hit the burst cap if many clients arrive at once during cold-start fill.</p>
+<h3 id="acquiring-a-connection"><a class="header" href="#acquiring-a-connection">Acquiring a connection</a></h3>
+<p>When a client requests a connection through <code>pool.get()</code>, pg_doorman
+walks through the following phases. Each phase either returns a
+connection or hands off to the next phase.</p>
+<p><strong>Phase 1 — Hot path recycle.</strong> Pop the front of the idle queue. If a
+connection is there and passes the recycle check, return it. The recycle
+check rolls back any open transaction, runs a liveness probe if the
+connection has been idle longer than <code>server_idle_check_timeout</code>, and
+verifies that the connection's reconnect epoch matches the pool's
+current epoch. The pool bumps its reconnect epoch on the <code>RECONNECT</code>
+admin command and after detected backend failures; connections from
+before the bump fail this check and are dropped instead of being
+returned. A healthy steady-state pool only takes this path. Cost: a
+mutex acquire and the recycle check.</p>
+<p><strong>Phase 2 — Warm zone gate.</strong> If the pool size is below the warm
+threshold, skip anticipation and jump straight to creating a new backend
+connection. Cold pools fill fast.</p>
+<p><strong>Phase 3 — Anticipation spin.</strong> Above the warm threshold, retry the
+recycle 10 times in a tight <code>yield_now</code> loop (controlled by
+<code>scaling_fast_retries</code>). This catches the case where another client
+finished its query in the same microsecond range and is about to push
+the connection back. Total cost is around 10–50 microseconds. No sleep,
+no blocking I/O.</p>
+<p><strong>Phase 4 — Anticipation wait.</strong> If the spin did not catch a return,
+register a <code>Notify</code> future that wakes when <em>any</em> client returns a
+connection. Wait on that future, bounded by:</p>
+<ul>
+<li><code>scaling_max_anticipation_wait_ms</code> (default 100 ms), and</li>
+<li>half of the client's remaining <code>query_wait_timeout</code> budget.</li>
+</ul>
+<p>The lower of the two is used, with a 1 ms floor so the wait has a chance
+to register. If a return fires during the wait, exactly <strong>one</strong> task
+wakes, never all of them at once. If the wait elapses without a return,
+drop through to phase 5.</p>
+<p><strong>Phase 5 — Bounded burst gate.</strong> Try to take one of
+<code>scaling_max_parallel_creates</code> slots (default 2) for in-flight backend
+connects. If a slot is free, take it and call <code>connect()</code> against
+PostgreSQL. If all slots are full, wait on a <code>Notify</code> woken by either an
+idle return or another in-flight create finishing, then re-try the
+recycle and the gate. A 5 ms backoff acts as a safety net if both wake
+sources are missed.</p>
+<p><strong>Phase 6 — Backend connect.</strong> Run <code>connect()</code>, authenticate, hand the
+connection to the client. The burst slot is released automatically when
+this phase finishes, regardless of success or failure.</p>
+<pre><code>                  Plain mode acquisition flow
+                  ---------------------------
+
+   pool.get()
+       |
+       v
+   +--------------+
+   |  Phase 1:    |  --- HIT ----&gt; return idle connection
+   |  recycle pop |
+   +------+-------+
+          | MISS
+          v
+   +--------------+
+   |  Phase 2:    |  --- below warm ---&gt; jump to phase 5
+   |  warm gate   |
+   +------+-------+
+          | above warm
+          v
+   +--------------+
+   |  Phase 3:    |  --- HIT ----&gt; return idle connection
+   |  fast spin   |
+   +------+-------+
+          | MISS
+          v
+   +--------------+
+   |  Phase 4:    |  --- HIT     ----&gt; return idle connection
+   |  anticipate  |  --- notify  ----&gt; return idle connection
+   |  Notify wait |  --- timeout ----&gt; fall through
+   +------+-------+
+          |
+          v
+   +--------------+
+   |  Phase 5:    |  --- slot taken --&gt; proceed to phase 6
+   |  burst gate  |  --- slot full  --&gt; wait, retry recycle
+   +------+-------+
+          |
+          v
+   +--------------+
+   |  Phase 6:    |
+   |  connect()   | ----&gt; return new connection
+   +--------------+
+</code></pre>
+<h3 id="burst-suppression-in-action"><a class="header" href="#burst-suppression-in-action">Burst suppression in action</a></h3>
+<p>The same 200-client thundering herd scenario, this time with plain mode
+and <code>scaling_max_parallel_creates = 2</code>:</p>
+<pre><code>Time:   t=0ms     t=5ms    t=10ms   t=15ms   t=20ms   t=25ms
+
+C_1     [idle]--[query]-[done]
+C_2     [idle]--[query]-[done]
+C_3     [idle]--[query]-[done]
+C_4     [idle]--[query]-[done]
+C_5     [spin/wait]------[recycled C_1]--[query]-[done]
+C_6     [spin/wait]------[recycled C_2]--[query]-[done]
+C_7     [gate=1]-[connect]----[auth]--[query]-[done]
+C_8     [gate=2]-[connect]----[auth]--[query]-[done]
+C_9     [gate full, wait]---[recycled C_3]--[query]
+C_10    [gate full, wait]---[recycled C_4]--[query]
+  .
+  .     [...196 clients use a mix of recycle, anticipation, and at
+  .      most 2 in-flight connects...]
+  .
+C_200   [gate=2]-[connect]--[auth]--[query]--[done]
+
+PostgreSQL: at most 2 spawning backends at any moment
+            + the 4 connections that were already there
+</code></pre>
+<p>The same pool serves all 200 clients, but PostgreSQL never sees more
+than <code>scaling_max_parallel_creates</code> (default 2) concurrent backend
+spawns from this pool. Most clients land on a recycled connection from
+a peer that finished moments earlier, not a fresh <code>connect()</code>.</p>
+<h3 id="non-blocking-checkout"><a class="header" href="#non-blocking-checkout">Non-blocking checkout</a></h3>
+<p>When a client sets <code>query_wait_timeout = 0</code> it asks for either an
+immediate idle hit or a fresh connect, with no waiting. The anticipation
+phase and the burst-gate wait are both skipped. pg_doorman runs the
+hot-path recycle, tries the burst gate once, then either creates a
+connection or returns a wait timeout error.</p>
+<p><strong>Limitation when the coordinator is enabled.</strong> Non-blocking only skips
+the anticipation and burst-gate waits inside the per-pool path. If
+<code>max_db_connections</code> is configured and the coordinator's wait phases
+(B–D) take time, a non-blocking caller still blocks inside
+<code>coordinator.acquire()</code> for up to <code>reserve_pool_timeout</code> (default 3000
+ms) before returning. For a strict zero-wait deadline on
+coordinator-managed databases, set <code>reserve_pool_timeout</code> low enough to
+fit your tolerance.</p>
+<h3 id="background-replenish"><a class="header" href="#background-replenish">Background replenish</a></h3>
+<p>When <code>min_pool_size</code> is set, a background task periodically tops up the
+pool to its minimum. It uses the same burst gate as client traffic.
+<strong>It does not queue</strong> behind a busy gate: it gives up immediately and
+retries on the next retain cycle (default every 30 seconds, controlled
+by <code>retain_connections_time</code>).</p>
+<p>The reasoning: during a load spike, clients are already saturating the
+gate creating connections they need <em>right now</em>. Having the replenish
+task fight them for slots buys nothing; client-driven creates will lift
+the pool above <code>min_pool_size</code> anyway. The <code>replenish_deferred</code> counter
+increments each time the background task backs off this way.</p>
+<p>Consequence: <code>min_pool_size</code> is best-effort under load. For a hard
+floor, see the troubleshooting section.</p>
+<h2 id="sizing-the-cap-against-postgresql"><a class="header" href="#sizing-the-cap-against-postgresql">Sizing the cap against PostgreSQL</a></h2>
+<p>Before reading about the coordinator, check that your worst-case backend
+connection count fits PostgreSQL. Without <code>max_db_connections</code> set, the
+worst case for one database is:</p>
+<pre><code>N pools (users) × pool_size  =  ceiling on backend connections
+</code></pre>
+<p>Worked example: three pools, <code>pool_size = 40</code> each, no
+<code>max_db_connections</code>. Worst case is <strong>120 simultaneous backend
+connections</strong> to that database, throttled only by
+<code>scaling_max_parallel_creates</code> per pool (default 2 each, so up to 6
+concurrent <code>connect()</code> calls in flight). If PostgreSQL is configured
+with <code>max_connections = 100</code>, the database refuses new connections
+during a workload-wide spike and clients see <code>FATAL: too many connections</code>.</p>
+<p>Two fixes:</p>
+<ul>
+<li>Lower <code>pool_size</code> so <code>N × pool_size</code> fits below <code>max_connections</code>,
+with margin for <code>superuser_reserved_connections</code>, replication slots,
+and any direct connectors that bypass pg_doorman.</li>
+<li>Set <code>max_db_connections</code> to enforce a hard cap (next section).</li>
+</ul>
+<p>Rule of thumb: keep aggregate pg_doorman demand at most 80% of
+PostgreSQL <code>max_connections - superuser_reserved_connections</code>. The
+remaining 20% is headroom for admin connections, replication, and
+burst.</p>
+<h2 id="coordinator-mode"><a class="header" href="#coordinator-mode">Coordinator mode</a></h2>
+<p>Coordinator mode activates when you set <code>max_db_connections</code> on a pool.
+It adds a second pressure layer <strong>above</strong> the per-pool one: a shared
+semaphore that caps total backend connections to a database across all
+user pools serving it. Without it, the <code>N × pool_size</code> ceiling from the
+previous section is the only limit. With <code>max_db_connections = 80</code>,
+only 80 can exist at once regardless of pool configuration, and the
+coordinator decides which pools may grow.</p>
+<p>When <code>max_db_connections = 0</code> (the default), the coordinator does not
+exist. When set, every plain-mode mechanism described above still runs;
+the coordinator adds a single permit acquisition step on the
+new-connection path. Idle reuse never touches the coordinator.</p>
+<h3 id="what-the-coordinator-adds"><a class="header" href="#what-the-coordinator-adds">What the coordinator adds</a></h3>
+<p>Three things:</p>
+<ol>
+<li>
+<p><strong>A hard cap</strong> on total connections per database. If 80 are in use,
+the 81st request waits or fails, regardless of which pool asks.</p>
+</li>
+<li>
+<p><strong>Eviction.</strong> When the cap is reached and a new pool needs a slot,
+the coordinator can close an idle connection from a different user's
+pool to free one. The evicted pool loses a connection; the
+requesting pool gets one. This is fair: users with the largest
+surplus above their <strong>effective minimum</strong> lose connections first,
+and only connections older than <code>min_connection_lifetime</code> (default
+5000 ms) are eligible.</p>
+<p>The <strong>effective minimum</strong> for a user pool is
+<code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>. Both knobs
+protect connections from eviction; whichever is larger wins.
+Lowering either drops the floor.</p>
+</li>
+<li>
+<p><strong>A reserve pool.</strong> If the cap is reached, eviction yields nothing,
+and waiting for a return times out, the coordinator can grant a
+permit from the <strong>reserve</strong>: a small extra pool above
+<code>max_db_connections</code>. The reserve is bounded by <code>reserve_pool_size</code>
+(default 0, meaning disabled) and prioritised: starving users (those
+below their <strong>effective minimum</strong>) and users with many queued
+clients are served first.</p>
+</li>
+</ol>
+<h3 id="coordinator-acquisition-phases"><a class="header" href="#coordinator-acquisition-phases">Coordinator acquisition phases</a></h3>
+<p>When the per-pool path reaches the new-connection step, the coordinator
+runs five phases. The first phase that hands back a permit ends the
+sequence.</p>
+<p><strong>Phase A — Try-acquire.</strong> Non-blocking semaphore acquire. If the cap
+is not reached, take the slot and return.</p>
+<p><strong>Phase B — Eviction.</strong> Walk all <em>other</em> user pools for the same
+database, find the one with the largest surplus above its <strong>effective
+minimum</strong>, and close one of its idle connections older than
+<code>min_connection_lifetime</code>. The evicted permit drops synchronously,
+freeing the slot. Re-try the semaphore acquire. If two callers race,
+the loser falls through to the next phase.</p>
+<p><strong>Phase C — Wait.</strong> Register a <code>Notify</code> woken when any in-use
+connection is returned to the coordinator. Wait up to
+<code>reserve_pool_timeout</code> (default 3000 ms) for the notify or the
+deadline. <strong>This timeout applies even when <code>reserve_pool_size = 0</code></strong>:
+it is the wait-phase budget, not just the reserve gating window. If
+your <code>query_wait_timeout</code> is shorter than <code>reserve_pool_timeout</code>, the
+client gives up first and you see <code>wait timeout</code> errors instead of the
+more diagnostic <code>all server connections to database 'X' are in use</code>.
+See troubleshooting for the symptom.</p>
+<p><strong>Phase D — Reserve.</strong> If the wait expired and <code>reserve_pool_size &gt; 0</code>,
+ask the reserve arbiter for a permit. Requests are scored by
+<code>(starving, queued_clients)</code> so users that need connections most get
+them first. The arbiter is a single tokio task that drains reserve
+permits from a priority heap.</p>
+<p><strong>Phase E — Error.</strong> If the reserve is exhausted or not configured,
+the client receives an error: <code>all server connections to database 'X' are in use (max=N, ...)</code>.</p>
+<h3 id="why-coordinator-runs-before-the-burst-gate"><a class="header" href="#why-coordinator-runs-before-the-burst-gate">Why coordinator runs before the burst gate</a></h3>
+<p>Inside the per-pool acquisition flow, the coordinator permit is
+acquired <strong>before</strong> the burst gate. The order is deliberate.</p>
+<p>The coordinator can wait <em>seconds</em> (up to <code>reserve_pool_timeout</code>,
+default 3000 ms). The burst gate wakes in <em>milliseconds</em>. If the gate
+came first, two callers in one pool could grab the only two slots,
+both block on the coordinator for seconds waiting for a peer pool to
+return, and the rest of the clients in their own pool would starve
+waiting for those two, even though the pool itself has nothing to do
+but <code>connect()</code>. This is <strong>head-of-line blocking inside one pool</strong>.</p>
+<p>With coordinator first, the gate caps <strong>actual <code>connect()</code> calls</strong>,
+not <em>waiting time on a peer pool</em>. A caller blocked in coordinator
+wait holds zero burst slots. The gate sees at most one caller per
+slot, each about to issue <code>connect()</code>.</p>
+<pre><code>        Coordinator + plain mode acquisition flow
+        -----------------------------------------
+
+   pool.get()
+       |
+       v
+   Phase 1: hot path recycle   --- HIT ---&gt; return
+       | MISS
+       v
+   Phase 2: warm gate          --- below ---+
+       | above warm                         |
+       v                                    |
+   Phase 3: fast spin          --- HIT ---&gt; return
+       | MISS                               |
+       v                                    |
+   Phase 4: anticipation wait  --- HIT ---&gt; return
+       | timeout                            |
+       v                                    |
+       | &lt;----------------------------------+
+       v
+   +----------------------+
+   |  Coordinator acquire |   &lt;-- inserted between phase 4 and phase 5
+   |   A: try_acquire     |       only when max_db_connections &gt; 0
+   |   B: evict from peer |
+   |   C: wait for return |   up to reserve_pool_timeout
+   |   D: reserve permit  |   scored priority
+   |   E: error           |   client gets DB exhausted error
+   +----------+-----------+
+              | permit granted
+              v
+   Phase 5: bounded burst gate (scaling_max_parallel_creates)
+              | slot acquired
+              v
+   Phase 6: server_pool.create()
+              |
+              v
+              return new connection
+</code></pre>
+<p>The phases are numbered identically to plain mode. The coordinator
+acquire is <strong>not</strong> a numbered phase: it is a separate gate inserted
+between phase 4 and phase 5 when <code>max_db_connections &gt; 0</code>. In plain
+mode it does not run.</p>
+<h3 id="when-the-coordinator-is-configured-but-the-cap-is-not-reached"><a class="header" href="#when-the-coordinator-is-configured-but-the-cap-is-not-reached">When the coordinator is configured but the cap is not reached</a></h3>
+<p>If <code>max_db_connections = 80</code> and current usage is 30, the coordinator's
+phase A always succeeds. Phases B–E never run. The behaviour is
+identical to plain mode plus one atomic semaphore increment per new
+connection. The hot path (idle reuse) does not touch the coordinator at
+all, so it has no measurable cost there. Only <em>new</em> connection creation
+does, and only by the duration of one atomic operation.</p>
+<p>By design, the coordinator is a <em>cap</em>, not a <em>queue</em>: it costs you
+only when you bump against the limit.</p>
+<h3 id="background-replenish-under-coordinator"><a class="header" href="#background-replenish-under-coordinator">Background replenish under coordinator</a></h3>
+<p><code>replenish</code> acquires its coordinator permit using <code>try_acquire</code>
+(non-blocking). If the database is at the cap, replenish gives up and
+retries on the next retain cycle. Same logic as the burst gate
+backoff: don't have a background task fight client traffic for scarce
+permits.</p>
+<h2 id="tuning-parameters"><a class="header" href="#tuning-parameters">Tuning parameters</a></h2>
+<p>All four scaling parameters are global by default, with per-pool
+overrides for <code>scaling_warm_pool_ratio</code> and <code>scaling_fast_retries</code>.
+The two anticipation/burst knobs are global only; per-pool overrides
+are not supported.</p>
+<div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Default</th><th>Where</th><th>What it does</th></tr></thead><tbody>
+<tr><td><code>scaling_warm_pool_ratio</code></td><td><code>20</code> (percent)</td><td><code>general</code>, per-pool</td><td>Threshold below which connections are created without anticipation. Below <code>pool_size × ratio / 100</code>, every new connection request goes straight to <code>connect()</code>.</td></tr>
+<tr><td><code>scaling_fast_retries</code></td><td><code>10</code></td><td><code>general</code>, per-pool</td><td>Number of <code>yield_now</code> spin retries in the anticipation phase before falling through to the event-driven wait.</td></tr>
+<tr><td><code>scaling_max_anticipation_wait_ms</code></td><td><code>100</code> (ms)</td><td><code>general</code></td><td>Upper bound on the event-driven wait for an idle return before falling through to backend connect. Capped at half the client's remaining <code>query_wait_timeout</code>.</td></tr>
+<tr><td><code>scaling_max_parallel_creates</code></td><td><code>2</code></td><td><code>general</code></td><td>Hard cap on concurrent backend <code>connect()</code> calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be <code>&gt;= 1</code>.</td></tr>
+<tr><td><code>max_db_connections</code></td><td>unset (disabled)</td><td>per-pool</td><td>Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist.</td></tr>
+<tr><td><code>min_connection_lifetime</code></td><td><code>5000</code> (ms)</td><td>per-pool</td><td>Minimum age of an idle connection before the coordinator may evict it for another pool. Lower bound on connection churn.</td></tr>
+<tr><td><code>reserve_pool_size</code></td><td><code>0</code> (disabled)</td><td>per-pool</td><td>Extra coordinator permits above <code>max_db_connections</code>, granted by priority when the main pool is exhausted.</td></tr>
+<tr><td><code>reserve_pool_timeout</code></td><td><code>3000</code> (ms)</td><td>per-pool</td><td>Maximum coordinator wait time before falling through to the reserve pool.</td></tr>
+<tr><td><code>min_guaranteed_pool_size</code></td><td><code>0</code></td><td>per-pool</td><td>Per-user minimum protected from coordinator eviction. A user with <code>current_size &lt;= min_guaranteed_pool_size</code> has its connections immune to eviction by other users.</td></tr>
+</tbody></table>
+</div>
+<h3 id="when-to-raise-scaling_max_parallel_creates"><a class="header" href="#when-to-raise-scaling_max_parallel_creates">When to raise <code>scaling_max_parallel_creates</code></a></h3>
+<p>Raise when:</p>
+<ul>
+<li><code>burst_gate_waits</code> is consistently growing across scrapes and
+<code>replenish_deferred</code> is also non-zero, meaning client traffic and the
+background task are both fighting for slots that don't exist;</li>
+<li>backend <code>connect()</code> is fast (&lt; 50 ms) and PostgreSQL has spare
+<code>max_connections</code>;</li>
+<li>connection latency spikes correlate with <code>burst_gate_waits</code> rate
+increases.</li>
+</ul>
+<p><strong>Hard ceiling.</strong> Never raise <code>scaling_max_parallel_creates</code> above
+either of these limits:</p>
+<ul>
+<li><code>pool_size / 4</code> for the smallest pool that uses this setting. Above
+this, the cap loses meaning: half the pool can be in flight at once,
+defeating the smoothing.</li>
+<li><code>(PostgreSQL max_connections - superuser_reserved_connections) / (10 × N pools)</code>
+where <code>N pools</code> counts all pools sharing this PostgreSQL instance.
+Above this, the aggregate concurrent connect rate exceeds what the
+backend can absorb without <code>accept()</code> queue overflow.</li>
+</ul>
+<p>Lower when:</p>
+<ul>
+<li>PostgreSQL <code>connect()</code> is expensive (&gt; 200 ms, e.g., SSL with cert
+verification, or a slow <code>pg_authid</code> lookup);</li>
+<li><code>pg_authid</code> contention shows up in PostgreSQL logs;</li>
+<li>the backend shows <code>accept()</code> queue overflow.</li>
+</ul>
+<p>Symptom of too low: <code>burst_gate_waits</code> rate climbs faster than client
+arrival rate. Symptom of too high: PostgreSQL <code>connect()</code> latency
+climbs and the connection storm reappears.</p>
+<p><strong>Sizing for many pools.</strong> The aggregate concurrent connect ceiling is
+<code>N pools × scaling_max_parallel_creates</code>. If you operate one PostgreSQL
+behind 10 pools and want at most 8 concurrent backend connects across
+all of them at any moment, set <code>scaling_max_parallel_creates</code> to
+roughly <code>desired_aggregate / N pools</code>, rounding down. Below 1 is not
+allowed; if the math gives &lt;1, lower <code>N pools</code> by consolidating users.</p>
+<h3 id="when-to-raise-scaling_max_anticipation_wait_ms"><a class="header" href="#when-to-raise-scaling_max_anticipation_wait_ms">When to raise <code>scaling_max_anticipation_wait_ms</code></a></h3>
+<p>Raise when:</p>
+<ul>
+<li><code>anticipation_wakes_timeout</code> is much larger than
+<code>anticipation_wakes_notify</code> and the pool is <em>not</em> under-sized (most
+queries finish faster than 100 ms but the anticipation budget is too
+short to catch them);</li>
+<li>latency p99 spikes correlate with <code>create_fallback</code> rate.</li>
+</ul>
+<p>Lower when:</p>
+<ul>
+<li><code>query_wait_timeout</code> is short (&lt; 200 ms) and you cannot afford to
+burn 100 ms on anticipation;</li>
+<li><code>anticipation_wakes_notify</code> is high (the optimistic path works) but
+individual clients see the wait inflate their tail latency.</li>
+</ul>
+<p>Symptom of too low: <code>create_fallback</code> and <code>anticipation_wakes_timeout</code>
+both grow faster than connection creation could justify. Symptom of
+too high: client tail latency includes a steady contribution from
+anticipation wait when the pool is genuinely undersized.</p>
+<h3 id="when-to-raise-scaling_warm_pool_ratio"><a class="header" href="#when-to-raise-scaling_warm_pool_ratio">When to raise <code>scaling_warm_pool_ratio</code></a></h3>
+<p>Raise when:</p>
+<ul>
+<li>pools are slow to warm at startup and <code>min_pool_size</code> is not used;</li>
+<li>clients wait for anticipation when the pool is mostly empty
+(anticipation only activates above the warm threshold, so this
+shouldn't happen, but a high ratio narrows the window where it
+<em>can</em>).</li>
+</ul>
+<p>Lower when:</p>
+<ul>
+<li>pools are over-sized and you want anticipation to suppress creates
+earlier in the size range.</li>
+</ul>
+<p>This knob rarely needs touching. The default of 20% works for most
+workloads.</p>
+<h3 id="when-to-set-max_db_connections"><a class="header" href="#when-to-set-max_db_connections">When to set <code>max_db_connections</code></a></h3>
+<p>Set it when:</p>
+<ul>
+<li>one PostgreSQL host serves multiple <code>(database, user)</code> pools and the
+sum of <code>pool_size</code> across pools exceeds the database's
+<code>max_connections</code>;</li>
+<li>you want a hard ceiling that survives misconfiguration of any single
+pool;</li>
+<li>you want cross-pool fairness via eviction.</li>
+</ul>
+<p>Leave it unset when:</p>
+<ul>
+<li>one pool serves one database and <code>pool_size</code> is the whole story;</li>
+<li>you don't want any cross-pool eviction (some workloads prefer hard
+per-user isolation).</li>
+</ul>
+<h3 id="reserve_pool_size-and-reserve_pool_timeout"><a class="header" href="#reserve_pool_size-and-reserve_pool_timeout"><code>reserve_pool_size</code> and <code>reserve_pool_timeout</code></a></h3>
+<p>The reserve is a <em>temporary overflow valve</em>, not extra steady-state
+capacity. It prevents client-visible exhaustion errors during brief
+bursts. Under normal operation <code>reserve_in_use</code> should be 0 most of
+the time.</p>
+<p>Sizing rule of thumb: <code>reserve_pool_size ≤ 0.25 × max_db_connections</code>.
+The reserve absorbs a spike; it does not double the cap.</p>
+<p><code>reserve_pool_timeout</code> is how long a client waits in coordinator phase
+C before the reserve is consulted. Default 3000 ms is conservative.
+Lower it if your <code>query_wait_timeout</code> is short and you would rather
+fall through to the reserve fast than block clients on coordinator
+wait.</p>
+<p><strong>Floor.</strong> Never lower <code>reserve_pool_timeout</code> below <code>2 × your p99 query latency</code>. Below that floor, the wait phase always times out
+before a peer returns a connection, and the reserve becomes a
+required permit for every new connection rather than an overflow
+valve. Reserve permits are scarce by design; using them as steady
+state defeats the purpose.</p>
+<p><strong>Trap: <code>query_wait_timeout &lt; reserve_pool_timeout</code>.</strong> When the
+client deadline is shorter than the coordinator wait phase, the
+client gives up first and you see <code>wait timeout</code> errors instead of
+the more diagnostic <code>all server connections to database 'X' are in use</code>. The coordinator's wait and reserve phases run their full course
+but no client is left to receive the result. The pg_doorman config
+validator emits a warning at startup; act on it.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p>pg_doorman exposes pool pressure state through the admin console and
+through Prometheus. Both show the same counters; pick whichever fits
+your monitoring stack.</p>
+<h3 id="admin-show-pool_scaling"><a class="header" href="#admin-show-pool_scaling">Admin: <code>SHOW POOL_SCALING</code></a></h3>
+<p>Per-pool counters for the anticipation + bounded burst path. Connect
+to the <code>pgdoorman</code> admin database and run:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW POOL_SCALING;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Column</th><th>Type</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>user</code></td><td>text</td><td>Pool user</td></tr>
+<tr><td><code>database</code></td><td>text</td><td>Pool database</td></tr>
+<tr><td><code>inflight</code></td><td>gauge</td><td>Backend <code>connect()</code> calls currently in progress for this pool. Bounded by <code>scaling_max_parallel_creates</code>.</td></tr>
+<tr><td><code>creates</code></td><td>counter</td><td>Total backend connections this pool has started creating since startup. Pairs with <code>gate_waits</code> to compute the gate hit rate.</td></tr>
+<tr><td><code>gate_waits</code></td><td>counter</td><td>Total times a caller observed the burst gate at capacity and had to wait on a <code>Notify</code>. High values indicate <code>scaling_max_parallel_creates</code> is too low.</td></tr>
+<tr><td><code>antic_notify</code></td><td>counter</td><td>Anticipation waits that woke on a real idle return. The optimistic path paid off.</td></tr>
+<tr><td><code>antic_timeout</code></td><td>counter</td><td>Anticipation waits that fell through on the budget timeout instead of catching a return. Ratio against <code>antic_notify</code> shows whether <code>scaling_max_anticipation_wait_ms</code> is well-calibrated.</td></tr>
+<tr><td><code>create_fallback</code></td><td>counter</td><td>Times anticipation completed but <code>try_recycle</code> still found the pool empty, forcing a fresh <code>connect()</code>.</td></tr>
+<tr><td><code>replenish_def</code></td><td>counter</td><td>Background replenish runs that hit the burst cap and deferred to the next retain cycle. Persistent non-zero values mean <code>min_pool_size</code> cannot be sustained under current load.</td></tr>
+</tbody></table>
+</div>
+<p>All counters are monotonic since startup. Compute deltas between
+scrapes; absolute values are only useful for ratios.</p>
+<h3 id="admin-show-pool_coordinator"><a class="header" href="#admin-show-pool_coordinator">Admin: <code>SHOW POOL_COORDINATOR</code></a></h3>
+<p>Per-database coordinator state. Only present for databases with
+<code>max_db_connections &gt; 0</code>.</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW POOL_COORDINATOR;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Column</th><th>Type</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>database</code></td><td>text</td><td>Database name</td></tr>
+<tr><td><code>max_db_conn</code></td><td>gauge</td><td>Configured <code>max_db_connections</code></td></tr>
+<tr><td><code>current</code></td><td>gauge</td><td>Total backend connections currently held under this coordinator (across all user pools)</td></tr>
+<tr><td><code>reserve_size</code></td><td>gauge</td><td>Configured <code>reserve_pool_size</code></td></tr>
+<tr><td><code>reserve_used</code></td><td>gauge</td><td>Reserve permits currently in use</td></tr>
+<tr><td><code>evictions</code></td><td>counter</td><td>Total times the coordinator evicted an idle connection from a peer pool to free a slot</td></tr>
+<tr><td><code>reserve_acq</code></td><td>counter</td><td>Total reserve permits granted by the arbiter</td></tr>
+<tr><td><code>exhaustions</code></td><td>counter</td><td>Times the coordinator returned an exhausted error to a client. <strong>This is the primary pager signal.</strong></td></tr>
+</tbody></table>
+</div>
+<h3 id="prometheus-metrics"><a class="header" href="#prometheus-metrics">Prometheus metrics</a></h3>
+<p>Two metric families per pool, two per coordinator. All four use
+<code>pg_doorman_pool_scaling*</code> and <code>pg_doorman_pool_coordinator*</code> namespaces.</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Type</th><th>Labels</th><th>Source</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_pool_scaling{type="inflight_creates"}</code></td><td>gauge</td><td><code>user</code>, <code>database</code></td><td><code>inflight</code> from <code>SHOW POOL_SCALING</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="creates_started"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>creates</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="burst_gate_waits"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>gate_waits</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="anticipation_wakes_notify"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>antic_notify</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="anticipation_wakes_timeout"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>antic_timeout</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="create_fallback"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>create_fallback</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="replenish_deferred"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>replenish_def</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="connections"}</code></td><td>gauge</td><td><code>database</code></td><td><code>current</code> from <code>SHOW POOL_COORDINATOR</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="reserve_in_use"}</code></td><td>gauge</td><td><code>database</code></td><td><code>reserve_used</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="max_connections"}</code></td><td>gauge</td><td><code>database</code></td><td><code>max_db_conn</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="reserve_pool_size"}</code></td><td>gauge</td><td><code>database</code></td><td><code>reserve_size</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator_total{type="evictions"}</code></td><td>counter</td><td><code>database</code></td><td><code>evictions</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator_total{type="reserve_acquisitions"}</code></td><td>counter</td><td><code>database</code></td><td><code>reserve_acq</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator_total{type="exhaustions"}</code></td><td>counter</td><td><code>database</code></td><td><code>exhaustions</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="alerts-to-set"><a class="header" href="#alerts-to-set">Alerts to set</a></h3>
+<p>The following alerts cover the failure modes that warrant a page or
+warn. They're written in Prometheus syntax; adapt to your stack. All
+use sustained-condition windows so brief bursts do not page the
+on-call.</p>
+<p>If you reload pg_doorman frequently and pools come and go, scope the
+alerts to recently-active pools (e.g., add
+<code>pg_doorman_pool_scaling_total{type="creates_started"} &gt; 0</code> as a
+gating filter).</p>
+<p><strong>Coordinator exhaustion (page).</strong> A client received a "database
+exhausted" error. Hard failure.
+<strong>Runbook:</strong> see Troubleshooting → "<code>max_db_connections</code> exhausted".</p>
+<pre><code class="language-promql">rate(pg_doorman_pool_coordinator_total{type="exhaustions"}[5m]) &gt; 0
+</code></pre>
+<p><strong>Burst gate saturated (warn).</strong> Roughly half the new-connection
+attempts queued at least once. Brief spikes above 0.5 during failover
+or restart are normal; sustained values mean
+<code>scaling_max_parallel_creates</code> is too low for offered load.</p>
+<pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="burst_gate_waits"}[5m])
+  &gt; 0.5 * rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m])
+</code></pre>
+<p><strong>Anticipation calibration drifting (warn).</strong> More anticipation waits
+fall through on timeout than are caught by a real return, suggesting
+<code>scaling_max_anticipation_wait_ms</code> is below the typical query latency.
+<strong>Action:</strong> raise <code>scaling_max_anticipation_wait_ms</code> to roughly your
+p90 query latency.</p>
+<pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="anticipation_wakes_timeout"}[5m])
+  &gt; 2 * rate(pg_doorman_pool_scaling_total{type="anticipation_wakes_notify"}[5m])
+</code></pre>
+<p><strong>Replenish deferred persistently (warn).</strong> The background task cannot
+sustain <code>min_pool_size</code> because the burst gate is busy with client
+traffic. Sustained over an hour, not a brief spike.</p>
+<pre><code class="language-promql">increase(pg_doorman_pool_scaling_total{type="replenish_deferred"}[1h]) &gt; 60
+</code></pre>
+<p><strong>Reserve pool continuously in use (warn).</strong> The reserve is meant for
+brief bursts. This rule fires only when the reserve has been in use
+<strong>continuously</strong> for 15 minutes, not momentary use.</p>
+<pre><code class="language-promql">min_over_time(pg_doorman_pool_coordinator{type="reserve_in_use"}[15m]) &gt; 0
+</code></pre>
+<p><strong>Coordinator approaching cap (warn).</strong> Lead time before exhaustion.
+The <code>&gt; 0</code> guard avoids dividing by zero on databases where the
+coordinator is disabled.</p>
+<pre><code class="language-promql">pg_doorman_pool_coordinator{type="max_connections"} &gt; 0
+  and
+  pg_doorman_pool_coordinator{type="connections"}
+    / pg_doorman_pool_coordinator{type="max_connections"} &gt; 0.85
+</code></pre>
+<p><strong>Inflight stuck at cap (warn).</strong> <code>inflight_creates</code> sitting at the
+configured cap for 5+ minutes means <code>connect()</code> calls are not
+finishing. Check backend health.</p>
+<pre><code class="language-promql">min_over_time(pg_doorman_pool_scaling{type="inflight_creates"}[5m])
+  &gt;= 2  # adjust to your scaling_max_parallel_creates value
+</code></pre>
+<p><strong>Coordinator thrashing (warn).</strong> Cap is full <em>and</em> evictions are
+happening: the coordinator is constantly closing peer connections to
+make room. The pool is undersized for offered load, not "occasionally
+pressured".</p>
+<pre><code class="language-promql">pg_doorman_pool_coordinator{type="connections"}
+    / pg_doorman_pool_coordinator{type="max_connections"} &gt; 0.95
+  and
+  rate(pg_doorman_pool_coordinator_total{type="evictions"}[5m]) &gt; 0
+</code></pre>
+<h3 id="reading-the-admin-output-during-an-incident"><a class="header" href="#reading-the-admin-output-during-an-incident">Reading the admin output during an incident</a></h3>
+<p>The admin console accepts only <code>SHOW &lt;subcommand&gt;</code>, <code>SET</code>, <code>RELOAD</code>,
+<code>SHUTDOWN</code>, <code>UPGRADE</code>, <code>PAUSE</code>, <code>RESUME</code>, and <code>RECONNECT</code>. <code>SHOW</code> is
+not a virtual table, so there is no <code>SELECT</code> against the admin
+database. To query the counters in shell pipelines, run <code>SHOW</code> from
+<code>psql</code> and post-process the output.</p>
+<p>The patterns below use <code>psql</code> against the admin listener (default
+credentials <code>admin/admin</code>):</p>
+<pre><code class="language-bash"># Highest burst-gate-wait ratio first (the hot pool).
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+     -c 'SHOW POOL_SCALING' --no-align --field-separator='|' \
+  | awk -F'|' 'NR&gt;1 &amp;&amp; $4&gt;0 { printf "%-20s %-20s %.3f  inflight=%d  defer=%d\n", $1, $2, $5/$4, $3, $9 }' \
+  | sort -k3 -nr | head
+
+# Highest anticipation miss ratio (timeout vs notify).
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+     -c 'SHOW POOL_SCALING' --no-align --field-separator='|' \
+  | awk -F'|' 'NR&gt;1 &amp;&amp; ($6+$7)&gt;0 { printf "%-20s %-20s %.3f  notify=%d  timeout=%d\n", $1, $2, $7/($6+$7), $6, $7 }' \
+  | sort -k3 -nr | head
+
+# Coordinator: closest databases to exhaustion.
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+     -c 'SHOW POOL_COORDINATOR' --no-align --field-separator='|' \
+  | awk -F'|' 'NR&gt;1 &amp;&amp; $2&gt;0 { printf "%-30s %.3f  used=%d/%d  reserve=%d  exhaustions=%d\n", $1, $3/$2, $3, $2, $5, $8 }' \
+  | sort -k2 -nr
+</code></pre>
+<p>Field positions in <code>awk</code> follow the column order documented above:
+<code>POOL_SCALING</code> is <code>user|database|inflight|creates|gate_waits|antic_notify|antic_timeout|create_fallback|replenish_def</code>,
+<code>POOL_COORDINATOR</code> is <code>database|max_db_conn|current|reserve_size|reserve_used|evictions|reserve_acq|exhaustions</code>.</p>
+<h2 id="comparison-with-pgbouncer"><a class="header" href="#comparison-with-pgbouncer">Comparison with PgBouncer</a></h2>
+<p>PgBouncer and pg_doorman both pool, but they handle pressure differently.</p>
+<div class="table-wrapper"><table><thead><tr><th>Concern</th><th>PgBouncer</th><th>pg_doorman</th></tr></thead><tbody>
+<tr><td>Per-pool size cap</td><td><code>pool_size</code></td><td><code>pool_size</code></td></tr>
+<tr><td>Cross-pool DB-level cap</td><td><code>max_db_connections</code> (hard cap, no eviction; per-database/per-user <code>pool_size</code> overrides for isolation)</td><td><code>max_db_connections</code> (hard cap, plus cross-pool eviction and reserve pool)</td></tr>
+<tr><td>Reserve pool</td><td><code>reserve_pool_size</code>, <code>reserve_pool_timeout</code></td><td><code>reserve_pool_size</code>, <code>reserve_pool_timeout</code> (plus arbiter prioritisation by starving/queued)</td></tr>
+<tr><td>Eviction across users</td><td>Not supported. A user holding idle connections starves a peer needing them.</td><td>Coordinator evicts idle connections from the user with the largest surplus above the <strong>effective minimum</strong> (<code>max(user.min_pool_size, min_guaranteed_pool_size)</code>).</td></tr>
+<tr><td>Concurrent backend <code>connect()</code> per pool</td><td>Single-threaded, processes events serially per pool — <code>connect()</code> calls fire one at a time.</td><td>Bounded by <code>scaling_max_parallel_creates</code> (default 2 per pool): up to N concurrent backend connects per pool, capped against the offered load.</td></tr>
+<tr><td>Anticipation of returns</td><td>None. Clients wait on <code>wait_timeout</code> for the next available connection in arrival order.</td><td>Event-driven anticipation: a returning connection wakes exactly one queued waiter, often before any new <code>connect()</code> is issued.</td></tr>
+<tr><td><code>min_pool_size</code> prewarm</td><td>Maintained on every event-loop tick (no separate replenish task).</td><td>Periodic background replenish (<code>retain_connections_time</code>, default 30 s) that defers when the burst gate is busy.</td></tr>
+<tr><td>Backend login retry-after-failure</td><td><code>server_login_retry</code> (default 15 s) blocks new login attempts after a backend rejection.</td><td>No equivalent. Backend login failures propagate directly to the client per attempt.</td></tr>
+<tr><td>Lifetime jitter</td><td>None. <code>server_lifetime</code> is exact.</td><td>±20% jitter on both <code>server_lifetime</code> and <code>idle_timeout</code> to avoid synchronised mass closures.</td></tr>
+<tr><td>Pool lookup key</td><td><code>(database, user, auth_type)</code></td><td><code>(database, user)</code></td></tr>
+<tr><td>Fairness across users on a shared cap</td><td>First come first served on <code>max_db_connections</code>.</td><td>Reserve arbiter scores requests by <code>(starving, queued_clients)</code>.</td></tr>
+<tr><td>Observability of new-connection pressure</td><td><code>SHOW POOLS</code>, <code>SHOW STATS</code>. No insight into in-flight connects or anticipation outcomes.</td><td><code>SHOW POOL_SCALING</code> and <code>SHOW POOL_COORDINATOR</code> expose every counter the new code path uses.</td></tr>
+</tbody></table>
+</div>
+<p>Two differences matter most in production:</p>
+<ol>
+<li>
+<p><strong>Bounded burst gate.</strong> PgBouncer's pool size limits how many
+<em>connections</em> you have, but does not limit how many <code>connect()</code>
+calls fire at the same time when many clients arrive in the same
+instant. pg_doorman caps the simultaneous backend <code>connect()</code>
+rate independently of pool size, so a sudden traffic spike does
+not translate into a connection storm against PostgreSQL.</p>
+</li>
+<li>
+<p><strong>Cross-pool eviction.</strong> PgBouncer's <code>max_db_connections</code> is a
+hard ceiling with no way to redistribute. If user A holds 80 idle
+connections and user B needs one but the cap is reached, user B
+waits or fails. pg_doorman's coordinator can close one of A's
+idle connections (if older than <code>min_connection_lifetime</code>) and
+give the slot to B.</p>
+</li>
+</ol>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="multiple-simultaneous-backend-connect-log-lines"><a class="header" href="#multiple-simultaneous-backend-connect-log-lines">Multiple simultaneous backend connect log lines</a></h3>
+<p><strong>Symptom.</strong> Server logs (or pg_doorman debug logs) show 5 or more
+backend <code>connect()</code> events in the same millisecond, suggesting the
+burst gate is not working.</p>
+<p><strong>Cause.</strong> Either <code>scaling_max_parallel_creates</code> is set too high
+(verify in <code>SHOW CONFIG</code> or your <code>pg_doorman.yaml</code>), or there are 5 or
+more pools each independently issuing concurrent connects (the gate is
+per-pool, not global).</p>
+<p><strong>Fix.</strong> Lower <code>scaling_max_parallel_creates</code>. The default of 2 fits
+most workloads. With many pools, the <em>aggregate</em> concurrent connect
+rate is <code>pools × scaling_max_parallel_creates</code>, which is expected.
+To bound the aggregate, set <code>max_db_connections</code> per database; the
+coordinator will then queue creates beyond the cap.</p>
+<h3 id="min_pool_size-is-not-being-maintained"><a class="header" href="#min_pool_size-is-not-being-maintained"><code>min_pool_size</code> is not being maintained</a></h3>
+<p><strong>Symptom.</strong> A pool with <code>min_pool_size = 10</code> shows <code>sv_idle = 4</code> in
+<code>SHOW POOLS</code> and stays there for minutes.</p>
+<p><strong>Cause.</strong> Background replenish is deferring because the burst gate is
+busy with client traffic. Check <code>replenish_def</code> in <code>SHOW POOL_SCALING</code>.
+If it keeps growing, replenish skips every retain cycle.</p>
+<p><strong>Fix.</strong> By design, under load, client-driven creates own the gate.
+The pool reaches <code>min_pool_size</code> once client traffic eases. For a
+hard floor, raise <code>scaling_max_parallel_creates</code> so replenish has
+spare capacity, or shorten <code>retain_connections_time</code> so replenish
+runs more often.</p>
+<p>For <strong>transaction pooling</strong> (<code>pool_mode = transaction</code>), setting
+<code>min_pool_size</code> higher than <code>pool_size / 2</code> usually indicates an
+undersized pool: most connections should be available for client
+checkouts, not pinned at minimum. For <strong>session pooling</strong> the
+heuristic does not apply: <code>min_pool_size = pool_size</code> is a
+legitimate setup to keep all session-scoped state hot.</p>
+<h3 id="latency-p99-climbing-without-obvious-cause"><a class="header" href="#latency-p99-climbing-without-obvious-cause">Latency p99 climbing without obvious cause</a></h3>
+<p><strong>Symptom.</strong> Client p99 latency rises while p50 stays flat. Pool size
+looks fine, no errors in logs.</p>
+<p><strong>Cause.</strong> Anticipation is timing out and clients are paying 100 ms of
+wait time on top of their query latency. Check
+<code>antic_timeout / antic_notify</code> ratio in <code>SHOW POOL_SCALING</code>.</p>
+<p><strong>Fix.</strong> Two cases.</p>
+<ul>
+<li>If the ratio is high (timeout &gt; notify) and <code>create_fallback</code> is
+also growing: anticipation is failing to catch returns. Either
+raise <code>scaling_max_anticipation_wait_ms</code> so anticipation can wait
+longer for a return, or accept that the pool is undersized and
+raise <code>pool_size</code>.</li>
+<li>If the ratio is low (notify &gt; timeout) but p99 is still high: the
+pool is fine, the latency is somewhere else (PostgreSQL, network,
+client side). Check <code>SHOW STATS avg_wait_time</code> to confirm
+pg_doorman is not the bottleneck.</li>
+</ul>
+<h3 id="max_db_connections-exhausted-clients-receive-errors"><a class="header" href="#max_db_connections-exhausted-clients-receive-errors"><code>max_db_connections</code> exhausted, clients receive errors</a></h3>
+<p><strong>Symptom.</strong> Clients see errors like <code>all server connections to database 'X' are in use (max=80, ...)</code>. <code>pg_doorman_pool_coordinator_total{type="exhaustions"}</code>
+is climbing.</p>
+<p><strong>Cause.</strong> All five coordinator phases failed: try-acquire failed,
+nothing was evictable, the wait timed out, and either the reserve was
+exhausted or <code>reserve_pool_size = 0</code>.</p>
+<p><strong>Fix.</strong> Walk the phases in order.</p>
+<ol>
+<li>Check <code>current</code> vs <code>max_db_conn</code> in <code>SHOW POOL_COORDINATOR</code>. If
+<code>current</code> is at the cap consistently, your offered load exceeds the
+cap. Either raise <code>max_db_connections</code> or look for a runaway pool.</li>
+<li>Check <code>evictions</code> rate. If it's zero or near-zero, eviction is not
+helping: every pool's idle connections are younger than
+<code>min_connection_lifetime</code> (default 5000 ms), or every other pool is
+at its <code>min_guaranteed_pool_size</code>. Lower <code>min_connection_lifetime</code>
+if your workload has very short queries, or increase
+<code>max_db_connections</code>.</li>
+<li>Check <code>reserve_used</code> vs <code>reserve_size</code>. If the reserve is fully
+occupied, raise <code>reserve_pool_size</code>. If it's empty but <code>exhaustions</code>
+are happening, the reserve is not configured (<code>reserve_pool_size = 0</code>).
+Set it to absorb bursts.</li>
+<li>Look at <code>SHOW POOLS</code> for the database. If one user has a much larger
+<code>sv_idle</code> than others, that user is hoarding connections; consider
+<code>min_guaranteed_pool_size</code> to protect smaller users from being
+crushed by it, or lower the hoarder's <code>pool_size</code>.</li>
+</ol>
+<h3 id="coordinator-wait-phase-is-the-bottleneck"><a class="header" href="#coordinator-wait-phase-is-the-bottleneck">Coordinator wait phase is the bottleneck</a></h3>
+<p><strong>Symptom.</strong> Clients pay 3 seconds of latency on average, exactly
+matching <code>reserve_pool_timeout</code>.</p>
+<p><strong>Cause.</strong> Phase C wait is consistently timing out. Either the database
+is genuinely at the cap and no connections are returning, or
+<code>reserve_pool_size = 0</code> so the wait runs to completion before the
+client receives any response.</p>
+<p><strong>Fix.</strong> Lower <code>reserve_pool_timeout</code> to fail fast, or set
+<code>reserve_pool_size &gt; 0</code> so phase D handles the overflow within the same
+acquisition path.</p>
+<h3 id="burst-gate-is-the-bottleneck-even-with-low-traffic"><a class="header" href="#burst-gate-is-the-bottleneck-even-with-low-traffic">Burst gate is the bottleneck even with low traffic</a></h3>
+<p><strong>Symptom.</strong> <code>gate_waits</code> rate is significant but <code>creates</code> rate is low,
+and <code>inflight_creates</code> is at the cap continuously.</p>
+<p><strong>Cause.</strong> Backend <code>connect()</code> is slow. Each create holds a slot for
+seconds; even with two slots, you can only create roughly <code>2 / connect_seconds</code>
+connections per second.</p>
+<p><strong>Fix.</strong> Investigate why <code>connect()</code> is slow on the PostgreSQL side
+(SCRAM iterations too high, <code>pg_authid</code> lock contention, slow DNS,
+SSL handshake). Once <code>connect()</code> is fast, the gate stops being the
+bottleneck. Raising <code>scaling_max_parallel_creates</code> papers over the
+problem and pushes the storm to PostgreSQL. Investigate first, raise
+the cap second.</p>
+<h3 id="is_starving-users-keep-getting-reserve-permits"><a class="header" href="#is_starving-users-keep-getting-reserve-permits"><code>is_starving</code> users keep getting reserve permits</a></h3>
+<p><strong>Symptom.</strong> <code>reserve_acquisitions_total</code> keeps increasing. The same
+small user is the one acquiring most reserves.</p>
+<p><strong>Cause.</strong> A user is below its <strong>effective minimum</strong>
+(<code>max(user.min_pool_size, min_guaranteed_pool_size)</code>) and the
+coordinator cannot satisfy that minimum without evicting from peers.
+Each client request from that user hits coordinator phase D and
+grabs a reserve. <strong>The deeper question is why the user keeps
+needing fresh connections</strong>: either its <code>pool_size</code> is too low to
+absorb its own load, or its traffic is bursty and the reserve is
+doing what reserves are for.</p>
+<p><strong>Fix.</strong> Three options, pick by the deeper cause:</p>
+<ul>
+<li>If the user's <code>pool_size</code> is genuinely too small for steady-state
+load, raise <code>pool_size</code> and (if needed) <code>max_db_connections</code> so the
+larger pool fits.</li>
+<li>If the user has a high effective minimum that the coordinator
+cannot satisfy, lower <strong>whichever knob is actually setting the
+floor</strong> (check both <code>user.min_pool_size</code> and <code>min_guaranteed_pool_size</code>).</li>
+<li>If the traffic is genuinely bursty and reserves are catching the
+bursts, leave it alone. Brief reserve usage is the design.</li>
+</ul>
+<h3 id="clients-receive-wait-timeout-not-database-exhausted"><a class="header" href="#clients-receive-wait-timeout-not-database-exhausted">Clients receive <code>wait timeout</code>, not <code>database exhausted</code></a></h3>
+<p><strong>Symptom.</strong> Under coordinator pressure clients see
+<code>PoolError::Timeout(Wait)</code>, but <code>pg_doorman_pool_coordinator_total{type="exhaustions"}</code>
+stays at zero. The coordinator never declared exhaustion, but every
+client times out.</p>
+<p><strong>Cause.</strong> <code>query_wait_timeout</code> is shorter than <code>reserve_pool_timeout</code>.
+The client gives up before the coordinator's wait phase finishes. The
+<code>exhaustions</code> counter never increments because the coordinator
+eventually gets a permit for a request that no longer has a waiting
+client.</p>
+<p><strong>Fix.</strong> Either raise <code>query_wait_timeout</code> above <code>reserve_pool_timeout</code>
+plus typical <code>connect()</code> time, or lower <code>reserve_pool_timeout</code> (within
+the floor noted in the tuning section). The startup config validator
+emits a warning for this configuration; act on it.</p>
+<h3 id="postgresql-was-restarted-what-now"><a class="header" href="#postgresql-was-restarted-what-now">PostgreSQL was restarted, what now</a></h3>
+<p><strong>Symptom.</strong> PostgreSQL master restarted (failover, crash, planned).
+You see a flash mob of clients hitting the burst gate, <code>inflight_creates</code>
+sitting at the cap, and <code>creates_started</code> rate spiking.</p>
+<p><strong>Cause.</strong> When pg_doorman detects an unusable backend (via
+<code>server_idle_check_timeout</code> or a failed query), it bumps the pool's
+reconnect epoch and drains all idle connections at once. Every client
+that arrives after the drain misses the hot path and hits the
+anticipation → burst-gate → connect path. With <code>scaling_max_parallel_creates = 2</code>,
+the pool refills at most 2 connections at a time per pool, gated by
+PostgreSQL's <code>connect()</code> latency.</p>
+<p><strong>What healthy recovery looks like.</strong> <code>inflight_creates = 2</code> continuously
+for the first few seconds, <code>creates_started</code> rate climbing rapidly,
+<code>burst_gate_waits</code> rate climbing in lockstep, <code>anticipation_wakes_notify</code>
+quickly overtaking <code>anticipation_wakes_timeout</code> as the new connections
+start cycling. Within <code>pool_size / 2</code> × <code>connect()</code> seconds, the pool
+returns to normal.</p>
+<p><strong>Fix.</strong> Usually nothing. The bounded burst gate is doing its job by
+preventing a connection storm against a recovering primary. If
+<code>connect()</code> is genuinely fast (&lt; 50 ms) and your <code>max_connections</code>
+has headroom, raise <code>scaling_max_parallel_creates</code> to 4 or 8 to
+shorten recovery, but stay within the hard ceiling from the tuning
+section.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/patroni-proxy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/patroni-proxy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+
+
+    </div>
+    </body>
+</html>
