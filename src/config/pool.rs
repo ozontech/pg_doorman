@@ -109,10 +109,6 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaling_fast_retries: Option<u32>,
 
-    /// Override global scaling_cooldown_sleep for this pool.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scaling_cooldown_sleep: Option<Duration>,
-
     /// Maximum total server connections to this database across all users.
     /// 0 or None = disabled (default), each user pool works independently.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,6 +172,7 @@ impl Pool {
     }
 
     /// Resolve scaling config by merging pool-level overrides with general defaults.
+    /// Anticipation/burst params are global-only by design (no per-pool override).
     pub fn resolve_scaling_config(
         &self,
         general: &crate::config::General,
@@ -186,13 +183,11 @@ impl Pool {
         let retries = self
             .scaling_fast_retries
             .unwrap_or(general.scaling_fast_retries);
-        let sleep = self
-            .scaling_cooldown_sleep
-            .unwrap_or(general.scaling_cooldown_sleep);
         crate::pool::ScalingConfig {
             warm_pool_ratio: ratio as f32 / 100.0,
             fast_retries: retries,
-            cooldown_sleep_ms: sleep.as_millis(),
+            max_anticipation_wait_ms: general.scaling_max_anticipation_wait_ms,
+            max_parallel_creates: general.scaling_max_parallel_creates,
         }
     }
 
@@ -335,7 +330,6 @@ impl Default for Pool {
             prepared_statements_cache_size: None,
             scaling_warm_pool_ratio: None,
             scaling_fast_retries: None,
-            scaling_cooldown_sleep: None,
             max_db_connections: None,
             min_connection_lifetime: None,
             reserve_pool_size: None,

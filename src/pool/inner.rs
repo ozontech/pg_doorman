@@ -3,7 +3,7 @@ use std::{
     fmt,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Weak,
     },
 };
@@ -14,7 +14,7 @@ use crate::utils::clock;
 
 use parking_lot::Mutex;
 
-use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
+use tokio::sync::{Notify, Semaphore, SemaphorePermit, TryAcquireError};
 
 use super::errors::{PoolError, RecycleError, TimeoutType};
 use super::pool_coordinator;
@@ -23,6 +23,12 @@ use super::ServerPool;
 use crate::server::Server;
 
 const MAX_FAST_RETRY: i32 = 10;
+
+/// Fallback wake interval for tasks queued behind the bounded burst limiter.
+/// Used as a safety net in case neither `idle_returned` nor `create_done`
+/// fires within the expected window — guarantees forward progress without
+/// busy-spinning.
+const BURST_BACKOFF: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Internal object wrapper with metrics.
 /// The `coordinator_permit` is held for the entire lifetime of the connection:
@@ -99,6 +105,51 @@ struct Slots {
     max_size: usize,
 }
 
+/// Per-pool counters for the anticipation + bounded burst code path.
+///
+/// All fields are monotonic counters. They are read by the admin/prometheus
+/// exporters and never reset; relative deltas between scrapes are what
+/// operators tune against.
+#[derive(Debug, Default)]
+pub(crate) struct ScalingStats {
+    /// Number of new connections that successfully took a burst slot and
+    /// proceeded to `server_pool.create()`. Pairs with `burst_gate_waits`
+    /// to compute the gate hit rate.
+    pub(crate) creates_started: AtomicU64,
+    /// Number of times a caller observed the burst gate at capacity and had
+    /// to wait on a Notify (or backoff). High values indicate `max_parallel_creates`
+    /// is too low for the offered load — or that creates are slow.
+    pub(crate) burst_gate_waits: AtomicU64,
+    /// Number of anticipation waits that woke on a real `idle_returned` signal
+    /// (the optimistic case — anticipation paid off).
+    pub(crate) anticipation_wakes_notify: AtomicU64,
+    /// Number of anticipation waits that fell through on the budget timeout
+    /// instead of catching a return. Ratio against `anticipation_wakes_notify`
+    /// shows whether `max_anticipation_wait_ms` is well-calibrated for the
+    /// pool's query latency distribution.
+    pub(crate) anticipation_wakes_timeout: AtomicU64,
+    /// Number of times anticipation completed but `try_recycle_one` still
+    /// found the pool empty, forcing a fall-through to `server_pool.create()`.
+    pub(crate) create_fallback: AtomicU64,
+    /// Number of times the background `replenish` task hit the burst cap
+    /// and deferred its work to the next retain cycle. Persistent non-zero
+    /// values indicate `min_pool_size` cannot be sustained under current load.
+    pub(crate) replenish_deferred: AtomicU64,
+}
+
+/// Snapshot of per-pool scaling counters, returned to admin/prometheus exporters.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScalingStatsSnapshot {
+    pub creates_started: u64,
+    pub burst_gate_waits: u64,
+    pub anticipation_wakes_notify: u64,
+    pub anticipation_wakes_timeout: u64,
+    pub create_fallback: u64,
+    pub replenish_deferred: u64,
+    /// Current `inflight_creates` value (gauge, not a counter).
+    pub inflight_creates: usize,
+}
+
 /// Internal pool state.
 struct PoolInner {
     server_pool: ServerPool,
@@ -113,6 +164,23 @@ struct PoolInner {
     pool_name: String,
     /// Username for this pool, used in coordinator error messages.
     username: String,
+    /// Anticipation signal: woken when an Object is returned to the idle pool.
+    /// Used by the cooldown zone in `timeout_get` to wait event-driven for a
+    /// recyclable connection instead of polling after a blind sleep.
+    idle_returned: Notify,
+    /// Number of server connection creates currently in-flight on this pool.
+    /// This is NOT the count of currently-held connections — only those being
+    /// established right now via `server_pool.create()`. Bounded by
+    /// `config.scaling.max_parallel_creates` to suppress thundering herd when
+    /// N parallel callers all miss the idle pool simultaneously.
+    inflight_creates: AtomicUsize,
+    /// Wake signal for tasks queued behind the bounded burst limiter.
+    /// Notified once when an in-flight create completes (success or failure),
+    /// so the next waiting task can attempt its own create or recycle.
+    create_done: Notify,
+    /// Counters exposed via SHOW POOLS and Prometheus for tuning the
+    /// anticipation + bounded burst path.
+    scaling_stats: ScalingStats,
 }
 
 enum RecycleOutcome {
@@ -171,6 +239,9 @@ impl PoolInner {
             }
             drop(slots);
             self.semaphore.add_permits(1);
+            // Wake one task waiting in the cooldown anticipation zone
+            // or behind the bounded burst limiter.
+            self.idle_returned.notify_one();
             return;
         }
         // Slow path: wait for lock
@@ -181,6 +252,7 @@ impl PoolInner {
         }
         drop(slots);
         self.semaphore.add_permits(1);
+        self.idle_returned.notify_one();
     }
 }
 
@@ -233,6 +305,10 @@ impl Pool {
                 coordinator: builder.coordinator,
                 pool_name: builder.pool_name,
                 username: builder.username,
+                idle_returned: Notify::new(),
+                inflight_creates: AtomicUsize::new(0),
+                create_done: Notify::new(),
+                scaling_stats: ScalingStats::default(),
             }),
         }
     }
@@ -319,8 +395,8 @@ impl Pool {
             });
         }
 
-        // No connection available - check if we should use cooldown zone logic
-        let should_use_cooldown = {
+        // No connection available - check if we should use the anticipation zone
+        let should_anticipate = {
             let slots = self.inner.slots.lock();
             let warm_threshold = std::cmp::max(
                 1,
@@ -329,7 +405,12 @@ impl Pool {
             slots.size >= warm_threshold
         };
 
-        if should_use_cooldown {
+        // Non-blocking checkout (wait_timeout == 0) skips anticipation entirely:
+        // the caller wants either an immediate idle hit or a fresh create, no waits.
+        let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
+
+        if should_anticipate {
+            // Phase A: yield_now spin — catches microsecond races without sleeping.
             let fast_retries = self.inner.config.scaling.fast_retries;
             for _ in 0..fast_retries {
                 if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
@@ -346,18 +427,67 @@ impl Pool {
                 tokio::task::yield_now().await;
             }
 
-            let cooldown_sleep_ms = self.inner.config.scaling.cooldown_sleep_ms;
-            if cooldown_sleep_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(cooldown_sleep_ms)).await;
+            // Phase B: event-driven anticipation wait. Instead of a blind sleep,
+            // wait on `idle_returned` so a single `return_object` wakes exactly
+            // one queued task. Bounded by both the configured anticipation
+            // window and the caller's remaining wait budget so the client never
+            // blows past its own wait_timeout.
+            if !non_blocking {
+                let max_wait_ms = self.inner.config.scaling.max_anticipation_wait_ms;
+                if max_wait_ms > 0 {
+                    let budget = compute_anticipation_budget(timeouts.wait, max_wait_ms);
+                    if !budget.is_zero() {
+                        // Register the notification BEFORE re-checking the slots:
+                        // if a return_object fires between the check and the await,
+                        // the notification is buffered and `notified().await` returns
+                        // immediately rather than missing the wake.
+                        let notified = self.inner.idle_returned.notified();
 
-                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(*inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
+                        if let RecycleOutcome::Reused(inner) =
+                            self.inner.try_recycle_one(timeouts).await
+                        {
+                            permit.forget();
+                            return Ok(Object {
+                                inner: Some(*inner),
+                                pool: Arc::downgrade(&self.inner),
+                            });
+                        }
+
+                        let woken_by_notify = tokio::select! {
+                            _ = notified => true,
+                            _ = tokio::time::sleep(budget) => false,
+                        };
+                        if woken_by_notify {
+                            self.inner
+                                .scaling_stats
+                                .anticipation_wakes_notify
+                                .fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            self.inner
+                                .scaling_stats
+                                .anticipation_wakes_timeout
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+
+                        if let RecycleOutcome::Reused(inner) =
+                            self.inner.try_recycle_one(timeouts).await
+                        {
+                            permit.forget();
+                            return Ok(Object {
+                                inner: Some(*inner),
+                                pool: Arc::downgrade(&self.inner),
+                            });
+                        }
+                    }
                 }
             }
+
+            // Anticipation either timed out or its wake-recycle missed.
+            // Either way we are about to allocate a new backend connection.
+            self.inner
+                .scaling_stats
+                .create_fallback
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // Drain any remaining recyclable connections before creating a new one
@@ -375,7 +505,19 @@ impl Pool {
             }
         }
 
-        // Acquire coordinator permit before creating a new connection.
+        // Acquire coordinator permit FIRST, before taking the bounded burst
+        // slot. The two limiters serve different roles and must be ordered
+        // so that the slow one (coordinator, can wait up to wait_timeout for
+        // eviction or a return in another pool) does not hold the fast one
+        // (burst gate, per-pool, woken in milliseconds).
+        //
+        // Wrong order (gate → coordinator) causes head-of-line blocking
+        // inside one pool: 2 callers grab the gate, both wait on coordinator
+        // for seconds, the remaining N-2 callers in the pool starve waiting
+        // for those 2 to finish, even though the pool itself has nothing to
+        // do. Right order (coordinator → gate) makes the gate cap actual
+        // backend connect() calls, not waiting time on a peer pool.
+        //
         // Only the NEW CONNECTION path goes through the coordinator —
         // idle reuse above is unaffected (permit is already inside ObjectInner).
         let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
@@ -400,6 +542,83 @@ impl Pool {
             }
         } else {
             None
+        };
+
+        // Bounded burst gate: cap the number of concurrent server creates per
+        // pool. Without this gate, N parallel callers that all miss the idle
+        // pool each independently issue a backend connect, producing
+        // thundering-herd bursts under load. With the cap, only `max_parallel_creates`
+        // creates run concurrently; the rest wait on a Notify woken by either
+        // an idle return or a peer create completion, then re-check recycle.
+        //
+        // The gate is taken AFTER the coordinator permit so a slow coordinator
+        // never holds the gate idle. See the ordering rationale above.
+        let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
+        let _create_gate = loop {
+            if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
+                // Got a create slot — guard releases it on drop, no matter
+                // whether create() succeeds, fails, or unwinds. Bump
+                // `creates_started` here (slot acquisition), not at release,
+                // so the counter tracks the in-flight intent rather than
+                // post-hoc completions.
+                self.inner
+                    .scaling_stats
+                    .creates_started
+                    .fetch_add(1, Ordering::Relaxed);
+                break scopeguard::guard((), |_| {
+                    self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
+                    self.inner.create_done.notify_one();
+                });
+            }
+
+            self.inner
+                .scaling_stats
+                .burst_gate_waits
+                .fetch_add(1, Ordering::Relaxed);
+
+            if non_blocking {
+                // Non-blocking caller: one last recycle attempt, then fail.
+                // The coordinator permit dropped here releases the cross-pool
+                // slot we briefly held while attempting the gate.
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
+                }
+                return Err(PoolError::Timeout(TimeoutType::Wait));
+            }
+
+            // Register both wake sources BEFORE re-checking recycle, so a
+            // peer create finishing or an idle return between the check and
+            // the await is captured rather than missed.
+            let on_create = self.inner.create_done.notified();
+            let on_idle = self.inner.idle_returned.notified();
+
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(*inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
+            }
+
+            tokio::select! {
+                _ = on_create => {}
+                _ = on_idle => {}
+                _ = tokio::time::sleep(BURST_BACKOFF) => {}
+            }
+
+            // After wake — try recycle once before retrying the gate.
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(*inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
+            }
+            // Loop back to retry the gate.
         };
 
         // Create a new object
@@ -593,6 +812,7 @@ impl Pool {
     /// Returns the number of connections successfully created.
     /// Stops on the first creation failure to avoid hammering a failing server.
     pub async fn replenish(&self, count: usize) -> usize {
+        let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
         let mut created = 0;
         for _ in 0..count {
             // Check if there's still room in the pool
@@ -603,8 +823,10 @@ impl Pool {
                 }
             }
 
-            // Acquire coordinator permit (non-blocking). If the coordinator
-            // limit is reached, skip and retry on the next retain cycle.
+            // Acquire coordinator permit FIRST (non-blocking). Same ordering
+            // rationale as `timeout_get`: a slow coordinator must not hold a
+            // burst slot. If the coordinator limit is reached, skip — the
+            // next retain cycle will retry.
             let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
                 match coordinator.try_acquire() {
                     Some(permit) => Some(permit),
@@ -620,6 +842,36 @@ impl Pool {
             } else {
                 None
             };
+
+            // Take the burst slot AFTER the coordinator permit. Replenish runs
+            // in the background retain loop, so when client traffic is already
+            // saturating the burst gate there is no value in queueing here —
+            // defer the work to the next retain cycle and let `timeout_get`
+            // callers own the budget. The dropped `coordinator_permit` returns
+            // its slot to the cross-pool semaphore.
+            if !try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
+                self.inner
+                    .scaling_stats
+                    .replenish_deferred
+                    .fetch_add(1, Ordering::Relaxed);
+                log::debug!(
+                    "[{}@{}] replenish: bounded burst at limit, deferring to next cycle",
+                    self.inner.username,
+                    self.inner.pool_name
+                );
+                break;
+            }
+            // Slot is taken — guard releases it on every exit path (success,
+            // error, panic) and wakes any task waiting at the bounded burst
+            // gate so it can retry recycle or take the slot.
+            self.inner
+                .scaling_stats
+                .creates_started
+                .fetch_add(1, Ordering::Relaxed);
+            let _create_gate = scopeguard::guard((), |_| {
+                self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
+                self.inner.create_done.notify_one();
+            });
 
             // Create a new connection
             let obj = match self.inner.server_pool.create().await {
@@ -724,6 +976,22 @@ impl Pool {
     pub fn reconnect_epoch(&self) -> u32 {
         self.inner.server_pool.current_epoch()
     }
+
+    /// Returns a snapshot of the per-pool scaling counters used for tuning
+    /// the anticipation + bounded burst path. Cheap — six relaxed atomic
+    /// loads. Safe to call from `SHOW POOLS` / Prometheus scrapes.
+    pub fn scaling_stats(&self) -> ScalingStatsSnapshot {
+        let s = &self.inner.scaling_stats;
+        ScalingStatsSnapshot {
+            creates_started: s.creates_started.load(Ordering::Relaxed),
+            burst_gate_waits: s.burst_gate_waits.load(Ordering::Relaxed),
+            anticipation_wakes_notify: s.anticipation_wakes_notify.load(Ordering::Relaxed),
+            anticipation_wakes_timeout: s.anticipation_wakes_timeout.load(Ordering::Relaxed),
+            create_fallback: s.create_fallback.load(Ordering::Relaxed),
+            replenish_deferred: s.replenish_deferred.load(Ordering::Relaxed),
+            inflight_creates: self.inner.inflight_creates.load(Ordering::Relaxed),
+        }
+    }
 }
 
 /// Builder for Pool.
@@ -784,5 +1052,329 @@ impl fmt::Debug for PoolBuilder {
         f.debug_struct("PoolBuilder")
             .field("config", &self.config)
             .finish()
+    }
+}
+
+/// Try to take a slot from the bounded burst counter.
+///
+/// Optimistically increments the counter and validates it stayed below `max`.
+/// If the slot is available, returns `true` and leaves the counter incremented
+/// (caller is responsible for releasing it). If the cap was already reached,
+/// rolls back the increment and returns `false`.
+///
+/// This intentionally tolerates brief over-shoot when many tasks race the
+/// `fetch_add`: the next observation will reflect the corrected value once
+/// rollback completes. The cap is a soft burst smoother, not a hard fence,
+/// and a 1-2 transient excess is acceptable for this purpose.
+#[inline]
+fn try_take_burst_slot(counter: &AtomicUsize, max: usize) -> bool {
+    let prev = counter.fetch_add(1, Ordering::AcqRel);
+    if prev < max {
+        return true;
+    }
+    counter.fetch_sub(1, Ordering::Release);
+    false
+}
+
+/// Compute how long the anticipation phase may wait for an idle return.
+///
+/// The budget is bounded by two independent limits:
+///
+/// 1. `max_wait_ms` — the operator-configured upper bound on event-driven
+///    waiting before falling through to creating a new connection.
+/// 2. The caller's remaining `wait_timeout` — anticipation must never burn
+///    the entire client budget, since after a miss the caller still needs
+///    time to actually create a connection. Half of the remaining timeout
+///    is reserved for the create path.
+///
+/// When `wait_timeout` is `None` the caller has no deadline at all and the
+/// full `max_wait_ms` is used. A computed budget below 1ms is rounded up so
+/// the wait actually has a chance to register a notification.
+fn compute_anticipation_budget(
+    wait_timeout: Option<std::time::Duration>,
+    max_wait_ms: u64,
+) -> std::time::Duration {
+    let max = std::time::Duration::from_millis(max_wait_ms);
+    let bounded = match wait_timeout {
+        None => max,
+        Some(remaining) => {
+            // Reserve half the caller's budget for the create path.
+            let half = remaining / 2;
+            std::cmp::min(half, max)
+        }
+    };
+    if bounded.is_zero() {
+        std::time::Duration::ZERO
+    } else {
+        std::cmp::max(bounded, std::time::Duration::from_millis(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn anticipation_budget_uses_full_max_when_no_wait_timeout() {
+        let budget = compute_anticipation_budget(None, 100);
+        assert_eq!(budget, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn anticipation_budget_caps_at_half_of_wait_timeout() {
+        // remaining wait = 50ms → half = 25ms; max = 100ms → result = 25ms
+        let budget = compute_anticipation_budget(Some(Duration::from_millis(50)), 100);
+        assert_eq!(budget, Duration::from_millis(25));
+    }
+
+    #[test]
+    fn anticipation_budget_caps_at_max_when_half_is_larger() {
+        // remaining wait = 1000ms → half = 500ms; max = 100ms → result = 100ms
+        let budget = compute_anticipation_budget(Some(Duration::from_secs(1)), 100);
+        assert_eq!(budget, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn anticipation_budget_returns_zero_for_non_blocking_caller() {
+        // remaining wait = 0 → half = 0 → bounded = 0 → ZERO (do not wait)
+        let budget = compute_anticipation_budget(Some(Duration::ZERO), 100);
+        assert_eq!(budget, Duration::ZERO);
+    }
+
+    #[test]
+    fn anticipation_budget_rounds_tiny_budget_up_to_one_ms() {
+        // remaining wait = 1ms → half = 500us → bounded = 500us → rounded to 1ms
+        let budget = compute_anticipation_budget(Some(Duration::from_millis(1)), 100);
+        assert_eq!(budget, Duration::from_millis(1));
+    }
+
+    #[test]
+    fn anticipation_budget_zero_max_yields_zero() {
+        // max_wait_ms = 0 → operator disabled anticipation entirely
+        let budget = compute_anticipation_budget(None, 0);
+        assert_eq!(budget, Duration::ZERO);
+    }
+
+    // ------------------------------------------------------------------
+    // try_take_burst_slot — soft burst limiter
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn burst_slot_taken_when_under_cap() {
+        let counter = AtomicUsize::new(0);
+        assert!(try_take_burst_slot(&counter, 2));
+        assert_eq!(counter.load(Ordering::Acquire), 1);
+        assert!(try_take_burst_slot(&counter, 2));
+        assert_eq!(counter.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn burst_slot_rejected_at_cap_and_counter_rolled_back() {
+        let counter = AtomicUsize::new(2);
+        assert!(!try_take_burst_slot(&counter, 2));
+        // Roll-back must restore the counter exactly.
+        assert_eq!(counter.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn burst_slot_rejected_when_already_above_cap() {
+        // Brief transient over-shoot from a racing peer should also reject
+        // and roll back, never grow further.
+        let counter = AtomicUsize::new(5);
+        assert!(!try_take_burst_slot(&counter, 2));
+        assert_eq!(counter.load(Ordering::Acquire), 5);
+    }
+
+    #[test]
+    fn burst_slot_zero_cap_always_rejects() {
+        let counter = AtomicUsize::new(0);
+        assert!(!try_take_burst_slot(&counter, 0));
+        assert_eq!(counter.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn burst_slot_concurrent_acquire_caps_within_one_of_max() {
+        // Stress: many threads racing the gate must never end with more than
+        // `max + (threads - max)` rolled-back observations. The gate is a
+        // soft cap, so we tolerate up to `max` accepted slots; everyone else
+        // must observe rejection and leave the counter at exactly `max`.
+        use std::sync::Arc;
+        use std::thread;
+
+        const THREADS: usize = 32;
+        const MAX: usize = 4;
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::with_capacity(THREADS);
+        for _ in 0..THREADS {
+            let counter = Arc::clone(&counter);
+            let accepted = Arc::clone(&accepted);
+            handles.push(thread::spawn(move || {
+                if try_take_burst_slot(&counter, MAX) {
+                    accepted.fetch_add(1, Ordering::Relaxed);
+                    // Hold the slot briefly so peers race rejection.
+                    thread::yield_now();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let final_count = counter.load(Ordering::Acquire);
+        let final_accepted = accepted.load(Ordering::Acquire);
+        // No leak: every accepted slot is still in the counter, every
+        // rejected attempt rolled back.
+        assert_eq!(final_count, final_accepted);
+        // Hard upper bound — burst gate must never accept more than MAX.
+        assert!(
+            final_accepted <= MAX,
+            "burst gate accepted {} > MAX {}",
+            final_accepted,
+            MAX
+        );
+        // Sanity — at least one thread must have made progress.
+        assert!(final_accepted >= 1);
+    }
+
+    // ------------------------------------------------------------------
+    // Notify register-before-check pattern
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn notify_one_buffered_when_registered_before_signal() {
+        // The cooldown anticipation zone relies on this property:
+        // notified() registered before notify_one() must wake immediately,
+        // even if the await happens after the signal.
+        let notify = std::sync::Arc::new(Notify::new());
+        let n2 = std::sync::Arc::clone(&notify);
+
+        let notified = notify.notified();
+        n2.notify_one();
+        // notify happened before await — must still wake.
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .expect("notified() must resolve when notify_one fired before await");
+    }
+
+    #[tokio::test]
+    async fn notify_one_wakes_exactly_one_waiter() {
+        // Anti-thundering-herd guarantee: a single return_object must wake
+        // exactly one cooldown-zone waiter, not all of them.
+        //
+        // Synchronization is barrier-based, not sleep-based: each waiter
+        // signals it has parked on `notified()` BEFORE awaiting, so the
+        // test never races CI scheduling latency.
+        use std::sync::Arc;
+        use tokio::sync::Barrier;
+
+        const WAITERS: usize = 5;
+
+        let notify = Arc::new(Notify::new());
+        let woken = Arc::new(AtomicUsize::new(0));
+        // +1 for the test driver itself.
+        let registered = Arc::new(Barrier::new(WAITERS + 1));
+
+        let mut handles = Vec::with_capacity(WAITERS);
+        for _ in 0..WAITERS {
+            let n = Arc::clone(&notify);
+            let w = Arc::clone(&woken);
+            let r = Arc::clone(&registered);
+            handles.push(tokio::spawn(async move {
+                // Register the future BEFORE the barrier so the wait below
+                // is on a future already attached to the Notify queue.
+                let fut = n.notified();
+                tokio::pin!(fut);
+                fut.as_mut().enable();
+                r.wait().await;
+                fut.await;
+                w.fetch_add(1, Ordering::Relaxed);
+            }));
+        }
+
+        // All waiters have armed their `Notified` future and are about to await.
+        registered.wait().await;
+        // Yield once so the spawned tasks reach `fut.await` after the barrier.
+        tokio::task::yield_now().await;
+
+        notify.notify_one();
+
+        // Wait for ANY one waiter to record its wake. We do this by polling
+        // a counter with a tight yield loop, capped by a generous wall-clock
+        // budget so a stuck test fails instead of hanging the suite.
+        let started = std::time::Instant::now();
+        loop {
+            if woken.load(Ordering::Acquire) >= 1 {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "no waiter woke within 2s after notify_one"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        // Strict invariant: only one waiter must be woken by one notify_one.
+        // Give the runtime a few yields to surface any spurious extra wakes.
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            woken.load(Ordering::Acquire),
+            1,
+            "exactly one waiter must wake per notify_one"
+        );
+
+        // Cleanup: wake the remaining waiters one by one so the spawned tasks
+        // can finish and we do not leak them past the test.
+        for _ in 0..(WAITERS - 1) {
+            notify.notify_one();
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn missed_notify_when_check_precedes_registration() {
+        // Negative regression test: this is what would break if a future
+        // refactor moved `let notified = ...` AFTER the recycle check in the
+        // anticipation phase. The notify fired between the check and the
+        // registration is lost, the waiter sleeps until its wake source
+        // arrives — proving why the register-before-check ordering matters.
+        let notify = Arc::new(Notify::new());
+
+        // Wrong order: signal fires BEFORE the waiter creates its `notified`.
+        notify.notify_one();
+        let notified = notify.notified();
+
+        // Permit was buffered when no waiter was registered, so the next
+        // `notified()` consumes it immediately.
+        // (This is the documented tokio behavior we rely on for the
+        // register-BEFORE-check pattern: the buffered permit goes to the
+        // first future that registers AFTER the signal.)
+        tokio::time::timeout(Duration::from_millis(50), notified)
+            .await
+            .expect("buffered permit must wake the next notified()");
+
+        // Now demonstrate the failure mode: signal fires, the buffered
+        // permit is consumed by an unrelated `notified()`, and a LATER
+        // `notified()` does NOT see it.
+        notify.notify_one();
+        let consumer = notify.notified();
+        tokio::time::timeout(Duration::from_millis(50), consumer)
+            .await
+            .expect("buffered permit goes to first future");
+
+        let late = notify.notified();
+        let result = tokio::time::timeout(Duration::from_millis(50), late).await;
+        assert!(
+            result.is_err(),
+            "a Notified future created AFTER the buffered permit was consumed \
+             must NOT wake without a fresh notify_one"
+        );
     }
 }

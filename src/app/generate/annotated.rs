@@ -143,7 +143,6 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         prepared_statements_cache_size: None,
         scaling_warm_pool_ratio: None,
         scaling_fast_retries: None,
-        scaling_cooldown_sleep: None,
         max_db_connections: None,
         min_connection_lifetime: None,
         reserve_pool_size: None,
@@ -639,14 +638,19 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     );
     w.blank();
 
-    write_field_desc(w, fi, "general", "scaling_cooldown_sleep");
-    write_duration_value(
-        w,
+    write_field_comment(w, fi, "general", "scaling_max_anticipation_wait_ms");
+    w.kv(
         fi,
-        "scaling_cooldown_sleep",
-        g.scaling_cooldown_sleep.as_millis(),
-        "10ms",
-        "",
+        "scaling_max_anticipation_wait_ms",
+        &w.num_val(g.scaling_max_anticipation_wait_ms),
+    );
+    w.blank();
+
+    write_field_comment(w, fi, "general", "scaling_max_parallel_creates");
+    w.kv(
+        fi,
+        "scaling_max_parallel_creates",
+        &w.num_val(g.scaling_max_parallel_creates),
     );
 
     // --- Logging ---
@@ -1197,20 +1201,6 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
         w.kv(fi, "scaling_fast_retries", &w.num_val(val));
     } else {
         w.commented_kv(fi, "scaling_fast_retries", "10");
-    }
-    w.blank();
-
-    write_field_desc(w, fi, "pool", "scaling_cooldown_sleep");
-    if let Some(val) = pool.scaling_cooldown_sleep {
-        match w.format {
-            ConfigFormat::Toml => w.kv(fi, "scaling_cooldown_sleep", &w.num_val(val.as_millis())),
-            ConfigFormat::Yaml => w.kv(fi, "scaling_cooldown_sleep", &w.str_val("10ms")),
-        }
-    } else {
-        match w.format {
-            ConfigFormat::Toml => w.commented_kv(fi, "scaling_cooldown_sleep", "10"),
-            ConfigFormat::Yaml => w.commented_kv(fi, "scaling_cooldown_sleep", "\"10ms\""),
-        }
     }
     w.blank();
 

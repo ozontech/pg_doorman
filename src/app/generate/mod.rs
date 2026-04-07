@@ -148,7 +148,6 @@ pub fn generate_config_with_client(
                     prepared_statements_cache_size: None,
                     scaling_warm_pool_ratio: None,
                     scaling_fast_retries: None,
-                    scaling_cooldown_sleep: None,
                     max_db_connections: None,
                     min_connection_lifetime: None,
                     reserve_pool_size: None,

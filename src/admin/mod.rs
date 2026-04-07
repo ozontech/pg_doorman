@@ -28,6 +28,7 @@ pub(crate) const SHOW_SUBCOMMANDS: &[&str] = &[
     "pools_extended",
     "pools_memory",
     "pool_coordinator",
+    "pool_scaling",
     "prepared_statements",
     "clients",
     "servers",
@@ -47,9 +48,9 @@ use commands::{pause, reconnect, reload, resume, shutdown};
 use show::show_sockets;
 use show::{
     show_auth_query, show_clients, show_config, show_connections, show_databases, show_help,
-    show_lists, show_log_level, show_pool_coordinator, show_pools, show_pools_extended,
-    show_pools_memory, show_prepared_statements, show_servers, show_stats, show_users,
-    show_version,
+    show_lists, show_log_level, show_pool_coordinator, show_pool_scaling, show_pools,
+    show_pools_extended, show_pools_memory, show_prepared_statements, show_servers, show_stats,
+    show_users, show_version,
 };
 
 /// Handle admin client.
@@ -126,6 +127,7 @@ where
                     "USERS" => show_users(stream).await,
                     "AUTH_QUERY" => show_auth_query(stream).await,
                     "POOL_COORDINATOR" => show_pool_coordinator(stream).await,
+                    "POOL_SCALING" => show_pool_scaling(stream).await,
                     "LOG_LEVEL" => show_log_level(stream).await,
                     #[cfg(target_os = "linux")]
                     "SOCKETS" => show_sockets(stream).await,

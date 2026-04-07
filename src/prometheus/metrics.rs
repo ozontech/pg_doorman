@@ -20,13 +20,13 @@ use super::system::get_process_memory_usage;
 use super::SHOW_SOCKETS;
 use super::{
     AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR, COORDINATOR,
-    COORDINATOR_TOTALS, SHOW_ASYNC_CLIENTS_COUNT, SHOW_CLIENT_CACHE_BYTES,
-    SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT,
-    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
-    SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
-    SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
-    SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
-    SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
+    COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
+    SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS, SHOW_POOLS_BYTES,
+    SHOW_POOLS_CLIENT, SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE,
+    SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER,
+    SHOW_POOLS_TRANSACTIONS_PERCENTILE, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME,
+    SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE,
+    SHOW_SERVERS_PREPARED_HITS, SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -41,6 +41,7 @@ pub fn update_metrics() {
     update_server_metrics();
     update_auth_query_metrics();
     update_coordinator_metrics();
+    update_pool_scaling_metrics();
 }
 
 fn update_memory_metrics() {
@@ -413,4 +414,100 @@ fn update_coordinator_metrics() {
             exhaustions_counter.inc_by(delta);
         }
     }
+}
+
+/// (type, user, db) → last observed counter value. Used by the scaling
+/// totals exporter so it can emit `inc_by(delta)` rather than overwrite a
+/// monotonic counter, and so it can drop stale label combinations on pool
+/// removal.
+type PoolScalingPrev = std::collections::HashMap<(String, String, String), u64>;
+
+static POOL_SCALING_PREV: Lazy<std::sync::Mutex<PoolScalingPrev>> =
+    Lazy::new(|| std::sync::Mutex::new(PoolScalingPrev::new()));
+
+const POOL_SCALING_TOTAL_TYPES: &[&str] = &[
+    "creates_started",
+    "burst_gate_waits",
+    "anticipation_wakes_notify",
+    "anticipation_wakes_timeout",
+    "create_fallback",
+    "replenish_deferred",
+];
+
+fn reset_pool_scaling_metrics(user: &str, database: &str) {
+    let _ = POOL_SCALING_GAUGE.remove_label_values(&["inflight_creates", user, database]);
+    for t in POOL_SCALING_TOTAL_TYPES {
+        let _ = POOL_SCALING_TOTALS.remove_label_values(&[*t, user, database]);
+    }
+}
+
+fn update_pool_scaling_metrics() {
+    use crate::pool::get_all_pools;
+
+    // One mutex acquisition for both delta emission and stale-label cleanup.
+    // The lock spans the iteration but each per-pool body is a few atomic
+    // loads plus HashMap lookups, so the critical section stays microsecond-scale.
+    let Ok(mut prev) = POOL_SCALING_PREV.lock() else {
+        return;
+    };
+
+    let mut current: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
+    for (identifier, pool) in get_all_pools().iter() {
+        let user = identifier.user.as_str();
+        let database = identifier.db.as_str();
+        current.insert((user.to_string(), database.to_string()));
+
+        let snapshot = pool.database.scaling_stats();
+
+        POOL_SCALING_GAUGE
+            .with_label_values(&["inflight_creates", user, database])
+            .set(snapshot.inflight_creates as f64);
+
+        // Translate snapshot fields to (type_label, value) pairs and emit
+        // them as monotonic counter deltas. Pools have unique (user, db) keys
+        // so prev tracking is per (type, user, db).
+        let totals: [(&str, u64); 6] = [
+            ("creates_started", snapshot.creates_started),
+            ("burst_gate_waits", snapshot.burst_gate_waits),
+            (
+                "anticipation_wakes_notify",
+                snapshot.anticipation_wakes_notify,
+            ),
+            (
+                "anticipation_wakes_timeout",
+                snapshot.anticipation_wakes_timeout,
+            ),
+            ("create_fallback", snapshot.create_fallback),
+            ("replenish_deferred", snapshot.replenish_deferred),
+        ];
+
+        for (label, value) in totals {
+            let key = (label.to_string(), user.to_string(), database.to_string());
+            let prev_value = prev.get(&key).copied().unwrap_or(0);
+            let delta = value.saturating_sub(prev_value);
+            if delta > 0 {
+                POOL_SCALING_TOTALS
+                    .with_label_values(&[label, user, database])
+                    .inc_by(delta);
+            }
+            prev.insert(key, value);
+        }
+    }
+
+    // Drop stale labels for pools that have disappeared since the last
+    // scrape. Order matters: collect the (user, db) pairs to reset BEFORE
+    // removing them from `prev`, otherwise we lose the information needed
+    // to clear the corresponding Prometheus labels and they linger forever.
+    let stale_pairs: std::collections::HashSet<(String, String)> = prev
+        .keys()
+        .filter(|(_, user, db)| !current.contains(&(user.clone(), db.clone())))
+        .map(|(_, user, db)| (user.clone(), db.clone()))
+        .collect();
+
+    for (user, db) in &stale_pairs {
+        reset_pool_scaling_metrics(user, db);
+    }
+
+    prev.retain(|(_, user, db), _| !stale_pairs.contains(&(user.clone(), db.clone())));
 }

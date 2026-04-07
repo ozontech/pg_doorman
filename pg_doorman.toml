@@ -140,20 +140,25 @@ max_memory_usage = 268435456
 
 # Warm pool ratio (0-100, percentage).
 # Connections below this threshold of max_size are created immediately.
-# Above this threshold, backpressure (fast retries + cooldown sleep) is applied.
+# Above this threshold, anticipation wait + bounded burst is applied.
 # Default: 20
 scaling_warm_pool_ratio = 20
 
-# Number of fast retries with yield_now() before sleeping during connection creation.
-# Higher values reduce latency but increase CPU usage.
+# Number of fast retries with yield_now() before the anticipation wait.
+# Higher values reduce latency on micro-races but increase CPU usage.
 # Default: 10
 scaling_fast_retries = 10
 
-# Sleep duration after fast retries during connection creation.
-# Applied when pool is above the warm threshold. 0 = disabled.
-# Default: "10ms"
-scaling_cooldown_sleep = 10
+# Maximum time (ms) to wait for an idle connection to be returned by another task
+# before creating a new one. Event-driven via Notify woken by return_object().
+# Default: 100
+scaling_max_anticipation_wait_ms = 100
 
+# Hard cap on concurrent server connection creates per pool.
+# Anti-thundering-herd: tasks above this limit wait on a Notify
+# for either an idle return or a create completion. Must be >= 1.
+# Default: 2
+scaling_max_parallel_creates = 2
 # --------------------------------------------------------------------------
 # Logging
 # --------------------------------------------------------------------------
@@ -453,9 +458,6 @@ cleanup_server_connections = true
 
 # Override global scaling_fast_retries for this pool.
 # scaling_fast_retries = 10
-
-# Override global scaling_cooldown_sleep for this pool.
-# scaling_cooldown_sleep = 10
 
 # --------------------------------------------------------------------------
 # Pool Coordinator (database-level connection limit)

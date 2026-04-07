@@ -21,7 +21,7 @@ mod inner;
 mod types;
 
 pub use errors::{PoolError, RecycleError, RecycleResult};
-pub use inner::{Object, Pool, PoolBuilder};
+pub use inner::{Object, Pool, PoolBuilder, ScalingStatsSnapshot};
 pub use types::{Metrics, PoolConfig, QueueMode, ScalingConfig, Status, Timeouts};
 
 pub use crate::server::PreparedStatementCache;
