@@ -141,12 +141,6 @@ pub(crate) struct ScalingStats {
     /// and deferred its work to the next retain cycle. Persistent non-zero
     /// values indicate `min_pool_size` cannot be sustained under current load.
     pub(crate) replenish_deferred: AtomicU64,
-    /// Number of times Phase 4 was skipped because the queue was at least
-    /// as deep as the current pool size and the pool could still grow.
-    /// A growing rate next to a flat `create_fallback` is the success
-    /// signal: callers stopped waiting on returns that another peer would
-    /// take and went straight to opening a new connection.
-    pub(crate) queue_pressure_shortcuts: AtomicU64,
 }
 
 /// Snapshot of per-pool scaling counters, returned to admin/prometheus exporters.
@@ -158,7 +152,6 @@ pub struct ScalingStatsSnapshot {
     pub anticipation_wakes_timeout: u64,
     pub create_fallback: u64,
     pub replenish_deferred: u64,
-    pub queue_pressure_shortcuts: u64,
     /// Current `inflight_creates` value (gauge, not a counter).
     pub inflight_creates: usize,
 }
@@ -203,25 +196,6 @@ enum RecycleOutcome {
     Empty,
 }
 
-/// Returns true when the caller should skip the Phase 4 anticipation loop
-/// and go straight to the create path. Two conditions, both required:
-///
-/// 1. The queue depth (`waiters`) has reached the current pool size — every
-///    holder must return AND every queued caller in front must lose its race
-///    before this caller can hope to recycle. One return cannot lift this
-///    caller out, no matter how soon it arrives.
-/// 2. The pool can still grow (`current_size < max_size`). If we are already
-///    at the configured maximum, recycle is the only option, so anticipation
-///    is the right thing to do.
-///
-/// Pulled out as a pure function so the boundary cases (waiters just below
-/// the threshold, pool at max, empty pool) are exercised without spinning up
-/// a real Pool. The caller in `timeout_get` reads `slots.size`, `slots.max_size`
-/// and the user counter under one short lock, then defers the decision here.
-fn should_shortcut_anticipation(current_size: usize, max_size: usize, waiters: usize) -> bool {
-    waiters >= current_size && current_size < max_size
-}
-
 impl PoolInner {
     /// Returns true when every permit is in use — clients are either holding
     /// connections or queued behind the semaphore. Used to suppress lifetime
@@ -231,21 +205,6 @@ impl PoolInner {
     #[inline(always)]
     fn under_pressure(&self) -> bool {
         self.semaphore.available_permits() == 0
-    }
-
-    /// Reads `slots.size`, `slots.max_size` and the user counter, computes
-    /// the queue depth and asks `should_shortcut_anticipation`. One short
-    /// lock acquisition; the rest is atomic loads. Called once per Phase B
-    /// entry, not per iteration.
-    #[inline]
-    fn anticipation_shortcut_decision(&self) -> bool {
-        let (current_size, max_size) = {
-            let slots = self.slots.lock();
-            (slots.size, slots.max_size)
-        };
-        let users = self.users.load(Ordering::Relaxed);
-        let waiters = users.saturating_sub(current_size);
-        should_shortcut_anticipation(current_size, max_size, waiters)
     }
 
     async fn try_recycle_one(&self, timeouts: &Timeouts) -> RecycleOutcome {
@@ -515,39 +474,25 @@ impl Pool {
                 tokio::task::yield_now().await;
             }
 
-            // Queue-pressure shortcut: when the queue is at least as deep as
-            // the current pool size and the pool can still grow, waiting on
-            // returns is the wrong move. Even if a return arrives every few
-            // milliseconds, every queued caller in front of us takes one
-            // before we get a chance, and we will fall through to a create
-            // anyway. Going straight to the create path now lets the burst
-            // gate (Phase 5) cap concurrent connects to `max_parallel_creates`
-            // — the gate is the safety net against connection storms, not
-            // this loop.
-            if self.inner.anticipation_shortcut_decision() {
-                self.inner
-                    .scaling_stats
-                    .queue_pressure_shortcuts
-                    .fetch_add(1, Ordering::Relaxed);
-            } else if !non_blocking {
-                // Phase B: event-driven anticipation loop. Wait on `idle_returned`
-                // so a single `return_object` wakes exactly one queued task, then
-                // retry recycle. Bounded by `timeouts.wait` (the caller's budget)
-                // minus a small reserve for the create path. Falls through to the
-                // create path only when the deadline is reached — not on a single
-                // race loss.
-                //
-                // Why a loop instead of one-shot wait-then-recycle:
-                //   return_object() bumps both `idle_returned` AND `semaphore`
-                //   permits. A waiter parked in Phase 1/2 blocking semaphore
-                //   acquire wakes at the same instant as this Phase B waiter, and
-                //   races into Phase 3's hot-path recycle. Under multi-threaded
-                //   scheduling the fresh Phase 1/2 waiter frequently wins the race,
-                //   popping the just-returned item from `slots.vec` before the
-                //   Phase B waiter can reach its post-await recycle. Without the
-                //   loop every such race loss became a wasted `server_pool.create()`
-                //   even though another return would have arrived within the next
-                //   few milliseconds. The loop retries until the caller's deadline.
+            // Phase B: event-driven anticipation loop. Wait on `idle_returned`
+            // so a single `return_object` wakes exactly one queued task, then
+            // retry recycle. Bounded by `timeouts.wait` (the caller's budget)
+            // minus a small reserve for the create path. Falls through to the
+            // create path only when the deadline is reached — not on a single
+            // race loss.
+            //
+            // Why a loop instead of one-shot wait-then-recycle:
+            //   return_object() bumps both `idle_returned` AND `semaphore`
+            //   permits. A waiter parked in Phase 1/2 blocking semaphore
+            //   acquire wakes at the same instant as this Phase B waiter, and
+            //   races into Phase 3's hot-path recycle. Under multi-threaded
+            //   scheduling the fresh Phase 1/2 waiter frequently wins the race,
+            //   popping the just-returned item from `slots.vec` before the
+            //   Phase B waiter can reach its post-await recycle. Without the
+            //   loop every such race loss became a wasted `server_pool.create()`
+            //   even though another return would have arrived within the next
+            //   few milliseconds. The loop retries until the caller's deadline.
+            if !non_blocking {
                 const CREATE_RESERVE: Duration = Duration::from_millis(500);
                 // Fallback budget used only when the caller passes no
                 // `wait_timeout`. Stock pg_doorman always propagates
@@ -1250,7 +1195,7 @@ impl Pool {
     }
 
     /// Returns a snapshot of the per-pool scaling counters used for tuning
-    /// the anticipation + bounded burst path. Cheap — seven relaxed atomic
+    /// the anticipation + bounded burst path. Cheap — six relaxed atomic
     /// loads. Safe to call from `SHOW POOLS` / Prometheus scrapes.
     pub fn scaling_stats(&self) -> ScalingStatsSnapshot {
         let s = &self.inner.scaling_stats;
@@ -1261,7 +1206,6 @@ impl Pool {
             anticipation_wakes_timeout: s.anticipation_wakes_timeout.load(Ordering::Relaxed),
             create_fallback: s.create_fallback.load(Ordering::Relaxed),
             replenish_deferred: s.replenish_deferred.load(Ordering::Relaxed),
-            queue_pressure_shortcuts: s.queue_pressure_shortcuts.load(Ordering::Relaxed),
             inflight_creates: self.inner.inflight_creates.load(Ordering::Relaxed),
         }
     }
@@ -1738,55 +1682,6 @@ mod tests {
         // spawned task does not leak past the test.
         phase_c_waiter.abort();
         let _ = phase_c_waiter.await;
-    }
-
-    // ------------------------------------------------------------------
-    // should_shortcut_anticipation — pure decision for the queue-pressure
-    // shortcut at Phase B entry
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn shortcut_takes_when_queue_matches_pool_size_and_pool_can_grow() {
-        // Canonical pressure case from production: 8 server connections all
-        // busy, 8 clients queued behind them, pool can grow to 40. Without
-        // the shortcut every queued caller waits on Phase B for a return
-        // that will be taken by the caller in front anyway.
-        assert!(should_shortcut_anticipation(8, 40, 8));
-        // Way past the threshold — the original 316-waiter scenario.
-        assert!(should_shortcut_anticipation(8, 40, 316));
-    }
-
-    #[test]
-    fn shortcut_skipped_when_queue_below_pool_size() {
-        // 8 servers, 7 waiters: a single return lifts one of them, anticipation
-        // is the right move. We must NOT shortcut here.
-        assert!(!should_shortcut_anticipation(8, 40, 7));
-    }
-
-    #[test]
-    fn shortcut_skipped_when_pool_already_at_max() {
-        // No room to grow → creating is impossible, recycle is the only path,
-        // anticipation must run.
-        assert!(!should_shortcut_anticipation(40, 40, 100));
-        // size > max can briefly happen during resize; treat the same way.
-        assert!(!should_shortcut_anticipation(41, 40, 100));
-    }
-
-    #[test]
-    fn shortcut_skipped_when_no_waiters() {
-        // Empty queue is the steady-state common case. Anticipation may
-        // still spin briefly but the shortcut never triggers.
-        assert!(!should_shortcut_anticipation(8, 40, 0));
-    }
-
-    #[test]
-    fn shortcut_handles_empty_pool_edge_case() {
-        // Pool size zero with capacity to grow: any waiter at all should
-        // shortcut, because there is literally nothing to recycle.
-        // (Unreachable from `timeout_get` because Phase B requires
-        // `slots.size >= warm_threshold >= 1`, but the predicate must
-        // still answer correctly — caller is responsible for the gate.)
-        assert!(should_shortcut_anticipation(0, 40, 1));
     }
 
     // ------------------------------------------------------------------

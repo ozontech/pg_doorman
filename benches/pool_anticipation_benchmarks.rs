@@ -14,9 +14,6 @@
 //! 5. `Notify` register-before-check    — the buffered-notify pattern used in
 //!    the cooldown zone. Verifies that a notify fired before the await still
 //!    resolves immediately, with realistic timings.
-//! 6. Queue-pressure shortcut decision  — the cost of the new check that gates
-//!    Phase B entry. Called once per acquire that reaches the warm zone, so
-//!    it must stay below the cost of one extra atomic load.
 //!
 //! These helpers are duplicated from `src/pool/inner.rs` on purpose: keeping
 //! them private avoids leaking test/bench scaffolding into the public API
@@ -36,14 +33,6 @@ fn try_take_burst_slot(counter: &AtomicUsize, max: usize) -> bool {
     }
     counter.fetch_sub(1, Ordering::Release);
     false
-}
-
-/// Mirror of the production `should_shortcut_anticipation` decision
-/// from `src/pool/inner.rs`. Two integer compares, no allocation, no
-/// atomic ops — bench measures the raw branch cost.
-#[inline]
-fn should_shortcut_anticipation(current_size: usize, max_size: usize, waiters: usize) -> bool {
-    waiters >= current_size && current_size < max_size
 }
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -160,37 +149,6 @@ fn notify_one_wake(c: &mut Criterion) {
     group.finish();
 }
 
-/// Queue-pressure shortcut decision cost. The hot-path caller in
-/// `timeout_get` reads `slots.size`, `slots.max_size` and the user counter
-/// once per acquire, then defers the decision to this branch. The bench
-/// covers the four mix branches (shortcut taken, queue too short, pool at
-/// max, no waiters) so a regression in any branch is visible.
-fn shortcut_decision(c: &mut Criterion) {
-    let mut group = c.benchmark_group("pool_anticipation/shortcut_decision");
-    group.throughput(Throughput::Elements(1));
-
-    for &(label, size, max, waiters) in &[
-        ("shortcut_taken_8_40_8", 8usize, 40usize, 8usize),
-        ("shortcut_taken_8_40_316", 8, 40, 316),
-        ("queue_too_short", 8, 40, 7),
-        ("pool_at_max", 40, 40, 100),
-        ("no_waiters", 8, 40, 0),
-    ] {
-        group.bench_function(label, |b| {
-            b.iter(|| {
-                let took = should_shortcut_anticipation(
-                    std::hint::black_box(size),
-                    std::hint::black_box(max),
-                    std::hint::black_box(waiters),
-                );
-                std::hint::black_box(took);
-            });
-        });
-    }
-
-    group.finish();
-}
-
 /// Buffered-notify pattern: `notify_one` fires BEFORE `notified()` is awaited.
 /// The cooldown anticipation zone relies on this — measures that the buffered
 /// signal resolves the await immediately without any wall time spent.
@@ -223,6 +181,5 @@ criterion_group!(
     burst_gate_concurrent,
     notify_one_wake,
     notify_buffered_pattern,
-    shortcut_decision,
 );
 criterion_main!(benches);
