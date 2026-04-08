@@ -432,6 +432,7 @@ const POOL_SCALING_TOTAL_TYPES: &[&str] = &[
     "anticipation_wakes_timeout",
     "create_fallback",
     "replenish_deferred",
+    "queue_pressure_shortcuts",
 ];
 
 fn reset_pool_scaling_metrics(user: &str, database: &str) {
@@ -467,7 +468,7 @@ fn update_pool_scaling_metrics() {
         // Translate snapshot fields to (type_label, value) pairs and emit
         // them as monotonic counter deltas. Pools have unique (user, db) keys
         // so prev tracking is per (type, user, db).
-        let totals: [(&str, u64); 6] = [
+        let totals: [(&str, u64); 7] = [
             ("creates_started", snapshot.creates_started),
             ("burst_gate_waits", snapshot.burst_gate_waits),
             (
@@ -480,6 +481,10 @@ fn update_pool_scaling_metrics() {
             ),
             ("create_fallback", snapshot.create_fallback),
             ("replenish_deferred", snapshot.replenish_deferred),
+            (
+                "queue_pressure_shortcuts",
+                snapshot.queue_pressure_shortcuts,
+            ),
         ];
 
         for (label, value) in totals {

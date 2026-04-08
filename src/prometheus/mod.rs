@@ -395,7 +395,9 @@ pub(crate) static POOL_SCALING_TOTALS: Lazy<IntCounterVec> = Lazy::new(|| {
              anticipation_wakes_notify (anticipation woke on idle return), \
              anticipation_wakes_timeout (anticipation budget elapsed without return), \
              create_fallback (anticipation did not avoid an allocation), \
-             replenish_deferred (background replenish skipped due to gate full).",
+             replenish_deferred (background replenish skipped due to gate full), \
+             queue_pressure_shortcuts (Phase 4 gave up early because the caller \
+             waited past a minimum and the pool was still saturated).",
         ),
         &["type", "user", "database"],
     )
