@@ -121,16 +121,21 @@ pub(crate) struct ScalingStats {
     /// to wait on a Notify (or backoff). High values indicate `max_parallel_creates`
     /// is too low for the offered load — or that creates are slow.
     pub(crate) burst_gate_waits: AtomicU64,
-    /// Number of anticipation waits that woke on a real `idle_returned` signal
-    /// (the optimistic case — anticipation paid off).
+    /// Number of anticipation loop iterations where a real `idle_returned`
+    /// signal woke the waiter. Incremented once per iteration that saw a
+    /// notify, including iterations that then lost the post-await recycle
+    /// race and looped back.
     pub(crate) anticipation_wakes_notify: AtomicU64,
-    /// Number of anticipation waits that fell through on the budget timeout
-    /// instead of catching a return. Ratio against `anticipation_wakes_notify`
-    /// shows whether `max_anticipation_wait_ms` is well-calibrated for the
-    /// pool's query latency distribution.
+    /// Number of Phase 4 fall-throughs where the per-iteration sleep fired
+    /// before any notify arrived, or where the deadline was already
+    /// exhausted at loop entry. Increments exactly once per Phase 4 exit
+    /// without a recyclable connection.
     pub(crate) anticipation_wakes_timeout: AtomicU64,
-    /// Number of times anticipation completed but `try_recycle_one` still
-    /// found the pool empty, forcing a fall-through to `server_pool.create()`.
+    /// Number of times Phase 4 fell through without a recyclable connection
+    /// and the caller had to call `server_pool.create()`. Steady-state
+    /// should be near zero; a sustained non-zero rate means offered load
+    /// exceeds what returns can serve within the caller's remaining wait
+    /// budget (`query_wait_timeout` - 500 ms create reserve).
     pub(crate) create_fallback: AtomicU64,
     /// Number of times the background `replenish` task hit the burst cap
     /// and deferred its work to the next retain cycle. Persistent non-zero
@@ -166,8 +171,9 @@ struct PoolInner {
     /// Username for this pool, used in coordinator error messages.
     username: String,
     /// Anticipation signal: woken when an Object is returned to the idle pool.
-    /// Used by the cooldown zone in `timeout_get` to wait event-driven for a
-    /// recyclable connection instead of polling after a blind sleep.
+    /// Used by the Phase 4 anticipation loop in `timeout_get` to wait for a
+    /// recyclable connection event-driven, and by peer coordinator waiters to
+    /// re-attempt peer eviction after a return.
     idle_returned: Notify,
     /// Number of server connection creates currently in-flight on this pool.
     /// This is NOT the count of currently-held connections — only those being
@@ -254,12 +260,12 @@ impl PoolInner {
         self.notify_return_observers();
     }
 
-    /// Wake observers of an idle return: the same-pool cooldown anticipation
+    /// Wake observers of an idle return: the same-pool Phase 4 anticipation
     /// waiter and any peer-pool Phase C waiter on the coordinator. Both fire
     /// on the same event (a connection landed in `slots.vec`) but consume by
     /// different waiters:
-    /// - `idle_returned` is for callers in this pool's bounded-burst /
-    ///   cooldown anticipation zone, who will recycle the returned object.
+    /// - `idle_returned` is for callers in this pool's Phase 4 anticipation
+    ///   loop or Phase 5 burst-gate wait, who will recycle the returned object.
     /// - `coordinator.notify_idle_returned()` is for callers in *peer* user
     ///   pools waiting on `PoolCoordinator` Phase C; they will scan this
     ///   pool's idle vec via `evict_one_idle` and drop the returned
@@ -1346,9 +1352,9 @@ mod tests {
 
     #[tokio::test]
     async fn notify_one_buffered_when_registered_before_signal() {
-        // The cooldown anticipation zone relies on this property:
+        // The Phase 4 anticipation loop relies on this property: a
         // notified() registered before notify_one() must wake immediately,
-        // even if the await happens after the signal.
+        // even if the await happens after the signal fires.
         let notify = std::sync::Arc::new(Notify::new());
         let n2 = std::sync::Arc::clone(&notify);
 
@@ -1363,7 +1369,7 @@ mod tests {
     #[tokio::test]
     async fn notify_one_wakes_exactly_one_waiter() {
         // Anti-thundering-herd guarantee: a single return_object must wake
-        // exactly one cooldown-zone waiter, not all of them.
+        // exactly one Phase 4 anticipation waiter, not all of them.
         //
         // Synchronization is barrier-based, not sleep-based: each waiter
         // signals it has parked on `notified()` BEFORE awaiting, so the

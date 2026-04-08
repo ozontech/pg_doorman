@@ -149,8 +149,10 @@ scaling_warm_pool_ratio = 20
 # Default: 10
 scaling_fast_retries = 10
 
-# Maximum time (ms) to wait for an idle connection to be returned by another task
-# before creating a new one. Event-driven via Notify woken by return_object().
+# Fallback anticipation budget (ms), used only when the client has no
+# query_wait_timeout. With query_wait_timeout set, the anticipation loop
+# uses the client's remaining wait minus a 500 ms create reserve and
+# this setting is ignored.
 # Default: 100
 scaling_max_anticipation_wait_ms = 100
 

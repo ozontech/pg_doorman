@@ -87,9 +87,13 @@ pub struct General {
     #[serde(default = "General::default_scaling_fast_retries")]
     pub scaling_fast_retries: u32,
 
-    /// Maximum time (milliseconds) to wait for an idle connection to be returned by
-    /// another task before creating a new one. The wait is event-driven via Notify
-    /// and is woken by return_object().
+    /// Fallback anticipation budget (milliseconds) used only when the
+    /// caller passes `Timeouts { wait: None, .. }`. With `query_wait_timeout`
+    /// set — the stock pg_doorman path — the anticipation loop uses the
+    /// client's remaining wait minus a 500 ms create reserve instead of
+    /// this value, so this knob is effectively inert in production. Do
+    /// not tune it for tail-latency control: adjust `query_wait_timeout`
+    /// and `pool_size` instead.
     #[serde(default = "General::default_scaling_max_anticipation_wait_ms")]
     pub scaling_max_anticipation_wait_ms: u64,
 
