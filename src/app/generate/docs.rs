@@ -245,7 +245,6 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "message_size_to_be_stream",
         "scaling_warm_pool_ratio",
         "scaling_fast_retries",
-        "scaling_max_anticipation_wait_ms",
         "scaling_max_parallel_creates",
         "max_memory_usage",
         "shutdown_timeout",

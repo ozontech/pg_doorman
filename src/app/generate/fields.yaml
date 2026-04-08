@@ -524,8 +524,10 @@ fields:
       doc: |
         Warm pool ratio as a percentage (0-100). When the pool size is below this threshold
         of `max_size`, new connections are created immediately. Above this threshold, the
-        pool first spins via fast retries, then waits up to `scaling_max_anticipation_wait_ms`
-        for an idle connection to be returned by another task before creating a new one.
+        pool first spins via fast retries, then enters an event-driven anticipation loop
+        that waits for a returned idle connection. The loop is bounded by the client's
+        remaining `query_wait_timeout` minus a 500 ms reserve for the create path, so it
+        cannot push the caller past its own wait deadline.
       default: "20"
 
     scaling_fast_retries:
@@ -539,25 +541,9 @@ fields:
       doc: |
         Number of fast retries using `yield_now()` for low-latency waiting when checking out
         connections above the warm pool threshold. Each retry takes approximately 1-5μs.
-        After exhausting fast retries, the pool waits on a Notify until either an idle
-        connection is returned or `scaling_max_anticipation_wait_ms` elapses.
+        After exhausting fast retries, the pool enters an event-driven anticipation loop
+        bounded by the client's remaining `query_wait_timeout`.
       default: "10"
-
-    scaling_max_anticipation_wait_ms:
-      config:
-        en: |
-          Maximum time (ms) to wait for an idle connection to be returned by another task
-          before creating a new one. Event-driven via Notify woken by return_object().
-        ru: |
-          Максимальное время (мс) ожидания возврата свободного соединения другой задачей
-          перед созданием нового. Управляется через Notify, пробуждаемый return_object().
-      doc: |
-        Upper bound on event-driven anticipation wait when the pool is above the warm
-        threshold. Replaces the legacy blind sleep with a Notify-based wait that wakes
-        immediately when another task returns a connection to the idle pool. The actual
-        wait is `min(this value, remaining client wait_timeout)`. Set lower for snappier
-        create decisions, higher to amortize more bursts onto existing connections.
-      default: "100"
 
     scaling_max_parallel_creates:
       config:

@@ -187,11 +187,6 @@ general:
   # Default: 10
   scaling_fast_retries: 10
 
-  # Maximum time (ms) to wait for an idle connection to be returned by another task
-  # before creating a new one. Event-driven via Notify woken by return_object().
-  # Default: 100
-  scaling_max_anticipation_wait_ms: 100
-
   # Hard cap on concurrent server connection creates per pool.
   # Anti-thundering-herd: tasks above this limit wait on a Notify
   # for either an idle return or a create completion. Must be >= 1.

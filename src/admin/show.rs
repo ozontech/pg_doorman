@@ -639,8 +639,10 @@ where
 }
 
 /// Show per-pool counters for the anticipation + bounded burst create path.
-/// Operators tune `scaling_max_anticipation_wait_ms` and `scaling_max_parallel_creates`
-/// against the relative motion of these counters between scrapes.
+/// Operators tune `scaling_max_parallel_creates` against the relative motion
+/// of these counters between scrapes. The anticipation loop bounds itself
+/// by the client's remaining `query_wait_timeout` minus a 500 ms reserve
+/// for the create path.
 pub async fn show_pool_scaling<T>(stream: &mut T) -> Result<(), Error>
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,

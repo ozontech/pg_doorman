@@ -15,7 +15,15 @@ impl ConnectionPool {
     /// If `max` is 0, all expired connections will be closed (unlimited).
     /// If `max` > 0, at most `max` connections will be closed across all pools,
     /// prioritizing the oldest connections first.
+    ///
+    /// Pools under client pressure are skipped: closing an idle connection
+    /// the moment a client is queued behind it just turns a free recycle
+    /// into a fresh connect on the wait path.
     pub fn retain_pool_connections(&self, count: Arc<AtomicUsize>, max: usize) -> usize {
+        if self.database.under_pressure() {
+            return 0;
+        }
+
         // Closure to determine if a connection should be closed
         // Uses per-connection timeouts with jitter to prevent mass closures
         let should_close = |_: &crate::server::Server, metrics: &crate::pool::Metrics| -> bool {
@@ -159,7 +167,14 @@ pub async fn retain_connections() {
         // Reserve pressure relief: close idle reserve connections early.
         // Reserve connections are temporary (created when max_db_connections was
         // reached) and should be released as soon as they've been idle long enough.
+        //
+        // Pools currently under client pressure are skipped: closing a reserve
+        // connection in front of a queued client just forces a connect() onto
+        // the wait path. Reserve cleanup runs again next cycle.
         for pool in &pool_refs {
+            if pool.database.under_pressure() {
+                continue;
+            }
             if let Some(ref coordinator) = pool.coordinator {
                 let min_lifetime = coordinator.config().min_connection_lifetime_ms;
                 let closed = pool.database.close_idle_reserve_connections(min_lifetime);
@@ -176,6 +191,8 @@ pub async fn retain_connections() {
             }
         }
 
+        // Idle / lifetime trimming. Pools under client pressure are skipped
+        // inside `retain_pool_connections` itself.
         for pool in &pool_refs {
             pool.retain_pool_connections(count.clone(), retain_max);
         }
@@ -251,4 +268,91 @@ pub fn drain_all_pools() -> usize {
         );
     }
     total_drained
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::Duration;
+
+    use crate::config::{Address, PoolMode, User};
+    use crate::pool::{Pool, PoolSettings, ServerParameters, ServerPool};
+    use dashmap::DashMap;
+
+    fn build_test_connection_pool() -> ConnectionPool {
+        let server_pool = ServerPool::new(
+            Address::default(),
+            User::default(),
+            "test_db",
+            Arc::new(DashMap::new()),
+            false,
+            false,
+            0,
+            "test_app".to_string(),
+            1,
+            60_000,
+            60_000,
+            60_000,
+            Duration::from_secs(5),
+            false,
+        );
+        let database = Pool::builder(server_pool)
+            .pool_name("test_db".to_string())
+            .username("test_user".to_string())
+            .build();
+
+        ConnectionPool {
+            database,
+            address: Address::default(),
+            original_server_parameters: Arc::new(tokio::sync::Mutex::new(ServerParameters::new())),
+            settings: PoolSettings {
+                pool_mode: PoolMode::Transaction,
+                user: User::default(),
+                db: "test_db".to_string(),
+                idle_timeout_ms: 60_000,
+                life_time_ms: 1, // tiny: any connection would be "expired"
+                sync_server_parameters: false,
+                min_guaranteed_pool_size: 0,
+            },
+            config_hash: 0,
+            prepared_statement_cache: None,
+            coordinator: None,
+            replenish_failures: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// Pools serving live traffic must not lose idle connections to retain
+    /// trimming. The whole point of the skip is to make sure that an idle
+    /// connection a queued client is about to grab is not closed for
+    /// housekeeping reasons one tick before. Drain the semaphore (models
+    /// "every permit is in flight"), call retain, and assert no closures.
+    #[tokio::test]
+    async fn retain_pool_skips_under_pressure() {
+        let conn_pool = build_test_connection_pool();
+
+        let semaphore = conn_pool.database.semaphore();
+        let total_permits = semaphore.available_permits();
+        let mut held = Vec::with_capacity(total_permits);
+        for _ in 0..total_permits {
+            held.push(semaphore.acquire().await.unwrap());
+        }
+        assert!(
+            conn_pool.database.under_pressure(),
+            "test setup must put the pool under pressure",
+        );
+
+        let count = Arc::new(AtomicUsize::new(0));
+        let closed = conn_pool.retain_pool_connections(count.clone(), 0);
+
+        assert_eq!(
+            closed, 0,
+            "retain must close zero connections under pressure"
+        );
+        assert_eq!(
+            count.load(Ordering::Relaxed),
+            0,
+            "shared retain counter must not advance",
+        );
+    }
 }

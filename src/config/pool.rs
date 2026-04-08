@@ -186,7 +186,6 @@ impl Pool {
         crate::pool::ScalingConfig {
             warm_pool_ratio: ratio as f32 / 100.0,
             fast_retries: retries,
-            max_anticipation_wait_ms: general.scaling_max_anticipation_wait_ms,
             max_parallel_creates: general.scaling_max_parallel_creates,
         }
     }

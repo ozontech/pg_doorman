@@ -23,10 +23,13 @@ pool.get()
   ↓
 4. Anticipation zone (Phase A → Phase B):
    - Phase A: 10 fast retries with yield_now (~10-50μs)
-   - Phase B: register `idle_returned.notified()` then await with select{
-       notified, sleep(min(max_anticipation_wait_ms, wait_timeout/2))
-     }
-   - On wake → re-try recycle
+   - Phase B: LOOP until deadline or recycle succeeds:
+       register `idle_returned.notified()` → recycle → select{
+         notified, sleep(remaining)
+       } → recycle → (race loss? loop back)
+   - Deadline = `start + wait_timeout - 500ms` where `start` is captured
+     at the top of `timeout_get`, so Phase 1/2 semaphore wait and Phase B
+     share a single budget and cannot cumulatively exceed `wait_timeout`
   ↓
 5. Coordinator permit (only if max_db_connections > 0)
    - acquire() may evict idle from peer pools, wait for a return,
@@ -61,7 +64,6 @@ coordinator first, the gate caps **actual `connect()` calls**, not
 ScalingConfig {
     warm_pool_ratio: 0.2,            // 0-20% of max_size: instant creation
     fast_retries: 10,                // yield_now spin retry count
-    max_anticipation_wait_ms: 100,   // upper bound on event-driven idle wait
     max_parallel_creates: 2,         // hard cap on concurrent creates per pool
 }
 ```
@@ -72,15 +74,38 @@ connect, producing thundering-herd bursts (5+ concurrent server connects)
 under load. The legacy `cooldown_sleep_ms` was a per-task blind sleep that
 neither coordinated waiters nor reacted to returns within the sleep window.
 
-The new mechanism has two layers:
+The mechanism has two layers:
 
-1. **Anticipation wait** (Phase B in the acquisition flow). When the pool is
+1. **Anticipation loop** (Phase B in the acquisition flow). When the pool is
    above the warm threshold and no idle connection is available, the caller
-   waits on a `tokio::sync::Notify` woken by `return_object()`. Exactly one
-   waiter is woken per return, which serializes recycle naturally and avoids
-   waking all queued tasks at once. The wait is bounded by both the operator
-   `max_anticipation_wait_ms` and half of the caller's remaining `wait_timeout`,
-   so anticipation never burns the entire client deadline.
+   enters a loop that waits on `tokio::sync::Notify` woken by
+   `return_object()`. Each iteration registers a fresh `Notified`, runs
+   `try_recycle_one` before the wait (to catch a buffered return), selects
+   between the notify and a deadline-bounded sleep, then runs
+   `try_recycle_one` after the wake. On a race loss (another waiter popped
+   the returned item first) the iteration re-registers and waits for the
+   next return. The loop exits on a successful recycle, a sleep-driven wake
+   with no notify in flight, or when the deadline is fully consumed.
+
+   The deadline is the caller's `wait_timeout` minus a 500 ms reserve for
+   the fall-through create path, measured against a `start` timestamp
+   captured at the top of `timeout_get`. Phase 1/2 semaphore wait consumes
+   from the same budget via that shared timestamp, so the cumulative wait
+   across phases cannot exceed `wait_timeout`.
+
+   When `wait_timeout` is `None` — a path stock pg_doorman never takes
+   because `query_wait_timeout` is always propagated into `Timeouts.wait`
+   — the loop falls back to a hardcoded 100 ms budget. That branch exists
+   only for direct API consumers.
+
+   Why a loop instead of a single wait-then-recycle: `return_object` bumps
+   both `idle_returned` and the semaphore permits. A Phase 1/2 semaphore
+   waiter wakes at the same instant as the Phase B waiter and races into
+   the hot-path recycle. Under multi-threaded scheduling the fresh Phase
+   1/2 waiter frequently wins and pops the returned item before Phase B
+   can post-await. Before the loop, every such race loss became a wasted
+   `server_pool.create()`. Measured production race rate on a busy shard
+   was 55%; the loop recovers all of them within the deadline.
 
 2. **Bounded burst gate** (Phase 5). A per-pool `AtomicUsize` caps how many
    `server_pool.create()` calls run concurrently. Excess callers wait on
@@ -130,17 +155,21 @@ metrics expose the per-pool counters used to tune the new path:
 | `inflight_creates` | Gauge: server creates currently in `connect()` |
 | `creates_started` | Total creates that took a burst slot |
 | `burst_gate_waits` | Total times a caller waited for a slot |
-| `anticipation_wakes_notify` | Anticipation woke on a real `idle_returned` |
-| `anticipation_wakes_timeout` | Anticipation budget elapsed without a return |
-| `create_fallback` | Anticipation finished without avoiding the create |
+| `anticipation_wakes_notify` | Loop iterations where a real `idle_returned` signal woke the waiter. Incremented once per iteration, including iterations that then lost the post-await race and looped back. |
+| `anticipation_wakes_timeout` | Loop exits where the per-iteration sleep fired before any notify, or where the deadline was already exhausted at iteration entry. Increments exactly once per Phase 4 fall-through. |
+| `create_fallback` | Phase 4 fell through without a recyclable connection. The caller paid for a fresh `connect()`. |
 | `replenish_deferred` | Background replenish skipped due to gate full |
 
 Tuning rules of thumb:
 - High `burst_gate_waits` and low `replenish_deferred` → `max_parallel_creates`
   is too low for the offered load.
-- High `anticipation_wakes_timeout` and low `anticipation_wakes_notify`
-  → `max_anticipation_wait_ms` is too low for query latency, or the pool is
-  genuinely under-sized.
+- `create_fallback > 0` sustained → anticipation cannot catch enough returns
+  within the deadline. This now means the pool is genuinely undersized for
+  the offered load (or `query_wait_timeout` is too short to give the loop
+  a useful window). Raise `pool_size` or raise `query_wait_timeout`.
+- `anticipation_wakes_notify` climbing in step with `creates_started` →
+  the loop is doing its job. Each return wakes exactly one waiter and the
+  loop recovers race losses that would otherwise become wasted creates.
 - Persistent non-zero `replenish_deferred` → `min_pool_size` cannot be sustained
   under current load; expect new connections to be created on the request path
   rather than prewarmed.

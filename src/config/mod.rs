@@ -371,14 +371,6 @@ impl Config {
             ));
         }
 
-        // Validate scaling_max_anticipation_wait_ms: sanity cap at 60s.
-        if self.general.scaling_max_anticipation_wait_ms > 60_000 {
-            return Err(Error::BadConfig(
-                "general.scaling_max_anticipation_wait_ms must be <= 60000 (60 seconds)"
-                    .to_string(),
-            ));
-        }
-
         // Validate mutual exclusion for HBA settings
         if self.general.pg_hba.is_some() && !self.general.hba.is_empty() {
             return Err(Error::BadConfig(
