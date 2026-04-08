@@ -6,6 +6,7 @@
 use cucumber::{given, then, when};
 use pprof::ProfilerGuardBuilder;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,7 +17,8 @@ fn is_pprof_enabled() -> bool {
 
 use pg_doorman::config::{Address, User};
 use pg_doorman::pool::{
-    ClientServerMap, Pool, PoolConfig, QueueMode, ScalingConfig, ServerPool, Timeouts,
+    ClientServerMap, Pool, PoolConfig, QueueMode, ScalingConfig, ScalingStatsSnapshot, ServerPool,
+    Timeouts,
 };
 use pg_doorman::stats::AddressStats;
 
@@ -366,4 +368,358 @@ async fn print_benchmark_results_to_stdout(world: &mut DoormanWorld) {
         );
     }
     println!("=============================\n");
+}
+
+/// Variant of `setup_internal_pool` that exposes `server_lifetime_ms` and
+/// `idle_timeout_ms`. Used by pressure scenarios that want to observe how
+/// `recycle()` and the retain loop behave under saturation — the default
+/// bench pool uses 0/0 (no lifetime, no idle timeout), which hides the
+/// interesting cases.
+#[given(
+    regex = r"^internal pool with size (\d+), server_lifetime (\d+) ms, idle_timeout (\d+) ms$"
+)]
+async fn setup_internal_pool_with_lifetimes(
+    world: &mut DoormanWorld,
+    size: usize,
+    lifetime_ms: u64,
+    idle_timeout_ms: u64,
+) {
+    let pg_port = world.pg_port.expect("PostgreSQL must be running");
+
+    let client_server_map: ClientServerMap = Arc::new(pg_doorman::utils::dashmap::new_dashmap(4));
+
+    let address = Address {
+        host: "127.0.0.1".to_string(),
+        port: pg_port,
+        database: "postgres".to_string(),
+        username: "postgres".to_string(),
+        password: "".to_string(),
+        backend_auth: None,
+        pool_name: "bench_pool".to_string(),
+        stats: Arc::new(AddressStats::default()),
+    };
+
+    let user = User {
+        username: "postgres".to_string(),
+        password: "".to_string(),
+        pool_size: size as u32,
+        ..User::default()
+    };
+
+    let server_pool = ServerPool::new(
+        address,
+        user,
+        "postgres",
+        client_server_map,
+        true,
+        false,
+        0,
+        "pool_bench".to_string(),
+        4,
+        lifetime_ms,
+        idle_timeout_ms,
+        0,
+        Duration::from_secs(10),
+        false,
+    );
+
+    let config = PoolConfig {
+        max_size: size,
+        timeouts: Timeouts {
+            wait: Some(Duration::from_secs(30)),
+            create: Some(Duration::from_secs(10)),
+            recycle: None,
+        },
+        queue_mode: QueueMode::Lifo,
+        scaling: ScalingConfig::default(),
+    };
+
+    let pool = Pool::builder(server_pool).config(config).build();
+    world.internal_pool = Some(InternalPool { pool });
+}
+
+/// Cascade load generator. Spawns N concurrent clients that each loop
+/// `pool.get() → hold → drop` for the specified wall-clock duration.
+/// Captures per-acquire latency and snapshots `scaling_stats()` before
+/// and after so the downstream assertions can pin both tail latency and
+/// the pool's internal bookkeeping (creates, fallbacks, anticipation
+/// wakes) against regressions.
+///
+/// This is the regression harness for any future Phase 4 shortcut or
+/// pool tuning work: run this step before and after a change, compare
+/// the cached metrics.
+#[when(
+    regex = r#"^I run cascade load "([^"]+)" with (\d+) clients for (\d+) seconds holding (\d+) ms$"#
+)]
+async fn run_cascade_load(
+    world: &mut DoormanWorld,
+    name: String,
+    clients: usize,
+    duration_secs: u64,
+    hold_ms: u64,
+) {
+    let pool = world
+        .internal_pool
+        .as_ref()
+        .expect("Internal pool must be set up")
+        .pool
+        .clone();
+
+    // Warm-up: force Phase 1 allocation for at least one slot so the very
+    // first burst does not measure cold-start create latency.
+    {
+        let _warm = pool.get().await.expect("warm-up acquire failed");
+    }
+
+    let stats_before = pool.scaling_stats();
+    let size_before = pool.status().size;
+
+    let deadline = Instant::now() + Duration::from_secs(duration_secs);
+    let hold = Duration::from_millis(hold_ms);
+    let errors = Arc::new(AtomicU64::new(0));
+
+    let mut handles = Vec::with_capacity(clients);
+    for _ in 0..clients {
+        let pool = pool.clone();
+        let errors = Arc::clone(&errors);
+        handles.push(tokio::spawn(async move {
+            let mut local_latencies: Vec<Duration> = Vec::new();
+            while Instant::now() < deadline {
+                let acquire_start = Instant::now();
+                match pool.get().await {
+                    Ok(obj) => {
+                        local_latencies.push(acquire_start.elapsed());
+                        if !hold.is_zero() {
+                            tokio::time::sleep(hold).await;
+                        }
+                        drop(obj);
+                    }
+                    Err(_) => {
+                        errors.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+            local_latencies
+        }));
+    }
+
+    let mut all_latencies: Vec<Duration> = Vec::new();
+    for h in handles {
+        let client_latencies = h.await.expect("cascade client task panicked");
+        all_latencies.extend(client_latencies);
+    }
+
+    let stats_after = pool.scaling_stats();
+    let size_after = pool.status().size;
+
+    let errors_total = errors.load(Ordering::Relaxed);
+    assert!(
+        !all_latencies.is_empty(),
+        "cascade load produced no successful acquires"
+    );
+    all_latencies.sort();
+
+    let p50 = all_latencies[all_latencies.len() / 2];
+    let p95 = all_latencies[(all_latencies.len() as f64 * 0.95) as usize];
+    let p99 = all_latencies[(all_latencies.len() as f64 * 0.99) as usize];
+    let max_lat = *all_latencies.last().unwrap();
+
+    let delta = StatsDelta::new(&stats_before, &stats_after);
+
+    println!("\n=== Cascade Load [{}] ===", name);
+    println!(
+        "clients={} duration={}s hold={}ms acquires={} errors={}",
+        clients,
+        duration_secs,
+        hold_ms,
+        all_latencies.len(),
+        errors_total
+    );
+    println!(
+        "latency p50={:?} p95={:?} p99={:?} max={:?}",
+        p50, p95, p99, max_lat
+    );
+    println!(
+        "pool size {} → {} (Δ={:+})",
+        size_before,
+        size_after,
+        size_after as i64 - size_before as i64
+    );
+    println!(
+        "scaling Δ: creates_started={} create_fallback={} burst_gate_waits={} \
+         antic_notify={} antic_timeout={} replenish_deferred={}",
+        delta.creates_started,
+        delta.create_fallback,
+        delta.burst_gate_waits,
+        delta.anticipation_wakes_notify,
+        delta.anticipation_wakes_timeout,
+        delta.replenish_deferred,
+    );
+
+    world
+        .bench_results
+        .insert(format!("{}_p50_ns", name), p50.as_nanos() as f64);
+    world
+        .bench_results
+        .insert(format!("{}_p95_ns", name), p95.as_nanos() as f64);
+    world
+        .bench_results
+        .insert(format!("{}_p99_ns", name), p99.as_nanos() as f64);
+    world
+        .bench_results
+        .insert(format!("{}_max_ns", name), max_lat.as_nanos() as f64);
+    world
+        .bench_results
+        .insert(format!("{}_errors", name), errors_total as f64);
+    world
+        .bench_results
+        .insert(format!("{}_size_before", name), size_before as f64);
+    world
+        .bench_results
+        .insert(format!("{}_size_after", name), size_after as f64);
+    world.bench_results.insert(
+        format!("{}_creates_started", name),
+        delta.creates_started as f64,
+    );
+    world.bench_results.insert(
+        format!("{}_create_fallback", name),
+        delta.create_fallback as f64,
+    );
+    world.bench_results.insert(
+        format!("{}_burst_gate_waits", name),
+        delta.burst_gate_waits as f64,
+    );
+    world.bench_results.insert(
+        format!("{}_antic_notify", name),
+        delta.anticipation_wakes_notify as f64,
+    );
+    world.bench_results.insert(
+        format!("{}_antic_timeout", name),
+        delta.anticipation_wakes_timeout as f64,
+    );
+}
+
+struct StatsDelta {
+    creates_started: u64,
+    burst_gate_waits: u64,
+    anticipation_wakes_notify: u64,
+    anticipation_wakes_timeout: u64,
+    create_fallback: u64,
+    replenish_deferred: u64,
+}
+
+impl StatsDelta {
+    fn new(before: &ScalingStatsSnapshot, after: &ScalingStatsSnapshot) -> Self {
+        Self {
+            creates_started: after.creates_started.saturating_sub(before.creates_started),
+            burst_gate_waits: after
+                .burst_gate_waits
+                .saturating_sub(before.burst_gate_waits),
+            anticipation_wakes_notify: after
+                .anticipation_wakes_notify
+                .saturating_sub(before.anticipation_wakes_notify),
+            anticipation_wakes_timeout: after
+                .anticipation_wakes_timeout
+                .saturating_sub(before.anticipation_wakes_timeout),
+            create_fallback: after.create_fallback.saturating_sub(before.create_fallback),
+            replenish_deferred: after
+                .replenish_deferred
+                .saturating_sub(before.replenish_deferred),
+        }
+    }
+}
+
+#[then(regex = r#"^cascade "([^"]+)" reports zero errors$"#)]
+async fn cascade_zero_errors(world: &mut DoormanWorld, name: String) {
+    let errors = world
+        .bench_results
+        .get(&format!("{}_errors", name))
+        .copied()
+        .unwrap_or(f64::NAN);
+    assert_eq!(
+        errors, 0.0,
+        "cascade '{}' expected zero errors, got {}",
+        name, errors
+    );
+}
+
+#[then(regex = r#"^cascade "([^"]+)" p99 latency is below (\d+) ms$"#)]
+async fn cascade_p99_below(world: &mut DoormanWorld, name: String, limit_ms: u64) {
+    let p99_ns = world
+        .bench_results
+        .get(&format!("{}_p99_ns", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+    let p99_ms = p99_ns / 1_000_000.0;
+    assert!(
+        p99_ms < limit_ms as f64,
+        "cascade '{}' p99 {:.2}ms exceeded limit {}ms",
+        name,
+        p99_ms,
+        limit_ms,
+    );
+}
+
+#[then(regex = r#"^cascade "([^"]+)" creates_started is at most (\d+)$"#)]
+async fn cascade_creates_at_most(world: &mut DoormanWorld, name: String, limit: u64) {
+    let creates = world
+        .bench_results
+        .get(&format!("{}_creates_started", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+    assert!(
+        (creates as u64) <= limit,
+        "cascade '{}' creates_started {} exceeded limit {}",
+        name,
+        creates as u64,
+        limit,
+    );
+}
+
+#[then(regex = r#"^cascade "([^"]+)" create_fallback is at most (\d+)$"#)]
+async fn cascade_create_fallback_at_most(world: &mut DoormanWorld, name: String, limit: u64) {
+    let fb = world
+        .bench_results
+        .get(&format!("{}_create_fallback", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+    assert!(
+        (fb as u64) <= limit,
+        "cascade '{}' create_fallback {} exceeded limit {}",
+        name,
+        fb as u64,
+        limit,
+    );
+}
+
+#[then(regex = r#"^cascade "([^"]+)" pool size is at most (\d+)$"#)]
+async fn cascade_size_at_most(world: &mut DoormanWorld, name: String, limit: u64) {
+    let size = world
+        .bench_results
+        .get(&format!("{}_size_after", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+    assert!(
+        (size as u64) <= limit,
+        "cascade '{}' final pool size {} exceeded limit {}",
+        name,
+        size as u64,
+        limit,
+    );
+}
+
+#[then(regex = r#"^cascade "([^"]+)" pool size is at least (\d+)$"#)]
+async fn cascade_size_at_least(world: &mut DoormanWorld, name: String, minimum: u64) {
+    let size = world
+        .bench_results
+        .get(&format!("{}_size_after", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+    assert!(
+        (size as u64) >= minimum,
+        "cascade '{}' final pool size {} below minimum {}",
+        name,
+        size as u64,
+        minimum,
+    );
 }
