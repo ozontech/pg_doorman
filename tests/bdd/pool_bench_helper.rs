@@ -503,9 +503,15 @@ async fn run_cascade_load(
         }));
     }
 
+    // Per-client iteration counts — surface fairness skews. A client stuck
+    // in `pool.get()` while peers race ahead will show up as a tiny
+    // `iter_count` against the rest. Without this, starvation hides
+    // behind an aggregate latency p99.
+    let mut per_client_iters: Vec<usize> = Vec::with_capacity(clients);
     let mut all_latencies: Vec<Duration> = Vec::new();
     for h in handles {
         let client_latencies = h.await.expect("cascade client task panicked");
+        per_client_iters.push(client_latencies.len());
         all_latencies.extend(client_latencies);
     }
 
@@ -526,6 +532,14 @@ async fn run_cascade_load(
 
     let delta = StatsDelta::new(&stats_before, &stats_after);
 
+    // Fairness stats: starvation shows up here as min_iters << max_iters.
+    // A single client stuck 30 seconds while peers race ahead will have
+    // iter_count=1 against max_iters in the thousands.
+    per_client_iters.sort();
+    let min_iters = *per_client_iters.first().unwrap_or(&0);
+    let max_iters = *per_client_iters.last().unwrap_or(&0);
+    let median_iters = per_client_iters[per_client_iters.len() / 2];
+
     println!("\n=== Cascade Load [{}] ===", name);
     println!(
         "clients={} duration={}s hold={}ms acquires={} errors={}",
@@ -538,6 +552,10 @@ async fn run_cascade_load(
     println!(
         "latency p50={:?} p95={:?} p99={:?} max={:?}",
         p50, p95, p99, max_lat
+    );
+    println!(
+        "per-client iters min={} median={} max={}",
+        min_iters, median_iters, max_iters
     );
     println!(
         "pool size {} → {} (Δ={:+})",
@@ -571,6 +589,15 @@ async fn run_cascade_load(
     world
         .bench_results
         .insert(format!("{}_errors", name), errors_total as f64);
+    world
+        .bench_results
+        .insert(format!("{}_min_iters", name), min_iters as f64);
+    world
+        .bench_results
+        .insert(format!("{}_max_iters", name), max_iters as f64);
+    world
+        .bench_results
+        .insert(format!("{}_median_iters", name), median_iters as f64);
     world
         .bench_results
         .insert(format!("{}_size_before", name), size_before as f64);
@@ -737,5 +764,91 @@ async fn cascade_size_at_least(world: &mut DoormanWorld, name: String, minimum: 
         name,
         size as u64,
         minimum,
+    );
+}
+
+/// Tail latency gate: the slowest single acquire must not exceed the
+/// given multiple of the p50 latency. A healthy pool keeps max / p50
+/// within a small ratio — aggregate p99 hides single stuck acquires
+/// because one outlier is buried in the percentile arithmetic. A
+/// `pool.get()` that wakes up 30 seconds late while its median peer
+/// returns in 60ms is exactly the failure mode this assertion surfaces.
+#[then(regex = r#"^cascade "([^"]+)" max latency is bounded by (\d+)x p50$"#)]
+async fn cascade_max_bounded_by_p50(world: &mut DoormanWorld, name: String, multiple: u64) {
+    let p50_ns = world
+        .bench_results
+        .get(&format!("{}_p50_ns", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+    let max_ns = world
+        .bench_results
+        .get(&format!("{}_max_ns", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+
+    assert!(
+        p50_ns > 0.0,
+        "cascade '{}' p50 latency is zero — cannot bound max against p50",
+        name
+    );
+    let ratio = max_ns / p50_ns;
+    assert!(
+        ratio <= multiple as f64,
+        "cascade '{}' tail latency blow-up: max={:.2}ms p50={:.2}ms ratio={:.1}x \
+         (limit {}x) — a single acquire lagged far behind the median, likely \
+         stuck in semaphore wake or pool resize mid-acquire",
+        name,
+        max_ns / 1_000_000.0,
+        p50_ns / 1_000_000.0,
+        ratio,
+        multiple,
+    );
+}
+
+/// Fairness gate: the slowest client in a cascade must not lag by more
+/// than the given multiple of the median iteration count. A starved
+/// client waiting in `pool.get()` while peers race ahead would show
+/// min_iters=1 against median_iters in the hundreds. Complements
+/// `max latency is bounded by Nx p50`: that catches single stuck
+/// acquires, this one catches clients stuck across their entire run.
+#[then(
+    regex = r#"^cascade "([^"]+)" iteration spread is bounded by (\d+)x median$"#
+)]
+async fn cascade_iter_spread_bounded(world: &mut DoormanWorld, name: String, multiple: u64) {
+    let min = world
+        .bench_results
+        .get(&format!("{}_min_iters", name))
+        .copied()
+        .expect("cascade step must run before assertion") as u64;
+    let median = world
+        .bench_results
+        .get(&format!("{}_median_iters", name))
+        .copied()
+        .expect("cascade step must run before assertion") as u64;
+    let max_iters = world
+        .bench_results
+        .get(&format!("{}_max_iters", name))
+        .copied()
+        .expect("cascade step must run before assertion") as u64;
+
+    assert!(
+        median > 0,
+        "cascade '{}' median iteration count is zero — no successful acquires",
+        name
+    );
+
+    // If min_iters * multiple >= median, the slowest client is within
+    // the fairness envelope. Otherwise one or more clients were starved.
+    let lower_bound = median.div_ceil(multiple);
+    assert!(
+        min >= lower_bound,
+        "cascade '{}' starvation: min_iters={} median_iters={} max_iters={} \
+         (slowest client < median/{}) — at least one client lagged far behind \
+         the pack, likely stuck in pool.get() semaphore wait",
+        name,
+        min,
+        median,
+        max_iters,
+        multiple,
     );
 }

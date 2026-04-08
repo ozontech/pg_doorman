@@ -85,5 +85,6 @@ Feature: Pool under sustained client pressure
     And I run cascade load "recycle_resume_quiet" with 1 clients for 2 seconds holding 5 ms
     Then cascade "recycle_resume_burst" reports zero errors
     And cascade "recycle_resume_burst" creates_started is at most 20
+    And cascade "recycle_resume_burst" iteration spread is bounded by 100x median
     And cascade "recycle_resume_quiet" reports zero errors
     And cascade "recycle_resume_quiet" creates_started is at least 1
