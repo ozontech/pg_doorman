@@ -141,13 +141,6 @@ pub(crate) struct ScalingStats {
     /// and deferred its work to the next retain cycle. Persistent non-zero
     /// values indicate `min_pool_size` cannot be sustained under current load.
     pub(crate) replenish_deferred: AtomicU64,
-    /// Number of times Phase 4 gave up anticipation early and fell through
-    /// to the create path because the caller had waited long enough and the
-    /// pool was still saturated. A growing rate means the pool is under
-    /// real, sustained client pressure — short idle-return windows are not
-    /// enough to serve the queue. Disjoint from `create_fallback`: a Phase 4
-    /// exit counts in exactly one of these two.
-    pub(crate) queue_pressure_shortcuts: AtomicU64,
 }
 
 /// Snapshot of per-pool scaling counters, returned to admin/prometheus exporters.
@@ -159,7 +152,6 @@ pub struct ScalingStatsSnapshot {
     pub anticipation_wakes_timeout: u64,
     pub create_fallback: u64,
     pub replenish_deferred: u64,
-    pub queue_pressure_shortcuts: u64,
     /// Current `inflight_creates` value (gauge, not a counter).
     pub inflight_creates: usize,
 }
@@ -464,14 +456,6 @@ impl Pool {
         // the caller wants either an immediate idle hit or a fresh create, no waits.
         let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
 
-        // Tracks whether Phase 4 exits via the pressure shortcut (early
-        // fall-through under sustained queue) or via the regular deadline
-        // path. The two outcomes increment different counters, kept
-        // disjoint so operators can tell "anticipation caught nothing
-        // within its deadline" from "caller gave up because pressure was
-        // real and waiting was pointless".
-        let mut exited_via_shortcut = false;
-
         if should_anticipate {
             // Phase A: yield_now spin — catches microsecond races without sleeping.
             let fast_retries = self.inner.config.scaling.fast_retries;
@@ -533,12 +517,6 @@ impl Pool {
 
                 if !total_budget.is_zero() {
                     let deadline = tokio::time::Instant::now() + total_budget;
-                    // Caller-local minimum wait before the pressure shortcut
-                    // is allowed to fire. Covers every micro-burst that
-                    // Phase 4 would have caught via recycle within a few
-                    // milliseconds, and kicks in only when the wait becomes
-                    // meaningful relative to a user-visible latency budget.
-                    const SHORTCUT_MIN_WAIT: Duration = Duration::from_millis(100);
 
                     loop {
                         let remaining =
@@ -548,28 +526,6 @@ impl Pool {
                                 .scaling_stats
                                 .anticipation_wakes_timeout
                                 .fetch_add(1, Ordering::Relaxed);
-                            break;
-                        }
-
-                        // Pressure-gated shortcut. Two signals must both hold:
-                        // (1) we have already spent more than SHORTCUT_MIN_WAIT
-                        //     in this acquire — so a micro-burst that Phase 4
-                        //     would have caught within a few milliseconds
-                        //     cannot trigger it;
-                        // (2) the pool is currently saturated — every permit
-                        //     is in flight, there is a real client queue.
-                        // Together they mean "this caller has been waiting a
-                        // real amount of time AND the pool is genuinely
-                        // overloaded, not briefly spiking". In that case
-                        // waiting longer on idle returns is pointless: every
-                        // return will be taken by a fresh Phase 1/2 waiter
-                        // ahead of us anyway, and we will fall through to
-                        // create when the deadline elapses. Going straight to
-                        // the create path now cuts the tail without creating
-                        // a connection storm — Phase 5's burst gate still
-                        // caps concurrent connect() to `max_parallel_creates`.
-                        if start.elapsed() > SHORTCUT_MIN_WAIT && self.inner.under_pressure() {
-                            exited_via_shortcut = true;
                             break;
                         }
 
@@ -589,39 +545,21 @@ impl Pool {
                             });
                         }
 
-                        // Cap the sleep duration so this loop re-checks the
-                        // pressure shortcut gate at least every SHORTCUT_MIN_WAIT
-                        // ms. Without the cap, a caller who reached Phase 4 on
-                        // a quiet pool would sleep for the full remaining budget
-                        // (~500 ms) and never get a chance to notice that
-                        // pressure appeared mid-wait.
-                        let sleep_duration = remaining.min(SHORTCUT_MIN_WAIT);
                         let woken_by_notify = tokio::select! {
                             _ = notified => true,
-                            _ = tokio::time::sleep(sleep_duration) => false,
+                            _ = tokio::time::sleep(remaining) => false,
                         };
                         if woken_by_notify {
                             self.inner
                                 .scaling_stats
                                 .anticipation_wakes_notify
                                 .fetch_add(1, Ordering::Relaxed);
-                        } else if deadline
-                            .saturating_duration_since(tokio::time::Instant::now())
-                            .is_zero()
-                        {
-                            // Cap-capped sleep finished exactly at the deadline.
-                            // Real timeout, not a periodic re-check.
+                        } else {
                             self.inner
                                 .scaling_stats
                                 .anticipation_wakes_timeout
                                 .fetch_add(1, Ordering::Relaxed);
                             break;
-                        } else {
-                            // Cap-capped sleep finished mid-budget. Loop back
-                            // to re-evaluate the shortcut gate and try another
-                            // recycle — do not count this as a timeout wake,
-                            // it was just a shortcut re-check opportunity.
-                            continue;
                         }
 
                         if let RecycleOutcome::Reused(inner) =
@@ -644,22 +582,11 @@ impl Pool {
 
             // Anticipation either was skipped (non_blocking / zero budget) or
             // its loop exhausted the deadline without finding a recyclable
-            // connection. Fall through to the create path. Exits through the
-            // pressure shortcut are counted separately in
-            // `queue_pressure_shortcuts` and do NOT increment `create_fallback`:
-            // the shortcut is an intentional decision to create, while
-            // `create_fallback` tracks anticipation failures.
-            if exited_via_shortcut {
-                self.inner
-                    .scaling_stats
-                    .queue_pressure_shortcuts
-                    .fetch_add(1, Ordering::Relaxed);
-            } else {
-                self.inner
-                    .scaling_stats
-                    .create_fallback
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            // connection. Fall through to the create path.
+            self.inner
+                .scaling_stats
+                .create_fallback
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // Drain any remaining recyclable connections before creating a new one
@@ -1268,7 +1195,7 @@ impl Pool {
     }
 
     /// Returns a snapshot of the per-pool scaling counters used for tuning
-    /// the anticipation + bounded burst path. Cheap — seven relaxed atomic
+    /// the anticipation + bounded burst path. Cheap — six relaxed atomic
     /// loads. Safe to call from `SHOW POOLS` / Prometheus scrapes.
     pub fn scaling_stats(&self) -> ScalingStatsSnapshot {
         let s = &self.inner.scaling_stats;
@@ -1279,7 +1206,6 @@ impl Pool {
             anticipation_wakes_timeout: s.anticipation_wakes_timeout.load(Ordering::Relaxed),
             create_fallback: s.create_fallback.load(Ordering::Relaxed),
             replenish_deferred: s.replenish_deferred.load(Ordering::Relaxed),
-            queue_pressure_shortcuts: s.queue_pressure_shortcuts.load(Ordering::Relaxed),
             inflight_creates: self.inner.inflight_creates.load(Ordering::Relaxed),
         }
     }
@@ -1812,179 +1738,6 @@ mod tests {
         assert!(
             !pool.inner.under_pressure(),
             "releasing one permit must clear pressure",
-        );
-    }
-
-    // ------------------------------------------------------------------
-    // Pressure-gated Phase 4 shortcut — end-to-end behavior check
-    // ------------------------------------------------------------------
-
-    /// The shortcut must fire once the caller has waited at least
-    /// SHORTCUT_MIN_WAIT AND the pool reports `under_pressure`. This
-    /// test pins both gates: drains the semaphore to force pressure,
-    /// calls `timeout_get` with a wait_timeout that comfortably exceeds
-    /// the shortcut threshold, and asserts that the exit path bumps the
-    /// `queue_pressure_shortcuts` counter (not `create_fallback`).
-    ///
-    /// Server pool `create()` is never called because the test pool is
-    /// built without a live backend. `try_recycle_one` returns Empty on
-    /// every iteration, so Phase 4 loops until the shortcut fires. The
-    /// test then observes the counter and the returned error.
-    #[tokio::test]
-    async fn phase_4_pressure_shortcut_counts_exit() {
-        let coord = pool_coordinator::PoolCoordinator::new(
-            "test_db".to_string(),
-            pool_coordinator::CoordinatorConfig {
-                max_db_connections: 0,
-                min_connection_lifetime_ms: 0,
-                reserve_pool_size: 0,
-                reserve_pool_timeout_ms: 0,
-            },
-        );
-        let pool = test_pool_with_coordinator(coord);
-
-        // Seed the pool so Phase 4 actually runs: the anticipation path
-        // only enters when `slots.size >= warm_threshold`. The semaphore
-        // permits come from the builder, here we only raise the size
-        // field so the warm-zone gate lets us through.
-        {
-            let mut slots = pool.inner.slots.lock();
-            slots.size = slots.max_size;
-        }
-
-        // Drain all but one permit so the test caller in `timeout_get`
-        // still gets a permit in Phase 1/2 (otherwise it parks there
-        // forever). One free permit means the caller enters Phase 4
-        // immediately, and we put the pool into pressure by holding
-        // the rest.
-        let total_permits = pool.inner.semaphore.available_permits();
-        assert!(total_permits >= 2, "test pool must have >= 2 permits");
-        let mut held = Vec::with_capacity(total_permits - 1);
-        for _ in 0..(total_permits - 1) {
-            held.push(pool.inner.semaphore.acquire().await.unwrap());
-        }
-
-        // Wait budget: well above the shortcut's 100ms min wait, so
-        // the shortcut gate fires before the deadline path. Minus the
-        // 500ms create reserve applied inside Phase 4, the loop still
-        // has ~400ms of budget and will spin on empty recycle until
-        // the shortcut kicks in.
-        let timeouts = Timeouts {
-            wait: Some(Duration::from_millis(1000)),
-            create: None,
-            recycle: None,
-        };
-
-        let before_shortcut = pool
-            .inner
-            .scaling_stats
-            .queue_pressure_shortcuts
-            .load(Ordering::Relaxed);
-        let before_fallback = pool
-            .inner
-            .scaling_stats
-            .create_fallback
-            .load(Ordering::Relaxed);
-
-        // timeout_get will fail because the test pool cannot actually
-        // connect to a backend, but the interesting state is already
-        // recorded before the create call is attempted.
-        let result = pool.timeout_get(&timeouts).await;
-        assert!(
-            result.is_err(),
-            "test pool has no backend — create must fail"
-        );
-
-        let after_shortcut = pool
-            .inner
-            .scaling_stats
-            .queue_pressure_shortcuts
-            .load(Ordering::Relaxed);
-        let after_fallback = pool
-            .inner
-            .scaling_stats
-            .create_fallback
-            .load(Ordering::Relaxed);
-
-        assert_eq!(
-            after_shortcut - before_shortcut,
-            1,
-            "exactly one pressure shortcut must fire for this caller",
-        );
-        assert_eq!(
-            after_fallback - before_fallback,
-            0,
-            "shortcut exits must NOT double-count in create_fallback",
-        );
-
-        drop(held);
-    }
-
-    /// Companion to the shortcut test: when the pool has spare permits
-    /// (not under pressure) and the caller waits past the shortcut
-    /// threshold, the shortcut must NOT fire. `create_fallback` wins.
-    /// This is the "random jitter / slow recycle" safeguard — time alone
-    /// must not trigger a create burst.
-    #[tokio::test]
-    async fn phase_4_shortcut_skipped_without_pressure() {
-        let coord = pool_coordinator::PoolCoordinator::new(
-            "test_db".to_string(),
-            pool_coordinator::CoordinatorConfig {
-                max_db_connections: 0,
-                min_connection_lifetime_ms: 0,
-                reserve_pool_size: 0,
-                reserve_pool_timeout_ms: 0,
-            },
-        );
-        let pool = test_pool_with_coordinator(coord);
-
-        {
-            let mut slots = pool.inner.slots.lock();
-            slots.size = slots.max_size;
-        }
-
-        // No permit drain — pool has spare capacity. Caller enters
-        // Phase 4 but `under_pressure()` returns false, so the
-        // shortcut never fires regardless of how long we wait.
-        let timeouts = Timeouts {
-            wait: Some(Duration::from_millis(250)),
-            create: None,
-            recycle: None,
-        };
-
-        let before_shortcut = pool
-            .inner
-            .scaling_stats
-            .queue_pressure_shortcuts
-            .load(Ordering::Relaxed);
-        let before_fallback = pool
-            .inner
-            .scaling_stats
-            .create_fallback
-            .load(Ordering::Relaxed);
-
-        let _ = pool.timeout_get(&timeouts).await;
-
-        let after_shortcut = pool
-            .inner
-            .scaling_stats
-            .queue_pressure_shortcuts
-            .load(Ordering::Relaxed);
-        let after_fallback = pool
-            .inner
-            .scaling_stats
-            .create_fallback
-            .load(Ordering::Relaxed);
-
-        assert_eq!(
-            after_shortcut - before_shortcut,
-            0,
-            "shortcut must not fire without pressure"
-        );
-        assert_eq!(
-            after_fallback - before_fallback,
-            1,
-            "caller without pressure exits through the regular fallback path"
         );
     }
 }

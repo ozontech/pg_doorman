@@ -657,7 +657,6 @@ where
         ("antic_timeout", DataType::Numeric),
         ("create_fallback", DataType::Numeric),
         ("replenish_def", DataType::Numeric),
-        ("pressure_shortcut", DataType::Numeric),
     ];
 
     let mut res = BytesMut::new();
@@ -680,7 +679,6 @@ where
             snapshot.anticipation_wakes_timeout.to_string(),
             snapshot.create_fallback.to_string(),
             snapshot.replenish_deferred.to_string(),
-            snapshot.queue_pressure_shortcuts.to_string(),
         ]));
     }
 
