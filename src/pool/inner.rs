@@ -1148,6 +1148,23 @@ impl Pool {
         &self.inner.server_pool
     }
 
+    /// True when every semaphore permit is in use — clients are either
+    /// holding connections or queued behind it. Used by housekeeping
+    /// (retain loop, lifetime expiration in `recycle()`) to back off and
+    /// not close working connections at the moment of peak demand.
+    #[must_use]
+    pub fn under_pressure(&self) -> bool {
+        self.inner.under_pressure()
+    }
+
+    /// Test-only handle on the inner semaphore. Used to model client
+    /// pressure (drain all permits) in unit tests that exercise the
+    /// `under_pressure()` housekeeping gate from peer modules.
+    #[cfg(test)]
+    pub(crate) fn semaphore(&self) -> &tokio::sync::Semaphore {
+        &self.inner.semaphore
+    }
+
     /// Pauses the pool — blocks new connection acquisition.
     pub fn pause(&self) {
         self.inner.server_pool.pause();
@@ -1671,8 +1688,8 @@ mod tests {
     // under_pressure — predicate that gates lifetime housekeeping
     // ------------------------------------------------------------------
 
-    /// `under_pressure` is the gate that decides whether `recycle()` (and
-    /// later `retain`) closes a working connection by `server_lifetime`.
+    /// `under_pressure` is the gate that decides whether `recycle()` and
+    /// the retain loop close a working connection by `server_lifetime`.
     /// Wrong answer here means we either close connections mid-storm
     /// (false negative) or never refresh aged ones (false positive). The
     /// contract is "true iff every semaphore permit is in flight", so the
