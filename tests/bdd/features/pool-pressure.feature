@@ -33,3 +33,28 @@ Feature: Pool under sustained client pressure
     And cascade "cascade_c300_pool10" create_fallback is at most 5
     And cascade "cascade_c300_pool10" pool size is at most 10
     And cascade "cascade_c300_pool10" pool size is at least 10
+
+  @cascade-recycle-skip
+  Scenario: server_lifetime expiration is suppressed while the pool is under sustained pressure
+    # Regression harness for the recycle-skip commit: when the semaphore is
+    # fully drained, `recycle()` must not close an aged connection on the way
+    # back into the pool. Otherwise a short `server_lifetime` on a permanently
+    # busy pool rotates every connection on every return, turning a working
+    # pool of ten into a cascade of connect() calls.
+    #
+    # Setup: 10 slots, server_lifetime=200ms, 100 clients × 10 seconds ×
+    # hold=10ms. The load is continuous and every permit is in flight, so the
+    # pool is under_pressure() for the entire run. Each server connection
+    # lives far past its 200ms budget but must NOT be closed by recycle.
+    #
+    # Without recycle skip: every return would trip the age check, close the
+    # connection and force a new connect. 10 slots × (10s / 200ms) = ~500
+    # forced rotations. With recycle skip: the warm-up grows the pool to 10
+    # and then nothing else creates — the bound is a tight upper limit on
+    # churn, so a regression in the gate is caught immediately.
+    Given internal pool with size 10, server_lifetime 200 ms, idle_timeout 0 ms
+    When I run cascade load "recycle_skip_c100_pool10" with 100 clients for 10 seconds holding 10 ms
+    Then cascade "recycle_skip_c100_pool10" reports zero errors
+    And cascade "recycle_skip_c100_pool10" creates_started is at most 20
+    And cascade "recycle_skip_c100_pool10" pool size is at most 10
+    And cascade "recycle_skip_c100_pool10" pool size is at least 10
