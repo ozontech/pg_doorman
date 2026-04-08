@@ -87,16 +87,6 @@ pub struct General {
     #[serde(default = "General::default_scaling_fast_retries")]
     pub scaling_fast_retries: u32,
 
-    /// Fallback anticipation budget (milliseconds) used only when the
-    /// caller passes `Timeouts { wait: None, .. }`. With `query_wait_timeout`
-    /// set — the stock pg_doorman path — the anticipation loop uses the
-    /// client's remaining wait minus a 500 ms create reserve instead of
-    /// this value, so this knob is effectively inert in production. Do
-    /// not tune it for tail-latency control: adjust `query_wait_timeout`
-    /// and `pool_size` instead.
-    #[serde(default = "General::default_scaling_max_anticipation_wait_ms")]
-    pub scaling_max_anticipation_wait_ms: u64,
-
     /// Hard cap on concurrent server connection creates per pool.
     /// Tasks above this limit wait for either an idle return or a create completion.
     /// Anti-thundering-herd: prevents N parallel timeout_get callers from each
@@ -278,11 +268,6 @@ impl General {
         10
     }
 
-    /// Default anticipation wait: 100ms (matches ScalingConfig::DEFAULT_MAX_ANTICIPATION_WAIT_MS).
-    pub fn default_scaling_max_anticipation_wait_ms() -> u64 {
-        100
-    }
-
     /// Default max parallel creates per pool: 2 (matches ScalingConfig::DEFAULT_MAX_PARALLEL_CREATES).
     pub fn default_scaling_max_parallel_creates() -> u32 {
         2
@@ -422,7 +407,6 @@ impl Default for General {
             max_concurrent_creates: Self::default_max_concurrent_creates(),
             scaling_warm_pool_ratio: Self::default_scaling_warm_pool_ratio(),
             scaling_fast_retries: Self::default_scaling_fast_retries(),
-            scaling_max_anticipation_wait_ms: Self::default_scaling_max_anticipation_wait_ms(),
             scaling_max_parallel_creates: Self::default_scaling_max_parallel_creates(),
             worker_threads: Self::default_worker_threads(),
             worker_cpu_affinity_pinning: Self::default_worker_cpu_affinity_pinning(),

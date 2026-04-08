@@ -638,14 +638,6 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     );
     w.blank();
 
-    write_field_comment(w, fi, "general", "scaling_max_anticipation_wait_ms");
-    w.kv(
-        fi,
-        "scaling_max_anticipation_wait_ms",
-        &w.num_val(g.scaling_max_anticipation_wait_ms),
-    );
-    w.blank();
-
     write_field_comment(w, fi, "general", "scaling_max_parallel_creates");
     w.kv(
         fi,

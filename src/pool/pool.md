@@ -64,7 +64,6 @@ coordinator first, the gate caps **actual `connect()` calls**, not
 ScalingConfig {
     warm_pool_ratio: 0.2,            // 0-20% of max_size: instant creation
     fast_retries: 10,                // yield_now spin retry count
-    max_anticipation_wait_ms: 100,   // fallback budget when wait_timeout is unset
     max_parallel_creates: 2,         // hard cap on concurrent creates per pool
 }
 ```
@@ -94,13 +93,10 @@ The mechanism has two layers:
    from the same budget via that shared timestamp, so the cumulative wait
    across phases cannot exceed `wait_timeout`.
 
-   When `wait_timeout` is `None`, the loop falls back to
-   `scaling_max_anticipation_wait_ms` (default 100 ms) as its total
-   budget. That is the only path where the knob takes effect. In a stock
-   pg_doorman deployment `query_wait_timeout` is set in the general
-   config and propagated to `Timeouts.wait`, so the knob has no effect
-   in production. Treat it as a safety value for direct API consumers,
-   not as a tail-latency tuning lever.
+   When `wait_timeout` is `None` — a path stock pg_doorman never takes
+   because `query_wait_timeout` is always propagated into `Timeouts.wait`
+   — the loop falls back to a hardcoded 100 ms budget. That branch exists
+   only for direct API consumers.
 
    Why a loop instead of a single wait-then-recycle: `return_object` bumps
    both `idle_returned` and the semaphore permits. A Phase 1/2 semaphore
@@ -170,9 +166,7 @@ Tuning rules of thumb:
 - `create_fallback > 0` sustained → anticipation cannot catch enough returns
   within the deadline. This now means the pool is genuinely undersized for
   the offered load (or `query_wait_timeout` is too short to give the loop
-  a useful window). Raise `pool_size` or raise `query_wait_timeout` — do
-  not raise `max_anticipation_wait_ms` unless the pool serves clients with
-  no wait timeout at all.
+  a useful window). Raise `pool_size` or raise `query_wait_timeout`.
 - `anticipation_wakes_notify` climbing in step with `creates_started` →
   the loop is doing its job. Each return wakes exactly one waiter and the
   loop recovers race losses that would otherwise become wasted creates.

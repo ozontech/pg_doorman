@@ -161,14 +161,6 @@ timestamp captured at the top of `timeout_get`. Phase 1/2 semaphore
 wait consumes from the same budget, so the cumulative wait across
 phases cannot exceed `query_wait_timeout`.
 
-If a caller passes `Timeouts { wait: None, .. }`, the loop falls back
-to `scaling_max_anticipation_wait_ms` (default 100 ms). That is the
-only path where the knob takes effect. In a stock pg_doorman
-deployment `query_wait_timeout` is set in the general config and
-propagated to `Timeouts.wait`, so the knob has no effect in
-production. Treat it as a safety value for direct API consumers, not
-as a tail-latency tuning lever.
-
 Each return wakes exactly one waiter. The loop is retry-driven
 against races: when `return_object()` fires, both this Phase 4
 waiter and any task parked in Phase 1/2 semaphore acquire wake
@@ -511,16 +503,15 @@ permits.
 
 ## Tuning parameters
 
-All four scaling parameters are global by default, with per-pool
-overrides for `scaling_warm_pool_ratio` and `scaling_fast_retries`.
-The two anticipation/burst knobs are global only; per-pool overrides
-are not supported.
+The scaling parameters are global by default, with per-pool overrides
+for `scaling_warm_pool_ratio` and `scaling_fast_retries`.
+`scaling_max_parallel_creates` is global only; per-pool overrides are
+not supported.
 
 | Parameter | Default | Where | What it does |
 |---|---|---|---|
 | `scaling_warm_pool_ratio` | `20` (percent) | `general`, per-pool | Threshold below which connections are created without anticipation. Below `pool_size × ratio / 100`, every new connection request goes straight to `connect()`. |
 | `scaling_fast_retries` | `10` | `general`, per-pool | Number of `yield_now` spin retries before entering the event-driven anticipation loop. Each retry costs ~1–5 µs. |
-| `scaling_max_anticipation_wait_ms` | `100` (ms) | `general` | Fallback budget for the anticipation loop, used only when the caller passes `Timeouts.wait = None`. In a stock pg_doorman deployment `query_wait_timeout` is set, so the loop uses the client's remaining wait minus a 500 ms reserve and this knob has no effect. Do not tune it for tail-latency control. Adjust `query_wait_timeout` and `pool_size` instead. |
 | `scaling_max_parallel_creates` | `2` | `general` | Hard cap on concurrent backend `connect()` calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be `>= 1`. |
 | `max_db_connections` | unset (disabled) | per-pool | Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist. |
 | `min_connection_lifetime` | `5000` (ms) | per-pool | Minimum age of an idle connection before the coordinator may evict it for another pool. Lower bound on connection churn. |
@@ -568,38 +559,6 @@ behind 10 pools and want at most 8 concurrent backend connects across
 all of them at any moment, set `scaling_max_parallel_creates` to
 roughly `desired_aggregate / N pools`, rounding down. Below 1 is not
 allowed; if the math gives <1, lower `N pools` by consolidating users.
-
-### `scaling_max_anticipation_wait_ms` is now a fallback
-
-With a `query_wait_timeout` configured on the pool (the common case),
-the anticipation loop does not use `scaling_max_anticipation_wait_ms`
-at all. Its budget is the remaining slice of `query_wait_timeout`
-minus a 500 ms reserve for the create path. Tuning this knob changes
-nothing for such clients.
-
-The knob only takes effect for clients that have no wait timeout
-(`query_wait_timeout = 0` on the connection, which normally means a
-long-lived session). For those clients, it caps how long the loop is
-willing to wait for a returned idle connection before creating a new
-one.
-
-Before this was a loop, raising `scaling_max_anticipation_wait_ms` was
-standard advice when `anticipation_wakes_timeout` was high. That
-advice no longer applies. Today a high `anticipation_wakes_timeout`
-rate next to a high `anticipation_wakes_notify` rate means the loop
-is doing its job: every return wakes one waiter and the sleep timer
-fires between returns. The useful ratio is now
-`create_fallback / creates_started`, which measures whether
-anticipation deadlines are being exhausted.
-
-If you see `create_fallback > 0` sustained, the fix is not this knob:
-
-- Raise `pool_size` if the pool is undersized for steady-state load.
-- Raise `query_wait_timeout` on the client if `connect()` is slow and
-  the 500 ms reserve leaves too little room for the loop to catch
-  returns.
-- Investigate why returns are slow (long-running transactions, slow
-  queries, blocked connections).
 
 ### When to raise `scaling_warm_pool_ratio`
 
@@ -776,9 +735,7 @@ might have avoided. Steady-state should be zero; any sustained rate
 means offered load exceeds what returns can serve within the
 deadline. **Action:** check `SHOW POOL_SCALING` for the affected
 pool, then either raise `pool_size`, raise `query_wait_timeout`, or
-investigate slow queries holding connections out of rotation. Do
-*not* raise `scaling_max_anticipation_wait_ms`; with
-`query_wait_timeout` set, that knob is bypassed.
+investigate slow queries holding connections out of rotation.
 
 ```promql
 rate(pg_doorman_pool_scaling_total{type="create_fallback"}[5m]) > 0.1
@@ -961,8 +918,6 @@ query latency.
   load from returns within the client's wait deadline. Raise
   `pool_size`, raise `query_wait_timeout` (if clients can tolerate
   it), or find the slow queries holding connections out of rotation.
-  Raising `scaling_max_anticipation_wait_ms` has no effect when
-  `query_wait_timeout` is set.
 - **`create_fallback` is flat at zero and `antic_notify` is climbing
   in step with pool turnover.** The anticipation loop is working:
   returns are being caught, no connection storm is firing. The

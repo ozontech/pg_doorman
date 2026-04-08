@@ -481,7 +481,13 @@ impl Pool {
             //   few milliseconds. The loop retries until the caller's deadline.
             if !non_blocking {
                 const CREATE_RESERVE: Duration = Duration::from_millis(500);
-                let max_wait_ms = self.inner.config.scaling.max_anticipation_wait_ms;
+                // Fallback budget used only when the caller passes no
+                // `wait_timeout`. Stock pg_doorman always propagates
+                // `query_wait_timeout` into `Timeouts.wait`, so this arm is
+                // only reachable from direct API consumers. The constant
+                // preserves the historical default so behavior on that path
+                // is unchanged.
+                const FALLBACK_BUDGET_MS: u64 = 100;
 
                 // Remaining time from the caller's wait_timeout minus the
                 // reserve we leave for the create path. `start` was captured
@@ -493,7 +499,7 @@ impl Pool {
                     Some(wait) => wait
                         .saturating_sub(start.elapsed())
                         .saturating_sub(CREATE_RESERVE),
-                    None => Duration::from_millis(max_wait_ms),
+                    None => Duration::from_millis(FALLBACK_BUDGET_MS),
                 };
 
                 if !total_budget.is_zero() {

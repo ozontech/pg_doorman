@@ -12,14 +12,6 @@ pub struct ScalingConfig {
     /// Fast retry count with yield_now() for low latency waiting.
     pub fast_retries: u32,
 
-    /// Fallback budget (ms) for the anticipation loop when the caller has
-    /// no `wait_timeout`. Measured as the total time the loop is willing to
-    /// wait for returned idle connections before falling through to
-    /// `server_pool.create()`. When `wait_timeout` is set, the loop uses
-    /// the client's remaining wait minus a 500 ms create reserve and this
-    /// field is ignored.
-    pub max_anticipation_wait_ms: u64,
-
     /// Hard cap on concurrent server connection creates per pool.
     /// Tasks beyond this limit wait for either an idle return or a create completion.
     /// Must be >= 1.
@@ -30,11 +22,9 @@ impl ScalingConfig {
     /// Default scaling configuration.
     /// - 20% warm pool (immediate creation below threshold)
     /// - 10 fast retries (~10-50μs of yield_now spin)
-    /// - 100 ms fallback anticipation budget for callers without wait_timeout
     /// - 2 concurrent creates per pool (anti-thundering-herd)
     pub const DEFAULT_WARM_POOL_RATIO: f32 = 0.2;
     pub const DEFAULT_FAST_RETRIES: u32 = 10;
-    pub const DEFAULT_MAX_ANTICIPATION_WAIT_MS: u64 = 100;
     pub const DEFAULT_MAX_PARALLEL_CREATES: u32 = 2;
 }
 
@@ -43,7 +33,6 @@ impl Default for ScalingConfig {
         Self {
             warm_pool_ratio: Self::DEFAULT_WARM_POOL_RATIO,
             fast_retries: Self::DEFAULT_FAST_RETRIES,
-            max_anticipation_wait_ms: Self::DEFAULT_MAX_ANTICIPATION_WAIT_MS,
             max_parallel_creates: Self::DEFAULT_MAX_PARALLEL_CREATES,
         }
     }
