@@ -83,8 +83,8 @@ The mechanism has two layers:
    `return_object()`. Each iteration registers a fresh `Notified`, runs
    `try_recycle_one` before the wait (to catch a buffered return), selects
    between the notify and a deadline-bounded sleep, then runs
-   `try_recycle_one` after the wake. On a race loss — another waiter popped
-   the returned item first — the iteration re-registers and waits for the
+   `try_recycle_one` after the wake. On a race loss (another waiter popped
+   the returned item first) the iteration re-registers and waits for the
    next return. The loop exits on a successful recycle, a sleep-driven wake
    with no notify in flight, or when the deadline is fully consumed.
 
@@ -94,14 +94,13 @@ The mechanism has two layers:
    from the same budget via that shared timestamp, so the cumulative wait
    across phases cannot exceed `wait_timeout`.
 
-   When `wait_timeout` is `None` (long-lived session with no deadline),
-   the loop falls back to `scaling_max_anticipation_wait_ms` (default 100
-   ms) as its total budget. This is the only case where the knob takes
-   effect; with a wait timeout set, the operator cap is bypassed and the
-   loop uses the client's remaining wait in full. Operators who previously
-   tuned `scaling_max_anticipation_wait_ms` small to cap tail latency
-   should remove that override — the client's own `query_wait_timeout`
-   now bounds tail latency directly.
+   When `wait_timeout` is `None`, the loop falls back to
+   `scaling_max_anticipation_wait_ms` (default 100 ms) as its total
+   budget. That is the only path where the knob takes effect. In a stock
+   pg_doorman deployment `query_wait_timeout` is set in the general
+   config and propagated to `Timeouts.wait`, so the knob has no effect
+   in production. Treat it as a safety value for direct API consumers,
+   not as a tail-latency tuning lever.
 
    Why a loop instead of a single wait-then-recycle: `return_object` bumps
    both `idle_returned` and the semaphore permits. A Phase 1/2 semaphore

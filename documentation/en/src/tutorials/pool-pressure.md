@@ -161,13 +161,13 @@ timestamp captured at the top of `timeout_get`. Phase 1/2 semaphore
 wait consumes from the same budget, so the cumulative wait across
 phases cannot exceed `query_wait_timeout`.
 
-If a caller ever passes `Timeouts { wait: None, .. }`, the loop falls
-back to `scaling_max_anticipation_wait_ms` (default 100 ms). This is
-the only place where that knob takes effect. In a stock pg_doorman
-deployment `query_wait_timeout` is always set in the general config
-and always propagated to `Timeouts.wait`, so the knob is effectively
-inert in production. Treat it as a safety value for direct API
-consumers, not as a tail-latency tuning lever.
+If a caller passes `Timeouts { wait: None, .. }`, the loop falls back
+to `scaling_max_anticipation_wait_ms` (default 100 ms). That is the
+only path where the knob takes effect. In a stock pg_doorman
+deployment `query_wait_timeout` is set in the general config and
+propagated to `Timeouts.wait`, so the knob has no effect in
+production. Treat it as a safety value for direct API consumers, not
+as a tail-latency tuning lever.
 
 Each return wakes exactly one waiter. The loop is retry-driven
 against races: when `return_object()` fires, both this Phase 4
@@ -178,7 +178,7 @@ forced a fresh `connect()` and grew the pool for no reason. With the
 loop, the waiter registers a fresh notify and waits for the next
 return. On a busy production shard with ~55% Phase 4 race loss,
 `create_fallback` dropped from 24 000 per scrape window to zero and
-`creates_started` dropped 90× against the same workload — the pool
+`creates_started` dropped 90× against the same workload. The pool
 stopped paying for connects that returns would have covered.
 
 **Phase 5 — Bounded burst gate.** Try to take one of
@@ -520,7 +520,7 @@ are not supported.
 |---|---|---|---|
 | `scaling_warm_pool_ratio` | `20` (percent) | `general`, per-pool | Threshold below which connections are created without anticipation. Below `pool_size × ratio / 100`, every new connection request goes straight to `connect()`. |
 | `scaling_fast_retries` | `10` | `general`, per-pool | Number of `yield_now` spin retries before entering the event-driven anticipation loop. Each retry costs ~1–5 µs. |
-| `scaling_max_anticipation_wait_ms` | `100` (ms) | `general` | Fallback budget for the anticipation loop, used only when the caller passes `Timeouts.wait = None`. In a stock pg_doorman deployment `query_wait_timeout` is always set, so the loop always uses the client's remaining wait minus a 500 ms reserve and this knob is effectively inert. Do not tune it for tail-latency control — adjust `query_wait_timeout` and `pool_size` instead. |
+| `scaling_max_anticipation_wait_ms` | `100` (ms) | `general` | Fallback budget for the anticipation loop, used only when the caller passes `Timeouts.wait = None`. In a stock pg_doorman deployment `query_wait_timeout` is set, so the loop uses the client's remaining wait minus a 500 ms reserve and this knob has no effect. Do not tune it for tail-latency control. Adjust `query_wait_timeout` and `pool_size` instead. |
 | `scaling_max_parallel_creates` | `2` | `general` | Hard cap on concurrent backend `connect()` calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be `>= 1`. |
 | `max_db_connections` | unset (disabled) | per-pool | Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist. |
 | `min_connection_lifetime` | `5000` (ms) | per-pool | Minimum age of an idle connection before the coordinator may evict it for another pool. Lower bound on connection churn. |
@@ -777,7 +777,7 @@ means offered load exceeds what returns can serve within the
 deadline. **Action:** check `SHOW POOL_SCALING` for the affected
 pool, then either raise `pool_size`, raise `query_wait_timeout`, or
 investigate slow queries holding connections out of rotation. Do
-*not* raise `scaling_max_anticipation_wait_ms` — with
+*not* raise `scaling_max_anticipation_wait_ms`; with
 `query_wait_timeout` set, that knob is bypassed.
 
 ```promql
@@ -950,9 +950,9 @@ legitimate setup to keep all session-scoped state hot.
 looks fine, no errors in logs.
 
 **First thing to check.** `create_fallback` rate in `SHOW POOL_SCALING`.
-If it's above zero and growing, anticipation is exhausting the full
-deadline (`query_wait_timeout - 500 ms`) without finding a return —
-clients are paying the wait plus a fresh `connect()` on top of their
+If it is above zero and growing, anticipation is exhausting the full
+deadline (`query_wait_timeout - 500 ms`) without finding a return.
+Clients are paying the wait plus a fresh `connect()` on top of their
 query latency.
 
 **Fix.** Two cases.
@@ -1090,7 +1090,7 @@ PostgreSQL's `connect()` latency.
 for the first few seconds, `creates_started` rate climbing rapidly,
 `burst_gate_waits` rate climbing in lockstep, `anticipation_wakes_notify`
 climbing as the first refilled connections start cycling back and the
-loop recovers race losses. `create_fallback` should stay flat — the
+loop recovers race losses. `create_fallback` should stay flat: the
 deadline window is wide enough that the loop catches returns before
 giving up. Within `pool_size / 2` × `connect()` seconds, the pool
 returns to normal.
