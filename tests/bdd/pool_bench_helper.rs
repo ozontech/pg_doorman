@@ -676,6 +676,22 @@ async fn cascade_creates_at_most(world: &mut DoormanWorld, name: String, limit: 
     );
 }
 
+#[then(regex = r#"^cascade "([^"]+)" creates_started is at least (\d+)$"#)]
+async fn cascade_creates_at_least(world: &mut DoormanWorld, name: String, minimum: u64) {
+    let creates = world
+        .bench_results
+        .get(&format!("{}_creates_started", name))
+        .copied()
+        .expect("cascade step must run before assertion");
+    assert!(
+        (creates as u64) >= minimum,
+        "cascade '{}' creates_started {} below minimum {}",
+        name,
+        creates as u64,
+        minimum,
+    );
+}
+
 #[then(regex = r#"^cascade "([^"]+)" create_fallback is at most (\d+)$"#)]
 async fn cascade_create_fallback_at_most(world: &mut DoormanWorld, name: String, limit: u64) {
     let fb = world

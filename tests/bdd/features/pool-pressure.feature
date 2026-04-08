@@ -58,3 +58,32 @@ Feature: Pool under sustained client pressure
     And cascade "recycle_skip_c100_pool10" creates_started is at most 20
     And cascade "recycle_skip_c100_pool10" pool size is at most 10
     And cascade "recycle_skip_c100_pool10" pool size is at least 10
+
+  @cascade-recycle-resume
+  Scenario: lifetime expiration resumes once client pressure clears
+    # Companion to @cascade-recycle-skip: the skip gate must be a brake, not
+    # a latch. Once the semaphore has spare permits again, recycle() must
+    # enforce server_lifetime on the very next acquire of an aged connection.
+    # A regression that makes recycle-skip permanent would freeze the pool
+    # with stale backends forever.
+    #
+    # Phase 1 fills the pool under pressure (same shape as the recycle-skip
+    # scenario). The sleep lets every connection age past server_lifetime.
+    # Phase 2 runs a single client so the semaphore is NOT under pressure —
+    # under_pressure() returns false, recycle() checks the age and closes
+    # each aged connection the client touches, creates a fresh one, and the
+    # counter ticks up.
+    #
+    # The assertion is deliberately loose (at least one rotation in the
+    # quiet phase): LIFO queue mode means the single client reuses the
+    # same slot repeatedly, so only the actively-touched connection is
+    # rotated within the short window. The test still fails if the gate
+    # is broken and zero rotations happen.
+    Given internal pool with size 10, server_lifetime 200 ms, idle_timeout 0 ms
+    When I run cascade load "recycle_resume_burst" with 100 clients for 2 seconds holding 5 ms
+    And we sleep for 500 milliseconds
+    And I run cascade load "recycle_resume_quiet" with 1 clients for 2 seconds holding 5 ms
+    Then cascade "recycle_resume_burst" reports zero errors
+    And cascade "recycle_resume_burst" creates_started is at most 20
+    And cascade "recycle_resume_quiet" reports zero errors
+    And cascade "recycle_resume_quiet" creates_started is at least 1
