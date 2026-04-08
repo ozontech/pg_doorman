@@ -1251,11 +1251,11 @@ Pool size:  0 ----------- 8 ---------------------------- 40
             |  warm_thr   |                              |
             |             |                              |
             |  Skip       |  Phase 3: fast spin          |
-            |  phases 3   |  Phase 4: Notify wait        |
-            |  and 4.     |   (&lt;= scaling_max_           |
-            |  Go straight|      anticipation_wait_ms)   |
-            |  to phase 5 |  Then phase 5                |
-            |  (burst gate|                              |
+            |  phases 3   |  Phase 4: Notify loop        |
+            |  and 4.     |   (bounded by remaining      |
+            |  Go straight|    query_wait_timeout        |
+            |  to phase 5 |    minus 500 ms reserve)     |
+            |  (burst gate|  Then phase 5                |
             |  + connect) |                              |
 
                   Burst-capped state (orthogonal)
@@ -1296,17 +1296,34 @@ recycle 10 times in a tight <code>yield_now</code> loop (controlled by
 finished its query in the same microsecond range and is about to push
 the connection back. Total cost is around 10–50 microseconds. No sleep,
 no blocking I/O.</p>
-<p><strong>Phase 4 — Anticipation wait.</strong> If the spin did not catch a return,
-register a <code>Notify</code> future that wakes when <em>any</em> client returns a
-connection. Wait on that future, bounded by:</p>
-<ul>
-<li><code>scaling_max_anticipation_wait_ms</code> (default 100 ms), and</li>
-<li>half of the client's remaining <code>query_wait_timeout</code> budget.</li>
-</ul>
-<p>The lower of the two is used, with a 1 ms floor so the wait has a chance
-to register. If a return fires during the wait, exactly <strong>one</strong> task
-wakes, never all of them at once. If the wait elapses without a return,
-drop through to phase 5.</p>
+<p><strong>Phase 4 — Anticipation loop.</strong> If the spin did not catch a return,
+enter a loop waiting for returned connections. Each iteration
+registers a <code>Notify</code> future woken by any <code>return_object()</code>, runs
+<code>try_recycle_one</code> before the wait to catch a buffered return, awaits
+either the notify or a deadline-bounded sleep, then runs
+<code>try_recycle_one</code> again after the wake. If another waiter popped the
+returned item first, the iteration registers a fresh future and
+waits for the next return. The loop exits on three conditions: a
+successful recycle (return the connection), a sleep-driven wake with
+no notify in flight (give up, the sleep timer fired before any
+return arrived), or the full deadline elapsed (exit with no
+connection).</p>
+<p>The deadline is the client's <code>query_wait_timeout</code> minus a 500 ms
+reserve for the fall-through create path, measured against a
+timestamp captured at the top of <code>timeout_get</code>. Phase 1/2 semaphore
+wait consumes from the same budget, so the cumulative wait across
+phases cannot exceed <code>query_wait_timeout</code>.</p>
+<p>Each return wakes exactly one waiter. The loop is retry-driven
+against races: when <code>return_object()</code> fires, both this Phase 4
+waiter and any task parked in Phase 1/2 semaphore acquire wake
+simultaneously, and the Phase 1/2 task often pops the returned item
+first. Under a single-shot wait-then-recycle, every such race loss
+forced a fresh <code>connect()</code> and grew the pool for no reason. With the
+loop, the waiter registers a fresh notify and waits for the next
+return. On a busy production shard with ~55% Phase 4 race loss,
+<code>create_fallback</code> dropped from 24 000 per scrape window to zero and
+<code>creates_started</code> dropped 90× against the same workload. The pool
+stopped paying for connects that returns would have covered.</p>
 <p><strong>Phase 5 — Bounded burst gate.</strong> Try to take one of
 <code>scaling_max_parallel_creates</code> slots (default 2) for in-flight backend
 connects. If a slot is free, take it and call <code>connect()</code> against
@@ -1342,9 +1359,9 @@ this phase finishes, regardless of success or failure.</p>
           | MISS
           v
    +--------------+
-   |  Phase 4:    |  --- HIT     ----&gt; return idle connection
-   |  anticipate  |  --- notify  ----&gt; return idle connection
-   |  Notify wait |  --- timeout ----&gt; fall through
+   |  Phase 4:    |  --- recycle  ----&gt; return idle connection
+   |  anticipate  |  --- race loss --&gt; wait next return (loop)
+   |  Notify loop |  --- deadline ----&gt; fall through
    +------+-------+
           |
           v
@@ -1549,8 +1566,8 @@ slot, each about to issue <code>connect()</code>.</p>
    Phase 3: fast spin          --- HIT ---&gt; return
        | MISS                               |
        v                                    |
-   Phase 4: anticipation wait  --- HIT ---&gt; return
-       | timeout                            |
+   Phase 4: anticipation loop  --- HIT ---&gt; return
+       | deadline                           |
        v                                    |
        | &lt;----------------------------------+
        v
@@ -1592,14 +1609,13 @@ retries on the next retain cycle. Same logic as the burst gate
 backoff: don't have a background task fight client traffic for scarce
 permits.</p>
 <h2 id="tuning-parameters"><a class="header" href="#tuning-parameters">Tuning parameters</a></h2>
-<p>All four scaling parameters are global by default, with per-pool
-overrides for <code>scaling_warm_pool_ratio</code> and <code>scaling_fast_retries</code>.
-The two anticipation/burst knobs are global only; per-pool overrides
-are not supported.</p>
+<p>The scaling parameters are global by default, with per-pool overrides
+for <code>scaling_warm_pool_ratio</code> and <code>scaling_fast_retries</code>.
+<code>scaling_max_parallel_creates</code> is global only; per-pool overrides are
+not supported.</p>
 <div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Default</th><th>Where</th><th>What it does</th></tr></thead><tbody>
 <tr><td><code>scaling_warm_pool_ratio</code></td><td><code>20</code> (percent)</td><td><code>general</code>, per-pool</td><td>Threshold below which connections are created without anticipation. Below <code>pool_size × ratio / 100</code>, every new connection request goes straight to <code>connect()</code>.</td></tr>
-<tr><td><code>scaling_fast_retries</code></td><td><code>10</code></td><td><code>general</code>, per-pool</td><td>Number of <code>yield_now</code> spin retries in the anticipation phase before falling through to the event-driven wait.</td></tr>
-<tr><td><code>scaling_max_anticipation_wait_ms</code></td><td><code>100</code> (ms)</td><td><code>general</code></td><td>Upper bound on the event-driven wait for an idle return before falling through to backend connect. Capped at half the client's remaining <code>query_wait_timeout</code>.</td></tr>
+<tr><td><code>scaling_fast_retries</code></td><td><code>10</code></td><td><code>general</code>, per-pool</td><td>Number of <code>yield_now</code> spin retries before entering the event-driven anticipation loop. Each retry costs ~1–5 µs.</td></tr>
 <tr><td><code>scaling_max_parallel_creates</code></td><td><code>2</code></td><td><code>general</code></td><td>Hard cap on concurrent backend <code>connect()</code> calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be <code>&gt;= 1</code>.</td></tr>
 <tr><td><code>max_db_connections</code></td><td>unset (disabled)</td><td>per-pool</td><td>Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist.</td></tr>
 <tr><td><code>min_connection_lifetime</code></td><td><code>5000</code> (ms)</td><td>per-pool</td><td>Minimum age of an idle connection before the coordinator may evict it for another pool. Lower bound on connection churn.</td></tr>
@@ -1646,26 +1662,6 @@ behind 10 pools and want at most 8 concurrent backend connects across
 all of them at any moment, set <code>scaling_max_parallel_creates</code> to
 roughly <code>desired_aggregate / N pools</code>, rounding down. Below 1 is not
 allowed; if the math gives &lt;1, lower <code>N pools</code> by consolidating users.</p>
-<h3 id="when-to-raise-scaling_max_anticipation_wait_ms"><a class="header" href="#when-to-raise-scaling_max_anticipation_wait_ms">When to raise <code>scaling_max_anticipation_wait_ms</code></a></h3>
-<p>Raise when:</p>
-<ul>
-<li><code>anticipation_wakes_timeout</code> is much larger than
-<code>anticipation_wakes_notify</code> and the pool is <em>not</em> under-sized (most
-queries finish faster than 100 ms but the anticipation budget is too
-short to catch them);</li>
-<li>latency p99 spikes correlate with <code>create_fallback</code> rate.</li>
-</ul>
-<p>Lower when:</p>
-<ul>
-<li><code>query_wait_timeout</code> is short (&lt; 200 ms) and you cannot afford to
-burn 100 ms on anticipation;</li>
-<li><code>anticipation_wakes_notify</code> is high (the optimistic path works) but
-individual clients see the wait inflate their tail latency.</li>
-</ul>
-<p>Symptom of too low: <code>create_fallback</code> and <code>anticipation_wakes_timeout</code>
-both grow faster than connection creation could justify. Symptom of
-too high: client tail latency includes a steady contribution from
-anticipation wait when the pool is genuinely undersized.</p>
 <h3 id="when-to-raise-scaling_warm_pool_ratio"><a class="header" href="#when-to-raise-scaling_warm_pool_ratio">When to raise <code>scaling_warm_pool_ratio</code></a></h3>
 <p>Raise when:</p>
 <ul>
@@ -1736,9 +1732,9 @@ to the <code>pgdoorman</code> admin database and run:</p>
 <tr><td><code>inflight</code></td><td>gauge</td><td>Backend <code>connect()</code> calls currently in progress for this pool. Bounded by <code>scaling_max_parallel_creates</code>.</td></tr>
 <tr><td><code>creates</code></td><td>counter</td><td>Total backend connections this pool has started creating since startup. Pairs with <code>gate_waits</code> to compute the gate hit rate.</td></tr>
 <tr><td><code>gate_waits</code></td><td>counter</td><td>Total times a caller observed the burst gate at capacity and had to wait on a <code>Notify</code>. High values indicate <code>scaling_max_parallel_creates</code> is too low.</td></tr>
-<tr><td><code>antic_notify</code></td><td>counter</td><td>Anticipation waits that woke on a real idle return. The optimistic path paid off.</td></tr>
-<tr><td><code>antic_timeout</code></td><td>counter</td><td>Anticipation waits that fell through on the budget timeout instead of catching a return. Ratio against <code>antic_notify</code> shows whether <code>scaling_max_anticipation_wait_ms</code> is well-calibrated.</td></tr>
-<tr><td><code>create_fallback</code></td><td>counter</td><td>Times anticipation completed but <code>try_recycle</code> still found the pool empty, forcing a fresh <code>connect()</code>.</td></tr>
+<tr><td><code>antic_notify</code></td><td>counter</td><td>Loop iterations where a real <code>idle_returned</code> signal woke the waiter. Incremented once per iteration that saw a notify, including iterations that then lost the post-await recycle race and looped back.</td></tr>
+<tr><td><code>antic_timeout</code></td><td>counter</td><td>Loop exits where the sleep timer fired before any notify, or the waiter found the deadline already exhausted at loop entry. Increments exactly once per Phase 4 fall-through.</td></tr>
+<tr><td><code>create_fallback</code></td><td>counter</td><td>Phase 4 exited without a recyclable connection and the caller fell through to <code>server_pool.create()</code>. Steady-state should be near zero. A sustained non-zero rate means offered load exceeds what returns can serve within the client's <code>query_wait_timeout - 500 ms</code> budget.</td></tr>
 <tr><td><code>replenish_def</code></td><td>counter</td><td>Background replenish runs that hit the burst cap and deferred to the next retain cycle. Persistent non-zero values mean <code>min_pool_size</code> cannot be sustained under current load.</td></tr>
 </tbody></table>
 </div>
@@ -1801,13 +1797,15 @@ or restart are normal; sustained values mean
 <pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="burst_gate_waits"}[5m])
   &gt; 0.5 * rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m])
 </code></pre>
-<p><strong>Anticipation calibration drifting (warn).</strong> More anticipation waits
-fall through on timeout than are caught by a real return, suggesting
-<code>scaling_max_anticipation_wait_ms</code> is below the typical query latency.
-<strong>Action:</strong> raise <code>scaling_max_anticipation_wait_ms</code> to roughly your
-p90 query latency.</p>
-<pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="anticipation_wakes_timeout"}[5m])
-  &gt; 2 * rate(pg_doorman_pool_scaling_total{type="anticipation_wakes_notify"}[5m])
+<p><strong>Create fallback firing (warn).</strong> Anticipation is exhausting its
+full deadline (<code>query_wait_timeout - 500 ms</code>) without finding a
+return. The pool paid for a fresh <code>connect()</code> that a longer wait
+might have avoided. Steady-state should be zero; any sustained rate
+means offered load exceeds what returns can serve within the
+deadline. <strong>Action:</strong> check <code>SHOW POOL_SCALING</code> for the affected
+pool, then either raise <code>pool_size</code>, raise <code>query_wait_timeout</code>, or
+investigate slow queries holding connections out of rotation.</p>
+<pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="create_fallback"}[5m]) &gt; 0.1
 </code></pre>
 <p><strong>Replenish deferred persistently (warn).</strong> The background task cannot
 sustain <code>min_pool_size</code> because the burst gate is busy with client
@@ -1856,10 +1854,11 @@ psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
   | awk -F'|' 'NR&gt;1 &amp;&amp; $4&gt;0 { printf "%-20s %-20s %.3f  inflight=%d  defer=%d\n", $1, $2, $5/$4, $3, $9 }' \
   | sort -k3 -nr | head
 
-# Highest anticipation miss ratio (timeout vs notify).
+# Pools where anticipation exhausted its deadline (undersized or slow returns).
+# Sorts by the create_fallback share of total creates.
 psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
      -c 'SHOW POOL_SCALING' --no-align --field-separator='|' \
-  | awk -F'|' 'NR&gt;1 &amp;&amp; ($6+$7)&gt;0 { printf "%-20s %-20s %.3f  notify=%d  timeout=%d\n", $1, $2, $7/($6+$7), $6, $7 }' \
+  | awk -F'|' 'NR&gt;1 &amp;&amp; $4&gt;0 { printf "%-20s %-20s %.3f  fallback=%d  creates=%d\n", $1, $2, $8/$4, $8, $4 }' \
   | sort -k3 -nr | head
 
 # Coordinator: closest databases to exhaustion.
@@ -1941,20 +1940,22 @@ legitimate setup to keep all session-scoped state hot.</p>
 <h3 id="latency-p99-climbing-without-obvious-cause"><a class="header" href="#latency-p99-climbing-without-obvious-cause">Latency p99 climbing without obvious cause</a></h3>
 <p><strong>Symptom.</strong> Client p99 latency rises while p50 stays flat. Pool size
 looks fine, no errors in logs.</p>
-<p><strong>Cause.</strong> Anticipation is timing out and clients are paying 100 ms of
-wait time on top of their query latency. Check
-<code>antic_timeout / antic_notify</code> ratio in <code>SHOW POOL_SCALING</code>.</p>
+<p><strong>First thing to check.</strong> <code>create_fallback</code> rate in <code>SHOW POOL_SCALING</code>.
+If it is above zero and growing, anticipation is exhausting the full
+deadline (<code>query_wait_timeout - 500 ms</code>) without finding a return.
+Clients are paying the wait plus a fresh <code>connect()</code> on top of their
+query latency.</p>
 <p><strong>Fix.</strong> Two cases.</p>
 <ul>
-<li>If the ratio is high (timeout &gt; notify) and <code>create_fallback</code> is
-also growing: anticipation is failing to catch returns. Either
-raise <code>scaling_max_anticipation_wait_ms</code> so anticipation can wait
-longer for a return, or accept that the pool is undersized and
-raise <code>pool_size</code>.</li>
-<li>If the ratio is low (notify &gt; timeout) but p99 is still high: the
-pool is fine, the latency is somewhere else (PostgreSQL, network,
-client side). Check <code>SHOW STATS avg_wait_time</code> to confirm
-pg_doorman is not the bottleneck.</li>
+<li><strong><code>create_fallback</code> is growing.</strong> The pool cannot serve offered
+load from returns within the client's wait deadline. Raise
+<code>pool_size</code>, raise <code>query_wait_timeout</code> (if clients can tolerate
+it), or find the slow queries holding connections out of rotation.</li>
+<li><strong><code>create_fallback</code> is flat at zero and <code>antic_notify</code> is climbing
+in step with pool turnover.</strong> The anticipation loop is working:
+returns are being caught, no connection storm is firing. The
+latency is somewhere else. Check <code>SHOW STATS avg_wait_time</code>,
+PostgreSQL-side wait events, network, and client code.</li>
 </ul>
 <h3 id="max_db_connections-exhausted-clients-receive-errors"><a class="header" href="#max_db_connections-exhausted-clients-receive-errors"><code>max_db_connections</code> exhausted, clients receive errors</a></h3>
 <p><strong>Symptom.</strong> Clients see errors like <code>all server connections to database 'X' are in use (max=80, ...)</code>. <code>pg_doorman_pool_coordinator_total{type="exhaustions"}</code>
@@ -2054,8 +2055,10 @@ PostgreSQL's <code>connect()</code> latency.</p>
 <p><strong>What healthy recovery looks like.</strong> <code>inflight_creates = 2</code> continuously
 for the first few seconds, <code>creates_started</code> rate climbing rapidly,
 <code>burst_gate_waits</code> rate climbing in lockstep, <code>anticipation_wakes_notify</code>
-quickly overtaking <code>anticipation_wakes_timeout</code> as the new connections
-start cycling. Within <code>pool_size / 2</code> × <code>connect()</code> seconds, the pool
+climbing as the first refilled connections start cycling back and the
+loop recovers race losses. <code>create_fallback</code> should stay flat: the
+deadline window is wide enough that the loop catches returns before
+giving up. Within <code>pool_size / 2</code> × <code>connect()</code> seconds, the pool
 returns to normal.</p>
 <p><strong>Fix.</strong> Usually nothing. The bounded burst gate is doing its job by
 preventing a connection storm against a recovering primary. If
@@ -2440,22 +2443,17 @@ The threshold itself defaults to 1 MB.</p>
 <h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
 <p>Warm pool ratio as a percentage (0-100). When the pool size is below this threshold
 of <code>max_size</code>, new connections are created immediately. Above this threshold, the
-pool first spins via fast retries, then waits up to <code>scaling_max_anticipation_wait_ms</code>
-for an idle connection to be returned by another task before creating a new one.</p>
+pool first spins via fast retries, then enters an event-driven anticipation loop
+that waits for a returned idle connection. The loop is bounded by the client's
+remaining <code>query_wait_timeout</code> minus a 500 ms reserve for the create path, so it
+cannot push the caller past its own wait deadline.</p>
 <p>Default: <code>20</code>.</p>
 <h3 id="scaling_fast_retries"><a class="header" href="#scaling_fast_retries">scaling_fast_retries</a></h3>
 <p>Number of fast retries using <code>yield_now()</code> for low-latency waiting when checking out
 connections above the warm pool threshold. Each retry takes approximately 1-5μs.
-After exhausting fast retries, the pool waits on a Notify until either an idle
-connection is returned or <code>scaling_max_anticipation_wait_ms</code> elapses.</p>
+After exhausting fast retries, the pool enters an event-driven anticipation loop
+bounded by the client's remaining <code>query_wait_timeout</code>.</p>
 <p>Default: <code>10</code>.</p>
-<h3 id="scaling_max_anticipation_wait_ms"><a class="header" href="#scaling_max_anticipation_wait_ms">scaling_max_anticipation_wait_ms</a></h3>
-<p>Upper bound on event-driven anticipation wait when the pool is above the warm
-threshold. Replaces the legacy blind sleep with a Notify-based wait that wakes
-immediately when another task returns a connection to the idle pool. The actual
-wait is <code>min(this value, remaining client wait_timeout)</code>. Set lower for snappier
-create decisions, higher to amortize more bursts onto existing connections.</p>
-<p>Default: <code>100</code>.</p>
 <h3 id="scaling_max_parallel_creates"><a class="header" href="#scaling_max_parallel_creates">scaling_max_parallel_creates</a></h3>
 <p>Bounded burst limiter for connection creation. Without this cap, N parallel
 <code>timeout_get</code> callers that miss the idle pool each independently issue a backend
@@ -2992,7 +2990,7 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <p><strong>Runtime log level control via admin <code>SET</code> command.</strong> Change log level without restarting the pooler: <code>SET log_level = 'debug'</code> for global, <code>SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'</code> for per-module (RUST_LOG syntax). View current level with <code>SHOW LOG_LEVEL</code>. Changes are ephemeral (lost on restart). Zero overhead on the hot path at production log levels — filtering uses lock-free <code>ArcSwap</code> instead of <code>RwLock</code>.</p>
 </li>
 <li>
-<p><strong>Anticipation + bounded burst for connection creation.</strong> Replaces the per-task blind cooldown sleep with two coordinated mechanisms that suppress thundering-herd backend connects under load. (1) Returns to the idle pool now signal a <code>tokio::sync::Notify</code>, so callers waiting in the cooldown zone wake event-driven and exactly one waiter is woken per return — no more N-task polling races after a <code>sleep(10ms)</code>. (2) Concurrent server creates per pool are capped by an atomic burst gate; overflow callers wait for either an idle return or a peer create completion before retrying recycle. The legacy <code>scaling_cooldown_sleep</code> knob is replaced by <code>scaling_max_anticipation_wait_ms</code> (default <code>100ms</code>, the upper bound on the event-driven idle wait) and <code>scaling_max_parallel_creates</code> (default <code>2</code>, the per-pool create cap). Both are global; per-pool overrides for these are intentionally not supported. The retain-loop replenish path also respects the burst cap so background replenishment does not compete with client-driven creates during a load spike. Hot-path overhead is ~3 ns on the burst gate atomic and ~104 ns on a buffered notify wake.</p>
+<p><strong>Anticipation + bounded burst for connection creation.</strong> Replaces the per-task blind cooldown sleep with two coordinated mechanisms that suppress thundering-herd backend connects under load. (1) Returns to the idle pool now signal a <code>tokio::sync::Notify</code>. Callers that miss the idle pool above the warm threshold enter an event-driven loop: register the notify, try recycle, wait on <code>select{notify, sleep}</code>, try recycle again, and on a race loss (a peer waiter popped the return first) loop back and wait for the next return. The loop exits on a successful recycle, a sleep-driven wake with no notify in flight, or when its deadline is reached. The deadline is the client's remaining <code>query_wait_timeout</code> minus a 500 ms reserve for the create path, measured against a single <code>start</code> timestamp captured at the top of <code>timeout_get</code> so Phase 1/2 semaphore wait and the anticipation loop share one budget. (2) Concurrent server creates per pool are capped by an atomic burst gate; overflow callers wait for either an idle return or a peer create completion before retrying recycle. The legacy <code>scaling_cooldown_sleep</code> knob is replaced by <code>scaling_max_parallel_creates</code> (default <code>2</code>, the per-pool create cap), a global setting — per-pool overrides are intentionally not supported. The retain-loop replenish path also respects the burst cap so background replenishment does not compete with client-driven creates during a load spike. On a busy shard with ~55% Phase B race loss rate, the loop fix drove <code>create_fallback</code> to zero and cut <code>creates_started</code> by 90× against the same workload. Hot-path overhead is ~3 ns on the burst gate atomic and ~104 ns on a buffered notify wake.</p>
 </li>
 </ul>
 <p><strong>Improvements:</strong></p>

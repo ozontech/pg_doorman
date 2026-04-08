@@ -485,22 +485,17 @@ The threshold itself defaults to 1 MB.</p>
 <h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
 <p>Warm pool ratio as a percentage (0-100). When the pool size is below this threshold
 of <code>max_size</code>, new connections are created immediately. Above this threshold, the
-pool first spins via fast retries, then waits up to <code>scaling_max_anticipation_wait_ms</code>
-for an idle connection to be returned by another task before creating a new one.</p>
+pool first spins via fast retries, then enters an event-driven anticipation loop
+that waits for a returned idle connection. The loop is bounded by the client's
+remaining <code>query_wait_timeout</code> minus a 500 ms reserve for the create path, so it
+cannot push the caller past its own wait deadline.</p>
 <p>Default: <code>20</code>.</p>
 <h3 id="scaling_fast_retries"><a class="header" href="#scaling_fast_retries">scaling_fast_retries</a></h3>
 <p>Number of fast retries using <code>yield_now()</code> for low-latency waiting when checking out
 connections above the warm pool threshold. Each retry takes approximately 1-5μs.
-After exhausting fast retries, the pool waits on a Notify until either an idle
-connection is returned or <code>scaling_max_anticipation_wait_ms</code> elapses.</p>
+After exhausting fast retries, the pool enters an event-driven anticipation loop
+bounded by the client's remaining <code>query_wait_timeout</code>.</p>
 <p>Default: <code>10</code>.</p>
-<h3 id="scaling_max_anticipation_wait_ms"><a class="header" href="#scaling_max_anticipation_wait_ms">scaling_max_anticipation_wait_ms</a></h3>
-<p>Upper bound on event-driven anticipation wait when the pool is above the warm
-threshold. Replaces the legacy blind sleep with a Notify-based wait that wakes
-immediately when another task returns a connection to the idle pool. The actual
-wait is <code>min(this value, remaining client wait_timeout)</code>. Set lower for snappier
-create decisions, higher to amortize more bursts onto existing connections.</p>
-<p>Default: <code>100</code>.</p>
 <h3 id="scaling_max_parallel_creates"><a class="header" href="#scaling_max_parallel_creates">scaling_max_parallel_creates</a></h3>
 <p>Bounded burst limiter for connection creation. Without this cap, N parallel
 <code>timeout_get</code> callers that miss the idle pool each independently issue a backend
