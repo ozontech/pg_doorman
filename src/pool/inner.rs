@@ -197,6 +197,16 @@ enum RecycleOutcome {
 }
 
 impl PoolInner {
+    /// Returns true when every permit is in use — clients are either holding
+    /// connections or queued behind the semaphore. Used to suppress lifetime
+    /// housekeeping (`recycle` lifetime expiry, retain-loop trimming) so we
+    /// do not close working connections at the moment they are most needed.
+    /// One atomic load on the semaphore — safe to call from the hot path.
+    #[inline(always)]
+    fn under_pressure(&self) -> bool {
+        self.semaphore.available_permits() == 0
+    }
+
     async fn try_recycle_one(&self, timeouts: &Timeouts) -> RecycleOutcome {
         let obj_inner = {
             let mut slots = self.slots.lock();
@@ -207,11 +217,14 @@ impl PoolInner {
             return RecycleOutcome::Empty;
         };
 
+        let skip_lifetime = self.under_pressure();
+
         let recycle_result = match timeouts.recycle {
             Some(duration) => {
                 match tokio::time::timeout(
                     duration,
-                    self.server_pool.recycle(&mut inner.obj, &inner.metrics),
+                    self.server_pool
+                        .recycle(&mut inner.obj, &inner.metrics, skip_lifetime),
                 )
                 .await
                 {
@@ -221,7 +234,7 @@ impl PoolInner {
             }
             None => {
                 self.server_pool
-                    .recycle(&mut inner.obj, &inner.metrics)
+                    .recycle(&mut inner.obj, &inner.metrics, skip_lifetime)
                     .await
             }
         };
@@ -1652,5 +1665,62 @@ mod tests {
         // spawned task does not leak past the test.
         phase_c_waiter.abort();
         let _ = phase_c_waiter.await;
+    }
+
+    // ------------------------------------------------------------------
+    // under_pressure — predicate that gates lifetime housekeeping
+    // ------------------------------------------------------------------
+
+    /// `under_pressure` is the gate that decides whether `recycle()` (and
+    /// later `retain`) closes a working connection by `server_lifetime`.
+    /// Wrong answer here means we either close connections mid-storm
+    /// (false negative) or never refresh aged ones (false positive). The
+    /// contract is "true iff every semaphore permit is in flight", so the
+    /// test acquires all permits, asserts true, releases them, asserts
+    /// false.
+    #[tokio::test]
+    async fn under_pressure_tracks_semaphore_exhaustion() {
+        let coord = pool_coordinator::PoolCoordinator::new(
+            "test_db".to_string(),
+            pool_coordinator::CoordinatorConfig {
+                max_db_connections: 0,
+                min_connection_lifetime_ms: 0,
+                reserve_pool_size: 0,
+                reserve_pool_timeout_ms: 0,
+            },
+        );
+        let pool = test_pool_with_coordinator(coord);
+
+        // Builder default for tests is small but non-zero. Read the
+        // current permit count so the test does not depend on it.
+        let total_permits = pool.inner.semaphore.available_permits();
+        assert!(
+            total_permits > 0,
+            "test pool must start with at least one permit"
+        );
+
+        // Empty pool with all permits free → no pressure.
+        assert!(
+            !pool.inner.under_pressure(),
+            "fresh pool must report no pressure"
+        );
+
+        // Drain every permit. Holding them models clients holding
+        // connections + clients queued behind the semaphore.
+        let mut held = Vec::with_capacity(total_permits);
+        for _ in 0..total_permits {
+            held.push(pool.inner.semaphore.acquire().await.unwrap());
+        }
+        assert!(
+            pool.inner.under_pressure(),
+            "drained semaphore must report under_pressure",
+        );
+
+        // Release one permit → pressure clears.
+        held.pop();
+        assert!(
+            !pool.inner.under_pressure(),
+            "releasing one permit must clear pressure",
+        );
     }
 }

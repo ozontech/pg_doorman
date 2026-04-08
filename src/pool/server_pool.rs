@@ -262,7 +262,20 @@ impl ServerPool {
 
     /// Checks if the connection can be recycled.
     /// Performs lifetime check and alive check for idle connections.
-    pub async fn recycle(&self, conn: &mut Server, metrics: &Metrics) -> RecycleResult {
+    ///
+    /// `skip_lifetime` lets the caller suppress the `server_lifetime`
+    /// expiration check when the pool is under client pressure (no spare
+    /// permits, queue forming). Lifetime is housekeeping, not safety: closing
+    /// an aged-but-working connection mid-storm forces a `connect()` round-trip
+    /// onto the wait path of every queued client. Bad-connection, RECONNECT
+    /// epoch and idle-alive checks always run regardless of the flag — those
+    /// are correctness, not housekeeping.
+    pub async fn recycle(
+        &self,
+        conn: &mut Server,
+        metrics: &Metrics,
+        skip_lifetime: bool,
+    ) -> RecycleResult {
         if conn.is_bad() {
             conn.close_reason = Some("bad connection".to_string());
             return Err(RecycleError::StaticMessage("Bad connection"));
@@ -277,17 +290,15 @@ impl ServerPool {
         }
 
         // Check server_lifetime - applies to all connections, not just idle
-        // Uses per-connection lifetime with jitter to prevent mass closures
-        if metrics.lifetime_ms > 0 {
-            let age_ms = metrics.age().as_millis() as u64;
-            if age_ms > metrics.lifetime_ms {
-                conn.close_reason = Some(format!(
-                    "lifetime exceeded (age={}, limit={})",
-                    format_duration_ms(age_ms),
-                    format_duration_ms(metrics.lifetime_ms),
-                ));
-                return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
-            }
+        // Uses per-connection lifetime with jitter to prevent mass closures.
+        // Skipped when the pool is under pressure: see doc-comment above.
+        if let Some(age_ms) = lifetime_exceeded(metrics, skip_lifetime) {
+            conn.close_reason = Some(format!(
+                "lifetime exceeded (age={}, limit={})",
+                format_duration_ms(age_ms),
+                format_duration_ms(metrics.lifetime_ms),
+            ));
+            return Err(RecycleError::StaticMessage("Connection exceeded lifetime"));
         }
 
         // Check if connection was idle too long and needs alive check
@@ -312,5 +323,72 @@ impl ServerPool {
         }
 
         Ok(())
+    }
+}
+
+/// Returns `Some(age_ms)` when a connection should be closed because it
+/// crossed its per-connection `lifetime_ms` budget. Returns `None` when the
+/// caller asked to skip the check (`skip_lifetime`), the lifetime budget is
+/// disabled (`lifetime_ms == 0`), or the connection is still within budget.
+///
+/// Pulled out of `recycle()` so the lifetime decision can be exercised
+/// without constructing a real `Server` connection in tests.
+fn lifetime_exceeded(metrics: &Metrics, skip_lifetime: bool) -> Option<u64> {
+    if skip_lifetime || metrics.lifetime_ms == 0 {
+        return None;
+    }
+    let age_ms = metrics.age().as_millis() as u64;
+    if age_ms > metrics.lifetime_ms {
+        Some(age_ms)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    fn metrics_with_lifetime(lifetime_ms: u64) -> Metrics {
+        Metrics::new(lifetime_ms, 0, 0)
+    }
+
+    #[test]
+    fn lifetime_exceeded_skipped_when_under_pressure() {
+        // A connection well past its budget is kept alive when the caller
+        // signals pressure. This is the whole point of the new flag: a
+        // working connection must not be closed mid-storm.
+        let metrics = metrics_with_lifetime(1);
+        thread::sleep(Duration::from_millis(5));
+        assert!(lifetime_exceeded(&metrics, true).is_none());
+    }
+
+    #[test]
+    fn lifetime_exceeded_returns_age_when_age_above_limit() {
+        let metrics = metrics_with_lifetime(1);
+        // 1ms budget with ±20% jitter resolves to 1ms exactly (jitter floor).
+        // Sleep well past it, then assert we report the breach.
+        thread::sleep(Duration::from_millis(5));
+        let age = lifetime_exceeded(&metrics, false).expect("must exceed lifetime");
+        assert!(age >= 1, "reported age {} must be > limit 1", age);
+    }
+
+    #[test]
+    fn lifetime_exceeded_none_when_lifetime_disabled() {
+        // lifetime_ms == 0 means "no budget, never expire", and that
+        // contract must hold regardless of the skip flag.
+        let metrics = metrics_with_lifetime(0);
+        thread::sleep(Duration::from_millis(2));
+        assert!(lifetime_exceeded(&metrics, false).is_none());
+        assert!(lifetime_exceeded(&metrics, true).is_none());
+    }
+
+    #[test]
+    fn lifetime_exceeded_none_when_age_within_limit() {
+        // Generous budget — connection is fresh, no breach reported.
+        let metrics = metrics_with_lifetime(60_000);
+        assert!(lifetime_exceeded(&metrics, false).is_none());
     }
 }
