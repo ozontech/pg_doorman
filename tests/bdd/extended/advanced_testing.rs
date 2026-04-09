@@ -1,5 +1,6 @@
 use crate::world::DoormanWorld;
 use cucumber::{then, when};
+use std::path::PathBuf;
 
 #[when(regex = r#"^we read (\d+) bytes from session "([^"]+)"$"#)]
 pub async fn read_bytes_from_session(world: &mut DoormanWorld, bytes: usize, session_name: String) {
@@ -406,4 +407,91 @@ pub async fn verify_error_response_on_flush_timeout(
         "Session '{}': correctly received ErrorResponse on flush timeout",
         session_name
     );
+}
+
+// =============================================================================
+// PostgreSQL server log inspection steps
+// =============================================================================
+
+/// Locate `pg.log` inside the temporary PostgreSQL data directory. The path is
+/// the one `start_postgres_internal` hands to `pg_ctl -l`, so it always exists
+/// for scenarios that start PostgreSQL via one of the `PostgreSQL started ...`
+/// Given steps.
+fn pg_log_path(world: &DoormanWorld) -> PathBuf {
+    world
+        .pg_tmp_dir
+        .as_ref()
+        .expect("PostgreSQL not started (no pg_tmp_dir)")
+        .path()
+        .join("pg.log")
+}
+
+/// Count non-overlapping occurrences of `needle` in the PostgreSQL server log.
+/// Falls back to `0` if the log file has not been created yet — this is safe
+/// because the steps using this helper assert after traffic has flowed.
+fn pg_log_count(world: &DoormanWorld, needle: &str) -> usize {
+    let path = pg_log_path(world);
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    content.matches(needle).count()
+}
+
+/// Truncate `pg.log` so subsequent assertions only see log lines emitted from
+/// this point onward. PostgreSQL keeps its `stderr` file descriptor open past
+/// the truncation, which is exactly the behaviour we want (new lines are
+/// appended from offset zero again).
+#[when(regex = r#"^we truncate PostgreSQL log$"#)]
+pub async fn truncate_postgres_log(world: &mut DoormanWorld) {
+    let path = pg_log_path(world);
+    // Ignore NotFound: if the log does not exist yet there is nothing to truncate.
+    match std::fs::File::create(&path) {
+        Ok(_) => eprintln!("Truncated PostgreSQL log at {:?}", path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("PostgreSQL log at {:?} does not exist yet, skipping", path)
+        }
+        Err(err) => panic!("Failed to truncate PostgreSQL log at {:?}: {}", path, err),
+    }
+}
+
+/// Assert an exact occurrence count of a literal substring in `pg.log`.
+///
+/// Requires the scenario to start PostgreSQL with `log_statement = 'all'`
+/// (via `PostgreSQL started with options "-c log_statement=all"`), otherwise
+/// DDL/utility statements like `RESET ALL` are never written to the log and
+/// every count is zero.
+#[then(regex = r#"^PostgreSQL log should contain exactly (\d+) occurrences of "([^"]+)"$"#)]
+pub async fn pg_log_should_contain_exactly(
+    world: &mut DoormanWorld,
+    expected: String,
+    needle: String,
+) {
+    let expected: usize = expected.parse().expect("Invalid count");
+    let actual = pg_log_count(world, &needle);
+    if actual != expected {
+        let path = pg_log_path(world);
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        panic!(
+            "PostgreSQL log expected {expected} occurrences of {needle:?}, \
+             got {actual}. Full log:\n{content}"
+        );
+    }
+}
+
+/// Assert that a literal substring is absent from `pg.log`.
+#[then(regex = r#"^PostgreSQL log should not contain "([^"]+)"$"#)]
+pub async fn pg_log_should_not_contain(world: &mut DoormanWorld, needle: String) {
+    pg_log_should_contain_exactly(world, "0".to_string(), needle).await;
+}
+
+/// Assert that a literal substring is present at least once.
+#[then(regex = r#"^PostgreSQL log should contain "([^"]+)"$"#)]
+pub async fn pg_log_should_contain(world: &mut DoormanWorld, needle: String) {
+    let actual = pg_log_count(world, &needle);
+    if actual == 0 {
+        let path = pg_log_path(world);
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        panic!(
+            "PostgreSQL log expected to contain {needle:?}, but it was missing. \
+             Full log:\n{content}"
+        );
+    }
 }
