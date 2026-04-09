@@ -126,10 +126,10 @@ pub(crate) struct ScalingStats {
     /// notify, including iterations that then lost the post-await recycle
     /// race and looped back.
     pub(crate) anticipation_wakes_notify: AtomicU64,
-    /// Number of Phase 4 fall-throughs where the per-iteration sleep fired
-    /// before any notify arrived, or where the deadline was already
-    /// exhausted at loop entry. Increments exactly once per Phase 4 exit
-    /// without a recyclable connection.
+    /// Number of Phase 4 fall-throughs that gave up on anticipation:
+    /// the deadline was exhausted, the per-caller race-loss cap was
+    /// hit, or the wall-clock hard cap fired. Increments exactly once
+    /// per Phase 4 exit without a recyclable connection.
     pub(crate) anticipation_wakes_timeout: AtomicU64,
     /// Number of times Phase 4 fell through without a recyclable connection
     /// and the caller had to call `server_pool.create()`. Steady-state
@@ -516,12 +516,45 @@ impl Pool {
                 };
 
                 if !total_budget.is_zero() {
-                    let deadline = tokio::time::Instant::now() + total_budget;
+                    // Hard cap on Phase 4 wall clock. Independent of race
+                    // losses and notify wake ordering, a caller must not
+                    // spend more than PHASE_4_HARD_CAP in anticipation
+                    // before falling through to the create path. This is
+                    // the outer bound that protects tail latency under
+                    // pathological wake distributions where a caller
+                    // wakes on every notify but loses every post-wake
+                    // race. Phase 5's burst gate still caps how many
+                    // creates actually reach the backend.
+                    const PHASE_4_HARD_CAP: Duration = Duration::from_millis(500);
+                    let effective_budget = total_budget.min(PHASE_4_HARD_CAP);
+                    let deadline = tokio::time::Instant::now() + effective_budget;
+                    // Per-iteration sleep cap — bounds silent-wait time when
+                    // nobody notifies. Without it a caller would sleep the
+                    // full remaining budget on every race loss.
+                    const SLEEP_CAP: Duration = Duration::from_millis(100);
+                    // Race-loss cap — bounds how many post-wake recycle
+                    // races this caller is allowed to lose in a row before
+                    // giving up on anticipation. Tokio's Notify does not
+                    // guarantee FIFO wake ordering, so under sustained load
+                    // a single caller can wake hundreds of times on
+                    // `idle_returned` and lose the post-wake pop race to a
+                    // fresh Phase 1/2 waiter every time, never actually
+                    // acquiring a connection.
+                    const MAX_RACE_LOSSES: u32 = 20;
+                    let mut race_losses: u32 = 0;
 
                     loop {
                         let remaining =
                             deadline.saturating_duration_since(tokio::time::Instant::now());
                         if remaining.is_zero() {
+                            self.inner
+                                .scaling_stats
+                                .anticipation_wakes_timeout
+                                .fetch_add(1, Ordering::Relaxed);
+                            break;
+                        }
+
+                        if race_losses >= MAX_RACE_LOSSES {
                             self.inner
                                 .scaling_stats
                                 .anticipation_wakes_timeout
@@ -545,21 +578,22 @@ impl Pool {
                             });
                         }
 
+                        // Sleep up to SLEEP_CAP or until a peer notifies us,
+                        // whichever comes first. A capped sleep that finishes
+                        // mid-budget means "nothing happened in the last
+                        // 100ms, loop back and try recycle again with fresh
+                        // state". Only `remaining.is_zero()` at the top of
+                        // the loop causes a real timeout exit.
+                        let sleep_duration = remaining.min(SLEEP_CAP);
                         let woken_by_notify = tokio::select! {
                             _ = notified => true,
-                            _ = tokio::time::sleep(remaining) => false,
+                            _ = tokio::time::sleep(sleep_duration) => false,
                         };
                         if woken_by_notify {
                             self.inner
                                 .scaling_stats
                                 .anticipation_wakes_notify
                                 .fetch_add(1, Ordering::Relaxed);
-                        } else {
-                            self.inner
-                                .scaling_stats
-                                .anticipation_wakes_timeout
-                                .fetch_add(1, Ordering::Relaxed);
-                            break;
                         }
 
                         if let RecycleOutcome::Reused(inner) =
@@ -571,11 +605,12 @@ impl Pool {
                                 pool: Arc::downgrade(&self.inner),
                             });
                         }
-                        // Race loss: another task popped the vec between our
-                        // wake-up and the post-await recycle. Loop back and
-                        // wait for the next return instead of falling through
-                        // to `server_pool.create()` — the create would grow
-                        // the pool for no reason when returns are flowing.
+
+                        // Race loss or silent wake: loop back after bumping
+                        // the counter. The race-loss cap at the top of the
+                        // loop guarantees forward progress even when Notify
+                        // wake ordering consistently favours peers.
+                        race_losses += 1;
                     }
                 }
             }

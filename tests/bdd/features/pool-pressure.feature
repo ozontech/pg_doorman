@@ -86,5 +86,6 @@ Feature: Pool under sustained client pressure
     Then cascade "recycle_resume_burst" reports zero errors
     And cascade "recycle_resume_burst" creates_started is at most 20
     And cascade "recycle_resume_burst" iteration spread is bounded by 100x median
+    And cascade "recycle_resume_burst" max latency is bounded by 20x p50
     And cascade "recycle_resume_quiet" reports zero errors
     And cascade "recycle_resume_quiet" creates_started is at least 1

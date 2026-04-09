@@ -811,9 +811,7 @@ async fn cascade_max_bounded_by_p50(world: &mut DoormanWorld, name: String, mult
 /// min_iters=1 against median_iters in the hundreds. Complements
 /// `max latency is bounded by Nx p50`: that catches single stuck
 /// acquires, this one catches clients stuck across their entire run.
-#[then(
-    regex = r#"^cascade "([^"]+)" iteration spread is bounded by (\d+)x median$"#
-)]
+#[then(regex = r#"^cascade "([^"]+)" iteration spread is bounded by (\d+)x median$"#)]
 async fn cascade_iter_spread_bounded(world: &mut DoormanWorld, name: String, multiple: u64) {
     let min = world
         .bench_results
