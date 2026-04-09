@@ -28,6 +28,8 @@
 
 - **Prepared statement cache eviction log.** Shows truncated query text and current cache size (`size=99/100`) to help diagnose cache sizing issues.
 
+- **`min_connection_lifetime` default raised from 5 s to 30 s.** With the old 5-second floor, a loaded shard with two or more user pools sharing the same database would thrash idle slots between peers every few seconds: user A's connection would age past the floor, peer B would evict it the next time it needed a permit, A would replace it and start ageing again. Canary observations were in the 120-270 evictions/minute range on busy shards despite no configuration change. The 30-second floor lets connections stay "sticky" to their current user long enough that routine bursts are absorbed by returns rather than cross-pool evictions, reducing eviction churn to the natural rate of sustained imbalance between user pools. Operators with very short, very uneven workloads and real reason to want faster cross-pool rebalancing can still set a smaller value explicitly.
+
 **Security:**
 
 - **Removed password hash from logs.** The "unsupported password type" warning no longer includes the password hash value.

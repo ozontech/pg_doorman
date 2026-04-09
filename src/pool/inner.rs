@@ -126,10 +126,10 @@ pub(crate) struct ScalingStats {
     /// notify, including iterations that then lost the post-await recycle
     /// race and looped back.
     pub(crate) anticipation_wakes_notify: AtomicU64,
-    /// Number of Phase 4 fall-throughs where the per-iteration sleep fired
-    /// before any notify arrived, or where the deadline was already
-    /// exhausted at loop entry. Increments exactly once per Phase 4 exit
-    /// without a recyclable connection.
+    /// Number of Phase 4 fall-throughs that gave up on anticipation:
+    /// the deadline was exhausted, the per-caller race-loss cap was
+    /// hit, or the wall-clock hard cap fired. Increments exactly once
+    /// per Phase 4 exit without a recyclable connection.
     pub(crate) anticipation_wakes_timeout: AtomicU64,
     /// Number of times Phase 4 fell through without a recyclable connection
     /// and the caller had to call `server_pool.create()`. Steady-state
@@ -516,12 +516,45 @@ impl Pool {
                 };
 
                 if !total_budget.is_zero() {
-                    let deadline = tokio::time::Instant::now() + total_budget;
+                    // Hard cap on Phase 4 wall clock. Independent of race
+                    // losses and notify wake ordering, a caller must not
+                    // spend more than PHASE_4_HARD_CAP in anticipation
+                    // before falling through to the create path. This is
+                    // the outer bound that protects tail latency under
+                    // pathological wake distributions where a caller
+                    // wakes on every notify but loses every post-wake
+                    // race. Phase 5's burst gate still caps how many
+                    // creates actually reach the backend.
+                    const PHASE_4_HARD_CAP: Duration = Duration::from_millis(500);
+                    let effective_budget = total_budget.min(PHASE_4_HARD_CAP);
+                    let deadline = tokio::time::Instant::now() + effective_budget;
+                    // Per-iteration sleep cap — bounds silent-wait time when
+                    // nobody notifies. Without it a caller would sleep the
+                    // full remaining budget on every race loss.
+                    const SLEEP_CAP: Duration = Duration::from_millis(100);
+                    // Race-loss cap — bounds how many post-wake recycle
+                    // races this caller is allowed to lose in a row before
+                    // giving up on anticipation. Tokio's Notify does not
+                    // guarantee FIFO wake ordering, so under sustained load
+                    // a single caller can wake hundreds of times on
+                    // `idle_returned` and lose the post-wake pop race to a
+                    // fresh Phase 1/2 waiter every time, never actually
+                    // acquiring a connection.
+                    const MAX_RACE_LOSSES: u32 = 20;
+                    let mut race_losses: u32 = 0;
 
                     loop {
                         let remaining =
                             deadline.saturating_duration_since(tokio::time::Instant::now());
                         if remaining.is_zero() {
+                            self.inner
+                                .scaling_stats
+                                .anticipation_wakes_timeout
+                                .fetch_add(1, Ordering::Relaxed);
+                            break;
+                        }
+
+                        if race_losses >= MAX_RACE_LOSSES {
                             self.inner
                                 .scaling_stats
                                 .anticipation_wakes_timeout
@@ -545,21 +578,22 @@ impl Pool {
                             });
                         }
 
+                        // Sleep up to SLEEP_CAP or until a peer notifies us,
+                        // whichever comes first. A capped sleep that finishes
+                        // mid-budget means "nothing happened in the last
+                        // 100ms, loop back and try recycle again with fresh
+                        // state". Only `remaining.is_zero()` at the top of
+                        // the loop causes a real timeout exit.
+                        let sleep_duration = remaining.min(SLEEP_CAP);
                         let woken_by_notify = tokio::select! {
                             _ = notified => true,
-                            _ = tokio::time::sleep(remaining) => false,
+                            _ = tokio::time::sleep(sleep_duration) => false,
                         };
                         if woken_by_notify {
                             self.inner
                                 .scaling_stats
                                 .anticipation_wakes_notify
                                 .fetch_add(1, Ordering::Relaxed);
-                        } else {
-                            self.inner
-                                .scaling_stats
-                                .anticipation_wakes_timeout
-                                .fetch_add(1, Ordering::Relaxed);
-                            break;
                         }
 
                         if let RecycleOutcome::Reused(inner) =
@@ -571,11 +605,12 @@ impl Pool {
                                 pool: Arc::downgrade(&self.inner),
                             });
                         }
-                        // Race loss: another task popped the vec between our
-                        // wake-up and the post-await recycle. Loop back and
-                        // wait for the next return instead of falling through
-                        // to `server_pool.create()` — the create would grow
-                        // the pool for no reason when returns are flowing.
+
+                        // Race loss or silent wake: loop back after bumping
+                        // the counter. The race-loss cap at the top of the
+                        // loop guarantees forward progress even when Notify
+                        // wake ordering consistently favours peers.
+                        race_losses += 1;
                     }
                 }
             }
@@ -942,6 +977,53 @@ impl Pool {
             |_, metrics| metrics.age().as_millis() >= u128::from(min_lifetime_ms),
             1,
         ) > 0
+    }
+
+    /// Convert idle reserve connections into main connections when the
+    /// coordinator's main semaphore has headroom. Run by the retain task —
+    /// never on the hot checkout path — so contention on `slots.lock()`
+    /// stays predictable.
+    ///
+    /// Reserve permits are supposed to be a burst buffer: a backend grabbed
+    /// under peak pressure so the pool can push past `max_db_connections`
+    /// for a moment. Once the peak is gone, the backend sits in
+    /// `slots.vec` as an ordinary idle connection, but its permit still
+    /// counts against `reserve_in_use`. Without an upgrade, the reserve
+    /// pool shows as occupied even though the main semaphore has free
+    /// slots — the next real burst can't tell the buffer is empty, and
+    /// `SHOW POOL_COORDINATOR` reports `reserve_used` that doesn't match
+    /// actual reserve availability.
+    ///
+    /// The upgrade itself is a book-keeping swap, not a reconnect: for
+    /// each idle reserve backend we try to steal a `db_semaphore` permit
+    /// (non-blocking), and on success flip `permit.is_reserve = false`.
+    /// The backend stays alive; the reserve semaphore gains a slot.
+    ///
+    /// Returns the number of permits upgraded.
+    pub fn upgrade_reserve_to_main(&self) -> usize {
+        let coordinator = match self.inner.coordinator.as_ref() {
+            Some(c) => c,
+            None => return 0,
+        };
+        let mut upgraded = 0;
+        let mut guard = self.inner.slots.lock();
+        for obj in guard.vec.iter_mut() {
+            let Some(permit) = obj.coordinator_permit.as_mut() else {
+                continue;
+            };
+            if !permit.is_reserve {
+                continue;
+            }
+            if coordinator.try_upgrade_reserve_to_main() {
+                permit.is_reserve = false;
+                upgraded += 1;
+            } else {
+                // Main is saturated too; no point walking the rest of the
+                // vec looking for another reserve entry to upgrade.
+                break;
+            }
+        }
+        upgraded
     }
 
     /// Close idle reserve connections that have been idle longer than `min_lifetime_ms`.
@@ -1682,6 +1764,64 @@ mod tests {
         // spawned task does not leak past the test.
         phase_c_waiter.abort();
         let _ = phase_c_waiter.await;
+    }
+
+    // ------------------------------------------------------------------
+    // upgrade_reserve_to_main — retain-time book-keeping swap
+    // ------------------------------------------------------------------
+
+    /// Smoke test for the retain-time helper: on an empty pool it must
+    /// report zero upgrades and leave the coordinator state untouched.
+    /// The real coverage of the upgrade arithmetic lives in
+    /// `pool_coordinator::tests::reserve_to_main_upgrade_*`; this test
+    /// pins the outer wrapper against a refactor that would accidentally
+    /// touch coordinator counters on an empty slots vec.
+    #[tokio::test]
+    async fn upgrade_reserve_to_main_noop_on_empty_pool() {
+        let coord = pool_coordinator::PoolCoordinator::new(
+            "test_db".to_string(),
+            pool_coordinator::CoordinatorConfig {
+                max_db_connections: 4,
+                min_connection_lifetime_ms: 5000,
+                reserve_pool_size: 2,
+                reserve_pool_timeout_ms: 100,
+            },
+        );
+        let pool = test_pool_with_coordinator(coord.clone());
+        assert_eq!(pool.upgrade_reserve_to_main(), 0);
+        assert_eq!(coord.reserve_in_use(), 0);
+        assert_eq!(coord.total_connections(), 0);
+    }
+
+    /// A pool without a coordinator (max_db_connections = 0) has no
+    /// reserve concept at all — the helper must short-circuit and
+    /// return 0 without locking `slots`.
+    #[tokio::test]
+    async fn upgrade_reserve_to_main_returns_zero_without_coordinator() {
+        use crate::config::{Address, User};
+        use dashmap::DashMap;
+
+        let server_pool = ServerPool::new(
+            Address::default(),
+            User::default(),
+            "test_db",
+            Arc::new(DashMap::new()),
+            false,
+            false,
+            0,
+            "test_app".to_string(),
+            1,
+            60_000,
+            60_000,
+            60_000,
+            Duration::from_secs(5),
+            false,
+        );
+        let pool = Pool::builder(server_pool)
+            .pool_name("test_db".to_string())
+            .username("test_user".to_string())
+            .build();
+        assert_eq!(pool.upgrade_reserve_to_main(), 0);
     }
 
     // ------------------------------------------------------------------
