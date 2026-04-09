@@ -34,6 +34,10 @@
 
 - **Removed password hash from logs.** The "unsupported password type" warning no longer includes the password hash value.
 
+**Bug Fixes:**
+
+- **Client-side session reset batch no longer triggers a second `RESET ALL` on checkin.** When a client (e.g. `jackc/pgx` on an internal context deadline) kept the server connection alive by running its own cleanup batch (`SET SESSION AUTHORIZATION DEFAULT; RESET ALL; CLOSE ALL; UNLISTEN *; DISCARD PLANS; DISCARD SEQUENCES; DISCARD TEMP`), pg_doorman saw only the `SET` tag from `SET SESSION AUTHORIZATION DEFAULT`, marked the connection dirty, and sent its own `RESET ROLE; RESET ALL;` when the connection returned to the pool. Every dangling client query tripled the traffic to PostgreSQL: the original query, the client's cleanup batch, and pg_doorman's redundant reset. Fixed by recognising the CommandComplete tags that restore session state (`RESET`, `CLOSE CURSOR ALL`, `DEALLOCATE ALL`, `DISCARD ALL`) and clearing the matching `needs_cleanup_*` flags. Baseline behaviour is unchanged: a `SET statement_timeout = 1000` without a follow-up reset still provokes `RESET ROLE; RESET ALL;` on checkin.
+
 ### 3.3.5 <small>Mar 31, 2026</small>
 
 **Bug Fixes:**
