@@ -214,9 +214,11 @@ own <code>pool_size</code>. Similar to PgBouncer's <code>max_db_connections</cod
 <p>Default: <code>0 (disabled)</code>.</p>
 <h3 id="min_connection_lifetime"><a class="header" href="#min_connection_lifetime">min_connection_lifetime</a></h3>
 <p>Minimum age (in milliseconds) a connection must reach before it can be evicted by the
-pool coordinator. Prevents thundering herd scenarios where freshly created connections
-are immediately taken away. Only relevant when <code>max_db_connections &gt; 0</code>.</p>
-<p>Default: <code>5000 (5 seconds)</code>.</p>
+pool coordinator. Prevents cyclic reconnect between user pools that share the same
+database: without this gate, one user's idle slot becomes evictable the moment its
+peer asks for a permit, and under sustained multi-user load each pool steals a slot
+back from its neighbour every few seconds. Only relevant when <code>max_db_connections &gt; 0</code>.</p>
+<p>Default: <code>30000 (30 seconds)</code>.</p>
 <h3 id="reserve_pool_size"><a class="header" href="#reserve_pool_size">reserve_pool_size</a></h3>
 <p>Number of extra connections allowed beyond <code>max_db_connections</code> as a last resort. When
 eviction fails and no connections are returned within <code>reserve_pool_timeout</code>, a reserve

@@ -285,19 +285,24 @@ no blocking I/O.</p>
 enter a loop waiting for returned connections. Each iteration
 registers a <code>Notify</code> future woken by any <code>return_object()</code>, runs
 <code>try_recycle_one</code> before the wait to catch a buffered return, awaits
-either the notify or a deadline-bounded sleep, then runs
-<code>try_recycle_one</code> again after the wake. If another waiter popped the
-returned item first, the iteration registers a fresh future and
-waits for the next return. The loop exits on three conditions: a
-successful recycle (return the connection), a sleep-driven wake with
-no notify in flight (give up, the sleep timer fired before any
-return arrived), or the full deadline elapsed (exit with no
-connection).</p>
-<p>The deadline is the client's <code>query_wait_timeout</code> minus a 500 ms
-reserve for the fall-through create path, measured against a
-timestamp captured at the top of <code>timeout_get</code>. Phase 1/2 semaphore
-wait consumes from the same budget, so the cumulative wait across
-phases cannot exceed <code>query_wait_timeout</code>.</p>
+either the notify or a per-iteration sleep capped at 100 ms, then
+runs <code>try_recycle_one</code> again after the wake. If another waiter
+popped the returned item first, the iteration bumps a race-loss
+counter and registers a fresh future for the next return. The loop
+exits on three conditions: a successful recycle (return the
+connection), the deadline expired at the top of the iteration, or
+the race-loss counter reached <code>MAX_RACE_LOSSES</code> (20) — the caller
+has woken repeatedly and lost the post-wake race every time, so
+anticipation gives up and falls through to the create path.</p>
+<p>The deadline is <code>min(query_wait_timeout - 500 ms, PHASE_4_HARD_CAP)</code>
+where <code>PHASE_4_HARD_CAP = 500 ms</code>, measured against a timestamp
+captured at the top of <code>timeout_get</code>. The hard cap bounds tail
+latency under pathological wake orderings where a caller wakes on
+every notify but loses every post-wake race — without it, a large
+<code>query_wait_timeout</code> would let one caller spend tens of seconds in
+anticipation. Phase 1/2 semaphore wait consumes from the same budget,
+so the cumulative wait across phases cannot exceed the caller's
+<code>query_wait_timeout</code>.</p>
 <p>Each return wakes exactly one waiter. The loop is retry-driven
 against races: when <code>return_object()</code> fires, both this Phase 4
 waiter and any task parked in Phase 1/2 semaphore acquire wake
@@ -460,41 +465,65 @@ new-connection path. Idle reuse never touches the coordinator.</p>
 the 81st request waits or fails, regardless of which pool asks.</p>
 </li>
 <li>
-<p><strong>Eviction.</strong> When the cap is reached and a new pool needs a slot,
-the coordinator can close an idle connection from a different user's
-pool to free one. The evicted pool loses a connection; the
-requesting pool gets one. This is fair: users with the largest
-surplus above their <strong>effective minimum</strong> lose connections first,
-and only connections older than <code>min_connection_lifetime</code> (default
-5000 ms) are eligible.</p>
-<p>The <strong>effective minimum</strong> for a user pool is
-<code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>. Both knobs
-protect connections from eviction; whichever is larger wins.
-Lowering either drops the floor.</p>
+<p><strong>A reserve pool.</strong> When the cap is reached and <code>reserve_pool_size</code>
+has room, the coordinator grants a permit from the <strong>reserve</strong>
+immediately — a small extra pool above <code>max_db_connections</code> that
+acts as a burst buffer. This is Phase R (reserve-first) in the
+acquisition flow below: no peer backend is closed, no wait is
+incurred. The reserve is bounded by <code>reserve_pool_size</code> (default
+0, meaning disabled) and prioritised: starving users (those below
+their <strong>effective minimum</strong>) and users with many queued clients
+are served first by the arbiter.</p>
 </li>
 <li>
-<p><strong>A reserve pool.</strong> If the cap is reached, eviction yields nothing,
-and waiting for a return times out, the coordinator can grant a
-permit from the <strong>reserve</strong>: a small extra pool above
-<code>max_db_connections</code>. The reserve is bounded by <code>reserve_pool_size</code>
-(default 0, meaning disabled) and prioritised: starving users (those
-below their <strong>effective minimum</strong>) and users with many queued
-clients are served first.</p>
+<p><strong>Eviction.</strong> Fallback when the reserve is either disabled
+(<code>reserve_pool_size = 0</code>) or already fully used: the coordinator
+closes an idle connection from a different user's pool to free a
+main slot. The evicted pool loses a connection; the requesting
+pool gets one. This is fair: users with the largest surplus above
+their <strong>effective minimum</strong> lose connections first, and only
+connections older than <code>min_connection_lifetime</code> (default
+30 000 ms) are eligible. The 30-second floor is deliberate: it
+suppresses cyclic reconnect between peer pools that take turns
+stealing slots from each other.</p>
+<p>The <strong>effective minimum</strong> for a user pool is
+<code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>. Both
+knobs protect connections from eviction; whichever is larger wins.
+Lowering either drops the floor.</p>
 </li>
 </ol>
 <h3 id="coordinator-acquisition-phases"><a class="header" href="#coordinator-acquisition-phases">Coordinator acquisition phases</a></h3>
 <p>When the per-pool path reaches the new-connection step, the coordinator
-runs five phases. The first phase that hands back a permit ends the
+walks six phases. The first phase that hands back a permit ends the
 sequence.</p>
 <p><strong>Phase A — Try-acquire.</strong> Non-blocking semaphore acquire. If the cap
 is not reached, take the slot and return.</p>
-<p><strong>Phase B — Eviction.</strong> Walk all <em>other</em> user pools for the same
-database, find the one with the largest surplus above its <strong>effective
-minimum</strong>, and close one of its idle connections older than
-<code>min_connection_lifetime</code>. The evicted permit drops synchronously,
-freeing the slot. Re-try the semaphore acquire. If two callers race,
-the loser falls through to the next phase.</p>
-<p><strong>Phase C — Wait.</strong> Register a <code>Notify</code> woken on two events:</p>
+<p><strong>Phase R — Reserve-first.</strong> Phase A proved the database is full.
+Before closing any peer backend, the coordinator checks whether the
+reserve pool has headroom (<code>reserve_in_use &lt; reserve_pool_size</code>). If
+yes, it asks the reserve arbiter for a permit directly. On success,
+the caller gets a reserve permit — no eviction, no peer backend
+closed, no wait on <code>connection_returned</code>. The arbiter responds in
+sub-millisecond time under normal load.</p>
+<p>Reserve-first is the p99-latency path: a reserve permit costs one
+arbiter round-trip, while the old flow (Phase B + Phase C) could
+block for the full <code>reserve_pool_timeout</code> even when the reserve had
+empty slots. Phase R does not run when <code>reserve_pool_size = 0</code>, and
+falls through to Phase B when the arbiter denies the grant (every
+reserve permit is already in use, or the arbiter is racing another
+caller).</p>
+<p><strong>Phase B — Eviction.</strong> Reached when Phase R did not hand back a
+permit: either <code>reserve_pool_size = 0</code>, or the reserve semaphore was
+fully in use at the check (<code>reserve_in_use == reserve_pool_size</code>), or
+the arbiter denied the grant. Walk all <em>other</em> user pools for the
+same database, find the one with the largest surplus above its
+<strong>effective minimum</strong>, and close one of its idle connections older
+than <code>min_connection_lifetime</code>. The evicted permit drops
+synchronously, freeing the slot. Re-try the semaphore acquire. If
+two callers race, the loser falls through to the next phase.</p>
+<p><strong>Phase C — Wait.</strong> Reached when reserve is disabled or fully in use
+<em>and</em> Phase B found nothing evictable. Register a <code>Notify</code> woken on
+two events:</p>
 <ol>
 <li>A <code>CoordinatorPermit</code> was dropped — a peer's server connection was
 physically destroyed (<code>server_lifetime</code> expiry, <code>recycle</code> error,
@@ -503,11 +532,16 @@ physically destroyed (<code>server_lifetime</code> expiry, <code>recycle</code> 
 <code>Pool::return_object</code> — the slot is NOT free, but the peer's
 <code>spare_above_min</code> may have just grown.</li>
 </ol>
-<p>On every wake, Phase C re-runs <code>try_evict_one</code> against peer pools
-before re-running <code>try_acquire</code>. This is how a peer's freshly returned
-idle connection becomes available to the waiting caller: the second
-eviction attempt finds the spare that did not exist a moment ago and
-drops the peer's permit, which frees the semaphore slot.</p>
+<p>On every wake, Phase C runs <code>try_acquire</code> <strong>first</strong> and only calls
+<code>try_evict_one</code> if the cheap path fails. A permit-drop wake leaves a
+free slot in the semaphore — the cheap path takes it and no peer
+backend is closed. An idle-return wake does not free a slot directly
+but may have grown a peer's <code>spare_above_min</code>, so the eviction retry
+finds a candidate that was not evictable a moment ago, drops the
+peer's permit, and the subsequent <code>try_acquire</code> succeeds. This
+ordering (cheap first, evict second) is pinned by a regression test
+so a future refactor cannot re-introduce peer closes on permit-drop
+wakes.</p>
 <p>Wait up to <code>reserve_pool_timeout</code> (default 3000 ms) for a wake or the
 deadline. <strong>This timeout applies even when <code>reserve_pool_size = 0</code></strong>:
 it is the wait-phase budget, not just the reserve gating window. If
@@ -515,13 +549,60 @@ your <code>query_wait_timeout</code> is shorter than <code>reserve_pool_timeout<
 client gives up first and you see <code>wait timeout</code> errors instead of the
 more diagnostic <code>all server connections to database 'X' are in use</code>.
 See troubleshooting for the symptom.</p>
-<p><strong>Phase D — Reserve.</strong> If the wait expired and <code>reserve_pool_size &gt; 0</code>,
-ask the reserve arbiter for a permit. Requests are scored by
-<code>(starving, queued_clients)</code> so users that need connections most get
-them first. The arbiter is a single tokio task that drains reserve
-permits from a priority heap.</p>
-<p><strong>Phase E — Error.</strong> If the reserve is exhausted or not configured,
-the client receives an error: <code>all server connections to database 'X' are in use (max=N, ...)</code>.</p>
+<p><strong>Phase D — Reserve retry.</strong> Phase R already tried this path once.
+Phase D runs again after Phase C exhausted its wait budget, in case
+a peer reserve holder dropped its permit during the wait. Requests
+are scored by <code>(starving, queued_clients)</code> so users that need
+connections most get them first. The arbiter is a single tokio task
+that drains reserve permits from a priority heap.</p>
+<p><strong>Phase E — Error.</strong> If Phase D also fails or reserve is not
+configured, the client receives an error: <code>all server connections to database 'X' are in use (max=N, ...)</code>.</p>
+<h3 id="reserve--main-upgrade-retain-task"><a class="header" href="#reserve--main-upgrade-retain-task">Reserve → main upgrade (retain task)</a></h3>
+<p>Reserve permits are a burst buffer, not persistent state. Once a
+burst passes, the backend that held a reserve permit stays alive and
+healthy, but its <code>CoordinatorPermit</code> still counts against
+<code>reserve_in_use</code> — even when <code>current &lt; max_db_connections</code> leaves
+free slots in the main semaphore. Without active housekeeping,
+<code>SHOW POOL_COORDINATOR</code> reports a reserve pool that looks occupied
+while the real burst capacity is empty, and the next spike has
+nowhere to grow.</p>
+<p>The retain task runs every <code>retain_connections_time</code> (default 30 s)
+and performs a book-keeping swap: for each pool not <strong>under
+pressure</strong> (see definition below), it walks the idle vec and, for
+every backend still holding a reserve permit, tries to steal a main
+semaphore permit.</p>
+<p>A pool is <strong>under pressure</strong> when its per-pool semaphore has zero
+available permits. There is no single column in <code>SHOW POOLS</code> that
+reports the semaphore state directly, and the observable columns
+lag the internal state:</p>
+<ul>
+<li><strong>Strong proxy:</strong> <code>sv_active == pool_size</code>. Every active server
+connection holds a permit, so when every server in the pool is
+active, every permit is taken. This direction is strict.</li>
+<li><strong>Weak proxy:</strong> <code>cl_waiting &gt; 0</code> means at least one client is
+inside <code>timeout_get</code>, which <em>often</em> means the semaphore is
+empty — but a client that already grabbed a permit and is
+parked in Phase 4 anticipation or coordinator Phase C still
+shows as waiting. Use it as an indicator, not a proof.</li>
+</ul>
+<p>The retain task skips pools under pressure for two reasons:
+upgrading a reserve permit at that moment hands the slot to the
+waiting client (no effect on <code>reserve_used</code>), and closing a reserve
+connection would force a fresh <code>connect()</code> in front of that
+client. Cleanup runs on the next cycle. On success, the
+reserve permit is released back to the reserve semaphore,
+<code>reserve_in_use</code> drops by one, and the backend's permit flips from
+reserve to main. No reconnect, no peer churn — just two atomic
+operations. The walk stops on the first upgrade failure in a pool
+because that proves the main semaphore is saturated; no point
+checking the rest of the pool's idle vec. The same retain cycle
+then runs <code>close_idle_reserve_connections</code> to close reserve
+backends that could not be upgraded and have been idle longer than
+<code>min_connection_lifetime</code>.</p>
+<p>Under this scheme, <code>reserve_in_use &gt; 0</code> means exactly one thing: a
+burst is actually in flight <em>or</em> finished within the last
+<code>retain_connections_time</code>. Historical reserve usage converges back
+to zero as soon as main has headroom.</p>
 <h3 id="why-coordinator-runs-before-the-burst-gate"><a class="header" href="#why-coordinator-runs-before-the-burst-gate">Why coordinator runs before the burst gate</a></h3>
 <p>Inside the per-pool acquisition flow, the coordinator permit is
 acquired <strong>before</strong> the burst gate. The order is deliberate.</p>
@@ -559,9 +640,10 @@ slot, each about to issue <code>connect()</code>.</p>
    +----------------------+
    |  Coordinator acquire |   &lt;-- inserted between phase 4 and phase 5
    |   A: try_acquire     |       only when max_db_connections &gt; 0
+   |   R: reserve-first   |   sub-ms arbiter round-trip
    |   B: evict from peer |
    |   C: wait for return |   up to reserve_pool_timeout
-   |   D: reserve permit  |   scored priority
+   |   D: reserve retry   |   scored priority
    |   E: error           |   client gets DB exhausted error
    +----------+-----------+
               | permit granted
@@ -603,7 +685,7 @@ not supported.</p>
 <tr><td><code>scaling_fast_retries</code></td><td><code>10</code></td><td><code>general</code>, per-pool</td><td>Number of <code>yield_now</code> spin retries before entering the event-driven anticipation loop. Each retry costs ~1–5 µs.</td></tr>
 <tr><td><code>scaling_max_parallel_creates</code></td><td><code>2</code></td><td><code>general</code></td><td>Hard cap on concurrent backend <code>connect()</code> calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be <code>&gt;= 1</code>.</td></tr>
 <tr><td><code>max_db_connections</code></td><td>unset (disabled)</td><td>per-pool</td><td>Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist.</td></tr>
-<tr><td><code>min_connection_lifetime</code></td><td><code>5000</code> (ms)</td><td>per-pool</td><td>Minimum age of an idle connection before the coordinator may evict it for another pool. Lower bound on connection churn.</td></tr>
+<tr><td><code>min_connection_lifetime</code></td><td><code>30000</code> (ms)</td><td>per-pool</td><td>Minimum age of an idle connection before the coordinator may evict it for another pool. The 30-second floor suppresses cyclic reconnect between peer pools that keep stealing slots from each other.</td></tr>
 <tr><td><code>reserve_pool_size</code></td><td><code>0</code> (disabled)</td><td>per-pool</td><td>Extra coordinator permits above <code>max_db_connections</code>, granted by priority when the main pool is exhausted.</td></tr>
 <tr><td><code>reserve_pool_timeout</code></td><td><code>3000</code> (ms)</td><td>per-pool</td><td>Maximum coordinator wait time before falling through to the reserve pool.</td></tr>
 <tr><td><code>min_guaranteed_pool_size</code></td><td><code>0</code></td><td>per-pool</td><td>Per-user minimum protected from coordinator eviction. A user with <code>current_size &lt;= min_guaranteed_pool_size</code> has its connections immune to eviction by other users.</td></tr>
@@ -685,12 +767,56 @@ capacity. It prevents client-visible exhaustion errors during brief
 bursts. Under normal operation <code>reserve_in_use</code> should be 0 most of
 the time.</p>
 <p>Sizing rule of thumb: <code>reserve_pool_size ≤ 0.25 × max_db_connections</code>.
-The reserve absorbs a spike; it does not double the cap.</p>
+Past that ratio the reserve stops behaving like a buffer. If half
+your workload lives in the reserve continuously, raise
+<code>max_db_connections</code> instead of extending the overflow.</p>
 <p><code>reserve_pool_timeout</code> is how long a client waits in coordinator phase
 C before the reserve is consulted. Default 3000 ms is conservative.
 Lower it if your <code>query_wait_timeout</code> is short and you would rather
 fall through to the reserve fast than block clients on coordinator
 wait.</p>
+<h4 id="tuning-recipe-bring-checkout-p99-down-on-a-coordinator-managed-database"><a class="header" href="#tuning-recipe-bring-checkout-p99-down-on-a-coordinator-managed-database">Tuning recipe: bring checkout p99 down on a coordinator-managed database</a></h4>
+<p>Workload shape: PostgreSQL answers in ~1 ms (p99 query latency is low),
+but clients see 100–500 ms p99 checkout latency on a coordinator-managed
+pool. The checkout time is coming from the coordinator, not PostgreSQL.</p>
+<ol>
+<li>Confirm the phase. Run <code>SHOW POOL_COORDINATOR</code> during a latency
+spike. Compute <code>main_used = current - reserve_used</code> — <code>current</code>
+includes reserve permits, and this recipe hinges on whether the
+<strong>main</strong> semaphore alone is full.
+<ul>
+<li><code>main_used == max_db_conn</code> <strong>and</strong> <code>exhaustions</code> not climbing
+→ wait-phase dominated. The client spends its budget in
+Phase C before falling into Phase D. Continue to step 2.</li>
+<li><code>main_used &lt; max_db_conn</code> with no exhaustions → checkout latency
+is not coming from the coordinator. Check <code>SHOW POOL_SCALING</code>
+<code>create_fallback</code> and the plain-mode troubleshooting section.</li>
+</ul>
+</li>
+<li>Enable reserve-first if it is not already. Set
+<code>reserve_pool_size</code> to at least <code>max(2, 0.1 × max_db_connections)</code>.
+Reserve-first grants a permit in sub-ms when the reserve has
+headroom, so a client that used to sit in Phase C now pays
+one arbiter round-trip.</li>
+<li>Shorten <code>reserve_pool_timeout</code> to <code>2 × p99 query latency</code>, never
+lower. For a 1 ms query the floor is typically 20 ms; start at
+50 ms and watch <code>reserve_acq</code> and <code>evictions</code> for a week.</li>
+<li>Leave <code>min_connection_lifetime</code> at the 30 000 ms default unless
+you specifically want cross-pool rebalancing to react faster;
+lowering it increases eviction rate and connection churn.</li>
+</ol>
+<p>What to watch after each change (all in <code>SHOW POOL_COORDINATOR</code>):</p>
+<div class="table-wrapper"><table><thead><tr><th>Before</th><th>After</th><th>Verdict</th></tr></thead><tbody>
+<tr><td><code>reserve_acq</code> flat</td><td><code>reserve_acq</code> rising</td><td>Reserve-first took over — checkout latency should drop; expected</td></tr>
+<tr><td><code>evictions</code> steady</td><td><code>evictions</code> dropping</td><td>Phase B stopped firing because Phase R caught the caller earlier; expected</td></tr>
+<tr><td><code>exhaustions</code> 0</td><td><code>exhaustions</code> &gt; 0</td><td>Over-tightened: <code>reserve_pool_timeout</code> is below the true peer-return time</td></tr>
+<tr><td><code>reserve_used</code> hovers &gt; 0</td><td><code>reserve_used</code> returns to 0 in 30 s</td><td>Retain upgrade path is working; no action needed</td></tr>
+</tbody></table>
+</div>
+<p>If checkout p99 does not drop after steps 2–3, the path is not
+coordinator-bound. Re-read <code>SHOW POOL_SCALING</code> on the affected pool —
+<code>create_fallback</code> &gt; 0 means the pool itself cannot serve offered load
+from returns, and the fix is <code>pool_size</code>, not <code>reserve_pool_size</code>.</p>
 <p><strong>Floor.</strong> Never lower <code>reserve_pool_timeout</code> below <code>2 × your p99 query latency</code>. Below that floor, the wait phase always times out
 before a peer returns a connection, and the reserve becomes a
 required permit for every new connection rather than an overflow
@@ -735,12 +861,49 @@ scrapes; absolute values are only useful for ratios.</p>
 <tr><td><code>max_db_conn</code></td><td>gauge</td><td>Configured <code>max_db_connections</code></td></tr>
 <tr><td><code>current</code></td><td>gauge</td><td>Total backend connections currently held under this coordinator (across all user pools)</td></tr>
 <tr><td><code>reserve_size</code></td><td>gauge</td><td>Configured <code>reserve_pool_size</code></td></tr>
-<tr><td><code>reserve_used</code></td><td>gauge</td><td>Reserve permits currently in use</td></tr>
-<tr><td><code>evictions</code></td><td>counter</td><td>Total times the coordinator evicted an idle connection from a peer pool to free a slot</td></tr>
-<tr><td><code>reserve_acq</code></td><td>counter</td><td>Total reserve permits granted by the arbiter</td></tr>
+<tr><td><code>reserve_used</code></td><td>gauge</td><td>Reserve permits currently in use. Converges back to 0 when main has headroom — the retain task upgrades idle reserve permits to main every <code>retain_connections_time</code>. A sustained non-zero value indicates either an active burst or a database continuously pressed to <code>max_db_connections</code>.</td></tr>
+<tr><td><code>evictions</code></td><td>counter</td><td>Total times the coordinator evicted an idle connection from a peer pool to free a slot. With reserve-first enabled, this counter only climbs under true cross-pool pressure — when the reserve is full <em>and</em> a peer has evictable connections.</td></tr>
+<tr><td><code>reserve_acq</code></td><td>counter</td><td>Total reserve permits granted by the arbiter (Phase R fast path plus Phase D fallback combined)</td></tr>
 <tr><td><code>exhaustions</code></td><td>counter</td><td>Times the coordinator returned an exhausted error to a client. <strong>This is the primary pager signal.</strong></td></tr>
 </tbody></table>
 </div>
+<h4 id="reading-show-pool_coordinator-output"><a class="header" href="#reading-show-pool_coordinator-output">Reading <code>SHOW POOL_COORDINATOR</code> output</a></h4>
+<p>Three snapshots and what each one means for the operator:</p>
+<p><strong>Healthy idle database:</strong></p>
+<pre><code> database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+----------+-------------+---------+--------------+--------------+-----------+-------------+-------------
+ mydb     |          80 |      24 |           10 |            0 |         0 |           0 |           0
+</code></pre>
+<p>Normal steady state. Plenty of headroom, reserve is dormant, no
+evictions, no exhaustions. Alerts must be silent here.</p>
+<p><strong>Post-burst, upgrade in progress:</strong></p>
+<pre><code> database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+----------+-------------+---------+--------------+--------------+-----------+-------------+-------------
+ mydb     |          80 |      65 |           10 |            3 |         0 |          12 |           0
+</code></pre>
+<p>A burst consumed most of <code>max_db_connections</code> and spilled three
+connections into the reserve. <code>current &lt; max_db_conn</code> means main
+has headroom, so the retain task will upgrade these three permits
+to main on its next cycle; <code>reserve_used</code> should drop to 0 within
+<code>retain_connections_time</code> (default 30 s). If it does not, see the
+troubleshooting section below. <code>evictions = 0</code> and
+<code>reserve_acq &gt; 0</code> together confirm reserve-first absorbed the
+burst without closing peer backends.</p>
+<p><strong>Sustained overload:</strong></p>
+<pre><code> database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+----------+-------------+---------+--------------+--------------+-----------+-------------+-------------
+ mydb     |          80 |      95 |           20 |           15 |       300 |         500 |           0
+</code></pre>
+<p>Main is full (<code>main_used = current - reserve_used = 80</code>, equal to
+<code>max_db_conn</code>), reserve is 75% used, evictions are high, and
+reserve grants are high. The database is not occasionally pressured
+— it is permanently short of capacity and surviving only because
+eviction rotates connections between users and reserve-first
+absorbs every new arrival. <code>exhaustions = 0</code> means the arbiter
+still keeps up, but any transient spike tips it over. <strong>Action:</strong>
+raise <code>max_db_connections</code> after confirming PostgreSQL has
+headroom, or find the runaway pool via <code>SHOW POOLS</code> and lower its
+<code>pool_size</code>.</p>
 <h3 id="prometheus-metrics"><a class="header" href="#prometheus-metrics">Prometheus metrics</a></h3>
 <p>Two metric families per pool, two per coordinator. All four use
 <code>pg_doorman_pool_scaling*</code> and <code>pg_doorman_pool_coordinator*</code> namespaces.</p>
@@ -770,61 +933,190 @@ on-call.</p>
 alerts to recently-active pools (e.g., add
 <code>pg_doorman_pool_scaling_total{type="creates_started"} &gt; 0</code> as a
 gating filter).</p>
+<p>Each alert below has a <strong>Runbook</strong> block with one diagnostic
+command and two or three branches tied to concrete counter values.</p>
 <p><strong>Coordinator exhaustion (page).</strong> A client received a "database
-exhausted" error. Hard failure.
-<strong>Runbook:</strong> see Troubleshooting → "<code>max_db_connections</code> exhausted".</p>
+exhausted" error. Hard failure — reserve and eviction both failed.</p>
 <pre><code class="language-promql">rate(pg_doorman_pool_coordinator_total{type="exhaustions"}[5m]) &gt; 0
 </code></pre>
-<p><strong>Burst gate saturated (warn).</strong> Roughly half the new-connection
-attempts queued at least once. Brief spikes above 0.5 during failover
-or restart are normal; sustained values mean
-<code>scaling_max_parallel_creates</code> is too low for offered load.</p>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<p><code>current</code> is the combined main+reserve count
+(<code>current == max_db_conn + reserve_size</code> means both semaphores are
+fully drained).</p>
+<ul>
+<li><code>current == max_db_conn + reserve_size</code> → both semaphores are
+fully drained. Raise <code>max_db_connections</code> (verify PostgreSQL
+<code>max_connections</code> has headroom first) or add a larger reserve.</li>
+<li><code>reserve_size == 0</code> and <code>current == max_db_conn</code> → reserve is
+disabled and main is full. Set <code>reserve_pool_size</code> to absorb
+bursts, then raise <code>max_db_connections</code> if <code>exhaustions</code> keeps
+firing after that.</li>
+<li><code>current &lt; max_db_conn + reserve_size</code> but <code>exhaustions</code> climbing
+→ race in Phase R/D — should not happen sustained; file a bug
+with the matching <code>SHOW POOL_COORDINATOR</code> snapshot.</li>
+<li>One user in <code>SHOW POOLS</code> has <code>sv_idle</code> much larger than others →
+runaway pool is hoarding connections. Lower that pool's
+<code>pool_size</code>, or set <code>min_guaranteed_pool_size</code> to protect the
+victims.</li>
+</ul>
+<p><strong>Burst gate saturated (warn).</strong> The burst gate is waiting behind
+other creates more often than it proceeds directly. Brief spikes
+above the threshold during failover or restart are normal; sustained
+values mean <code>scaling_max_parallel_creates</code> is too low for offered
+load.</p>
 <pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="burst_gate_waits"}[5m])
   &gt; 0.5 * rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m])
 </code></pre>
-<p><strong>Create fallback firing (warn).</strong> Anticipation is exhausting its
-full deadline (<code>query_wait_timeout - 500 ms</code>) without finding a
-return. The pool paid for a fresh <code>connect()</code> that a longer wait
-might have avoided. Steady-state should be zero; any sustained rate
-means offered load exceeds what returns can serve within the
-deadline. <strong>Action:</strong> check <code>SHOW POOL_SCALING</code> for the affected
-pool, then either raise <code>pool_size</code>, raise <code>query_wait_timeout</code>, or
-investigate slow queries holding connections out of rotation.</p>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_SCALING'
+</code></pre>
+<ul>
+<li><code>inflight_creates</code> sits at the configured cap AND clients are
+visible in <code>SHOW POOLS</code> <code>cl_waiting</code> → <code>connect()</code> is slow on the
+backend side, see <strong>Burst gate is the bottleneck even with low
+traffic</strong> troubleshooting before raising the cap.</li>
+<li><code>inflight_creates</code> cycles below the cap but <code>gate_waits</code> climbs →
+many short bursts. Raise <code>scaling_max_parallel_creates</code>, stay
+within the hard ceiling documented under tuning.</li>
+<li>Only one pool is hot → consider <code>min_guaranteed_pool_size</code> on the
+neighbours or lower that pool's <code>pool_size</code>.</li>
+</ul>
+<p><strong>Create fallback firing (warn).</strong> Phase 4 anticipation is giving up
+without finding a return and falls through to a fresh <code>connect()</code>.
+Steady-state should be zero.</p>
 <pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="create_fallback"}[5m]) &gt; 0.1
 </code></pre>
-<p><strong>Replenish deferred persistently (warn).</strong> The background task cannot
-sustain <code>min_pool_size</code> because the burst gate is busy with client
-traffic. Sustained over an hour, not a brief spike.</p>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_SCALING'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+    -c 'SHOW STATS' | grep -E 'database|avg_xact_time|avg_query_time'
+</code></pre>
+<ul>
+<li><code>create_fallback</code> is high on one pool AND <code>avg_xact_time</code> on that
+database is growing → slow queries are holding connections out of
+rotation. Fix the slow query first; the pool is sized for normal
+queries, not this transaction length.</li>
+<li><code>create_fallback</code> is high across all pools AND <code>creates_started</code>
+rate is also high → offered load exceeds what returns can serve
+within the deadline. Raise <code>pool_size</code>.</li>
+<li><code>create_fallback</code> is high but <code>query_wait_timeout</code> is short
+(&lt; 1 s) → the anticipation deadline (<code>query_wait_timeout − 500 ms</code>
+capped at 500 ms) is too short to catch even normal returns. Raise
+<code>query_wait_timeout</code> to at least <code>2 × p99 query latency</code>.</li>
+</ul>
+<p><strong>Replenish deferred persistently (warn).</strong> Background replenish
+cannot sustain <code>min_pool_size</code> because the burst gate is busy with
+client traffic.</p>
 <pre><code class="language-promql">increase(pg_doorman_pool_scaling_total{type="replenish_deferred"}[1h]) &gt; 60
 </code></pre>
-<p><strong>Reserve pool continuously in use (warn).</strong> The reserve is meant for
-brief bursts. This rule fires only when the reserve has been in use
-<strong>continuously</strong> for 15 minutes, not momentary use.</p>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_SCALING'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<ul>
+<li>The affected pool shows <code>sv_idle + sv_active &lt; min_pool_size</code>
+while <code>gate_waits</code> is also climbing → replenish is losing to
+client traffic. Raise <code>scaling_max_parallel_creates</code> so the
+background task has spare bandwidth, or accept the defer as
+cosmetic (under load, client-driven creates will lift the pool
+above <code>min_pool_size</code> anyway).</li>
+<li><code>inflight_creates</code> sits at the cap continuously → gate is full
+for a different reason (slow <code>connect()</code>); fix that first.</li>
+</ul>
+<p><strong>Reserve pool continuously in use (warn).</strong> Reserve permit gauge
+has not returned to zero over 15 minutes. The retain task upgrades
+idle reserve permits back to main every <code>retain_connections_time</code>
+(default 30 s), so this alert means the upgrade path is <em>unable</em> to
+run or succeed, not that it forgot to run.</p>
 <pre><code class="language-promql">min_over_time(pg_doorman_pool_coordinator{type="reserve_in_use"}[15m]) &gt; 0
 </code></pre>
-<p><strong>Coordinator approaching cap (warn).</strong> Lead time before exhaustion.
-The <code>&gt; 0</code> guard avoids dividing by zero on databases where the
-coordinator is disabled.</p>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<p>Compute <code>main_used = current - reserve_used</code> from the row — <code>current</code>
+is the combined total of main and reserve permits, not main alone.</p>
+<ul>
+<li><code>main_used == max_db_conn</code> → main is fully used; upgrade has no
+slot to steal. The database is undersized; raise
+<code>max_db_connections</code>.</li>
+<li><code>main_used &lt; max_db_conn</code> AND every pool in <code>SHOW POOLS</code> shows
+<code>sv_active == pool_size</code> (or <code>cl_waiting &gt; 0</code> as an indicator)
+→ every pool is under pressure, retain task skips upgrade.
+Increase <code>pool_size</code> on whichever pool has the highest
+<code>cl_waiting</code> or the tightest <code>sv_active / pool_size</code> ratio.</li>
+<li><code>main_used &lt; max_db_conn</code> AND no pool shows either sign, yet the
+gauge stays non-zero → file a bug with the <code>SHOW POOL_COORDINATOR</code>
+and <code>SHOW POOLS</code> snapshots; this should not happen.</li>
+</ul>
+<p><strong>Coordinator approaching cap (warn).</strong> Lead time before exhaustion.</p>
 <pre><code class="language-promql">pg_doorman_pool_coordinator{type="max_connections"} &gt; 0
   and
   pg_doorman_pool_coordinator{type="connections"}
     / pg_doorman_pool_coordinator{type="max_connections"} &gt; 0.85
 </code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<ul>
+<li><code>current</code> climbing monotonically over hours → capacity planning
+problem. Raise <code>max_db_connections</code> (check PostgreSQL headroom
+first) before the next burst.</li>
+<li><code>current</code> oscillating near the cap → burst-driven. Raise
+<code>reserve_pool_size</code> so bursts absorb without touching
+<code>max_db_connections</code>, and watch <code>reserve_acq</code> rate afterward.</li>
+<li>One pool dominates <code>SHOW POOLS</code> (<code>sv_active + sv_idle</code> much
+larger than peers) → runaway pool; lower its <code>pool_size</code> or add
+<code>min_guaranteed_pool_size</code> to the victims.</li>
+</ul>
 <p><strong>Inflight stuck at cap (warn).</strong> <code>inflight_creates</code> sitting at the
 configured cap for 5+ minutes means <code>connect()</code> calls are not
-finishing. Check backend health.</p>
+finishing.</p>
 <pre><code class="language-promql">min_over_time(pg_doorman_pool_scaling{type="inflight_creates"}[5m])
   &gt;= 2  # adjust to your scaling_max_parallel_creates value
 </code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">time psql -h $PG_HOST -p $PG_PORT -U $PG_USER -d $PG_DB -c 'SELECT 1'
+psql -h $PG_HOST -p $PG_PORT -c \
+    "SELECT state, count(*) FROM pg_stat_activity GROUP BY state"
+</code></pre>
+<ul>
+<li><code>psql</code> timing shows <code>connect()</code> &gt; 500 ms → backend connect is
+slow. Check <code>pg_stat_ssl</code> for SSL handshake cost, <code>pg_authid</code>
+for role lookup contention, and DNS resolution time from the
+pg_doorman host.</li>
+<li><code>pg_stat_activity</code> shows many <code>startup</code> or <code>authenticating</code>
+sessions → backend is spawning but not clearing the handshake
+queue. Likely <code>max_connections</code> is hit at the backend level —
+run <code>SELECT setting FROM pg_settings WHERE name = 'max_connections'</code>
+and compare with actual active sessions.</li>
+<li><code>pg_stat_activity</code> is empty on the pg_doorman-side user →
+network / firewall issue between pg_doorman and PostgreSQL.</li>
+</ul>
 <p><strong>Coordinator thrashing (warn).</strong> Cap is full <em>and</em> evictions are
-happening: the coordinator is constantly closing peer connections to
-make room. The pool is undersized for offered load, not "occasionally
-pressured".</p>
+happening: the coordinator is constantly closing peer connections
+to make room. The pool is undersized for offered load.</p>
 <pre><code class="language-promql">pg_doorman_pool_coordinator{type="connections"}
     / pg_doorman_pool_coordinator{type="max_connections"} &gt; 0.95
   and
   rate(pg_doorman_pool_coordinator_total{type="evictions"}[5m]) &gt; 0
 </code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+</code></pre>
+<ul>
+<li><code>evictions</code> rate high AND <code>reserve_used == 0</code> → reserve is off
+or exhausted, eviction is the only release valve. Enable /
+raise <code>reserve_pool_size</code> to absorb the burst without closing
+peer backends.</li>
+<li><code>evictions</code> AND <code>reserve_acq</code> both climbing → reserve is
+consumed and still not enough. Raise <code>max_db_connections</code> or
+<code>reserve_pool_size</code>; check PostgreSQL <code>max_connections</code> first.</li>
+</ul>
 <h3 id="reading-the-admin-output-during-an-incident"><a class="header" href="#reading-the-admin-output-during-an-incident">Reading the admin output during an incident</a></h3>
 <p>The admin console accepts only <code>SHOW &lt;subcommand&gt;</code>, <code>SET</code>, <code>RELOAD</code>,
 <code>SHUTDOWN</code>, <code>UPGRADE</code>, <code>PAUSE</code>, <code>RESUME</code>, and <code>RECONNECT</code>. <code>SHOW</code> is
@@ -955,10 +1247,10 @@ exhausted or <code>reserve_pool_size = 0</code>.</p>
 cap. Either raise <code>max_db_connections</code> or look for a runaway pool.</li>
 <li>Check <code>evictions</code> rate. If it's zero or near-zero, eviction is not
 helping: every pool's idle connections are younger than
-<code>min_connection_lifetime</code> (default 5000 ms), or every other pool is
-at its <code>min_guaranteed_pool_size</code>. Lower <code>min_connection_lifetime</code>
-if your workload has very short queries, or increase
-<code>max_db_connections</code>.</li>
+<code>min_connection_lifetime</code> (default 30 000 ms), or every other pool
+is at its <code>min_guaranteed_pool_size</code>. Lower <code>min_connection_lifetime</code>
+if your workload has very short queries and you explicitly want
+faster cross-pool rebalancing, or increase <code>max_db_connections</code>.</li>
 <li>Check <code>reserve_used</code> vs <code>reserve_size</code>. If the reserve is fully
 occupied, raise <code>reserve_pool_size</code>. If it's empty but <code>exhaustions</code>
 are happening, the reserve is not configured (<code>reserve_pool_size = 0</code>).
@@ -971,13 +1263,38 @@ crushed by it, or lower the hoarder's <code>pool_size</code>.</li>
 <h3 id="coordinator-wait-phase-is-the-bottleneck"><a class="header" href="#coordinator-wait-phase-is-the-bottleneck">Coordinator wait phase is the bottleneck</a></h3>
 <p><strong>Symptom.</strong> Clients pay 3 seconds of latency on average, exactly
 matching <code>reserve_pool_timeout</code>.</p>
-<p><strong>Cause.</strong> Phase C wait is consistently timing out. Either the database
-is genuinely at the cap and no connections are returning, or
+<p><strong>Cause.</strong> Phase C wait is consistently timing out. With reserve-first
+enabled, reaching Phase C means the reserve was already full when the
+caller arrived, so a peer return is the only way out. Either the
+database is genuinely at the cap with no connections returning, or
 <code>reserve_pool_size = 0</code> so the wait runs to completion before the
 client receives any response.</p>
 <p><strong>Fix.</strong> Lower <code>reserve_pool_timeout</code> to fail fast, or set
-<code>reserve_pool_size &gt; 0</code> so phase D handles the overflow within the same
-acquisition path.</p>
+<code>reserve_pool_size &gt; 0</code> so Phase R / Phase D handles the overflow
+within the same acquisition path without parking in Phase C at all.</p>
+<h3 id="reserve_used-stays-non-zero-but-the-pool-looks-idle"><a class="header" href="#reserve_used-stays-non-zero-but-the-pool-looks-idle"><code>reserve_used</code> stays non-zero but the pool looks idle</a></h3>
+<p><strong>Symptom.</strong> <code>SHOW POOL_COORDINATOR</code> shows <code>reserve_used = 4</code> (or
+any non-zero number) while <code>SHOW POOLS</code> shows no <code>cl_waiting</code>, low
+<code>cl_active</code>, and <code>current &lt; max_db_conn</code>. The reserve pool looks
+occupied by "ghosts".</p>
+<p><strong>Cause.</strong> On builds before the reserve→main upgrade, a reserve
+permit stayed attached to its backend until the backend aged out
+past <code>min_connection_lifetime</code> <em>and</em> the retain cycle caught it
+idle. Under steady client traffic, <code>last_used()</code> on the backend
+kept refreshing faster than <code>min_connection_lifetime</code>, so the
+permit was never released.</p>
+<p><strong>Fix.</strong> On current builds this is resolved automatically: the
+retain task runs <code>upgrade_reserve_to_main</code> every
+<code>retain_connections_time</code> (default 30 s). Each reserve backend in
+a pool not under pressure gets its permit swapped for a main permit
+as long as <code>db_semaphore</code> has headroom. Watch the <code>reserve_used</code>
+gauge drop to zero within one retain cycle.</p>
+<p>If <code>reserve_used</code> still sticks, the pool is either under sustained
+pressure (<code>under_pressure() == true</code> skips upgrade, which is correct
+— a queued client would re-grab the slot immediately) or
+<code>current == max_db_connections</code> (no main slot to steal into).
+Either condition means the database is genuinely full; the fix is
+more capacity, not a workaround.</p>
 <h3 id="burst-gate-is-the-bottleneck-even-with-low-traffic"><a class="header" href="#burst-gate-is-the-bottleneck-even-with-low-traffic">Burst gate is the bottleneck even with low traffic</a></h3>
 <p><strong>Symptom.</strong> <code>gate_waits</code> rate is significant but <code>creates</code> rate is low,
 and <code>inflight_creates</code> is at the cap continuously.</p>
@@ -996,11 +1313,12 @@ small user is the one acquiring most reserves.</p>
 <p><strong>Cause.</strong> A user is below its <strong>effective minimum</strong>
 (<code>max(user.min_pool_size, min_guaranteed_pool_size)</code>) and the
 coordinator cannot satisfy that minimum without evicting from peers.
-Each client request from that user hits coordinator phase D and
-grabs a reserve. <strong>The deeper question is why the user keeps
-needing fresh connections</strong>: either its <code>pool_size</code> is too low to
-absorb its own load, or its traffic is bursty and the reserve is
-doing what reserves are for.</p>
+Each client request from that user hits Phase R (reserve-first) as
+soon as the database is full and grabs a reserve permit — the
+arbiter scores starving users highest, so they win the grant. <strong>The
+deeper question is why the user keeps needing fresh connections</strong>:
+either its <code>pool_size</code> is too low to absorb its own load, or its
+traffic is bursty and the reserve is doing what reserves are for.</p>
 <p><strong>Fix.</strong> Three options, pick by the deeper cause:</p>
 <ul>
 <li>If the user's <code>pool_size</code> is genuinely too small for steady-state
@@ -1051,6 +1369,60 @@ preventing a connection storm against a recovering primary. If
 has headroom, raise <code>scaling_max_parallel_creates</code> to 4 or 8 to
 shorten recovery, but stay within the hard ceiling from the tuning
 section.</p>
+<h2 id="glossary"><a class="header" href="#glossary">Glossary</a></h2>
+<ul>
+<li><strong><code>bounded burst gate</code></strong> — per-pool limiter capped at
+<code>scaling_max_parallel_creates</code> concurrent backend <code>connect()</code> calls.
+Tasks beyond the cap wait on a <code>Notify</code> until a slot frees up.</li>
+<li><strong><code>CoordinatorPermit</code></strong> — RAII guard that accounts for one coordinator
+slot. Carries an <code>is_reserve</code> flag. Dropped when the backend is
+physically destroyed (not when it returns to the idle vec), at which
+point it releases its slot back to either <code>db_semaphore</code> (main) or
+<code>reserve_semaphore</code> (reserve).</li>
+<li><strong>effective minimum</strong> — the eviction floor for a user pool, computed
+as <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>. The
+coordinator protects this many connections per user from being
+evicted by peers.</li>
+<li><strong><code>MAX_RACE_LOSSES</code></strong> — compile-time constant (20). The Phase 4
+anticipation loop gives up after this many consecutive failed
+post-wake recycles. Not configurable.</li>
+<li><strong>Phase R (reserve-first)</strong> — coordinator shortcut inserted between
+Phase A and Phase B. When the database is full but the reserve pool
+has headroom, Phase R grants a reserve permit directly via the
+arbiter instead of closing a peer backend or parking in Phase C.</li>
+<li><strong><code>PHASE_4_HARD_CAP</code></strong> — compile-time constant (500 ms). Upper
+bound on Phase 4 anticipation wall time, regardless of
+<code>query_wait_timeout</code>. Protects tail latency under pathological
+wake orderings. Not configurable.</li>
+<li><strong>reserve arbiter</strong> — single tokio task that owns the reserve
+permits. Reserve requests are scored by <code>(starving, queued_clients)</code>
+and drained from a priority heap so the neediest users are served
+first.</li>
+<li><strong>reserve → main upgrade</strong> — retain-time book-keeping swap. When
+an idle backend holds a reserve permit and <code>db_semaphore</code> has
+headroom, the retain task steals a main permit, returns the reserve
+slot, and flips <code>is_reserve</code> on the permit. No reconnect.</li>
+<li><strong><code>spare_above_min</code></strong> — <code>slots.size - effective_minimum</code> for a user
+pool, where <code>slots.size</code> is the pool's currently allocated
+connection count (active + idle together, not just idle). Used by
+the coordinator to pick eviction victims: the user pool with the
+largest <code>spare_above_min</code> loses a connection first. The underlying
+connection still has to be idle in the vec to be eligible for
+eviction — <code>spare_above_min</code> only selects the pool, not the
+specific connection.</li>
+<li><strong><code>starving</code> user</strong> — a user pool whose current connection count is
+below its effective minimum. The reserve arbiter gives starving
+users absolute priority over non-starving users.</li>
+<li><strong><code>under_pressure()</code></strong> — predicate that returns <code>true</code> when a pool's
+per-pool semaphore has zero available permits, equivalent to every
+slot being checked out right now. Used by the retain task to skip
+upgrade/close on pools that would just hand the freed slot to a
+waiting client.</li>
+<li><strong>warm threshold</strong> — <code>pool_size × scaling_warm_pool_ratio / 100</code>.
+Below this size, the pool skips anticipation and goes straight to
+<code>connect()</code>. Above it, anticipation is active and the pool tries to
+catch returns before creating new backends.</li>
+</ul>
 
                     </main>
 
