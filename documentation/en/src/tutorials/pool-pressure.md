@@ -354,28 +354,31 @@ Three things:
 1. **A hard cap** on total connections per database. If 80 are in use,
    the 81st request waits or fails, regardless of which pool asks.
 
-2. **Eviction.** When the cap is reached and a new pool needs a slot,
-   the coordinator can close an idle connection from a different user's
-   pool to free one. The evicted pool loses a connection; the
-   requesting pool gets one. This is fair: users with the largest
-   surplus above their **effective minimum** lose connections first,
-   and only connections older than `min_connection_lifetime` (default
+2. **A reserve pool.** When the cap is reached and `reserve_pool_size`
+   has room, the coordinator grants a permit from the **reserve**
+   immediately — a small extra pool above `max_db_connections` that
+   acts as a burst buffer. This is Phase R (reserve-first) in the
+   acquisition flow below: no peer backend is closed, no wait is
+   incurred. The reserve is bounded by `reserve_pool_size` (default
+   0, meaning disabled) and prioritised: starving users (those below
+   their **effective minimum**) and users with many queued clients
+   are served first by the arbiter.
+
+3. **Eviction.** Fallback when the reserve is either disabled
+   (`reserve_pool_size = 0`) or already fully used: the coordinator
+   closes an idle connection from a different user's pool to free a
+   main slot. The evicted pool loses a connection; the requesting
+   pool gets one. This is fair: users with the largest surplus above
+   their **effective minimum** lose connections first, and only
+   connections older than `min_connection_lifetime` (default
    30 000 ms) are eligible. The 30-second floor is deliberate: it
    suppresses cyclic reconnect between peer pools that take turns
    stealing slots from each other.
 
    The **effective minimum** for a user pool is
-   `max(user.min_pool_size, pool.min_guaranteed_pool_size)`. Both knobs
-   protect connections from eviction; whichever is larger wins.
+   `max(user.min_pool_size, pool.min_guaranteed_pool_size)`. Both
+   knobs protect connections from eviction; whichever is larger wins.
    Lowering either drops the floor.
-
-3. **A reserve pool.** If the cap is reached, eviction yields nothing,
-   and waiting for a return times out, the coordinator can grant a
-   permit from the **reserve**: a small extra pool above
-   `max_db_connections`. The reserve is bounded by `reserve_pool_size`
-   (default 0, meaning disabled) and prioritised: starving users (those
-   below their **effective minimum**) and users with many queued
-   clients are served first.
 
 ### Coordinator acquisition phases
 
