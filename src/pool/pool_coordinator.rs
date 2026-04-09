@@ -229,7 +229,24 @@ impl PoolCoordinator {
         }
     }
 
-    /// Full acquisition path: try → evict → wait → reserve → error.
+    /// Full acquisition path: try → reserve-first → evict → wait → reserve → error.
+    ///
+    /// Reserve-first short-circuit: after Phase A proves the database is
+    /// full, the coordinator checks the reserve pool. If reserve has
+    /// headroom, the caller skips straight to a reserve grant without
+    /// closing any peer backend (Phase B) or parking on `connection_returned`
+    /// (Phase C). This drops tail latency under cross-pool contention:
+    /// previously a waiter would sit in Phase C for up to
+    /// `reserve_pool_timeout_ms` (3 seconds default) before falling into
+    /// Phase D, each wake cycle producing a p99 spike of tens to hundreds
+    /// of milliseconds. With reserve-first, a caller that hits a full
+    /// database but a warm reserve pool pays only the arbiter round-trip
+    /// (sub-millisecond in the common case).
+    ///
+    /// Reserve is meant to burst above `max_db_connections` during transient
+    /// pressure — that is exactly the job it is doing here. Eviction and
+    /// Phase C wait stay as the fallback path for the case where the reserve
+    /// is already fully used.
     pub async fn acquire(
         self: &Arc<Self>,
         database: &str,
@@ -254,27 +271,47 @@ impl PoolCoordinator {
         let active = self.total_connections.load(Ordering::Relaxed);
         debug!(
             "[{}@{}] coordinator: fast path unavailable \
-             (active={}/{}), trying eviction",
+             (active={}/{}), checking reserve headroom",
             user, database, active, max,
         );
 
         // A peer pool may have dropped its permit between Phase A's
         // `try_acquire` and now (any concurrent `CoordinatorPermit::drop`
         // bumps `db_semaphore` without going through this path). Re-check
-        // the cheap fast path before incurring an eviction: closing a peer
-        // backend that didn't need to be closed is unrecoverable damage,
-        // and a single extra atomic CAS is essentially free compared to
-        // the alternative.
+        // the cheap fast path before incurring reserve or eviction work:
+        // closing a peer backend that didn't need to be closed is
+        // unrecoverable damage, and a single extra atomic CAS is essentially
+        // free compared to the alternative.
         if let Some(permit) = self.try_acquire() {
             debug!(
-                "[{}@{}] coordinator: permit became free between Phase A and Phase B, \
-                 eviction avoided (active={}/{})",
+                "[{}@{}] coordinator: permit became free between fast-path \
+                 tries, reserve/eviction avoided (active={}/{})",
                 user,
                 database,
                 self.total_connections.load(Ordering::Relaxed),
                 max,
             );
             return Ok(permit);
+        }
+
+        // Reserve-first: if the reserve pool has headroom, grant a reserve
+        // permit directly. Skips Phase B (closing a peer backend) and
+        // Phase C (parking for up to `reserve_pool_timeout_ms`), which is
+        // where the p99 tail used to come from. The `available_permits()`
+        // check matches what the arbiter will itself try — a lock-free
+        // peek on the semaphore, no extra atomics compared to the Phase D
+        // path below.
+        if self.config.reserve_pool_size > 0 && self.reserve_semaphore.available_permits() > 0 {
+            if let Some(permit) = self
+                .try_grant_reserve(database, user, eviction_source)
+                .await
+            {
+                return Ok(permit);
+            }
+            // Reserve grant failed (arbiter raced another caller or
+            // oneshot timed out). Fall through to the eviction/wait path —
+            // the caller still has a budget to spend on peer eviction and
+            // Phase C wakes before we end up back at the Phase D retry.
         }
 
         // Phase B: try eviction — close an idle connection from another user
@@ -308,7 +345,12 @@ impl PoolCoordinator {
             );
         }
 
-        // Phase C: wait for a connection to be returned.
+        // Phase C: wait for a connection to be returned. Reached only when
+        // reserve is either disabled or fully in use — otherwise reserve-first
+        // took over right after Phase A. This phase exists for the steady-state
+        // saturation case, where both main and reserve permits are already
+        // held, and the only way forward is a peer returning a connection.
+        //
         // Register `notified()` BEFORE `try_acquire()` so that the
         // `notify_one` from CoordinatorPermit::drop is not lost.
         let timeout_ms = self.config.reserve_pool_timeout_ms;
@@ -411,64 +453,19 @@ impl PoolCoordinator {
             max,
         );
 
-        // Phase D: reserve
+        // Phase D: reserve retry. Reserve-first already tried this path
+        // once right after Phase A. Re-trying here catches the case where
+        // a reserve permit freed up during Phase C's wait (a peer reserve
+        // holder dropped its permit), at the cost of a single arbiter
+        // round-trip. The cost is negligible compared to the Phase C wait
+        // we just spent.
         let phase = if self.config.reserve_pool_size > 0 {
-            let starving = u8::from(eviction_source.is_starving(user));
-            let queued = eviction_source.queued_clients(user);
-            let reserve_in_use = self.reserve_in_use.load(Ordering::Relaxed);
-
-            debug!(
-                "[{}@{}] coordinator: requesting reserve permit \
-                 (starving={}, queued_clients={}, reserve_in_use={}/{})",
-                user,
-                database,
-                starving == 1,
-                queued,
-                reserve_in_use,
-                self.config.reserve_pool_size,
-            );
-
-            let (tx, rx) = tokio::sync::oneshot::channel();
-
-            if self
-                .reserve_tx
-                .send(ReserveRequest {
-                    user: user.to_string(),
-                    score: (starving, queued),
-                    response: tx,
-                })
+            if let Some(permit) = self
+                .try_grant_reserve(database, user, eviction_source)
                 .await
-                .is_ok()
             {
-                if let Ok(Ok(grant)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await {
-                    self.total_connections.fetch_add(1, Ordering::Relaxed);
-                    self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
-                    self.reserve_acquisitions_total
-                        .fetch_add(1, Ordering::Relaxed);
-                    info!(
-                        "[{}@{}] coordinator: reserve permit granted \
-                         (active={}/{}, reserve_in_use={}/{})",
-                        user,
-                        database,
-                        self.total_connections.load(Ordering::Relaxed),
-                        max,
-                        self.reserve_in_use.load(Ordering::Relaxed),
-                        self.config.reserve_pool_size,
-                    );
-                    return Ok(grant.into_permit());
-                }
+                return Ok(permit);
             }
-
-            debug!(
-                "[{}@{}] coordinator: reserve request denied — \
-                 no reserve permits available or arbiter timeout \
-                 (reserve_in_use={}/{})",
-                user,
-                database,
-                self.reserve_in_use.load(Ordering::Relaxed),
-                self.config.reserve_pool_size,
-            );
-
             AcquirePhase::ReserveExhausted
         } else {
             debug!(
@@ -523,6 +520,76 @@ impl PoolCoordinator {
     /// every few milliseconds.
     pub(crate) fn notify_idle_returned(&self) {
         self.connection_returned.notify_one();
+    }
+
+    /// Send a reserve request to the arbiter and wait for the grant.
+    /// Returns `Some` on successful grant, `None` if the arbiter denied
+    /// (no reserve permits) or the oneshot timed out. Used both by the
+    /// reserve-first fast path (after Phase A) and by the Phase D
+    /// fallback (after Phase C wait exhaustion).
+    async fn try_grant_reserve(
+        self: &Arc<Self>,
+        database: &str,
+        user: &str,
+        eviction_source: &dyn EvictionSource,
+    ) -> Option<CoordinatorPermit> {
+        let max = self.config.max_db_connections;
+        let starving = u8::from(eviction_source.is_starving(user));
+        let queued = eviction_source.queued_clients(user);
+        let reserve_in_use = self.reserve_in_use.load(Ordering::Relaxed);
+
+        debug!(
+            "[{}@{}] coordinator: requesting reserve permit \
+             (starving={}, queued_clients={}, reserve_in_use={}/{})",
+            user,
+            database,
+            starving == 1,
+            queued,
+            reserve_in_use,
+            self.config.reserve_pool_size,
+        );
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        if self
+            .reserve_tx
+            .send(ReserveRequest {
+                user: user.to_string(),
+                score: (starving, queued),
+                response: tx,
+            })
+            .await
+            .is_ok()
+        {
+            if let Ok(Ok(grant)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await {
+                self.total_connections.fetch_add(1, Ordering::Relaxed);
+                self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
+                self.reserve_acquisitions_total
+                    .fetch_add(1, Ordering::Relaxed);
+                info!(
+                    "[{}@{}] coordinator: reserve permit granted \
+                     (active={}/{}, reserve_in_use={}/{})",
+                    user,
+                    database,
+                    self.total_connections.load(Ordering::Relaxed),
+                    max,
+                    self.reserve_in_use.load(Ordering::Relaxed),
+                    self.config.reserve_pool_size,
+                );
+                return Some(grant.into_permit());
+            }
+        }
+
+        debug!(
+            "[{}@{}] coordinator: reserve request denied — \
+             no reserve permits available or arbiter timeout \
+             (reserve_in_use={}/{})",
+            user,
+            database,
+            self.reserve_in_use.load(Ordering::Relaxed),
+            self.config.reserve_pool_size,
+        );
+        None
     }
 
     pub fn total_connections(&self) -> usize {
@@ -994,6 +1061,9 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_eviction_frees_permit() {
+        // Reserve = 0 to force the path through eviction; with reserve > 0
+        // the reserve-first short-circuit would grant a reserve permit
+        // instead of running eviction.
         let coord = PoolCoordinator::new("test_db".to_string(), test_config(2, 0));
         let p1 = coord.try_acquire().unwrap();
         let _p2 = coord.try_acquire().unwrap();
@@ -1005,6 +1075,97 @@ mod tests {
         assert!(result.is_ok());
         assert!(!result.unwrap().is_reserve);
         assert_eq!(coord.stats().evictions_total, 1);
+    }
+
+    /// Reserve-first invariant: when the database is full but the reserve
+    /// pool has headroom, the coordinator must grant a reserve permit
+    /// without closing a peer backend or parking in Phase C. This is the
+    /// core of the p99-latency fix — eviction should never run while the
+    /// reserve pool has slack.
+    #[tokio::test]
+    async fn reserve_first_skips_eviction_when_reserve_has_room() {
+        use std::sync::atomic::{AtomicU64, Ordering as AOrdering};
+
+        #[derive(Clone)]
+        struct RecordingEviction {
+            calls: std::sync::Arc<AtomicU64>,
+        }
+        impl EvictionSource for RecordingEviction {
+            fn try_evict_one(&self, _user: &str) -> bool {
+                self.calls.fetch_add(1, AOrdering::Relaxed);
+                true // would succeed, but must not be reached
+            }
+            fn queued_clients(&self, _user: &str) -> usize {
+                0
+            }
+            fn is_starving(&self, _user: &str) -> bool {
+                false
+            }
+        }
+
+        // 1 main slot (already pinned) + 5 reserve permits free.
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 5));
+        let _p1 = coord.try_acquire().unwrap();
+
+        let calls = std::sync::Arc::new(AtomicU64::new(0));
+        let eviction = RecordingEviction {
+            calls: std::sync::Arc::clone(&calls),
+        };
+
+        let permit = coord
+            .acquire("testdb", "user_a", &eviction)
+            .await
+            .expect("reserve-first must grant a permit");
+        assert!(
+            permit.is_reserve,
+            "short-circuit must produce a reserve permit, not a main one"
+        );
+        assert_eq!(
+            calls.load(AOrdering::Relaxed),
+            0,
+            "eviction must not be called while reserve has headroom",
+        );
+        assert_eq!(coord.stats().evictions_total, 0);
+        assert_eq!(coord.stats().reserve_acquisitions_total, 1);
+        assert_eq!(coord.reserve_in_use(), 1);
+    }
+
+    /// Reserve-first fallback: once the reserve pool is fully in use,
+    /// the short-circuit fails and the coordinator must still run the
+    /// original eviction → wait → reserve-retry path. Pins the fallback
+    /// so a regression that removes Phase B/C can't hide.
+    #[tokio::test]
+    async fn reserve_first_falls_back_to_eviction_when_reserve_full() {
+        // 2 main slots + 1 reserve permit total.
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(2, 1));
+        let p1 = coord.try_acquire().unwrap();
+        let _p2 = coord.try_acquire().unwrap();
+
+        // Saturate the reserve via a normal acquire — main is full, so
+        // the caller gets the single reserve permit via reserve-first.
+        let noop = NoOpEviction;
+        let _r1 = coord
+            .acquire("testdb", "reserve_holder", &noop)
+            .await
+            .expect("reserve-first grants the only reserve permit");
+        assert_eq!(coord.reserve_in_use(), 1);
+
+        // Database is now fully saturated (main 2/2, reserve 1/1). The
+        // next caller must fall through to eviction — reserve-first
+        // cannot grant, Phase B must drop p1.
+        let eviction = PermitDroppingEviction::new(p1);
+        let permit = coord
+            .acquire("testdb", "requester", &eviction)
+            .await
+            .expect("eviction path must still work when reserve is full");
+        assert!(
+            !permit.is_reserve,
+            "fallback must grant a main permit via eviction, not reserve",
+        );
+        assert_eq!(coord.stats().evictions_total, 1);
+        // Reserve counter stays at 1 — the second grant came from eviction,
+        // not from another reserve acquisition.
+        assert_eq!(coord.stats().reserve_acquisitions_total, 1);
     }
 
     #[tokio::test]
