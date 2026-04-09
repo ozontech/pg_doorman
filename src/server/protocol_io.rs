@@ -35,14 +35,35 @@ use crate::messages::{
 use super::parameters::ServerParameters;
 use super::server_backend::Server;
 
-// PostgreSQL CommandComplete message payloads for tracking session state changes
-/// CommandComplete payload for SET statements (requires RESET ALL cleanup)
+// PostgreSQL CommandComplete message payloads for tracking session state changes.
+//
+// A checkin-time `RESET ALL` / `DEALLOCATE ALL` / `CLOSE ALL` is a heuristic
+// upper bound: we arm the `needs_cleanup_*` flags when we see a statement that
+// *might* have mutated the session, and we disarm them when we see a statement
+// that has since restored it. Disarming matters because otherwise a client that
+// performs its own reset batch (e.g. pgx on internal context deadline sends
+// `SET SESSION AUTHORIZATION DEFAULT; RESET ALL; CLOSE ALL; UNLISTEN *;
+// DISCARD PLANS; ...`) leaves pg_doorman thinking the connection is still dirty
+// and triggers a second, redundant `RESET ALL` round-trip on checkin.
+
+/// `SET` statement CommandComplete tag — arms the `needs_cleanup_set` flag.
+/// Returned for any `SET foo = ...`, including `SET SESSION AUTHORIZATION ...`.
 const COMMAND_COMPLETE_BY_SET: &[u8; 4] = b"SET\0";
-/// CommandComplete payload for DECLARE CURSOR statements (requires CLOSE ALL cleanup)
+/// `RESET` statement CommandComplete tag — disarms `needs_cleanup_set`.
+/// PostgreSQL returns this tag both for `RESET ALL` and for `RESET foo.bar`;
+/// the per-GUC form is still safe to treat as a reset because the only state
+/// pg_doorman tracked is the `SET` flag — the next `SET` will re-arm it.
+const COMMAND_COMPLETE_BY_RESET: &[u8; 6] = b"RESET\0";
+/// `DECLARE CURSOR` CommandComplete tag — arms the `needs_cleanup_declare` flag.
 const COMMAND_COMPLETE_BY_DECLARE: &[u8; 15] = b"DECLARE CURSOR\0";
-/// CommandComplete payload for DEALLOCATE ALL (clears prepared statement cache)
+/// `CLOSE ALL` CommandComplete tag — disarms `needs_cleanup_declare`.
+/// Note the server emits `CLOSE CURSOR ALL`, not `CLOSE ALL`.
+const COMMAND_COMPLETE_BY_CLOSE_CURSOR_ALL: &[u8; 17] = b"CLOSE CURSOR ALL\0";
+/// `DEALLOCATE ALL` CommandComplete tag — clears prepared statement cache
+/// and disarms `needs_cleanup_prepare`.
 const COMMAND_COMPLETE_BY_DEALLOCATE_ALL: &[u8; 15] = b"DEALLOCATE ALL\0";
-/// CommandComplete payload for DISCARD ALL (clears prepared statement cache)
+/// `DISCARD ALL` CommandComplete tag — equivalent to `RESET ALL; DEALLOCATE ALL;
+/// CLOSE ALL; UNLISTEN *; ...`, so disarms every `needs_cleanup_*` flag.
 const COMMAND_COMPLETE_BY_DISCARD_ALL: &[u8; 12] = b"DISCARD ALL\0";
 
 /// Buffer flush threshold in bytes (8 KiB).
@@ -301,47 +322,111 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
     }
 }
 
+/// Effect a single CommandComplete tag has on the server's cleanup tracking.
+///
+/// Extracted from [`handle_command_complete`] so the tag-matching logic can be
+/// unit-tested without constructing a full `Server`. See the tests at the bottom
+/// of this file for the exhaustive tag coverage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandCompleteEffect {
+    /// Tag does not influence cleanup tracking (e.g. SELECT, INSERT).
+    None,
+    /// `SET ...` — session GUC potentially mutated; arm set-cleanup.
+    ArmSet,
+    /// `DECLARE CURSOR` — a server-side cursor may now be open; arm declare-cleanup.
+    ArmDeclare,
+    /// `RESET` / `RESET ALL` — session GUCs are back to the server defaults;
+    /// disarm set-cleanup because the subsequent checkin RESET would be a no-op.
+    DisarmSet,
+    /// `CLOSE CURSOR ALL` — no server-side cursors remain; disarm declare-cleanup.
+    DisarmDeclare,
+    /// `DEALLOCATE ALL` — every prepared statement is gone server-side; disarm
+    /// prepare-cleanup and drop the LRU so the next checkout starts from scratch.
+    DisarmPrepare,
+    /// `DISCARD ALL` — equivalent to `RESET ALL; DEALLOCATE ALL; CLOSE ALL;
+    /// UNLISTEN *; ...` executed atomically; disarm every `needs_cleanup_*` flag
+    /// and drop the LRU.
+    DisarmAll,
+}
+
+/// Pure classifier for CommandComplete tags relevant to session cleanup tracking.
+///
+/// The tags are compared byte-for-byte; `PartialEq for [u8]` already short-circuits
+/// on length, so non-matching messages (the common case on the hot path) cost a
+/// single length comparison per arm.
+fn classify_command_complete(tag: &[u8]) -> CommandCompleteEffect {
+    if tag == COMMAND_COMPLETE_BY_SET {
+        CommandCompleteEffect::ArmSet
+    } else if tag == COMMAND_COMPLETE_BY_RESET {
+        CommandCompleteEffect::DisarmSet
+    } else if tag == COMMAND_COMPLETE_BY_DECLARE {
+        CommandCompleteEffect::ArmDeclare
+    } else if tag == COMMAND_COMPLETE_BY_CLOSE_CURSOR_ALL {
+        CommandCompleteEffect::DisarmDeclare
+    } else if tag == COMMAND_COMPLETE_BY_DEALLOCATE_ALL {
+        CommandCompleteEffect::DisarmPrepare
+    } else if tag == COMMAND_COMPLETE_BY_DISCARD_ALL {
+        CommandCompleteEffect::DisarmAll
+    } else {
+        CommandCompleteEffect::None
+    }
+}
+
+/// Drop the pg_doorman-side prepared statement LRU after the server confirms it
+/// just executed an equivalent of `DEALLOCATE ALL` or `DISCARD ALL`.
+fn drop_prepared_statement_cache_on_reset(server: &mut Server, reason: &'static str) {
+    server.registering_prepared_statement.clear();
+    let Some(cache_size) = server
+        .prepared_statement_cache
+        .as_ref()
+        .map(|cache| cache.len())
+    else {
+        return;
+    };
+    warn!(
+        "[{}@{}] clearing prepared statement cache pid={}: {reason} ({cache_size} entries)",
+        server.address.username,
+        server.address.pool_name,
+        server.get_process_id(),
+    );
+    if let Some(cache) = server.prepared_statement_cache.as_mut() {
+        cache.clear();
+    }
+}
+
 /// Handles CommandComplete ('C') message - indicates successful completion of a command.
-/// Tracks commands that require cleanup (SET, DECLARE, etc.) and updates server state.
+/// Tracks commands that may require cleanup (SET, DECLARE, ...) and disarms the
+/// cleanup flags when the session has since been restored by a RESET / DISCARD /
+/// DEALLOCATE / CLOSE ALL statement in the same or a later batch — so that the
+/// next checkin does not issue a redundant `RESET ALL` round-trip on a connection
+/// the client has already cleaned up.
 fn handle_command_complete(server: &mut Server, message: &BytesMut) {
     // Exit COPY mode if we were in it
     if server.in_copy_mode {
         server.in_copy_mode = false;
     }
 
-    // Check for commands that require cleanup at connection checkin
-    if message.len() == 4 && &message[..] == COMMAND_COMPLETE_BY_SET {
-        server.cleanup_state.needs_cleanup_set = true;
-    }
-    if message.len() == 15 && &message[..] == COMMAND_COMPLETE_BY_DECLARE {
-        server.cleanup_state.needs_cleanup_declare = true;
-    }
-    if message.len() == 12 && &message[..] == COMMAND_COMPLETE_BY_DISCARD_ALL {
-        server.registering_prepared_statement.clear();
-        if server.prepared_statement_cache.is_some() {
-            let cache_size = server.prepared_statement_cache.as_ref().unwrap().len();
-            warn!(
-                "[{}@{}] clearing prepared statement cache pid={}: DISCARD ALL ({} entries)",
-                server.address.username,
-                server.address.pool_name,
-                server.get_process_id(),
-                cache_size
-            );
-            server.prepared_statement_cache.as_mut().unwrap().clear();
+    match classify_command_complete(&message[..]) {
+        CommandCompleteEffect::None => {}
+        CommandCompleteEffect::ArmSet => {
+            server.cleanup_state.needs_cleanup_set = true;
         }
-    }
-    if message.len() == 15 && &message[..] == COMMAND_COMPLETE_BY_DEALLOCATE_ALL {
-        server.registering_prepared_statement.clear();
-        if server.prepared_statement_cache.is_some() {
-            let cache_size = server.prepared_statement_cache.as_ref().unwrap().len();
-            warn!(
-                "[{}@{}] clearing prepared statement cache pid={}: DEALLOCATE ALL ({} entries)",
-                server.address.username,
-                server.address.pool_name,
-                server.get_process_id(),
-                cache_size
-            );
-            server.prepared_statement_cache.as_mut().unwrap().clear();
+        CommandCompleteEffect::ArmDeclare => {
+            server.cleanup_state.needs_cleanup_declare = true;
+        }
+        CommandCompleteEffect::DisarmSet => {
+            server.cleanup_state.needs_cleanup_set = false;
+        }
+        CommandCompleteEffect::DisarmDeclare => {
+            server.cleanup_state.needs_cleanup_declare = false;
+        }
+        CommandCompleteEffect::DisarmPrepare => {
+            server.cleanup_state.needs_cleanup_prepare = false;
+            drop_prepared_statement_cache_on_reset(server, "DEALLOCATE ALL");
+        }
+        CommandCompleteEffect::DisarmAll => {
+            server.cleanup_state.reset();
+            drop_prepared_statement_cache_on_reset(server, "DISCARD ALL");
         }
     }
 }
@@ -652,4 +737,158 @@ where
 
     // Pass the data back to the client.
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pure-function tests for CommandComplete tag classification.
+    //!
+    //! The tag strings were captured empirically against PostgreSQL 16 by
+    //! connecting with `psql` and inspecting the CommandComplete payload —
+    //! PostgreSQL does not expose the tag list as a public contract, so these
+    //! tests pin the bytes pg_doorman relies on.
+    //!
+    //! Note the two non-obvious cases:
+    //! * `RESET ALL` is reported as `RESET\0`, not `RESET ALL\0`.
+    //! * `CLOSE ALL` is reported as `CLOSE CURSOR ALL\0`, not `CLOSE ALL\0`.
+
+    use super::{classify_command_complete, CommandCompleteEffect};
+
+    #[test]
+    fn set_tag_arms_set_cleanup() {
+        assert_eq!(
+            classify_command_complete(b"SET\0"),
+            CommandCompleteEffect::ArmSet,
+        );
+    }
+
+    #[test]
+    fn reset_tag_disarms_set_cleanup() {
+        // PostgreSQL emits the same `RESET\0` tag for `RESET ALL` and
+        // `RESET foo.bar`; both restore GUCs to their default so either one
+        // legitimately disarms pg_doorman's heuristic flag.
+        assert_eq!(
+            classify_command_complete(b"RESET\0"),
+            CommandCompleteEffect::DisarmSet,
+        );
+    }
+
+    #[test]
+    fn declare_cursor_tag_arms_declare_cleanup() {
+        assert_eq!(
+            classify_command_complete(b"DECLARE CURSOR\0"),
+            CommandCompleteEffect::ArmDeclare,
+        );
+    }
+
+    #[test]
+    fn close_cursor_all_tag_disarms_declare_cleanup() {
+        assert_eq!(
+            classify_command_complete(b"CLOSE CURSOR ALL\0"),
+            CommandCompleteEffect::DisarmDeclare,
+        );
+    }
+
+    #[test]
+    fn close_single_cursor_tag_is_inert() {
+        // Closing one named cursor is not the same as `CLOSE ALL` — other
+        // cursors may still be open, so this tag must NOT disarm declare-cleanup.
+        assert_eq!(
+            classify_command_complete(b"CLOSE CURSOR\0"),
+            CommandCompleteEffect::None,
+        );
+    }
+
+    #[test]
+    fn deallocate_all_tag_disarms_prepare_cleanup() {
+        assert_eq!(
+            classify_command_complete(b"DEALLOCATE ALL\0"),
+            CommandCompleteEffect::DisarmPrepare,
+        );
+    }
+
+    #[test]
+    fn discard_all_tag_disarms_every_cleanup_flag() {
+        assert_eq!(
+            classify_command_complete(b"DISCARD ALL\0"),
+            CommandCompleteEffect::DisarmAll,
+        );
+    }
+
+    #[test]
+    fn partial_discard_tags_are_inert() {
+        // DISCARD PLANS drops the plan cache, DISCARD TEMP drops temp tables,
+        // DISCARD SEQUENCES resets sequence caches. None of them revert SET
+        // state or drop prepared statements, so none should influence the
+        // cleanup flags on their own.
+        assert_eq!(
+            classify_command_complete(b"DISCARD PLANS\0"),
+            CommandCompleteEffect::None,
+        );
+        assert_eq!(
+            classify_command_complete(b"DISCARD TEMP\0"),
+            CommandCompleteEffect::None,
+        );
+        assert_eq!(
+            classify_command_complete(b"DISCARD SEQUENCES\0"),
+            CommandCompleteEffect::None,
+        );
+    }
+
+    #[test]
+    fn regular_command_tags_are_inert() {
+        // A representative sample of data-plane tags. If any of these ever
+        // start influencing cleanup tracking it will be a correctness bug.
+        for tag in [
+            &b"SELECT 1\0"[..],
+            b"INSERT 0 1\0",
+            b"UPDATE 5\0",
+            b"DELETE 10\0",
+            b"BEGIN\0",
+            b"COMMIT\0",
+            b"ROLLBACK\0",
+            b"UNLISTEN\0",
+            b"SAVEPOINT\0",
+        ] {
+            assert_eq!(
+                classify_command_complete(tag),
+                CommandCompleteEffect::None,
+                "tag {:?} should not influence cleanup",
+                std::str::from_utf8(tag).unwrap_or("<non-utf8>"),
+            );
+        }
+    }
+
+    #[test]
+    fn length_only_matches_do_not_confuse_classifier() {
+        // Both DECLARE CURSOR and DEALLOCATE ALL are 15 bytes long with the
+        // trailing NUL; the classifier must dispatch on content, not length.
+        assert_eq!(
+            classify_command_complete(b"DECLARE CURSOR\0"),
+            CommandCompleteEffect::ArmDeclare,
+        );
+        assert_eq!(
+            classify_command_complete(b"DEALLOCATE ALL\0"),
+            CommandCompleteEffect::DisarmPrepare,
+        );
+        // Same length as DEALLOCATE ALL but unrelated content — must be inert.
+        assert_eq!(
+            classify_command_complete(b"MADE UP TAG 01\0"),
+            CommandCompleteEffect::None,
+        );
+    }
+
+    #[test]
+    fn empty_or_missing_nul_is_inert() {
+        assert_eq!(classify_command_complete(b""), CommandCompleteEffect::None,);
+        // Without the trailing NUL the length never matches the expected one.
+        assert_eq!(
+            classify_command_complete(b"SET"),
+            CommandCompleteEffect::None,
+        );
+        assert_eq!(
+            classify_command_complete(b"RESET"),
+            CommandCompleteEffect::None,
+        );
+    }
 }
