@@ -1101,15 +1101,19 @@ fields:
       config:
         en: |
           Don't evict connections younger than this (milliseconds).
-          Protects freshly created connections from immediate eviction.
+          Protects freshly created connections from eviction churn
+          between user pools sharing the same database.
         ru: |
           Не изымать соединения моложе этого значения (миллисекунды).
-          Защищает свежесозданные соединения от немедленного изъятия.
+          Защищает свежесозданные соединения от постоянного churn'а
+          между user-пулами, разделяющими одну базу данных.
       doc: |
         Minimum age (in milliseconds) a connection must reach before it can be evicted by the
-        pool coordinator. Prevents thundering herd scenarios where freshly created connections
-        are immediately taken away. Only relevant when `max_db_connections > 0`.
-      default: "5000 (5 seconds)"
+        pool coordinator. Prevents cyclic reconnect between user pools that share the same
+        database: without this gate, one user's idle slot becomes evictable the moment its
+        peer asks for a permit, and under sustained multi-user load each pool steals a slot
+        back from its neighbour every few seconds. Only relevant when `max_db_connections > 0`.
+      default: "30000 (30 seconds)"
 
     reserve_pool_size:
       config:

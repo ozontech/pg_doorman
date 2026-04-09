@@ -205,7 +205,7 @@ pools:
     server_host: "127.0.0.1"
     server_port: 5432
     max_db_connections: 80        # hard cap (0 = disabled)
-    min_connection_lifetime: 5000 # don't evict connections younger than 5s
+    min_connection_lifetime: 30000 # don't evict connections younger than 30s
     reserve_pool_size: 20         # extra slots beyond the limit
     reserve_pool_timeout: 3000    # wait up to 3s for a free connection before falling back to reserve
     min_guaranteed_pool_size: 2   # per-user eviction protection

@@ -235,7 +235,7 @@ impl ConnectionPool {
             }
             let new_cfg = pool_coordinator::CoordinatorConfig {
                 max_db_connections: max,
-                min_connection_lifetime_ms: pool_config.min_connection_lifetime.unwrap_or(5000),
+                min_connection_lifetime_ms: pool_config.min_connection_lifetime.unwrap_or(30_000),
                 reserve_pool_size: pool_config.reserve_pool_size.unwrap_or(0) as usize,
                 reserve_pool_timeout_ms: pool_config.reserve_pool_timeout.unwrap_or(3000),
             };

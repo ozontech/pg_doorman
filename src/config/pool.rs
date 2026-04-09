@@ -114,7 +114,7 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_db_connections: Option<u32>,
 
-    /// Don't evict connections younger than this (milliseconds). Default: 5000.
+    /// Don't evict connections younger than this (milliseconds). Default: 30000.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_connection_lifetime: Option<u64>,
 

@@ -355,7 +355,9 @@ Three things:
    requesting pool gets one. This is fair: users with the largest
    surplus above their **effective minimum** lose connections first,
    and only connections older than `min_connection_lifetime` (default
-   5000 ms) are eligible.
+   30 000 ms) are eligible. The 30-second floor is deliberate: it
+   suppresses cyclic reconnect between peer pools that take turns
+   stealing slots from each other.
 
    The **effective minimum** for a user pool is
    `max(user.min_pool_size, pool.min_guaranteed_pool_size)`. Both knobs
@@ -514,7 +516,7 @@ not supported.
 | `scaling_fast_retries` | `10` | `general`, per-pool | Number of `yield_now` spin retries before entering the event-driven anticipation loop. Each retry costs ~1–5 µs. |
 | `scaling_max_parallel_creates` | `2` | `general` | Hard cap on concurrent backend `connect()` calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be `>= 1`. |
 | `max_db_connections` | unset (disabled) | per-pool | Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist. |
-| `min_connection_lifetime` | `5000` (ms) | per-pool | Minimum age of an idle connection before the coordinator may evict it for another pool. Lower bound on connection churn. |
+| `min_connection_lifetime` | `30000` (ms) | per-pool | Minimum age of an idle connection before the coordinator may evict it for another pool. The 30-second floor suppresses cyclic reconnect between peer pools that keep stealing slots from each other. |
 | `reserve_pool_size` | `0` (disabled) | per-pool | Extra coordinator permits above `max_db_connections`, granted by priority when the main pool is exhausted. |
 | `reserve_pool_timeout` | `3000` (ms) | per-pool | Maximum coordinator wait time before falling through to the reserve pool. |
 | `min_guaranteed_pool_size` | `0` | per-pool | Per-user minimum protected from coordinator eviction. A user with `current_size <= min_guaranteed_pool_size` has its connections immune to eviction by other users. |
@@ -941,10 +943,10 @@ exhausted or `reserve_pool_size = 0`.
    cap. Either raise `max_db_connections` or look for a runaway pool.
 2. Check `evictions` rate. If it's zero or near-zero, eviction is not
    helping: every pool's idle connections are younger than
-   `min_connection_lifetime` (default 5000 ms), or every other pool is
-   at its `min_guaranteed_pool_size`. Lower `min_connection_lifetime`
-   if your workload has very short queries, or increase
-   `max_db_connections`.
+   `min_connection_lifetime` (default 30 000 ms), or every other pool
+   is at its `min_guaranteed_pool_size`. Lower `min_connection_lifetime`
+   if your workload has very short queries and you explicitly want
+   faster cross-pool rebalancing, or increase `max_db_connections`.
 3. Check `reserve_used` vs `reserve_size`. If the reserve is fully
    occupied, raise `reserve_pool_size`. If it's empty but `exhaustions`
    are happening, the reserve is not configured (`reserve_pool_size = 0`).

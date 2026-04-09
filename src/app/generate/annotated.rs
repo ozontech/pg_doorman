@@ -1212,7 +1212,7 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
     if let Some(val) = pool.min_connection_lifetime {
         w.kv(fi, "min_connection_lifetime", &w.num_val(val));
     } else {
-        w.commented_kv(fi, "min_connection_lifetime", "5000");
+        w.commented_kv(fi, "min_connection_lifetime", "30000");
     }
     w.blank();
 

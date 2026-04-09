@@ -464,8 +464,9 @@ cleanup_server_connections = true
 # max_db_connections = 0
 
 # Don't evict connections younger than this (milliseconds).
-# Protects freshly created connections from immediate eviction.
-# min_connection_lifetime = 5000
+# Protects freshly created connections from eviction churn
+# between user pools sharing the same database.
+# min_connection_lifetime = 30000
 
 # Extra connections beyond max_db_connections, used as last resort.
 # Allocated by priority: users below min_pool_size get served first.
