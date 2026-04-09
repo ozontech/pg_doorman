@@ -39,6 +39,8 @@ pub(crate) const SHOW_SUBCOMMANDS: &[&str] = &[
     "auth_query",
     "log_level",
     "lists",
+    #[cfg(target_os = "linux")]
+    "sockets",
 ];
 
 #[cfg(not(windows))]
