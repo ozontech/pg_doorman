@@ -39,6 +39,8 @@ Feature: Client session reset batch suppresses doorman-side cleanup
       admin_username = "admin"
       admin_password = "admin"
       pg_hba.content = "host all all 127.0.0.1/32 trust"
+      prepared_statements = true
+      prepared_statements_cache_size = 100
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -134,4 +136,72 @@ Feature: Client session reset batch suppresses doorman-side cleanup
     # whole simple-query string on one line when log_statement = 'all').
     Then PostgreSQL log should contain "DECLARE doorman_cur"
     # And the marker for pg_doorman's own checkin cleanup is absent.
+    And PostgreSQL log should not contain "RESET ROLE"
+
+  @client-session-reset-cleanup-per-guc-reset
+  Scenario: Per-GUC RESET disarms set-cleanup
+    # PostgreSQL returns the same `RESET` tag for `RESET ALL` and `RESET foo`,
+    # so a per-GUC RESET after a SET on the same GUC leaves the session clean
+    # as far as pg_doorman is concerned. Documents the intentional trade-off:
+    # `SET a=1; SET b=2; RESET a;` would also be treated as clean, because
+    # pg_doorman only tracks a single cleanup bit and cannot distinguish which
+    # GUCs are still modified.
+    When we create session "five" to pg_doorman as "example_user_1" with password "" and database "example_db_session"
+    And we send SimpleQuery "SELECT 1" to session "five"
+    And we sleep 100ms
+    When we truncate PostgreSQL log
+    And we send SimpleQuery "SET statement_timeout = 1000" to session "five"
+    And we send SimpleQuery "RESET statement_timeout" to session "five"
+    And we close session "five"
+    And we sleep 300ms
+    Then PostgreSQL log should contain "RESET statement_timeout"
+    And PostgreSQL log should not contain "RESET ROLE"
+
+  @client-session-reset-cleanup-single-close-keeps-armed
+  Scenario: Closing one named cursor does not disarm declare-cleanup
+    # Only `CLOSE CURSOR ALL` carries the disarm semantics. Closing a single
+    # named cursor emits `CLOSE CURSOR` (no ALL), which leaves other cursors
+    # open and must not clear the cleanup flag. pg_doorman has to follow up
+    # with its own `CLOSE ALL` on checkin.
+    When we create session "six" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "six"
+    And we sleep 100ms
+    When we truncate PostgreSQL log
+    And we send SimpleQuery "BEGIN; DECLARE doorman_c1 CURSOR FOR SELECT 1; DECLARE doorman_c2 CURSOR FOR SELECT 2; CLOSE doorman_c1; COMMIT" to session "six"
+    And we sleep 300ms
+    # The client closed only c1 — c2 is still defined on the server until the
+    # implicit transaction ended via COMMIT, so pg_doorman stayed armed and
+    # issued its own cleanup batch.
+    Then PostgreSQL log should contain "RESET ROLE"
+    And PostgreSQL log should contain "CLOSE ALL"
+
+  @client-session-reset-cleanup-error-arms-prepare
+  Scenario: PostgreSQL error arms prepare-cleanup, forcing DEALLOCATE ALL on checkin
+    # Baseline for the prepare-cleanup path: an ErrorResponse while the
+    # prepared-statement cache is enabled sets `needs_cleanup_prepare`, and
+    # pg_doorman must still issue `DEALLOCATE ALL` on checkin.
+    When we create session "seven" to pg_doorman as "example_user_1" with password "" and database "example_db_session"
+    And we send SimpleQuery "SELECT 1" to session "seven"
+    And we sleep 100ms
+    When we truncate PostgreSQL log
+    And we send SimpleQuery "SELECT 1/0" to session "seven" expecting error
+    And we close session "seven"
+    And we sleep 300ms
+    Then PostgreSQL log should contain "DEALLOCATE ALL"
+
+  @client-session-reset-cleanup-discard-after-error
+  Scenario: DISCARD ALL after a PostgreSQL error disarms prepare-cleanup
+    # After the error arms `needs_cleanup_prepare`, a subsequent DISCARD ALL
+    # clears every cleanup flag. No redundant `DEALLOCATE ALL` on checkin.
+    When we create session "eight" to pg_doorman as "example_user_1" with password "" and database "example_db_session"
+    And we send SimpleQuery "SELECT 1" to session "eight"
+    And we sleep 100ms
+    When we truncate PostgreSQL log
+    And we send SimpleQuery "SELECT 1/0" to session "eight" expecting error
+    And we send SimpleQuery "DISCARD ALL" to session "eight"
+    And we close session "eight"
+    And we sleep 300ms
+    Then PostgreSQL log should contain "DISCARD ALL"
+    # Neither the client nor pg_doorman issued DEALLOCATE ALL.
+    And PostgreSQL log should contain exactly 0 occurrences of "DEALLOCATE ALL"
     And PostgreSQL log should not contain "RESET ROLE"
