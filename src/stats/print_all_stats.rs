@@ -50,12 +50,11 @@ pub fn print_all_stats() {
     {
         if clients_flag {
             match get_socket_states_count(std::process::id()) {
-                Ok(info) => {
-                    info!("Connection states: {info}")
-                }
-                Err(err) => {
-                    error!("Connection states: {err}")
-                }
+                // The `Display` impl now emits the full `[sockets] ...` line
+                // so that grep/awk pipelines can parse it the same way as the
+                // pool-stats lines above.
+                Ok(info) => info!("{info}"),
+                Err(err) => error!("[sockets] error: {err}"),
             };
         }
     }
