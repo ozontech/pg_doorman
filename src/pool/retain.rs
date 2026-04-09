@@ -164,18 +164,42 @@ pub async fn retain_connections() {
         let mut pool_refs: Vec<_> = pools.values().collect();
         pool_refs.shuffle(&mut rand::rng());
 
-        // Reserve pressure relief: close idle reserve connections early.
-        // Reserve connections are temporary (created when max_db_connections was
-        // reached) and should be released as soon as they've been idle long enough.
+        // Reserve pressure relief runs in two steps, both off the hot path.
         //
-        // Pools currently under client pressure are skipped: closing a reserve
-        // connection in front of a queued client just forces a connect() onto
-        // the wait path. Reserve cleanup runs again next cycle.
+        // Step 1 — upgrade: if any backend in this pool still holds a
+        // reserve permit while the coordinator's main semaphore has
+        // headroom, swap the accounting so the reserve slot is freed
+        // without closing the backend. This fixes the case where a past
+        // burst left reserve permits pinned to idle backends, making
+        // `reserve_used` misrepresent actual burst buffer availability.
+        //
+        // Step 2 — close stale: for reserve backends that could not be
+        // upgraded (main is still full) AND have been idle longer than
+        // `min_connection_lifetime_ms`, close them the old way. These
+        // two steps together guarantee that `reserve_used` converges to
+        // the number of reserve permits actually defending against live
+        // pressure, not to the number of historical grants.
+        //
+        // Pools currently under client pressure are skipped: closing a
+        // reserve connection in front of a queued client just forces a
+        // connect() onto the wait path. Reserve cleanup runs again next
+        // cycle.
         for pool in &pool_refs {
             if pool.database.under_pressure() {
                 continue;
             }
             if let Some(ref coordinator) = pool.coordinator {
+                let upgraded = pool.database.upgrade_reserve_to_main();
+                if upgraded > 0 {
+                    info!(
+                        "[{}@{}] upgraded {} reserve permit{} to main \
+                         (main has headroom)",
+                        pool.address.username,
+                        pool.address.pool_name,
+                        upgraded,
+                        if upgraded == 1 { "" } else { "s" },
+                    );
+                }
                 let min_lifetime = coordinator.config().min_connection_lifetime_ms;
                 let closed = pool.database.close_idle_reserve_connections(min_lifetime);
                 if closed > 0 {

@@ -592,6 +592,41 @@ impl PoolCoordinator {
         None
     }
 
+    /// Try to convert a reserve permit into a main permit in-place. Called
+    /// by the retain task when it finds an idle reserve backend in one of
+    /// the user pools sharing this coordinator while `db_semaphore` still
+    /// has headroom.
+    ///
+    /// On success, the caller is responsible for flipping `permit.is_reserve`
+    /// to `false` on the matching `CoordinatorPermit` so that `Drop` releases
+    /// the slot into the main semaphore, not the reserve one. The upgrade
+    /// keeps the backend alive — no reconnect, no peer churn — and the
+    /// reserve pool regains a slot for actual burst traffic instead of
+    /// holding a permit hostage to a warm idle connection.
+    ///
+    /// `total_connections` stays unchanged: it is the same backend, just
+    /// accounted against a different semaphore.
+    pub fn try_upgrade_reserve_to_main(&self) -> bool {
+        match self.db_semaphore.try_acquire() {
+            Ok(sem) => {
+                sem.forget();
+                self.reserve_semaphore.add_permits(1);
+                self.reserve_in_use.fetch_sub(1, Ordering::Relaxed);
+                debug!(
+                    "[pool: {}] coordinator: reserve→main upgrade \
+                     (reserve_in_use={}/{}, main_active={}/{})",
+                    self.database,
+                    self.reserve_in_use.load(Ordering::Relaxed),
+                    self.config.reserve_pool_size,
+                    self.total_connections.load(Ordering::Relaxed),
+                    self.config.max_db_connections,
+                );
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     pub fn total_connections(&self) -> usize {
         self.total_connections.load(Ordering::Relaxed)
     }
@@ -1128,6 +1163,86 @@ mod tests {
         assert_eq!(coord.stats().evictions_total, 0);
         assert_eq!(coord.stats().reserve_acquisitions_total, 1);
         assert_eq!(coord.reserve_in_use(), 1);
+    }
+
+    /// Reserve → main upgrade: when the reserve pool holds a permit for a
+    /// backend that is no longer needed as overflow (main has headroom),
+    /// the coordinator must swap the accounting so the reserve slot is
+    /// free for real burst traffic. Pins the invariant that a successful
+    /// upgrade bumps `db_semaphore` consumption and restores a reserve
+    /// permit — without touching `total_connections`, since the backend
+    /// itself is unchanged.
+    #[tokio::test]
+    async fn reserve_to_main_upgrade_succeeds_when_headroom_available() {
+        // max=3 main, reserve=2. Take 1 main slot, then grab a reserve
+        // permit. Main now has headroom (2/3 free). Upgrade should move
+        // the reserve accounting onto main.
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(3, 2));
+        let _main = coord.try_acquire().unwrap();
+        assert_eq!(coord.total_connections(), 1);
+
+        // Saturate main briefly to force a reserve grant, then release it.
+        let _m2 = coord.try_acquire().unwrap();
+        let _m3 = coord.try_acquire().unwrap();
+        let eviction = NoOpEviction;
+        let reserve_permit = coord
+            .acquire("testdb", "burster", &eviction)
+            .await
+            .expect("reserve grant under main saturation");
+        assert!(reserve_permit.is_reserve);
+        assert_eq!(coord.reserve_in_use(), 1);
+        assert_eq!(coord.total_connections(), 4);
+
+        // Free two main slots so upgrade has a target.
+        drop(_m2);
+        drop(_m3);
+        assert_eq!(coord.total_connections(), 2);
+        assert_eq!(coord.reserve_in_use(), 1);
+
+        // Upgrade: reserve slot returns to the reserve semaphore,
+        // db_semaphore loses one permit, total_connections unchanged.
+        let ok = coord.try_upgrade_reserve_to_main();
+        assert!(ok, "upgrade must succeed when main has headroom");
+        assert_eq!(
+            coord.reserve_in_use(),
+            0,
+            "reserve counter must drop after upgrade"
+        );
+        assert_eq!(
+            coord.total_connections(),
+            2,
+            "total_connections is the same backend, must not change"
+        );
+
+        // The upgraded permit is still held by reserve_permit. If we
+        // flip is_reserve = false, Drop will release into main_semaphore.
+        let mut p = reserve_permit;
+        p.is_reserve = false;
+        drop(p);
+        assert_eq!(coord.total_connections(), 1);
+        // Reserve semaphore should be fully replenished.
+        assert_eq!(coord.reserve_in_use(), 0);
+    }
+
+    #[tokio::test]
+    async fn reserve_to_main_upgrade_fails_when_main_full() {
+        // max=1 main, reserve=1. Pin main, take reserve, verify upgrade
+        // refuses because there is no room in main.
+        let coord = PoolCoordinator::new("test_db".to_string(), test_config(1, 1));
+        let _main = coord.try_acquire().unwrap();
+        let eviction = NoOpEviction;
+        let _reserve = coord.acquire("testdb", "user", &eviction).await.unwrap();
+        assert_eq!(coord.reserve_in_use(), 1);
+        assert_eq!(coord.total_connections(), 2);
+
+        // Main is 1/1 — no room for upgrade.
+        assert!(
+            !coord.try_upgrade_reserve_to_main(),
+            "upgrade must fail when main is saturated"
+        );
+        // State unchanged.
+        assert_eq!(coord.reserve_in_use(), 1);
+        assert_eq!(coord.total_connections(), 2);
     }
 
     /// Reserve-first fallback: once the reserve pool is fully in use,

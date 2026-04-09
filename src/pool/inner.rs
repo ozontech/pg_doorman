@@ -979,6 +979,53 @@ impl Pool {
         ) > 0
     }
 
+    /// Convert idle reserve connections into main connections when the
+    /// coordinator's main semaphore has headroom. Run by the retain task —
+    /// never on the hot checkout path — so contention on `slots.lock()`
+    /// stays predictable.
+    ///
+    /// Reserve permits are supposed to be a burst buffer: a backend grabbed
+    /// under peak pressure so the pool can push past `max_db_connections`
+    /// for a moment. Once the peak is gone, the backend sits in
+    /// `slots.vec` as an ordinary idle connection, but its permit still
+    /// counts against `reserve_in_use`. Without an upgrade, the reserve
+    /// pool shows as occupied even though the main semaphore has free
+    /// slots — the next real burst can't tell the buffer is empty, and
+    /// `SHOW POOL_COORDINATOR` reports `reserve_used` that doesn't match
+    /// actual reserve availability.
+    ///
+    /// The upgrade itself is a book-keeping swap, not a reconnect: for
+    /// each idle reserve backend we try to steal a `db_semaphore` permit
+    /// (non-blocking), and on success flip `permit.is_reserve = false`.
+    /// The backend stays alive; the reserve semaphore gains a slot.
+    ///
+    /// Returns the number of permits upgraded.
+    pub fn upgrade_reserve_to_main(&self) -> usize {
+        let coordinator = match self.inner.coordinator.as_ref() {
+            Some(c) => c,
+            None => return 0,
+        };
+        let mut upgraded = 0;
+        let mut guard = self.inner.slots.lock();
+        for obj in guard.vec.iter_mut() {
+            let Some(permit) = obj.coordinator_permit.as_mut() else {
+                continue;
+            };
+            if !permit.is_reserve {
+                continue;
+            }
+            if coordinator.try_upgrade_reserve_to_main() {
+                permit.is_reserve = false;
+                upgraded += 1;
+            } else {
+                // Main is saturated too; no point walking the rest of the
+                // vec looking for another reserve entry to upgrade.
+                break;
+            }
+        }
+        upgraded
+    }
+
     /// Close idle reserve connections that have been idle longer than `min_lifetime_ms`.
     ///
     /// Reserve connections are temporary — created under coordinator pressure when the
@@ -1717,6 +1764,64 @@ mod tests {
         // spawned task does not leak past the test.
         phase_c_waiter.abort();
         let _ = phase_c_waiter.await;
+    }
+
+    // ------------------------------------------------------------------
+    // upgrade_reserve_to_main — retain-time book-keeping swap
+    // ------------------------------------------------------------------
+
+    /// Smoke test for the retain-time helper: on an empty pool it must
+    /// report zero upgrades and leave the coordinator state untouched.
+    /// The real coverage of the upgrade arithmetic lives in
+    /// `pool_coordinator::tests::reserve_to_main_upgrade_*`; this test
+    /// pins the outer wrapper against a refactor that would accidentally
+    /// touch coordinator counters on an empty slots vec.
+    #[tokio::test]
+    async fn upgrade_reserve_to_main_noop_on_empty_pool() {
+        let coord = pool_coordinator::PoolCoordinator::new(
+            "test_db".to_string(),
+            pool_coordinator::CoordinatorConfig {
+                max_db_connections: 4,
+                min_connection_lifetime_ms: 5000,
+                reserve_pool_size: 2,
+                reserve_pool_timeout_ms: 100,
+            },
+        );
+        let pool = test_pool_with_coordinator(coord.clone());
+        assert_eq!(pool.upgrade_reserve_to_main(), 0);
+        assert_eq!(coord.reserve_in_use(), 0);
+        assert_eq!(coord.total_connections(), 0);
+    }
+
+    /// A pool without a coordinator (max_db_connections = 0) has no
+    /// reserve concept at all — the helper must short-circuit and
+    /// return 0 without locking `slots`.
+    #[tokio::test]
+    async fn upgrade_reserve_to_main_returns_zero_without_coordinator() {
+        use crate::config::{Address, User};
+        use dashmap::DashMap;
+
+        let server_pool = ServerPool::new(
+            Address::default(),
+            User::default(),
+            "test_db",
+            Arc::new(DashMap::new()),
+            false,
+            false,
+            0,
+            "test_app".to_string(),
+            1,
+            60_000,
+            60_000,
+            60_000,
+            Duration::from_secs(5),
+            false,
+        );
+        let pool = Pool::builder(server_pool)
+            .pool_name("test_db".to_string())
+            .username("test_user".to_string())
+            .build();
+        assert_eq!(pool.upgrade_reserve_to_main(), 0);
     }
 
     // ------------------------------------------------------------------

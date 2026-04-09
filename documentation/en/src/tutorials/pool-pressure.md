@@ -146,20 +146,25 @@ no blocking I/O.
 enter a loop waiting for returned connections. Each iteration
 registers a `Notify` future woken by any `return_object()`, runs
 `try_recycle_one` before the wait to catch a buffered return, awaits
-either the notify or a deadline-bounded sleep, then runs
-`try_recycle_one` again after the wake. If another waiter popped the
-returned item first, the iteration registers a fresh future and
-waits for the next return. The loop exits on three conditions: a
-successful recycle (return the connection), a sleep-driven wake with
-no notify in flight (give up, the sleep timer fired before any
-return arrived), or the full deadline elapsed (exit with no
-connection).
+either the notify or a per-iteration sleep capped at 100 ms, then
+runs `try_recycle_one` again after the wake. If another waiter
+popped the returned item first, the iteration bumps a race-loss
+counter and registers a fresh future for the next return. The loop
+exits on three conditions: a successful recycle (return the
+connection), the deadline expired at the top of the iteration, or
+the race-loss counter reached `MAX_RACE_LOSSES` (20) — the caller
+has woken repeatedly and lost the post-wake race every time, so
+anticipation gives up and falls through to the create path.
 
-The deadline is the client's `query_wait_timeout` minus a 500 ms
-reserve for the fall-through create path, measured against a
-timestamp captured at the top of `timeout_get`. Phase 1/2 semaphore
-wait consumes from the same budget, so the cumulative wait across
-phases cannot exceed `query_wait_timeout`.
+The deadline is `min(query_wait_timeout - 500 ms, PHASE_4_HARD_CAP)`
+where `PHASE_4_HARD_CAP = 500 ms`, measured against a timestamp
+captured at the top of `timeout_get`. The hard cap bounds tail
+latency under pathological wake orderings where a caller wakes on
+every notify but loses every post-wake race — without it, a large
+`query_wait_timeout` would let one caller spend tens of seconds in
+anticipation. Phase 1/2 semaphore wait consumes from the same budget,
+so the cumulative wait across phases cannot exceed the caller's
+`query_wait_timeout`.
 
 Each return wakes exactly one waiter. The loop is retry-driven
 against races: when `return_object()` fires, both this Phase 4
@@ -375,20 +380,42 @@ Three things:
 ### Coordinator acquisition phases
 
 When the per-pool path reaches the new-connection step, the coordinator
-runs five phases. The first phase that hands back a permit ends the
+walks six phases. The first phase that hands back a permit ends the
 sequence.
 
 **Phase A — Try-acquire.** Non-blocking semaphore acquire. If the cap
 is not reached, take the slot and return.
 
-**Phase B — Eviction.** Walk all *other* user pools for the same
-database, find the one with the largest surplus above its **effective
-minimum**, and close one of its idle connections older than
-`min_connection_lifetime`. The evicted permit drops synchronously,
-freeing the slot. Re-try the semaphore acquire. If two callers race,
-the loser falls through to the next phase.
+**Phase R — Reserve-first.** Phase A proved the database is full.
+Before closing any peer backend, the coordinator checks whether the
+reserve pool has headroom (`reserve_in_use < reserve_pool_size`). If
+yes, it asks the reserve arbiter for a permit directly. On success,
+the caller gets a reserve permit — no eviction, no peer backend
+closed, no wait on `connection_returned`. The arbiter responds in
+sub-millisecond time under normal load.
 
-**Phase C — Wait.** Register a `Notify` woken on two events:
+Reserve-first is the p99-latency path: a reserve permit costs one
+arbiter round-trip, while the old flow (Phase B + Phase C) could
+block for the full `reserve_pool_timeout` even when the reserve had
+empty slots. Phase R does not run when `reserve_pool_size = 0`, and
+falls through to Phase B when the arbiter denies the grant (every
+reserve permit is already in use, or the arbiter is racing another
+caller).
+
+**Phase B — Eviction.** Reached when Phase R did not hand back a
+permit: either `reserve_pool_size = 0`, or the reserve semaphore was
+fully in use at the check (`reserve_in_use == reserve_pool_size`), or
+the arbiter denied the grant. Walk all *other* user pools for the
+same database, find the one with the largest surplus above its
+**effective minimum**, and close one of its idle connections older
+than `min_connection_lifetime`. The evicted permit drops
+synchronously, freeing the slot. Re-try the semaphore acquire. If
+two callers race, the loser falls through to the next phase.
+
+**Phase C — Wait.** Reached when reserve is disabled or fully in use
+*and* Phase B found nothing evictable. Register a `Notify` woken on
+two events:
+
 1. A `CoordinatorPermit` was dropped — a peer's server connection was
    physically destroyed (`server_lifetime` expiry, `recycle` error,
    `RECONNECT`), and a semaphore slot is now free.
@@ -396,11 +423,16 @@ the loser falls through to the next phase.
    `Pool::return_object` — the slot is NOT free, but the peer's
    `spare_above_min` may have just grown.
 
-On every wake, Phase C re-runs `try_evict_one` against peer pools
-before re-running `try_acquire`. This is how a peer's freshly returned
-idle connection becomes available to the waiting caller: the second
-eviction attempt finds the spare that did not exist a moment ago and
-drops the peer's permit, which frees the semaphore slot.
+On every wake, Phase C runs `try_acquire` **first** and only calls
+`try_evict_one` if the cheap path fails. A permit-drop wake leaves a
+free slot in the semaphore — the cheap path takes it and no peer
+backend is closed. An idle-return wake does not free a slot directly
+but may have grown a peer's `spare_above_min`, so the eviction retry
+finds a candidate that was not evictable a moment ago, drops the
+peer's permit, and the subsequent `try_acquire` succeeds. This
+ordering (cheap first, evict second) is pinned by a regression test
+so a future refactor cannot re-introduce peer closes on permit-drop
+wakes.
 
 Wait up to `reserve_pool_timeout` (default 3000 ms) for a wake or the
 deadline. **This timeout applies even when `reserve_pool_size = 0`**:
@@ -410,15 +442,46 @@ client gives up first and you see `wait timeout` errors instead of the
 more diagnostic `all server connections to database 'X' are in use`.
 See troubleshooting for the symptom.
 
-**Phase D — Reserve.** If the wait expired and `reserve_pool_size > 0`,
-ask the reserve arbiter for a permit. Requests are scored by
-`(starving, queued_clients)` so users that need connections most get
-them first. The arbiter is a single tokio task that drains reserve
-permits from a priority heap.
+**Phase D — Reserve retry.** Phase R already tried this path once.
+Phase D runs again after Phase C exhausted its wait budget, in case
+a peer reserve holder dropped its permit during the wait. Requests
+are scored by `(starving, queued_clients)` so users that need
+connections most get them first. The arbiter is a single tokio task
+that drains reserve permits from a priority heap.
 
-**Phase E — Error.** If the reserve is exhausted or not configured,
-the client receives an error: `all server connections to database 'X'
-are in use (max=N, ...)`.
+**Phase E — Error.** If Phase D also fails or reserve is not
+configured, the client receives an error: `all server connections to
+database 'X' are in use (max=N, ...)`.
+
+### Reserve → main upgrade (retain task)
+
+Reserve permits are a burst buffer, not persistent state. Once a
+burst passes, the backend that held a reserve permit stays alive and
+healthy, but its `CoordinatorPermit` still counts against
+`reserve_in_use` — even when `current < max_db_connections` leaves
+free slots in the main semaphore. Without active housekeeping,
+`SHOW POOL_COORDINATOR` reports a reserve pool that looks occupied
+while the real burst capacity is empty, and the next spike has
+nowhere to grow.
+
+The retain task runs every `retain_connections_time` (default 30 s)
+and performs a book-keeping swap: for each pool not under pressure,
+it walks the idle vec and, for every backend still holding a reserve
+permit, tries to steal a main semaphore permit. On success, the
+reserve permit is released back to the reserve semaphore,
+`reserve_in_use` drops by one, and the backend's permit flips from
+reserve to main. No reconnect, no peer churn — just two atomic
+operations. The walk stops on the first upgrade failure in a pool
+because that proves the main semaphore is saturated; no point
+checking the rest of the pool's idle vec. The same retain cycle
+then runs `close_idle_reserve_connections` to close reserve
+backends that could not be upgraded and have been idle longer than
+`min_connection_lifetime`.
+
+Under this scheme, `reserve_in_use > 0` means exactly one thing: a
+burst is actually in flight *or* finished within the last
+`retain_connections_time`. Historical reserve usage converges back
+to zero as soon as main has headroom.
 
 ### Why coordinator runs before the burst gate
 
@@ -462,9 +525,10 @@ slot, each about to issue `connect()`.
    +----------------------+
    |  Coordinator acquire |   <-- inserted between phase 4 and phase 5
    |   A: try_acquire     |       only when max_db_connections > 0
+   |   R: reserve-first   |   sub-ms arbiter round-trip
    |   B: evict from peer |
    |   C: wait for return |   up to reserve_pool_timeout
-   |   D: reserve permit  |   scored priority
+   |   D: reserve retry   |   scored priority
    |   E: error           |   client gets DB exhausted error
    +----------+-----------+
               | permit granted
@@ -673,9 +737,9 @@ pgdoorman=> SHOW POOL_COORDINATOR;
 | `max_db_conn` | gauge | Configured `max_db_connections` |
 | `current` | gauge | Total backend connections currently held under this coordinator (across all user pools) |
 | `reserve_size` | gauge | Configured `reserve_pool_size` |
-| `reserve_used` | gauge | Reserve permits currently in use |
-| `evictions` | counter | Total times the coordinator evicted an idle connection from a peer pool to free a slot |
-| `reserve_acq` | counter | Total reserve permits granted by the arbiter |
+| `reserve_used` | gauge | Reserve permits currently in use. Converges back to 0 when main has headroom — the retain task upgrades idle reserve permits to main every `retain_connections_time`. A sustained non-zero value indicates either an active burst or a database continuously pressed to `max_db_connections`. |
+| `evictions` | counter | Total times the coordinator evicted an idle connection from a peer pool to free a slot. With reserve-first enabled, this counter only climbs under true cross-pool pressure — when the reserve is full *and* a peer has evictable connections. |
+| `reserve_acq` | counter | Total reserve permits granted by the arbiter (Phase R fast path plus Phase D fallback combined) |
 | `exhaustions` | counter | Times the coordinator returned an exhausted error to a client. **This is the primary pager signal.** |
 
 ### Prometheus metrics
@@ -752,8 +816,13 @@ increase(pg_doorman_pool_scaling_total{type="replenish_deferred"}[1h]) > 60
 ```
 
 **Reserve pool continuously in use (warn).** The reserve is meant for
-brief bursts. This rule fires only when the reserve has been in use
-**continuously** for 15 minutes, not momentary use.
+brief bursts, and the retain task upgrades idle reserve permits back
+to main every `retain_connections_time` (default 30 s). Continuous
+non-zero `reserve_in_use` over 15 minutes therefore means either the
+main pool is permanently pressed against `max_db_connections` (so
+upgrades cannot find a main slot to steal), or backends holding
+reserve permits never go idle long enough for the retain task to
+touch them. Either way the database is undersized for its workload.
 
 ```promql
 min_over_time(pg_doorman_pool_coordinator{type="reserve_in_use"}[15m]) > 0
@@ -961,14 +1030,44 @@ exhausted or `reserve_pool_size = 0`.
 **Symptom.** Clients pay 3 seconds of latency on average, exactly
 matching `reserve_pool_timeout`.
 
-**Cause.** Phase C wait is consistently timing out. Either the database
-is genuinely at the cap and no connections are returning, or
+**Cause.** Phase C wait is consistently timing out. With reserve-first
+enabled, reaching Phase C means the reserve was already full when the
+caller arrived, so a peer return is the only way out. Either the
+database is genuinely at the cap with no connections returning, or
 `reserve_pool_size = 0` so the wait runs to completion before the
 client receives any response.
 
 **Fix.** Lower `reserve_pool_timeout` to fail fast, or set
-`reserve_pool_size > 0` so phase D handles the overflow within the same
-acquisition path.
+`reserve_pool_size > 0` so Phase R / Phase D handles the overflow
+within the same acquisition path without parking in Phase C at all.
+
+### `reserve_used` stays non-zero but the pool looks idle
+
+**Symptom.** `SHOW POOL_COORDINATOR` shows `reserve_used = 4` (or
+any non-zero number) while `SHOW POOLS` shows no `cl_waiting`, low
+`cl_active`, and `current < max_db_conn`. The reserve pool looks
+occupied by "ghosts".
+
+**Cause.** On builds before the reserve→main upgrade, a reserve
+permit stayed attached to its backend until the backend aged out
+past `min_connection_lifetime` *and* the retain cycle caught it
+idle. Under steady client traffic, `last_used()` on the backend
+kept refreshing faster than `min_connection_lifetime`, so the
+permit was never released.
+
+**Fix.** On current builds this is resolved automatically: the
+retain task runs `upgrade_reserve_to_main` every
+`retain_connections_time` (default 30 s). Each reserve backend in
+a pool not under pressure gets its permit swapped for a main permit
+as long as `db_semaphore` has headroom. Watch the `reserve_used`
+gauge drop to zero within one retain cycle.
+
+If `reserve_used` still sticks, the pool is either under sustained
+pressure (`under_pressure() == true` skips upgrade, which is correct
+— a queued client would re-grab the slot immediately) or
+`current == max_db_connections` (no main slot to steal into).
+Either condition means the database is genuinely full; the fix is
+more capacity, not a workaround.
 
 ### Burst gate is the bottleneck even with low traffic
 
@@ -994,11 +1093,12 @@ small user is the one acquiring most reserves.
 **Cause.** A user is below its **effective minimum**
 (`max(user.min_pool_size, min_guaranteed_pool_size)`) and the
 coordinator cannot satisfy that minimum without evicting from peers.
-Each client request from that user hits coordinator phase D and
-grabs a reserve. **The deeper question is why the user keeps
-needing fresh connections**: either its `pool_size` is too low to
-absorb its own load, or its traffic is bursty and the reserve is
-doing what reserves are for.
+Each client request from that user hits Phase R (reserve-first) as
+soon as the database is full and grabs a reserve permit — the
+arbiter scores starving users highest, so they win the grant. **The
+deeper question is why the user keeps needing fresh connections**:
+either its `pool_size` is too low to absorb its own load, or its
+traffic is bursty and the reserve is doing what reserves are for.
 
 **Fix.** Three options, pick by the deeper cause:
 
