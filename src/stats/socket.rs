@@ -189,105 +189,106 @@ impl Display for SocketInfoErr {
     }
 }
 
-impl Display for TcpStateCount {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut str_buf: Vec<String> = Vec::new();
-        if self.established != 0 {
-            str_buf.push(format!("ESTABLISHED: {}", self.established));
-        }
-        if self.syn_sent != 0 {
-            str_buf.push(format!("SYN_SENT: {}", self.syn_sent));
-        }
-        if self.syn_recv != 0 {
-            str_buf.push(format!("SYN_RECV: {}", self.syn_recv));
-        }
-        if self.fin_wait1 != 0 {
-            str_buf.push(format!("FIN_WAIT1: {}", self.fin_wait1));
-        }
-        if self.fin_wait2 != 0 {
-            str_buf.push(format!("FIN_WAIT2: {}", self.fin_wait2));
-        }
-        if self.time_wait != 0 {
-            str_buf.push(format!("TIME_WAIT: {}", self.time_wait));
-        }
-        if self.close != 0 {
-            str_buf.push(format!("CLOSE: {}", self.close));
-        }
-        if self.close_wait != 0 {
-            str_buf.push(format!("CLOSE_WAIT: {}", self.close_wait));
-        }
-        if self.last_ack != 0 {
-            str_buf.push(format!("LAST_ACK: {}", self.last_ack));
-        }
-        if self.listen != 0 {
-            str_buf.push(format!("LISTEN: {}", self.listen));
-        }
-        if self.closing != 0 {
-            str_buf.push(format!("CLOSING: {}", self.closing));
-        }
-        if self.new_syn_recv != 0 {
-            str_buf.push(format!("NEW_SYN_RECV: {}", self.new_syn_recv));
-        }
-        if self.bound_inactive != 0 {
-            str_buf.push(format!("BOUND_INACTIVE: {}", self.bound_inactive));
-        }
-        f.write_fmt(format_args!("[{}]", str_buf.join(", ")))?;
-        Ok(())
-    }
+/// TCP state breakdown with IPv4 and IPv6 counters merged per state.
+///
+/// Kernel-level limits like `net.ipv4.tcp_max_tw_buckets` are process-wide, so
+/// a DBA reacting to a TIME_WAIT storm or a CLOSE_WAIT leak wants a single
+/// number per state rather than one per address family. The per-family totals
+/// still appear separately in the log line so a dual-stack misconfig stays
+/// visible — see `Display for SocketStateCount`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct MergedTcpBreakdown {
+    established: u32,
+    listen: u32,
+    time_wait: u32,
+    fin_wait1: u32,
+    fin_wait2: u32,
+    close_wait: u32,
+    last_ack: u32,
+    syn_sent: u32,
+    syn_recv: u32,
+    new_syn_recv: u32,
+    closing: u32,
+    close: u32,
+    bound_inactive: u32,
 }
 
-impl Display for UnixStreamStateCount {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut str_buf: Vec<String> = Vec::new();
-        if self.unconnected != 0 {
-            str_buf.push(format!("UNCONNECTED: {}", self.unconnected));
+impl SocketStateCount {
+    /// Sum each TCP state across the `tcp` (IPv4) and `tcp6` counters.
+    /// Widening to `u32` avoids any risk of overflow on a process with more
+    /// than 65_535 sockets in a single state.
+    fn merged_tcp_breakdown(&self) -> MergedTcpBreakdown {
+        let t4 = &self.tcp;
+        let t6 = &self.tcp6;
+        MergedTcpBreakdown {
+            established: t4.established as u32 + t6.established as u32,
+            listen: t4.listen as u32 + t6.listen as u32,
+            time_wait: t4.time_wait as u32 + t6.time_wait as u32,
+            fin_wait1: t4.fin_wait1 as u32 + t6.fin_wait1 as u32,
+            fin_wait2: t4.fin_wait2 as u32 + t6.fin_wait2 as u32,
+            close_wait: t4.close_wait as u32 + t6.close_wait as u32,
+            last_ack: t4.last_ack as u32 + t6.last_ack as u32,
+            syn_sent: t4.syn_sent as u32 + t6.syn_sent as u32,
+            syn_recv: t4.syn_recv as u32 + t6.syn_recv as u32,
+            new_syn_recv: t4.new_syn_recv as u32 + t6.new_syn_recv as u32,
+            closing: t4.closing as u32 + t6.closing as u32,
+            close: t4.close as u32 + t6.close as u32,
+            bound_inactive: t4.bound_inactive as u32 + t6.bound_inactive as u32,
         }
-        if self.connecting != 0 {
-            str_buf.push(format!("CONNECTING: {}", self.connecting));
-        }
-        if self.connected != 0 {
-            str_buf.push(format!("CONNECTED: {}", self.connected));
-        }
-        if self.disconnecting != 0 {
-            str_buf.push(format!("DISCONNECTING: {}", self.disconnecting));
-        }
-        if self.free != 0 {
-            str_buf.push(format!("FREE: {}", self.free));
-        }
-        f.write_fmt(format_args!("[{}]", str_buf.join(", ")))?;
-        Ok(())
     }
 }
 
 impl Display for SocketStateCount {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut str_buf: Vec<String> = Vec::new();
-        let tcp_total = self.tcp.get_total();
-        if tcp_total != 0 {
-            str_buf.push(format!("{} tcp sockets: {}", tcp_total, self.tcp));
-        }
-        let tcp6_total = self.tcp6.get_total();
-        if tcp6_total != 0 {
-            str_buf.push(format!("{} tcp6 sockets: {}", tcp6_total, self.tcp6));
-        }
-        let unix_total = self.unix_stream.get_total();
-        if unix_total != 0 {
-            str_buf.push(format!(
-                "{} unix SOCK_STREAMs: {}",
-                unix_total, self.unix_stream
-            ));
-        }
-        if self.unix_dgram != 0 {
-            str_buf.push(format!("SOCK_DGRAM: {}", self.unix_dgram));
-        }
-        if self.unix_seq_packet != 0 {
-            str_buf.push(format!("SOCK_SEQPACKET: {}", self.unix_seq_packet));
-        }
-        if self.unknown != 0 {
-            str_buf.push(format!("UNKNOWN={}", self.unknown));
-        }
-        write!(f, "{}", str_buf.join(", "))?;
-        Ok(())
+        // Layout follows the pool-stats line convention: `[prefix] key=value ...
+        // | group2 ... | group3 ...`. Zero values are always printed so that
+        // field positions stay stable for `awk`/Loki parsing — a listen socket
+        // dropping to zero must be observable as `tcp_lstn=0`, not as an
+        // absent field.
+        let tcp4 = self.tcp.total_count;
+        let tcp6 = self.tcp6.total_count;
+        let tcp_total = tcp4 + tcp6;
+        let tcp = self.merged_tcp_breakdown();
+        let u = &self.unix_stream;
+
+        write!(f, "[sockets] tcp={tcp_total} tcp4={tcp4} tcp6={tcp6}")?;
+        write!(
+            f,
+            " | tcp_est={est} tcp_lstn={lstn} tcp_tw={tw} tcp_fw1={fw1} tcp_fw2={fw2} \
+             tcp_cw={cw} tcp_la={la} tcp_syns={syns} tcp_synr={synr} tcp_nsr={nsr} \
+             tcp_clsg={clsg} tcp_cls={cls} tcp_bnd={bnd}",
+            est = tcp.established,
+            lstn = tcp.listen,
+            tw = tcp.time_wait,
+            fw1 = tcp.fin_wait1,
+            fw2 = tcp.fin_wait2,
+            cw = tcp.close_wait,
+            la = tcp.last_ack,
+            syns = tcp.syn_sent,
+            synr = tcp.syn_recv,
+            nsr = tcp.new_syn_recv,
+            clsg = tcp.closing,
+            cls = tcp.close,
+            bnd = tcp.bound_inactive,
+        )?;
+        write!(
+            f,
+            " | unix={unix} unix_conn={conn} unix_uncn={uncn} unix_cng={cng} \
+             unix_dcn={dcn} unix_free={free}",
+            unix = u.total_count,
+            conn = u.connected,
+            uncn = u.unconnected,
+            cng = u.connecting,
+            dcn = u.disconnecting,
+            free = u.free,
+        )?;
+        write!(
+            f,
+            " | dgram={dgram} seqpkt={seqpkt} unknown={unknown}",
+            dgram = self.unix_dgram,
+            seqpkt = self.unix_seq_packet,
+            unknown = self.unknown,
+        )
     }
 }
 
@@ -510,5 +511,193 @@ fn parse_addr(raw: &str) -> Option<SocketAddr> {
             )))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Format tests for the `[sockets] ...` log line and the v4+v6 merge
+    //! helper. The format is consumed by grep/awk/Loki pipelines, so the key
+    //! set, the ` | ` group boundaries, and the zero-value visibility all
+    //! belong in pinned tests — any intentional change must update these.
+
+    use super::*;
+
+    fn sample_full() -> SocketStateCount {
+        SocketStateCount {
+            tcp: TcpStateCount {
+                established: 600,
+                listen: 1,
+                time_wait: 3,
+                fin_wait1: 0,
+                fin_wait2: 2,
+                close_wait: 5,
+                last_ack: 0,
+                syn_sent: 0,
+                syn_recv: 0,
+                new_syn_recv: 0,
+                closing: 0,
+                close: 0,
+                bound_inactive: 0,
+                total_count: 611,
+            },
+            tcp6: TcpStateCount {
+                established: 10,
+                listen: 1,
+                time_wait: 0,
+                fin_wait1: 0,
+                fin_wait2: 0,
+                close_wait: 1,
+                last_ack: 0,
+                syn_sent: 0,
+                syn_recv: 0,
+                new_syn_recv: 0,
+                closing: 0,
+                close: 0,
+                bound_inactive: 0,
+                total_count: 12,
+            },
+            unix_stream: UnixStreamStateCount {
+                free: 0,
+                unconnected: 0,
+                connecting: 0,
+                connected: 12,
+                disconnecting: 0,
+                total_count: 12,
+            },
+            unix_dgram: 1,
+            unix_seq_packet: 0,
+            unknown: 0,
+        }
+    }
+
+    #[test]
+    fn merged_tcp_breakdown_sums_v4_and_v6_per_state() {
+        let merged = sample_full().merged_tcp_breakdown();
+        assert_eq!(merged.established, 610);
+        assert_eq!(merged.listen, 2);
+        assert_eq!(merged.time_wait, 3);
+        assert_eq!(merged.close_wait, 6);
+        assert_eq!(merged.fin_wait2, 2);
+        // States that are zero on both families stay zero.
+        assert_eq!(merged.syn_sent, 0);
+        assert_eq!(merged.closing, 0);
+    }
+
+    #[test]
+    fn merged_tcp_breakdown_widens_to_u32_without_overflow() {
+        // 50_000 + 50_000 overflows u16 but must fit in u32.
+        let mut sc = SocketStateCount::default();
+        sc.tcp.established = 50_000;
+        sc.tcp6.established = 50_000;
+        let merged = sc.merged_tcp_breakdown();
+        assert_eq!(merged.established, 100_000);
+    }
+
+    #[test]
+    fn display_emits_full_sockets_line_with_every_key() {
+        let line = format!("{}", sample_full());
+        let expected = "[sockets] tcp=623 tcp4=611 tcp6=12 \
+            | tcp_est=610 tcp_lstn=2 tcp_tw=3 tcp_fw1=0 tcp_fw2=2 tcp_cw=6 tcp_la=0 \
+            tcp_syns=0 tcp_synr=0 tcp_nsr=0 tcp_clsg=0 tcp_cls=0 tcp_bnd=0 \
+            | unix=12 unix_conn=12 unix_uncn=0 unix_cng=0 unix_dcn=0 unix_free=0 \
+            | dgram=1 seqpkt=0 unknown=0";
+        assert_eq!(line, expected);
+    }
+
+    #[test]
+    fn display_prints_zeros_on_an_empty_count() {
+        // A DBA alert on `tcp_lstn=0` must still fire when nothing is listening,
+        // so every field has to be present even when every counter is zero.
+        let line = format!("{}", SocketStateCount::default());
+        assert_eq!(
+            line,
+            "[sockets] tcp=0 tcp4=0 tcp6=0 \
+             | tcp_est=0 tcp_lstn=0 tcp_tw=0 tcp_fw1=0 tcp_fw2=0 tcp_cw=0 tcp_la=0 \
+             tcp_syns=0 tcp_synr=0 tcp_nsr=0 tcp_clsg=0 tcp_cls=0 tcp_bnd=0 \
+             | unix=0 unix_conn=0 unix_uncn=0 unix_cng=0 unix_dcn=0 unix_free=0 \
+             | dgram=0 seqpkt=0 unknown=0"
+        );
+    }
+
+    #[test]
+    fn display_uses_exactly_three_group_separators() {
+        // Four groups → three ` | ` separators. Adding or removing a group is
+        // a contract break for awk parsers that index into split-by-pipe fields.
+        let line = format!("{}", sample_full());
+        assert_eq!(line.matches(" | ").count(), 3);
+    }
+
+    #[test]
+    fn display_starts_with_fixed_sockets_tag() {
+        // The `[sockets]` prefix is how ops pipelines disambiguate this line
+        // from per-pool lines, which start with `[user@pool]`.
+        let line = format!("{}", sample_full());
+        assert!(line.starts_with("[sockets] "));
+        // And it must not accidentally look like a pool line.
+        assert!(!line.starts_with("[sockets@"));
+    }
+
+    #[test]
+    fn display_key_set_is_stable() {
+        // Every key that grep/awk pipelines downstream can pattern-match on.
+        // If you need to rename or add one, update this list *and* the
+        // changelog/docs at the same time.
+        let line = format!("{}", sample_full());
+        for key in [
+            "tcp=",
+            "tcp4=",
+            "tcp6=",
+            "tcp_est=",
+            "tcp_lstn=",
+            "tcp_tw=",
+            "tcp_fw1=",
+            "tcp_fw2=",
+            "tcp_cw=",
+            "tcp_la=",
+            "tcp_syns=",
+            "tcp_synr=",
+            "tcp_nsr=",
+            "tcp_clsg=",
+            "tcp_cls=",
+            "tcp_bnd=",
+            "unix=",
+            "unix_conn=",
+            "unix_uncn=",
+            "unix_cng=",
+            "unix_dcn=",
+            "unix_free=",
+            "dgram=",
+            "seqpkt=",
+            "unknown=",
+        ] {
+            assert!(line.contains(key), "missing key {key:?} in {line}");
+        }
+    }
+
+    #[test]
+    fn display_no_key_collides_with_pool_stats_keys() {
+        // Pool stats already use `active`, `idle`, `wait`, `clients`,
+        // `servers`, `qps`, `tps`, `query_ms`, `xact_ms`, `avg_wait`. None of
+        // those must appear as a key in the sockets line, or a naive
+        // `key=` grep over the whole stats block would double-count.
+        let line = format!("{}", sample_full());
+        for collision in [
+            " active=",
+            " idle=",
+            " wait=",
+            " clients=",
+            " servers=",
+            " qps=",
+            " tps=",
+            " query_ms ",
+            " xact_ms ",
+            " avg_wait=",
+        ] {
+            assert!(
+                !line.contains(collision),
+                "sockets line collided with pool-stats key {collision:?}"
+            );
+        }
     }
 }
