@@ -1008,6 +1008,8 @@ Steady-state should be zero.
 
 ```promql
 rate(pg_doorman_pool_scaling_total{type="create_fallback"}[5m]) > 0.1
+  and
+  rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m]) > 0.1
 ```
 
 **Runbook:**

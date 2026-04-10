@@ -15,7 +15,9 @@ use crate::utils::clock;
 
 use parking_lot::Mutex;
 
-use tokio::sync::{Notify, Semaphore, SemaphorePermit, TryAcquireError};
+use tokio::sync::{
+    oneshot, Notify, Semaphore, SemaphorePermit, TryAcquireError,
+};
 
 use super::errors::{PoolError, RecycleError, TimeoutType};
 use super::pool_coordinator;
@@ -104,7 +106,7 @@ struct Slots {
     /// Direct-handoff queue: waiters blocked on a oneshot receiver.
     /// `return_object` pops the oldest sender and delivers the connection
     /// directly, bypassing the idle VecDeque entirely.
-    waiters: VecDeque<tokio::sync::oneshot::Sender<ObjectInner>>,
+    waiters: VecDeque<oneshot::Sender<ObjectInner>>,
     size: usize,
     max_size: usize,
 }
@@ -714,7 +716,7 @@ impl Pool {
                     const PHASE_4_HARD_CAP: Duration = Duration::from_millis(500);
                     let effective_budget = total_budget.min(PHASE_4_HARD_CAP);
 
-                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let (tx, rx) = oneshot::channel();
                     self.inner.slots.lock().waiters.push_back(tx);
 
                     match tokio::time::timeout(effective_budget, rx).await {
@@ -834,7 +836,7 @@ impl Pool {
             }
 
             // Register a direct-handoff waiter AND listen on create_done.
-            let (tx, rx) = tokio::sync::oneshot::channel();
+            let (tx, rx) = oneshot::channel();
             self.inner.slots.lock().waiters.push_back(tx);
             let on_create = self.inner.create_done.notified();
 
@@ -955,7 +957,7 @@ impl Pool {
                         });
                     }
 
-                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let (tx, rx) = oneshot::channel();
                     self.inner.slots.lock().waiters.push_back(tx);
                     let on_create = self.inner.create_done.notified();
 
@@ -2141,9 +2143,9 @@ mod tests {
     async fn direct_handoff_delivers_to_oldest_waiter() {
         // Three waiters registered in order. A single send must deliver
         // to the first (oldest) waiter; the other two must not receive.
-        let (tx1, rx1) = tokio::sync::oneshot::channel::<u32>();
-        let (tx2, rx2) = tokio::sync::oneshot::channel::<u32>();
-        let (tx3, rx3) = tokio::sync::oneshot::channel::<u32>();
+        let (tx1, rx1) = oneshot::channel::<u32>();
+        let (tx2, rx2) = oneshot::channel::<u32>();
+        let (tx3, rx3) = oneshot::channel::<u32>();
 
         let mut waiters = VecDeque::new();
         waiters.push_back(tx1);
@@ -2171,8 +2173,8 @@ mod tests {
         // receiver, then attempt send. The send must fail with the
         // value returned in Err, allowing the caller to try the next
         // waiter or fall back to the idle queue.
-        let (tx1, rx1) = tokio::sync::oneshot::channel::<u32>();
-        let (tx2, rx2) = tokio::sync::oneshot::channel::<u32>();
+        let (tx1, rx1) = oneshot::channel::<u32>();
+        let (tx2, rx2) = oneshot::channel::<u32>();
 
         let mut waiters = VecDeque::new();
         waiters.push_back(tx1);
@@ -2202,7 +2204,7 @@ mod tests {
     async fn direct_handoff_falls_back_when_no_waiters() {
         // With no waiters, there is nothing to pop. The value stays
         // with the caller (simulates the push-to-vec fallback path).
-        let waiters: VecDeque<tokio::sync::oneshot::Sender<u32>> = VecDeque::new();
+        let waiters: VecDeque<oneshot::Sender<u32>> = VecDeque::new();
         assert!(waiters.is_empty());
         // return_object would push to vec + add_permits here.
     }
