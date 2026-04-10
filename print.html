@@ -1251,9 +1251,9 @@ Pool size:  0 ----------- 8 ---------------------------- 40
             |  warm_thr   |                              |
             |             |                              |
             |  Skip       |  Phase 3: fast spin          |
-            |  phases 3   |  Phase 4: Notify loop        |
-            |  and 4.     |   (bounded by remaining      |
-            |  Go straight|    query_wait_timeout        |
+            |  phases 3   |  Phase 4: direct handoff     |
+            |  and 4.     |   (oneshot channel, bounded  |
+            |  Go straight|    by query_wait_timeout     |
             |  to phase 5 |    minus 500 ms reserve)     |
             |  (burst gate|  Then phase 5                |
             |  + connect) |                              |
@@ -1264,9 +1264,9 @@ Pool size:  0 ----------- 8 ---------------------------- 40
 inflight_creates: 0 ---- 1 ---- 2 (= scaling_max_parallel_creates)
                                 ^
                                 |  At cap: any caller reaching the
-                                |  burst gate waits on a Notify
-                                |  for either an idle return or
-                                |  a peer create completion.
+                                |  burst gate registers a handoff
+                                |  waiter and listens for a peer
+                                |  create completion.
 </code></pre>
 <p>The warm/anticipation zones track <em>current pool size</em>. The burst-capped
 state tracks <em>concurrent backend creates</em>. A pool can be in the
@@ -1296,46 +1296,45 @@ recycle 10 times in a tight <code>yield_now</code> loop (controlled by
 finished its query in the same microsecond range and is about to push
 the connection back. Total cost is around 10–50 microseconds. No sleep,
 no blocking I/O.</p>
-<p><strong>Phase 4 — Anticipation loop.</strong> If the spin did not catch a return,
-enter a loop waiting for returned connections. Each iteration
-registers a <code>Notify</code> future woken by any <code>return_object()</code>, runs
-<code>try_recycle_one</code> before the wait to catch a buffered return, awaits
-either the notify or a per-iteration sleep capped at 100 ms, then
-runs <code>try_recycle_one</code> again after the wake. If another waiter
-popped the returned item first, the iteration bumps a race-loss
-counter and registers a fresh future for the next return. The loop
-exits on three conditions: a successful recycle (return the
-connection), the deadline expired at the top of the iteration, or
-the race-loss counter reached <code>MAX_RACE_LOSSES</code> (20) — the caller
-has woken repeatedly and lost the post-wake race every time, so
-anticipation gives up and falls through to the create path.</p>
+<p><strong>Phase 4 — Direct handoff.</strong> If the spin did not catch a return,
+register a oneshot channel in a per-pool <code>waiters</code> queue (a
+<code>VecDeque</code> inside <code>Slots</code>). When any client returns a connection via
+<code>return_object()</code>, the returned connection is sent directly through
+the oldest registered oneshot channel, bypassing the idle <code>VecDeque</code>
+entirely. The waiter receives the connection without racing any other
+task — there is no contention with Phase 1/2 semaphore waiters
+because the connection never enters the idle queue.</p>
+<p>If the oneshot receive succeeds, the connection goes through a
+recycle check (<code>recycle_handoff</code>). On recycle success the connection
+is returned to the caller. On recycle failure (stale backend), the
+pool decrements <code>slots.size</code> and the caller falls through to the
+create path.</p>
+<p>If no connection arrives before the deadline, the oneshot receiver is
+dropped. <code>return_object</code> detects the dropped receiver (<code>send</code> returns
+<code>Err</code>), skips the stale waiter, and tries the next one in the queue.
+This way timed-out waiters are cleaned up lazily without a separate
+garbage-collection pass.</p>
 <p>The deadline is <code>min(query_wait_timeout - 500 ms, PHASE_4_HARD_CAP)</code>
-where <code>PHASE_4_HARD_CAP = 500 ms</code>, measured against a timestamp
-captured at the top of <code>timeout_get</code>. The hard cap bounds tail
-latency under pathological wake orderings where a caller wakes on
-every notify but loses every post-wake race — without it, a large
-<code>query_wait_timeout</code> would let one caller spend tens of seconds in
-anticipation. Phase 1/2 semaphore wait consumes from the same budget,
-so the cumulative wait across phases cannot exceed the caller's
-<code>query_wait_timeout</code>.</p>
-<p>Each return wakes exactly one waiter. The loop is retry-driven
-against races: when <code>return_object()</code> fires, both this Phase 4
-waiter and any task parked in Phase 1/2 semaphore acquire wake
-simultaneously, and the Phase 1/2 task often pops the returned item
-first. Under a single-shot wait-then-recycle, every such race loss
-forced a fresh <code>connect()</code> and grew the pool for no reason. With the
-loop, the waiter registers a fresh notify and waits for the next
-return. On a busy production shard with ~55% Phase 4 race loss,
-<code>create_fallback</code> dropped from 24 000 per scrape window to zero and
-<code>creates_started</code> dropped 90× against the same workload. The pool
-stopped paying for connects that returns would have covered.</p>
+where <code>PHASE_4_HARD_CAP</code> is randomly chosen between <strong>300 ms and
+500 ms</strong> (uniform jitter) for each checkout attempt, measured against
+a timestamp captured at the top of <code>timeout_get</code>. Phase 1/2 semaphore
+wait consumes from the same budget, so the cumulative wait across
+phases cannot exceed the caller's <code>query_wait_timeout</code>.</p>
+<p>The jitter prevents a <strong>timeout cliff</strong>: without it, N clients that
+entered Phase B at the same instant all exit simultaneously and
+stampede into the burst gate, creating N new backend connections for a
+pool that needs far fewer. With jitter, clients exit in staggered
+batches — early exiters create connections, and by the time later
+exiters time out, those connections have already been used and returned
+to the idle queue for recycling.</p>
 <p><strong>Phase 5 — Bounded burst gate.</strong> Try to take one of
 <code>scaling_max_parallel_creates</code> slots (default 2) for in-flight backend
 connects. If a slot is free, take it and call <code>connect()</code> against
-PostgreSQL. If all slots are full, wait on a <code>Notify</code> woken by either an
-idle return or another in-flight create finishing, then re-try the
-recycle and the gate. A 5 ms backoff acts as a safety net if both wake
-sources are missed.</p>
+PostgreSQL. If all slots are full, register a direct-handoff oneshot
+waiter and also listen for <code>create_done</code> (another in-flight create
+finishing). If a connection arrives via the oneshot channel, recycle it
+and return. Otherwise, re-try the recycle and the gate after the wake.
+A 5 ms backoff acts as a safety net if both wake sources are missed.</p>
 <p><strong>Phase 6 — Backend connect.</strong> Run <code>connect()</code>, authenticate, hand the
 connection to the client. The burst slot is released automatically when
 this phase finishes, regardless of success or failure.</p>
@@ -1364,9 +1363,9 @@ this phase finishes, regardless of success or failure.</p>
           | MISS
           v
    +--------------+
-   |  Phase 4:    |  --- recycle  ----&gt; return idle connection
-   |  anticipate  |  --- race loss --&gt; wait next return (loop)
-   |  Notify loop |  --- deadline ----&gt; fall through
+   |  Phase 4:    |  --- handoff  ----&gt; return connection
+   |  anticipate  |  --- timeout  ----&gt; fall through
+   |  direct h/o  |
    +------+-------+
           |
           v
@@ -1436,31 +1435,28 @@ the pool above <code>min_pool_size</code> anyway. The <code>replenish_deferred</
 increments each time the background task backs off this way.</p>
 <p>Consequence: <code>min_pool_size</code> is best-effort under load. For a hard
 floor, see the troubleshooting section.</p>
-<h3 id="conditional-notify-on-return"><a class="header" href="#conditional-notify-on-return">Conditional notify on return</a></h3>
-<p>When a connection is returned to the idle queue, <code>return_object</code> signals
-two channels: <code>semaphore.add_permits(1)</code> to wake a Phase 1/2 waiter,
-and <code>idle_returned.notify_one()</code> to wake a Phase 4 anticipation waiter.</p>
-<p>At high concurrency (10k+ clients, pool fully utilized) the idle queue
-cycles rapidly and no callers sit in Phase 4 — every checkout hits the
-hot path. Calling <code>notify_one()</code> on every return in this case wakes a
-task that races the semaphore waiter for the same connection, loses, and
-wastes ~2-5 us of CPU per return. At 200k returns/sec this adds up to
-~10% throughput loss.</p>
-<p>To avoid this, <code>return_object</code> checks an <code>idle_returned_listeners</code>
-atomic counter before calling <code>notify_one()</code>. Phase 4 anticipation and
-the burst gate both increment the counter when they register a
-<code>Notified</code> future and decrement it when their wait ends. When the
-counter is zero (the common case under high throughput), <code>notify_one()</code>
-is skipped entirely — one atomic load (~3 ns) instead of a notify cycle
-(~104 ns) plus a wasted task wake.</p>
-<p>Safety net: if a listener registers between the load and a missed
-notify, Phase 4's <code>SLEEP_CAP</code> (100 ms) and the burst gate's
-<code>BURST_BACKOFF</code> (5 ms) guarantee progress on the next iteration.</p>
+<h3 id="direct-handoff-on-return"><a class="header" href="#direct-handoff-on-return">Direct handoff on return</a></h3>
+<p>When a connection is returned, <code>return_object</code> first checks the
+direct-handoff <code>waiters</code> queue inside <code>Slots</code>. If at least one waiter
+is registered, the connection is sent through the oldest oneshot
+channel, bypassing the idle <code>VecDeque</code> and the semaphore entirely.
+The waiter already holds a semaphore permit, so no <code>add_permits</code> call
+is needed. Waiters whose receiver has been dropped (the caller timed
+out) are skipped: <code>send</code> returns <code>Err</code> with the connection, and
+<code>return_object</code> tries the next waiter in the queue.</p>
+<p>If no waiters are registered (the common case at high throughput where
+every checkout hits the hot path), the connection is pushed into the
+idle <code>VecDeque</code> and <code>semaphore.add_permits(1)</code> wakes a Phase 1/2
+waiter as before.</p>
+<p>In both cases, the coordinator (if configured) is notified via
+<code>notify_return_observers</code> so peer-pool Phase C waiters can scan for
+eviction candidates. Same-pool waiters never park on a <code>Notify</code> — they
+receive connections directly through the oneshot channel.</p>
 <h3 id="pre-replacement-for-lifetime-expiry"><a class="header" href="#pre-replacement-for-lifetime-expiry">Pre-replacement for lifetime expiry</a></h3>
 <p>When <code>server_lifetime</code> is configured, backend connections are closed
 after reaching their individual lifetime limit (base ± 20% jitter).
 Closing a connection means the pool has one fewer idle backend —
-subsequent checkouts may enter the anticipation loop or create path,
+subsequent checkouts may enter the anticipation phase or create path,
 adding several milliseconds to p99 during lifetime expiry clusters.</p>
 <p><strong>Pre-replacement</strong> removes this spike. When a checkout recycles a
 connection whose age has reached <strong>95%</strong> of its lifetime, a background
@@ -1706,7 +1702,7 @@ evict / wait for a peer return), and then re-acquires a gate slot.</p>
    Phase 3: fast spin          --- HIT ---&gt; return
        | MISS                               |
        v                                    |
-   Phase 4: anticipation loop  --- HIT ---&gt; return
+   Phase 4: direct handoff     --- HIT ---&gt; return
        | deadline                           |
        v                                    |
        | &lt;----------------------------------+
@@ -1752,7 +1748,7 @@ for <code>scaling_warm_pool_ratio</code> and <code>scaling_fast_retries</code>.
 not supported.</p>
 <div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Default</th><th>Where</th><th>What it does</th></tr></thead><tbody>
 <tr><td><code>scaling_warm_pool_ratio</code></td><td><code>20</code> (percent)</td><td><code>general</code>, per-pool</td><td>Threshold below which connections are created without anticipation. Below <code>pool_size × ratio / 100</code>, every new connection request goes straight to <code>connect()</code>.</td></tr>
-<tr><td><code>scaling_fast_retries</code></td><td><code>10</code></td><td><code>general</code>, per-pool</td><td>Number of <code>yield_now</code> spin retries before entering the event-driven anticipation loop. Each retry costs ~1–5 µs.</td></tr>
+<tr><td><code>scaling_fast_retries</code></td><td><code>10</code></td><td><code>general</code>, per-pool</td><td>Number of <code>yield_now</code> spin retries before entering the direct-handoff anticipation phase. Each retry costs ~1–5 µs.</td></tr>
 <tr><td><code>scaling_max_parallel_creates</code></td><td><code>2</code></td><td><code>general</code></td><td>Hard cap on concurrent backend <code>connect()</code> calls per pool. Tasks above the cap wait for an idle return or a peer create completion. Must be <code>&gt;= 1</code>.</td></tr>
 <tr><td><code>max_db_connections</code></td><td>unset (disabled)</td><td>per-pool</td><td>Cap on total backend connections to a database across all user pools. When unset, the coordinator does not exist.</td></tr>
 <tr><td><code>min_connection_lifetime</code></td><td><code>30000</code> (ms)</td><td>per-pool</td><td>Minimum age of an idle connection before the coordinator may evict it for another pool. The 30-second floor suppresses cyclic reconnect between peer pools that keep stealing slots from each other.</td></tr>
@@ -1912,9 +1908,9 @@ to the <code>pgdoorman</code> admin database and run:</p>
 <tr><td><code>database</code></td><td>text</td><td>Pool database</td></tr>
 <tr><td><code>inflight</code></td><td>gauge</td><td>Backend <code>connect()</code> calls currently in progress for this pool. Bounded by <code>scaling_max_parallel_creates</code>.</td></tr>
 <tr><td><code>creates</code></td><td>counter</td><td>Total backend connections this pool has started creating since startup. Pairs with <code>gate_waits</code> to compute the gate hit rate.</td></tr>
-<tr><td><code>gate_waits</code></td><td>counter</td><td>Total times a caller observed the burst gate at capacity and had to wait on a <code>Notify</code>. High values indicate <code>scaling_max_parallel_creates</code> is too low.</td></tr>
-<tr><td><code>antic_notify</code></td><td>counter</td><td>Loop iterations where a real <code>idle_returned</code> signal woke the waiter. Incremented once per iteration that saw a notify, including iterations that then lost the post-await recycle race and looped back.</td></tr>
-<tr><td><code>antic_timeout</code></td><td>counter</td><td>Loop exits where the sleep timer fired before any notify, or the waiter found the deadline already exhausted at loop entry. Increments exactly once per Phase 4 fall-through.</td></tr>
+<tr><td><code>gate_waits</code></td><td>counter</td><td>Total times a caller observed the burst gate at capacity and had to wait for a slot. High values indicate <code>scaling_max_parallel_creates</code> is too low.</td></tr>
+<tr><td><code>antic_notify</code></td><td>counter</td><td>Phase 4 anticipation attempts where a direct-handoff delivery via oneshot channel succeeded. Incremented once per successful receive, before the recycle check.</td></tr>
+<tr><td><code>antic_timeout</code></td><td>counter</td><td>Phase 4 anticipation attempts where the oneshot timed out without receiving a connection, or the budget was zero. Increments exactly once per Phase 4 fall-through to the create path.</td></tr>
 <tr><td><code>create_fallback</code></td><td>counter</td><td>Phase 4 exited without a recyclable connection and the caller fell through to <code>server_pool.create()</code>. Steady-state should be near zero. A sustained non-zero rate means offered load exceeds what returns can serve within the client's <code>query_wait_timeout - 500 ms</code> budget.</td></tr>
 <tr><td><code>replenish_def</code></td><td>counter</td><td>Background replenish runs that hit the burst cap and deferred to the next retain cycle. Persistent non-zero values mean <code>min_pool_size</code> cannot be sustained under current load.</td></tr>
 </tbody></table>
@@ -2058,6 +2054,8 @@ neighbours or lower that pool's <code>pool_size</code>.</li>
 without finding a return and falls through to a fresh <code>connect()</code>.
 Steady-state should be zero.</p>
 <pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="create_fallback"}[5m]) &gt; 0.1
+  and
+  rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m]) &gt; 0.1
 </code></pre>
 <p><strong>Runbook:</strong></p>
 <pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_SCALING'
@@ -2299,7 +2297,7 @@ load from returns within the client's wait deadline. Raise
 <code>pool_size</code>, raise <code>query_wait_timeout</code> (if clients can tolerate
 it), or find the slow queries holding connections out of rotation.</li>
 <li><strong><code>create_fallback</code> is flat at zero and <code>antic_notify</code> is climbing
-in step with pool turnover.</strong> The anticipation loop is working:
+in step with pool turnover.</strong> The direct handoff is working:
 returns are being caught, no connection storm is firing. The
 latency is somewhere else. Check <code>SHOW STATS avg_wait_time</code>,
 PostgreSQL-side wait events, network, and client code.</li>
@@ -2429,9 +2427,9 @@ PostgreSQL's <code>connect()</code> latency.</p>
 for the first few seconds, <code>creates_started</code> rate climbing rapidly,
 <code>burst_gate_waits</code> rate climbing in lockstep, <code>anticipation_wakes_notify</code>
 climbing as the first refilled connections start cycling back and the
-loop recovers race losses. <code>create_fallback</code> should stay flat: the
-deadline window is wide enough that the loop catches returns before
-giving up. Within <code>pool_size / 2</code> × <code>connect()</code> seconds, the pool
+direct handoff delivers them to waiting callers. <code>create_fallback</code>
+should stay flat: the deadline window is wide enough that the handoff
+catches returns before giving up. Within <code>pool_size / 2</code> × <code>connect()</code> seconds, the pool
 returns to normal.</p>
 <p><strong>Fix.</strong> Usually nothing. The bounded burst gate is doing its job by
 preventing a connection storm against a recovering primary. If
@@ -2443,7 +2441,8 @@ section.</p>
 <ul>
 <li><strong><code>bounded burst gate</code></strong> — per-pool limiter capped at
 <code>scaling_max_parallel_creates</code> concurrent backend <code>connect()</code> calls.
-Tasks beyond the cap wait on a <code>Notify</code> until a slot frees up.</li>
+Tasks beyond the cap register a direct-handoff waiter and listen for
+a peer create completion until a slot frees up.</li>
 <li><strong><code>CoordinatorPermit</code></strong> — RAII guard that accounts for one coordinator
 slot. Carries an <code>is_reserve</code> flag. Dropped when the backend is
 physically destroyed (not when it returns to the idle vec), at which
@@ -2453,17 +2452,19 @@ point it releases its slot back to either <code>db_semaphore</code> (main) or
 as <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>. The
 coordinator protects this many connections per user from being
 evicted by peers.</li>
-<li><strong><code>MAX_RACE_LOSSES</code></strong> — compile-time constant (20). The Phase 4
-anticipation loop gives up after this many consecutive failed
-post-wake recycles. Not configurable.</li>
+<li><strong>direct handoff</strong> — Phase 4 delivery mechanism. <code>return_object</code>
+sends the connection through a oneshot channel to the oldest
+registered waiter, bypassing the idle queue. No race with Phase 1/2
+semaphore waiters — the connection goes to a specific caller.</li>
 <li><strong>Phase R (reserve-first)</strong> — coordinator shortcut inserted between
 Phase A and Phase B. When the database is full but the reserve pool
 has headroom, Phase R grants a reserve permit directly via the
 arbiter instead of closing a peer backend or parking in Phase C.</li>
-<li><strong><code>PHASE_4_HARD_CAP</code></strong> — compile-time constant (500 ms). Upper
+<li><strong><code>PHASE_4_HARD_CAP</code></strong> — compile-time constant with uniform jitter:
+each checkout draws a random cap between 300 ms and 500 ms. Upper
 bound on Phase 4 anticipation wall time, regardless of
-<code>query_wait_timeout</code>. Protects tail latency under pathological
-wake orderings. Not configurable.</li>
+<code>query_wait_timeout</code>. Not configurable. The jitter prevents
+synchronized timeouts that cause burst-gate stampedes.</li>
 <li><strong>reserve arbiter</strong> — single tokio task that owns the reserve
 permits. Reserve requests are scored by <code>(starving, queued_clients)</code>
 and drained from a priority heap so the neediest users are served
