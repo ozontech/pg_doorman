@@ -108,6 +108,11 @@ pub struct PoolStats {
     /// Percentile statistics for query execution times (from HDR histogram)
     pub query_percentile: Percentile,
 
+    /// Percentile statistics for client checkout (wait) times — full
+    /// `Pool::timeout_get` path from `stats.waiting()` to backend handoff.
+    /// Populated from `AddressStats::get_wait_percentiles()`.
+    pub wait_percentile: Percentile,
+
     //
     // Aggregated statistics for SHOW STATS command
     // ------------------------------------------------------------------------------------------
@@ -195,6 +200,7 @@ impl PoolStats {
     /// * `mode` - Operating mode of the pool (session, transaction, statement)
     /// * `query_percentile` - Pre-calculated query time percentiles
     /// * `xact_percentile` - Pre-calculated transaction time percentiles
+    /// * `wait_percentile` - Pre-calculated client checkout wait time percentiles
     ///
     /// # Returns
     ///
@@ -204,6 +210,7 @@ impl PoolStats {
         mode: PoolMode,
         query_percentile: Percentile,
         xact_percentile: Percentile,
+        wait_percentile: Percentile,
     ) -> Self {
         PoolStats {
             identifier,
@@ -229,6 +236,7 @@ impl PoolStats {
             // Percentiles from HDR histogram
             xact_percentile,
             query_percentile,
+            wait_percentile,
             total_xact_count: 0,
             total_query_count: 0,
             total_received: 0,
@@ -296,6 +304,7 @@ impl PoolStats {
             ("pool_size", DataType::Numeric),
             ("maxwait", DataType::Numeric),
             ("maxwait_us", DataType::Numeric),
+            ("avg_xact_time", DataType::Numeric),
             ("paused", DataType::Text),
         ]
     }
@@ -367,6 +376,7 @@ impl PoolStats {
             Cow::Owned(self.pool_size.to_string()),
             Cow::Owned((self.maxwait / 1_000_000).to_string()),
             Cow::Owned((self.maxwait % 1_000_000).to_string()),
+            Cow::Owned(self.avg_xact_time_microsecons.to_string()),
             Cow::Borrowed(if self.paused { "1" } else { "0" }),
         ]
     }
@@ -457,6 +467,7 @@ impl PoolStats {
             // Get percentiles directly from HDR histograms (O(1) operation)
             let (query_p50, query_p90, query_p95, query_p99) = address.get_query_percentiles();
             let (xact_p50, xact_p90, xact_p95, xact_p99) = address.get_xact_percentiles();
+            let (wait_p50, wait_p90, wait_p95, wait_p99) = address.get_wait_percentiles();
 
             // Create a new PoolStats instance for this pool with pre-calculated percentiles
             let mut current = PoolStats::new_with_percentiles(
@@ -473,6 +484,12 @@ impl PoolStats {
                     p90: xact_p90,
                     p95: xact_p95,
                     p99: xact_p99,
+                },
+                Percentile {
+                    p50: wait_p50,
+                    p90: wait_p90,
+                    p95: wait_p95,
+                    p99: wait_p99,
                 },
             );
 

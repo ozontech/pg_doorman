@@ -691,10 +691,28 @@ where
                 };
                 let server = conn.deref_mut();
                 server.stats.active(self.stats.application_name());
-                server.stats.checkout_time(
-                    connecting_at.elapsed().as_micros() as u64,
-                    self.stats.application_name(),
-                );
+                let checkout_us = connecting_at.elapsed().as_micros() as u64;
+                server
+                    .stats
+                    .checkout_time(checkout_us, self.stats.application_name());
+                // Update client-side wait tracking so SHOW POOLS maxwait
+                // reflects real checkout peaks, not the zero from init.
+                self.stats
+                    .total_wait_time
+                    .fetch_add(checkout_us, Ordering::Relaxed);
+                self.stats
+                    .max_wait_time
+                    .fetch_max(checkout_us, Ordering::Relaxed);
+                if checkout_us >= 500_000 {
+                    warn!(
+                        "[{}@{} #c{}] slow checkout: {}ms (server pid={})",
+                        self.username,
+                        self.pool_name,
+                        self.connection_id,
+                        checkout_us / 1_000,
+                        server.get_process_id(),
+                    );
+                }
                 let server_active_at = now();
 
                 // Server is assigned to the client in case the client wants to

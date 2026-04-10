@@ -3,6 +3,8 @@
 //! Bridges `PoolCoordinator`'s eviction callbacks to real pool state,
 //! scanning idle connections across user pools for the same database.
 
+use std::sync::atomic::Ordering;
+
 use log::{debug, info};
 
 use crate::utils::format_duration_ms;
@@ -39,16 +41,22 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
     fn try_evict_one(&self, requesting_user: &str) -> bool {
         let all_pools = POOLS.load();
 
-        // Snapshot spare count once per candidate (avoids repeated locking).
-        let all_other_users: Vec<(&PoolIdentifier, &ConnectionPool, usize)> = all_pools
+        // Snapshot spare count and p95 xact time once per candidate.
+        // Spare avoids TOCTOU from repeated locking. p95 is an atomic
+        // load (~3ns) from a value cached every 15s in the stats cycle.
+        let all_other_users: Vec<(&PoolIdentifier, &ConnectionPool, usize, u64)> = all_pools
             .iter()
             .filter(|(id, _)| id.db == self.database && id.user != requesting_user)
-            .map(|(id, pool)| (id, pool, pool.spare_above_min()))
+            .map(|(id, pool)| {
+                let spare = pool.spare_above_min();
+                let p95 = pool.address.stats.p95_xact_time_us.load(Ordering::Relaxed);
+                (id, pool, spare, p95)
+            })
             .collect();
 
-        let mut candidates: Vec<(&PoolIdentifier, &ConnectionPool, usize)> = all_other_users
+        let mut candidates: Vec<(&PoolIdentifier, &ConnectionPool, usize, u64)> = all_other_users
             .iter()
-            .filter(|(_, _, spare)| *spare > 0)
+            .filter(|(_, _, spare, _)| *spare > 0)
             .cloned()
             .collect();
 
@@ -66,7 +74,10 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
                     all_other_users.len(),
                     all_other_users
                         .iter()
-                        .map(|(id, _, spare)| format!("{}(spare={})", id.user, spare))
+                        .map(|(id, _, spare, p95)| format!(
+                            "{}(spare={}, p95_xact={}us)",
+                            id.user, spare, p95
+                        ))
                         .collect::<Vec<_>>()
                         .join(", "),
                 );
@@ -74,8 +85,11 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
             return false;
         }
 
-        // Evict from the user with the most surplus first — minimizes impact.
-        candidates.sort_by(|a, b| b.2.cmp(&a.2));
+        // Slow pools (high p95 xact time) donate first — they tolerate
+        // the re-create cost better. 1ms of pool wait adds 6.7% to a
+        // 15ms p95 but 104% to a 0.96ms p95. Spare count as tiebreaker
+        // when p95 is equal or not yet computed (0).
+        candidates.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| b.2.cmp(&a.2)));
 
         debug!(
             "[{requesting_user}@{}] eviction: {} candidate(s) with spare connections ({})",
@@ -83,18 +97,21 @@ impl pool_coordinator::EvictionSource for PoolEvictionSource {
             candidates.len(),
             candidates
                 .iter()
-                .map(|(id, _, spare)| format!("{}(spare={})", id.user, spare))
+                .map(|(id, _, spare, p95)| format!(
+                    "{}(spare={}, p95_xact={}us)",
+                    id.user, spare, p95
+                ))
                 .collect::<Vec<_>>()
                 .join(", "),
         );
 
         let min_lifetime_ms = candidates
             .first()
-            .and_then(|(_, pool, _)| pool.coordinator.as_ref())
+            .and_then(|(_, pool, _, _)| pool.coordinator.as_ref())
             .map(|c| c.config().min_connection_lifetime_ms)
             .unwrap_or(5000);
 
-        for (id, pool, spare) in &candidates {
+        for (id, pool, spare, _) in &candidates {
             // Re-check spare to narrow TOCTOU window: another thread may have
             // acquired a connection since the snapshot, reducing spare to 0.
             let current_spare = pool.spare_above_min();

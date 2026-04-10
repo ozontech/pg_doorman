@@ -648,6 +648,12 @@ impl PoolCoordinator {
     pub fn config(&self) -> &CoordinatorConfig {
         &self.config
     }
+
+    /// Number of free main (non-reserve) permits. Used by pre-replacement
+    /// to check headroom before speculatively creating a connection.
+    pub fn available_main_permits(&self) -> usize {
+        self.db_semaphore.available_permits()
+    }
 }
 
 /// What phase the coordinator was in when it gave up.

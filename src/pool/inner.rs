@@ -141,6 +141,11 @@ pub(crate) struct ScalingStats {
     /// and deferred its work to the next retain cycle. Persistent non-zero
     /// values indicate `min_pool_size` cannot be sustained under current load.
     pub(crate) replenish_deferred: AtomicU64,
+    /// Number of pre-replacement connections created ahead of lifetime expiry.
+    pub(crate) pre_replacements_triggered: AtomicU64,
+    /// Number of pre-replacement attempts skipped (coordinator full, pressure,
+    /// pool not tight, or another pre-replacement already in flight).
+    pub(crate) pre_replacements_skipped: AtomicU64,
 }
 
 /// Snapshot of per-pool scaling counters, returned to admin/prometheus exporters.
@@ -154,6 +159,8 @@ pub struct ScalingStatsSnapshot {
     pub replenish_deferred: u64,
     /// Current `inflight_creates` value (gauge, not a counter).
     pub inflight_creates: usize,
+    pub pre_replacements_triggered: u64,
+    pub pre_replacements_skipped: u64,
 }
 
 /// Internal pool state.
@@ -175,6 +182,13 @@ struct PoolInner {
     /// recyclable connection event-driven, and by peer coordinator waiters to
     /// re-attempt peer eviction after a return.
     idle_returned: Notify,
+    /// Number of tasks currently awaiting `idle_returned.notified()`. Covers
+    /// Phase B anticipation waiters AND burst gate waiters. Incremented before
+    /// registering a `Notified` future, decremented on loop exit (scopeguard).
+    /// `return_object` checks this before calling `idle_returned.notify_one()`
+    /// to avoid waking a task that will race against the semaphore waiter and
+    /// lose — at 10k clients this race doubles per-return CPU cost for no gain.
+    idle_returned_listeners: AtomicUsize,
     /// Number of server connection creates currently in-flight on this pool.
     /// This is NOT the count of currently-held connections — only those being
     /// established right now via `server_pool.create()`. Bounded by
@@ -188,6 +202,10 @@ struct PoolInner {
     /// Counters exposed via SHOW POOLS and Prometheus for tuning the
     /// anticipation + bounded burst path.
     scaling_stats: ScalingStats,
+    /// Number of pre-replacement tasks currently in flight. Capped at
+    /// `MAX_CONCURRENT_PRE_REPLACEMENTS` to prevent a burst of expiring
+    /// connections from spawning too many background creates at once.
+    pre_replacements_in_flight: AtomicUsize,
 }
 
 enum RecycleOutcome {
@@ -196,7 +214,182 @@ enum RecycleOutcome {
     Empty,
 }
 
+/// Minimum `server_lifetime` for pre-replacement to be worthwhile.
+/// With shorter lifetimes the overlap window is too narrow for the
+/// replacement to be ready in time.
+const PRE_REPLACE_MIN_LIFETIME_MS: u64 = 60_000;
+
+/// Pre-replacement threshold as a percentage of `metrics.lifetime_ms`.
+/// At 95% of a 5-minute lifetime the overlap window is ~15 seconds —
+/// 15 000x the ~1 ms Unix-socket connect time. For TCP deployments this
+/// can be lowered to 85%.
+const PRE_REPLACE_THRESHOLD_PCT: u64 = 95;
+
+/// Maximum concurrent pre-replacement tasks per pool. With a 5-minute
+/// lifetime and ±20% jitter, up to 3 connections can expire within
+/// the same 15-second window. Allowing 3 concurrent pre-replacements
+/// ensures each one gets a warm replacement without serialization.
+const MAX_CONCURRENT_PRE_REPLACEMENTS: usize = 3;
+
 impl PoolInner {
+    /// Background pre-replacement: create one connection ahead of lifetime
+    /// expiry so the next checkout finds a warm replacement in the idle
+    /// queue instead of paying for a fresh create.
+    ///
+    /// Called via `tokio::spawn` from `Pool::trigger_pre_replacement`.
+    /// On success the pool temporarily holds `max_size + 1` connections
+    /// until the old one dies during the next recycle.
+    async fn pre_replace_one(&self) {
+        // Coordinator permit — non-blocking, with headroom guard.
+        let coordinator_permit = if let Some(ref coord) = self.coordinator {
+            // Keep at least 2 permits free so a peer pool can still create
+            // without being forced onto the slow eviction/reserve path.
+            if coord.available_main_permits() < 2 {
+                log::debug!(
+                    "[{}@{}] pre-replace: skipped — coordinator headroom < 2",
+                    self.username,
+                    self.pool_name,
+                );
+                self.scaling_stats
+                    .pre_replacements_skipped
+                    .fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            match coord.try_acquire() {
+                Some(p) => Some(p),
+                None => {
+                    log::debug!(
+                        "[{}@{}] pre-replace: skipped — coordinator full",
+                        self.username,
+                        self.pool_name,
+                    );
+                    self.scaling_stats
+                        .pre_replacements_skipped
+                        .fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        // Burst gate — non-blocking, like replenish.
+        let max_parallel = self.config.scaling.max_parallel_creates as usize;
+        if !try_take_burst_slot(&self.inflight_creates, max_parallel) {
+            log::debug!(
+                "[{}@{}] pre-replace: skipped — burst gate full",
+                self.username,
+                self.pool_name,
+            );
+            self.scaling_stats
+                .pre_replacements_skipped
+                .fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        self.scaling_stats
+            .creates_started
+            .fetch_add(1, Ordering::Relaxed);
+        let _gate = scopeguard::guard((), |_| {
+            self.inflight_creates.fetch_sub(1, Ordering::Release);
+            self.create_done.notify_one();
+        });
+
+        // Create the replacement connection.
+        let obj = match self.server_pool.create().await {
+            Ok(obj) => obj,
+            Err(e) => {
+                log::debug!(
+                    "[{}@{}] pre-replace: create failed — {}",
+                    self.username,
+                    self.pool_name,
+                    e,
+                );
+                self.scaling_stats
+                    .pre_replacements_skipped
+                    .fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        };
+
+        let lifetime_ms = self.server_pool.lifetime_ms();
+        let idle_timeout_ms = self.server_pool.idle_timeout_ms();
+        let epoch = self.server_pool.current_epoch();
+        let inner = ObjectInner {
+            obj,
+            metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+            coordinator_permit,
+        };
+
+        // Push to idle queue. Temporarily exceeds max_size by 1; returns
+        // to max_size when the old connection fails recycle.
+        {
+            let mut slots = self.slots.lock();
+            slots.size += 1;
+            match self.config.queue_mode {
+                QueueMode::Fifo => slots.vec.push_back(inner),
+                QueueMode::Lifo => slots.vec.push_front(inner),
+            }
+        }
+
+        // Add a semaphore permit so a client can reach the pre-created
+        // connection through the normal checkout path. The extra permit
+        // is consumed when the old connection fails recycle: the caller
+        // holds it and retries try_recycle_one which finds the replacement.
+        self.semaphore.add_permits(1);
+
+        // Wake anticipation/burst-gate waiters if any.
+        if self.idle_returned_listeners.load(Ordering::Acquire) > 0 {
+            self.idle_returned.notify_one();
+        }
+
+        self.scaling_stats
+            .pre_replacements_triggered
+            .fetch_add(1, Ordering::Relaxed);
+        log::info!(
+            "[{}@{}] pre-replace: replacement connection created ahead of lifetime expiry",
+            self.username,
+            self.pool_name,
+        );
+    }
+
+    /// Create a new backend connection via `server_pool.create()`, respecting
+    /// the caller's `create` timeout. On success, increments `slots.size` and
+    /// returns the `ObjectInner` ready for wrapping into an `Object`.
+    async fn create_connection(
+        &self,
+        timeouts: &Timeouts,
+        coordinator_permit: Option<pool_coordinator::CoordinatorPermit>,
+    ) -> Result<ObjectInner, PoolError> {
+        let obj = match timeouts.create {
+            Some(duration) => {
+                match tokio::time::timeout(duration, self.server_pool.create()).await {
+                    Ok(Ok(obj)) => obj,
+                    Ok(Err(e)) => return Err(PoolError::Backend(e)),
+                    Err(_) => return Err(PoolError::Timeout(TimeoutType::Create)),
+                }
+            }
+            None => self
+                .server_pool
+                .create()
+                .await
+                .map_err(PoolError::Backend)?,
+        };
+
+        {
+            let mut slots = self.slots.lock();
+            slots.size += 1;
+        }
+
+        let lifetime_ms = self.server_pool.lifetime_ms();
+        let idle_timeout_ms = self.server_pool.idle_timeout_ms();
+        let epoch = self.server_pool.current_epoch();
+        Ok(ObjectInner {
+            obj,
+            metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+            coordinator_permit,
+        })
+    }
+
     /// Returns true when every permit is in use — clients are either holding
     /// connections or queued behind the semaphore. Used to suppress lifetime
     /// housekeeping (`recycle` lifetime expiry, retain-loop trimming) so we
@@ -291,7 +484,21 @@ impl PoolInner {
     /// `evict_one_idle` — the returned connection is now visible there.
     #[inline(always)]
     fn notify_return_observers(&self) {
-        self.idle_returned.notify_one();
+        // Only wake anticipation / burst-gate waiters if at least one task
+        // is parked on `idle_returned.notified()`. At 10k clients in steady
+        // state the idle queue cycles fast and no one enters Phase B or the
+        // burst gate — every return would wake a task that races the
+        // semaphore waiter and loses, doubling per-return CPU cost for no
+        // gain. The atomic load is ~3 ns vs ~104 ns for the notify + the
+        // ~2-5 us wasted task wake on the losing side.
+        //
+        // Safety net: if a listener registers between our load and a missed
+        // notify_one, it will still progress — Phase B's SLEEP_CAP (100 ms)
+        // and the burst gate's BURST_BACKOFF (5 ms) guarantee an iteration
+        // even without a signal.
+        if self.idle_returned_listeners.load(Ordering::Acquire) > 0 {
+            self.idle_returned.notify_one();
+        }
         if let Some(coordinator) = self.coordinator.as_ref() {
             coordinator.notify_idle_returned();
         }
@@ -348,9 +555,11 @@ impl Pool {
                 pool_name: builder.pool_name,
                 username: builder.username,
                 idle_returned: Notify::new(),
+                idle_returned_listeners: AtomicUsize::new(0),
                 inflight_creates: AtomicUsize::new(0),
                 create_done: Notify::new(),
                 scaling_stats: ScalingStats::default(),
+                pre_replacements_in_flight: AtomicUsize::new(0),
             }),
         }
     }
@@ -435,6 +644,11 @@ impl Pool {
 
         // Hot path: try to get an existing connection
         if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+            // If this connection is approaching lifetime expiry, spawn a
+            // background task to create a replacement so the NEXT checkout
+            // finds a warm connection in the idle queue instead of paying
+            // for a fresh create after recycle rejects the expired one.
+            self.maybe_trigger_pre_replacement(&inner.metrics);
             permit.forget();
             return Ok(Object {
                 inner: Some(*inner),
@@ -474,12 +688,39 @@ impl Pool {
                 tokio::task::yield_now().await;
             }
 
+            // Capacity deficit: the pool has room to grow (size < max_size)
+            // but the idle queue is empty. Phase B anticipation is futile
+            // here — no amount of waiting for a recycle will help when the
+            // pool genuinely needs a NEW backend connection. Waiting wastes
+            // up to 500 ms of the client's budget on race-loss retries that
+            // produce nothing; skipping straight to the create path lets the
+            // pool recover from lifetime expiry or load spikes immediately.
+            //
+            // When size == max_size the pool is full and anticipation is the
+            // right strategy: a return WILL arrive within the query latency
+            // window and recycling avoids a wasted create that would exceed
+            // the pool cap anyway.
+            //
+            // Disabled when a coordinator is configured: anticipation acts as
+            // a natural throttle that prevents one pool from grabbing all
+            // coordinator permits in a burst. Without it, a high-traffic
+            // pool can instantly consume max_db_connections permits, leaving
+            // peer pools starved and forcing them onto the reserve path.
+            let capacity_deficit = self.inner.coordinator.is_none() && {
+                let slots = self.inner.slots.lock();
+                slots.vec.is_empty() && slots.size < slots.max_size
+            };
+
             // Phase B: event-driven anticipation loop. Wait on `idle_returned`
             // so a single `return_object` wakes exactly one queued task, then
             // retry recycle. Bounded by `timeouts.wait` (the caller's budget)
             // minus a small reserve for the create path. Falls through to the
             // create path only when the deadline is reached — not on a single
             // race loss.
+            //
+            // Skipped when `capacity_deficit` is true: the pool has room to
+            // grow, so creating a new connection is cheaper than racing for
+            // returns in the anticipation loop.
             //
             // Why a loop instead of one-shot wait-then-recycle:
             //   return_object() bumps both `idle_returned` AND `semaphore`
@@ -492,7 +733,7 @@ impl Pool {
             //   loop every such race loss became a wasted `server_pool.create()`
             //   even though another return would have arrived within the next
             //   few milliseconds. The loop retries until the caller's deadline.
-            if !non_blocking {
+            if !capacity_deficit && !non_blocking {
                 const CREATE_RESERVE: Duration = Duration::from_millis(500);
                 // Fallback budget used only when the caller passes no
                 // `wait_timeout`. Stock pg_doorman always propagates
@@ -516,6 +757,18 @@ impl Pool {
                 };
 
                 if !total_budget.is_zero() {
+                    // Register as an idle_returned listener so return_object
+                    // knows to call notify_one. Decremented on any exit from
+                    // the loop (break, return, or scope drop).
+                    self.inner
+                        .idle_returned_listeners
+                        .fetch_add(1, Ordering::Release);
+                    let _listener_guard = scopeguard::guard((), |_| {
+                        self.inner
+                            .idle_returned_listeners
+                            .fetch_sub(1, Ordering::Release);
+                    });
+
                     // Hard cap on Phase 4 wall clock. Independent of race
                     // losses and notify wake ordering, a caller must not
                     // spend more than PHASE_4_HARD_CAP in anticipation
@@ -639,67 +892,6 @@ impl Pool {
             }
         }
 
-        // Acquire coordinator permit FIRST, before taking the bounded burst
-        // slot. The two limiters serve different roles and must be ordered
-        // so that the slow one (coordinator, can wait up to wait_timeout for
-        // eviction or a return in another pool) does not hold the fast one
-        // (burst gate, per-pool, woken in milliseconds).
-        //
-        // Wrong order (gate → coordinator) causes head-of-line blocking
-        // inside one pool: 2 callers grab the gate, both wait on coordinator
-        // for seconds, the remaining N-2 callers in the pool starve waiting
-        // for those 2 to finish, even though the pool itself has nothing to
-        // do. Right order (coordinator → gate) makes the gate cap actual
-        // backend connect() calls, not waiting time on a peer pool.
-        //
-        // Only the NEW CONNECTION path goes through the coordinator —
-        // idle reuse above is unaffected (permit is already inside ObjectInner).
-        let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
-            let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
-            match coordinator
-                .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
-                .await
-            {
-                Ok(permit) => {
-                    debug!(
-                        "[{}@{}] coordinator: new connection authorized \
-                         (permit_type={})",
-                        self.inner.username,
-                        self.inner.pool_name,
-                        if permit.is_reserve { "reserve" } else { "main" },
-                    );
-                    Some(permit)
-                }
-                Err(pool_coordinator::AcquireError::NoConnection(info)) => {
-                    return Err(PoolError::DbLimitExhausted(info));
-                }
-            }
-        } else {
-            None
-        };
-
-        // The coordinator wait above can run for up to `reserve_pool_timeout_ms`
-        // (default 3000 ms). During that wait a sibling caller in this same
-        // user pool may have finished a query and pushed its connection back
-        // into `slots.vec`. The coordinator has no visibility into the local
-        // pool — it could not have consumed that return on our behalf — so we
-        // re-check the local idle vec here, before paying the cost of a fresh
-        // backend connect. If we find a recyclable idle, drop the coordinator
-        // permit (its slot returns to the cross-pool semaphore and any peer
-        // Phase C waiter can take it) and hand the recycled object to the
-        // caller. The connect cost is saved; an eviction the coordinator may
-        // have already performed is unrecoverable, but the damage stops at
-        // one peer backend instead of cascading into a wasted local create.
-        if coordinator_permit.is_some() {
-            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                permit.forget();
-                return Ok(Object {
-                    inner: Some(*inner),
-                    pool: Arc::downgrade(&self.inner),
-                });
-            }
-        }
-
         // Bounded burst gate: cap the number of concurrent server creates per
         // pool. Without this gate, N parallel callers that all miss the idle
         // pool each independently issue a backend connect, producing
@@ -707,8 +899,17 @@ impl Pool {
         // creates run concurrently; the rest wait on a Notify woken by either
         // an idle return or a peer create completion, then re-check recycle.
         //
-        // The gate is taken AFTER the coordinator permit so a slow coordinator
-        // never holds the gate idle. See the ordering rationale above.
+        // The gate is taken BEFORE the coordinator permit (JIT permit
+        // acquisition). Old ordering (coordinator → gate) caused phantom
+        // permits: N callers each took a coordinator permit then queued
+        // behind the gate, inflating `total_connections` far beyond the
+        // actual connection count and triggering false reserve grants.
+        //
+        // New ordering (gate → coordinator) ensures permits are only held
+        // during actual connection creation. Head-of-line blocking is
+        // avoided by releasing the gate slot when the coordinator needs a
+        // slow path (eviction/wait), then re-acquiring after the permit
+        // arrives.
         let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
         let _create_gate = loop {
             if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
@@ -749,10 +950,21 @@ impl Pool {
             // Register both wake sources BEFORE re-checking recycle, so a
             // peer create finishing or an idle return between the check and
             // the await is captured rather than missed.
+            //
+            // Bump `idle_returned_listeners` so `return_object` knows to
+            // call `notify_one` while we are parked on the select. The
+            // guard decrements on every exit path (break via recycle,
+            // loop-back, or early return).
+            self.inner
+                .idle_returned_listeners
+                .fetch_add(1, Ordering::Release);
             let on_create = self.inner.create_done.notified();
             let on_idle = self.inner.idle_returned.notified();
 
             if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                self.inner
+                    .idle_returned_listeners
+                    .fetch_sub(1, Ordering::Release);
                 permit.forget();
                 return Ok(Object {
                     inner: Some(*inner),
@@ -765,6 +977,9 @@ impl Pool {
                 _ = on_idle => {}
                 _ = tokio::time::sleep(BURST_BACKOFF) => {}
             }
+            self.inner
+                .idle_returned_listeners
+                .fetch_sub(1, Ordering::Release);
 
             // After wake — try recycle once before retrying the gate.
             if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
@@ -777,38 +992,134 @@ impl Pool {
             // Loop back to retry the gate.
         };
 
-        // Create a new object
-        let obj = match timeouts.create {
-            Some(duration) => {
-                match tokio::time::timeout(duration, self.inner.server_pool.create()).await {
-                    Ok(Ok(obj)) => obj,
-                    Ok(Err(e)) => return Err(PoolError::Backend(e)),
-                    Err(_) => return Err(PoolError::Timeout(TimeoutType::Create)),
+        // JIT coordinator permit: acquired AFTER the burst gate slot so
+        // that waiters queued behind the gate do not inflate
+        // `total_connections` with phantom permits. Only callers that
+        // actually have a create slot (and will immediately connect) hold
+        // a coordinator permit.
+        //
+        // Fast path (try_acquire): non-blocking CAS, succeeds when the
+        // database has headroom. No burst-gate slot is wasted on a wait.
+        //
+        // Slow path: if the fast try fails, release the burst gate slot
+        // so other callers can create while we wait on eviction / peer
+        // return. After the coordinator grants the permit, re-acquire a
+        // burst gate slot (loop back) — this is rare and acceptable
+        // because it only happens under genuine cross-pool pressure.
+        // JIT coordinator permit: acquired AFTER the burst gate slot so
+        // that waiters queued behind the gate do not inflate
+        // `total_connections` with phantom permits. Only callers that
+        // actually have a create slot (and will immediately connect) hold
+        // a coordinator permit.
+        //
+        // Fast path (try_acquire): non-blocking CAS, succeeds when the
+        // database has headroom. No burst-gate slot is wasted on a wait.
+        //
+        // Slow path: if the fast try fails, drop the gate guard (releases
+        // the slot), wait on the coordinator (may evict / wait for a peer
+        // return), re-acquire a gate slot, then proceed to create.
+        let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
+            let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
+            if let Some(p) = coordinator.try_acquire() {
+                debug!(
+                    "[{}@{}] coordinator: permit via fast JIT path \
+                     (permit_type=main)",
+                    self.inner.username, self.inner.pool_name,
+                );
+                Some(p)
+            } else {
+                // Release gate slot so peers can create while we wait.
+                drop(_create_gate);
+                let p = match coordinator
+                    .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
+                    .await
+                {
+                    Ok(p) => p,
+                    Err(pool_coordinator::AcquireError::NoConnection(info)) => {
+                        return Err(PoolError::DbLimitExhausted(info));
+                    }
+                };
+
+                debug!(
+                    "[{}@{}] coordinator: permit via slow JIT path \
+                     (permit_type={})",
+                    self.inner.username,
+                    self.inner.pool_name,
+                    if p.is_reserve { "reserve" } else { "main" },
+                );
+
+                // Re-check idle: a sibling may have returned a connection
+                // while we waited on the coordinator.
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
+
+                // Re-acquire burst gate slot and create.
+                let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
+                let _create_gate = loop {
+                    if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
+                        self.inner
+                            .scaling_stats
+                            .creates_started
+                            .fetch_add(1, Ordering::Relaxed);
+                        break scopeguard::guard((), |_| {
+                            self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
+                            self.inner.create_done.notify_one();
+                        });
+                    }
+
+                    self.inner
+                        .idle_returned_listeners
+                        .fetch_add(1, Ordering::Release);
+                    let on_create = self.inner.create_done.notified();
+                    let on_idle = self.inner.idle_returned.notified();
+
+                    if let RecycleOutcome::Reused(inner) =
+                        self.inner.try_recycle_one(timeouts).await
+                    {
+                        self.inner
+                            .idle_returned_listeners
+                            .fetch_sub(1, Ordering::Release);
+                        permit.forget();
+                        return Ok(Object {
+                            inner: Some(*inner),
+                            pool: Arc::downgrade(&self.inner),
+                        });
+                    }
+
+                    tokio::select! {
+                        _ = on_create => {}
+                        _ = on_idle => {}
+                        _ = tokio::time::sleep(BURST_BACKOFF) => {}
+                    }
+                    self.inner
+                        .idle_returned_listeners
+                        .fetch_sub(1, Ordering::Release);
+                };
+
+                let obj_inner = self.inner.create_connection(timeouts, Some(p)).await?;
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(obj_inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
             }
-            None => self
-                .inner
-                .server_pool
-                .create()
-                .await
-                .map_err(PoolError::Backend)?,
+        } else {
+            None
         };
 
-        {
-            let mut slots = self.inner.slots.lock();
-            slots.size += 1;
-        }
-
+        // Main create path (no coordinator, or fast JIT succeeded).
+        let obj_inner = self
+            .inner
+            .create_connection(timeouts, coordinator_permit)
+            .await?;
         permit.forget();
-        let lifetime_ms = self.inner.server_pool.lifetime_ms();
-        let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
-        let epoch = self.inner.server_pool.current_epoch();
         Ok(Object {
-            inner: Some(ObjectInner {
-                obj,
-                metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
-                coordinator_permit,
-            }),
+            inner: Some(obj_inner),
             pool: Arc::downgrade(&self.inner),
         })
     }
@@ -1289,7 +1600,69 @@ impl Pool {
             create_fallback: s.create_fallback.load(Ordering::Relaxed),
             replenish_deferred: s.replenish_deferred.load(Ordering::Relaxed),
             inflight_creates: self.inner.inflight_creates.load(Ordering::Relaxed),
+            pre_replacements_triggered: s.pre_replacements_triggered.load(Ordering::Relaxed),
+            pre_replacements_skipped: s.pre_replacements_skipped.load(Ordering::Relaxed),
         }
+    }
+
+    /// Check if a connection approaching lifetime expiry should trigger
+    /// a background pre-replacement, and spawn the task if so.
+    fn maybe_trigger_pre_replacement(&self, metrics: &Metrics) {
+        // Quick checks that don't need a lock.
+        if metrics.lifetime_ms < PRE_REPLACE_MIN_LIFETIME_MS {
+            return;
+        }
+        let age_ms = metrics.age().as_millis() as u64;
+        let threshold = metrics.lifetime_ms * PRE_REPLACE_THRESHOLD_PCT / 100;
+        if age_ms < threshold || age_ms >= metrics.lifetime_ms {
+            return;
+        }
+        if self.inner.under_pressure() {
+            return;
+        }
+        if self.inner.server_pool.is_paused() {
+            return;
+        }
+
+        // Pool tightness + overshoot check under lock.
+        {
+            let slots = self.inner.slots.lock();
+            // Allow overshoot up to max_size + MAX_CONCURRENT_PRE_REPLACEMENTS.
+            let in_flight = self
+                .inner
+                .pre_replacements_in_flight
+                .load(Ordering::Relaxed);
+            if slots.size + in_flight > slots.max_size + MAX_CONCURRENT_PRE_REPLACEMENTS {
+                return;
+            }
+            // Idle ratio: only pre-replace when < 25% of connections are idle.
+            // If the pool has plenty of idle connections it can absorb the
+            // loss of one to lifetime expiry without a spike.
+            let idle_pct = if slots.size > 0 {
+                slots.vec.len() * 100 / slots.size
+            } else {
+                100
+            };
+            if idle_pct >= 25 {
+                return;
+            }
+        }
+
+        // Cap concurrent pre-replacements.
+        if !try_take_burst_slot(
+            &self.inner.pre_replacements_in_flight,
+            MAX_CONCURRENT_PRE_REPLACEMENTS,
+        ) {
+            return;
+        }
+
+        let inner = Arc::clone(&self.inner);
+        tokio::spawn(async move {
+            inner.pre_replace_one().await;
+            inner
+                .pre_replacements_in_flight
+                .fetch_sub(1, Ordering::Release);
+        });
     }
 }
 
@@ -1698,12 +2071,19 @@ mod tests {
 
         // Park an idle-return observer on the same pool's idle_returned.
         // Pin + enable so the wake cannot race a late first poll.
+        // Bump idle_returned_listeners so notify_return_observers fires.
         let inner = Arc::clone(&pool.inner);
+        inner
+            .idle_returned_listeners
+            .fetch_add(1, Ordering::Relaxed);
         let idle_observer = tokio::spawn(async move {
             let fut = inner.idle_returned.notified();
             tokio::pin!(fut);
             fut.as_mut().enable();
             fut.await;
+            inner
+                .idle_returned_listeners
+                .fetch_sub(1, Ordering::Relaxed);
         });
 
         // Wait until both observers are parked. Phase C is observable

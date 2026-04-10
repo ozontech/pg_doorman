@@ -72,6 +72,20 @@ pub struct AddressStats {
 
     /// HDR histogram for query times in microseconds (reset each period)
     pub query_histogram: Mutex<Histogram<u64>>,
+
+    /// HDR histogram for client checkout times in microseconds (reset each period).
+    /// Checkout time is the full wait from `ClientStats::waiting()` to the moment
+    /// the client receives a server connection — it spans Phase 1/2 semaphore wait,
+    /// Phase 4 anticipation, the coordinator path, and the burst gate. Running
+    /// mean (`avg_wait_time`) drowns spikes; this histogram is how operators
+    /// correlate client-side tail latency with pg_doorman state.
+    pub wait_histogram: Mutex<Histogram<u64>>,
+
+    /// Cached p95 transaction time in microseconds. Updated every stats cycle
+    /// (15s) from `xact_histogram`. Used by the coordinator's eviction scoring
+    /// to prefer slow pools as connection donors — one atomic load per candidate
+    /// instead of locking the histogram mutex on every eviction call.
+    pub p95_xact_time_us: AtomicU64,
 }
 
 impl Default for AddressStats {
@@ -83,6 +97,8 @@ impl Default for AddressStats {
             averages_updated: AtomicBool::new(false),
             xact_histogram: Mutex::new(new_histogram()),
             query_histogram: Mutex::new(new_histogram()),
+            wait_histogram: Mutex::new(new_histogram()),
+            p95_xact_time_us: AtomicU64::new(0),
         }
     }
 }
@@ -282,9 +298,12 @@ impl AddressStats {
         }
     }
 
-    /// Adds the specified time to the wait time counter.
+    /// Adds the specified time to the wait time counter and records it in
+    /// the wait histogram.
     ///
-    /// This method is called whenever a client waits for a resource.
+    /// Called from `ServerStats::checkout_time` on every successful client
+    /// checkout. The histogram captures per-checkout tail latency that the
+    /// `avg_wait_time` running mean washes out.
     ///
     /// # Arguments
     ///
@@ -293,6 +312,15 @@ impl AddressStats {
     pub fn wait_time_add(&self, time: u64) {
         self.total.wait_time.fetch_add(time, Ordering::Relaxed);
         self.current.wait_time.fetch_add(time, Ordering::Relaxed);
+
+        // Record the wait time in the histogram if we can acquire the lock.
+        // Matches the `try_lock` discipline of query/xact paths: the hot
+        // path never blocks on the stats mutex. Zero-length checkouts are
+        // still recorded — they are the healthy-pool baseline.
+        if let Some(mut histogram) = self.wait_histogram.try_lock() {
+            let value = time.min(HISTOGRAM_MAX_VALUE_US);
+            let _ = histogram.record(value);
+        }
     }
 
     /// Increments the error counter in both total and current statistics.
@@ -330,14 +358,40 @@ impl AddressStats {
         )
     }
 
+    /// Returns client checkout (wait) time percentiles (p50, p90, p95, p99)
+    /// in microseconds.
+    ///
+    /// Checkout time covers the full journey of `Pool::timeout_get`:
+    /// semaphore wait, Phase 4 anticipation, coordinator Phase A/R/B/C/D,
+    /// pre-create recycle, burst gate, and `server_pool.create()`. Use
+    /// the p99 value to correlate client-side latency spikes against the
+    /// pool.
+    pub fn get_wait_percentiles(&self) -> (u64, u64, u64, u64) {
+        let histogram = self.wait_histogram.lock();
+        (
+            histogram.value_at_quantile(0.50),
+            histogram.value_at_quantile(0.90),
+            histogram.value_at_quantile(0.95),
+            histogram.value_at_quantile(0.99),
+        )
+    }
+
     /// Resets the histograms for the new time window.
     ///
     /// Called at the end of each stats period (15 seconds) to start fresh.
     pub fn reset_histograms(&self) {
         if let Some(mut histogram) = self.xact_histogram.try_lock() {
+            // Cache p95 before reset — used by eviction scoring to prefer
+            // slow pools as donors without locking the histogram on every
+            // eviction call.
+            self.p95_xact_time_us
+                .store(histogram.value_at_quantile(0.95), Ordering::Relaxed);
             histogram.reset();
         }
         if let Some(mut histogram) = self.query_histogram.try_lock() {
+            histogram.reset();
+        }
+        if let Some(mut histogram) = self.wait_histogram.try_lock() {
             histogram.reset();
         }
     }
