@@ -3,7 +3,7 @@ use std::{
     fmt,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Weak,
     },
     time::Duration,
@@ -202,10 +202,10 @@ struct PoolInner {
     /// Counters exposed via SHOW POOLS and Prometheus for tuning the
     /// anticipation + bounded burst path.
     scaling_stats: ScalingStats,
-    /// Guards concurrent pre-replacement: at most one background create
-    /// per pool at a time. Set to `true` when a pre-replacement task is
-    /// spawned, cleared when it finishes (success or failure).
-    pre_replacement_active: AtomicBool,
+    /// Number of pre-replacement tasks currently in flight. Capped at
+    /// `MAX_CONCURRENT_PRE_REPLACEMENTS` to prevent a burst of expiring
+    /// connections from spawning too many background creates at once.
+    pre_replacements_in_flight: AtomicUsize,
 }
 
 enum RecycleOutcome {
@@ -224,6 +224,12 @@ const PRE_REPLACE_MIN_LIFETIME_MS: u64 = 60_000;
 /// 15 000x the ~1 ms Unix-socket connect time. For TCP deployments this
 /// can be lowered to 85%.
 const PRE_REPLACE_THRESHOLD_PCT: u64 = 95;
+
+/// Maximum concurrent pre-replacement tasks per pool. With a 5-minute
+/// lifetime and ±20% jitter, up to 3 connections can expire within
+/// the same 15-second window. Allowing 3 concurrent pre-replacements
+/// ensures each one gets a warm replacement without serialization.
+const MAX_CONCURRENT_PRE_REPLACEMENTS: usize = 3;
 
 impl PoolInner {
     /// Background pre-replacement: create one connection ahead of lifetime
@@ -553,7 +559,7 @@ impl Pool {
                 inflight_creates: AtomicUsize::new(0),
                 create_done: Notify::new(),
                 scaling_stats: ScalingStats::default(),
-                pre_replacement_active: AtomicBool::new(false),
+                pre_replacements_in_flight: AtomicUsize::new(0),
             }),
         }
     }
@@ -1621,8 +1627,13 @@ impl Pool {
         // Pool tightness + overshoot check under lock.
         {
             let slots = self.inner.slots.lock();
-            if slots.size > slots.max_size {
-                return; // already have a pre-replacement overshoot
+            // Allow overshoot up to max_size + MAX_CONCURRENT_PRE_REPLACEMENTS.
+            let in_flight = self
+                .inner
+                .pre_replacements_in_flight
+                .load(Ordering::Relaxed);
+            if slots.size + in_flight > slots.max_size + MAX_CONCURRENT_PRE_REPLACEMENTS {
+                return;
             }
             // Idle ratio: only pre-replace when < 25% of connections are idle.
             // If the pool has plenty of idle connections it can absorb the
@@ -1637,19 +1648,20 @@ impl Pool {
             }
         }
 
-        // One at a time per pool.
-        if self
-            .inner
-            .pre_replacement_active
-            .swap(true, Ordering::AcqRel)
-        {
-            return; // another pre-replacement already in flight
+        // Cap concurrent pre-replacements.
+        if !try_take_burst_slot(
+            &self.inner.pre_replacements_in_flight,
+            MAX_CONCURRENT_PRE_REPLACEMENTS,
+        ) {
+            return;
         }
 
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
             inner.pre_replace_one().await;
-            inner.pre_replacement_active.store(false, Ordering::Release);
+            inner
+                .pre_replacements_in_flight
+                .fetch_sub(1, Ordering::Release);
         });
     }
 }
