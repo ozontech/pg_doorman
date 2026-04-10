@@ -204,6 +204,44 @@ enum RecycleOutcome {
 }
 
 impl PoolInner {
+    /// Create a new backend connection via `server_pool.create()`, respecting
+    /// the caller's `create` timeout. On success, increments `slots.size` and
+    /// returns the `ObjectInner` ready for wrapping into an `Object`.
+    async fn create_connection(
+        &self,
+        timeouts: &Timeouts,
+        coordinator_permit: Option<pool_coordinator::CoordinatorPermit>,
+    ) -> Result<ObjectInner, PoolError> {
+        let obj = match timeouts.create {
+            Some(duration) => {
+                match tokio::time::timeout(duration, self.server_pool.create()).await {
+                    Ok(Ok(obj)) => obj,
+                    Ok(Err(e)) => return Err(PoolError::Backend(e)),
+                    Err(_) => return Err(PoolError::Timeout(TimeoutType::Create)),
+                }
+            }
+            None => self
+                .server_pool
+                .create()
+                .await
+                .map_err(PoolError::Backend)?,
+        };
+
+        {
+            let mut slots = self.slots.lock();
+            slots.size += 1;
+        }
+
+        let lifetime_ms = self.server_pool.lifetime_ms();
+        let idle_timeout_ms = self.server_pool.idle_timeout_ms();
+        let epoch = self.server_pool.current_epoch();
+        Ok(ObjectInner {
+            obj,
+            metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+            coordinator_permit,
+        })
+    }
+
     /// Returns true when every permit is in use — clients are either holding
     /// connections or queued behind the semaphore. Used to suppress lifetime
     /// housekeeping (`recycle` lifetime expiry, retain-loop trimming) so we
@@ -808,177 +846,120 @@ impl Pool {
         // return. After the coordinator grants the permit, re-acquire a
         // burst gate slot (loop back) — this is rare and acceptable
         // because it only happens under genuine cross-pool pressure.
+        // JIT coordinator permit: acquired AFTER the burst gate slot so
+        // that waiters queued behind the gate do not inflate
+        // `total_connections` with phantom permits. Only callers that
+        // actually have a create slot (and will immediately connect) hold
+        // a coordinator permit.
+        //
+        // Fast path (try_acquire): non-blocking CAS, succeeds when the
+        // database has headroom. No burst-gate slot is wasted on a wait.
+        //
+        // Slow path: if the fast try fails, drop the gate guard (releases
+        // the slot), wait on the coordinator (may evict / wait for a peer
+        // return), re-acquire a gate slot, then proceed to create.
         let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
             let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
-            match coordinator.try_acquire() {
-                Some(p) => {
-                    debug!(
-                        "[{}@{}] coordinator: permit via fast JIT path \
-                         (permit_type=main)",
-                        self.inner.username, self.inner.pool_name,
-                    );
-                    Some(p)
-                }
-                None => {
-                    // Slow path: release burst gate slot to avoid head-of-line
-                    // blocking, then wait on the coordinator (may evict / wait
-                    // for a peer return), then loop back to re-acquire a gate
-                    // slot. The `_create_gate` scopeguard fires on drop,
-                    // decrementing `inflight_creates` and notifying a peer.
-                    drop(_create_gate);
-                    match coordinator
-                        .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
-                        .await
-                    {
-                        Ok(p) => {
-                            debug!(
-                                "[{}@{}] coordinator: permit via slow JIT path \
-                                 (permit_type={})",
-                                self.inner.username,
-                                self.inner.pool_name,
-                                if p.is_reserve { "reserve" } else { "main" },
-                            );
-                            // Re-check idle queue: a sibling caller may have
-                            // returned a connection while we waited on the
-                            // coordinator. Reusing it is cheaper than a fresh
-                            // connect and avoids wasting the gate slot.
-                            if let RecycleOutcome::Reused(inner) =
-                                self.inner.try_recycle_one(timeouts).await
-                            {
-                                permit.forget();
-                                return Ok(Object {
-                                    inner: Some(*inner),
-                                    pool: Arc::downgrade(&self.inner),
-                                });
-                            }
-
-                            // Re-acquire burst gate slot. The loop is the same
-                            // as above but without the coordinator acquire
-                            // inside — we already have the permit.
-                            let max_parallel =
-                                self.inner.config.scaling.max_parallel_creates as usize;
-                            loop {
-                                if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
-                                    self.inner
-                                        .scaling_stats
-                                        .creates_started
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    // Shadow _create_gate with a new guard
-                                    // that lives until the end of the function.
-                                    // The old one was already dropped above.
-                                    let _create_gate = scopeguard::guard((), |_| {
-                                        self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
-                                        self.inner.create_done.notify_one();
-                                    });
-
-                                    // Proceed to create with both permits
-                                    let obj = match timeouts.create {
-                                        Some(duration) => {
-                                            match tokio::time::timeout(
-                                                duration,
-                                                self.inner.server_pool.create(),
-                                            )
-                                            .await
-                                            {
-                                                Ok(Ok(obj)) => obj,
-                                                Ok(Err(e)) => return Err(PoolError::Backend(e)),
-                                                Err(_) => {
-                                                    return Err(PoolError::Timeout(
-                                                        TimeoutType::Create,
-                                                    ))
-                                                }
-                                            }
-                                        }
-                                        None => self
-                                            .inner
-                                            .server_pool
-                                            .create()
-                                            .await
-                                            .map_err(PoolError::Backend)?,
-                                    };
-
-                                    {
-                                        let mut slots = self.inner.slots.lock();
-                                        slots.size += 1;
-                                    }
-
-                                    permit.forget();
-                                    let lifetime_ms = self.inner.server_pool.lifetime_ms();
-                                    let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
-                                    let epoch = self.inner.server_pool.current_epoch();
-                                    return Ok(Object {
-                                        inner: Some(ObjectInner {
-                                            obj,
-                                            metrics: Metrics::new(
-                                                lifetime_ms,
-                                                idle_timeout_ms,
-                                                epoch,
-                                            ),
-                                            coordinator_permit: Some(p),
-                                        }),
-                                        pool: Arc::downgrade(&self.inner),
-                                    });
-                                }
-
-                                // Burst gate full — wait and retry
-                                let on_create = self.inner.create_done.notified();
-                                if let RecycleOutcome::Reused(inner) =
-                                    self.inner.try_recycle_one(timeouts).await
-                                {
-                                    permit.forget();
-                                    return Ok(Object {
-                                        inner: Some(*inner),
-                                        pool: Arc::downgrade(&self.inner),
-                                    });
-                                }
-                                tokio::select! {
-                                    _ = on_create => {}
-                                    _ = tokio::time::sleep(BURST_BACKOFF) => {}
-                                }
-                            }
-                        }
-                        Err(pool_coordinator::AcquireError::NoConnection(info)) => {
-                            return Err(PoolError::DbLimitExhausted(info));
-                        }
+            if let Some(p) = coordinator.try_acquire() {
+                debug!(
+                    "[{}@{}] coordinator: permit via fast JIT path \
+                     (permit_type=main)",
+                    self.inner.username, self.inner.pool_name,
+                );
+                Some(p)
+            } else {
+                // Release gate slot so peers can create while we wait.
+                drop(_create_gate);
+                let p = match coordinator
+                    .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
+                    .await
+                {
+                    Ok(p) => p,
+                    Err(pool_coordinator::AcquireError::NoConnection(info)) => {
+                        return Err(PoolError::DbLimitExhausted(info));
                     }
+                };
+
+                debug!(
+                    "[{}@{}] coordinator: permit via slow JIT path \
+                     (permit_type={})",
+                    self.inner.username,
+                    self.inner.pool_name,
+                    if p.is_reserve { "reserve" } else { "main" },
+                );
+
+                // Re-check idle: a sibling may have returned a connection
+                // while we waited on the coordinator.
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    permit.forget();
+                    return Ok(Object {
+                        inner: Some(*inner),
+                        pool: Arc::downgrade(&self.inner),
+                    });
                 }
+
+                // Re-acquire burst gate slot and create.
+                let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
+                let _create_gate = loop {
+                    if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
+                        self.inner
+                            .scaling_stats
+                            .creates_started
+                            .fetch_add(1, Ordering::Relaxed);
+                        break scopeguard::guard((), |_| {
+                            self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
+                            self.inner.create_done.notify_one();
+                        });
+                    }
+
+                    self.inner
+                        .idle_returned_listeners
+                        .fetch_add(1, Ordering::Release);
+                    let on_create = self.inner.create_done.notified();
+                    let on_idle = self.inner.idle_returned.notified();
+
+                    if let RecycleOutcome::Reused(inner) =
+                        self.inner.try_recycle_one(timeouts).await
+                    {
+                        self.inner
+                            .idle_returned_listeners
+                            .fetch_sub(1, Ordering::Release);
+                        permit.forget();
+                        return Ok(Object {
+                            inner: Some(*inner),
+                            pool: Arc::downgrade(&self.inner),
+                        });
+                    }
+
+                    tokio::select! {
+                        _ = on_create => {}
+                        _ = on_idle => {}
+                        _ = tokio::time::sleep(BURST_BACKOFF) => {}
+                    }
+                    self.inner
+                        .idle_returned_listeners
+                        .fetch_sub(1, Ordering::Release);
+                };
+
+                let obj_inner = self.inner.create_connection(timeouts, Some(p)).await?;
+                permit.forget();
+                return Ok(Object {
+                    inner: Some(obj_inner),
+                    pool: Arc::downgrade(&self.inner),
+                });
             }
         } else {
             None
         };
 
-        // Create a new object
-        let obj = match timeouts.create {
-            Some(duration) => {
-                match tokio::time::timeout(duration, self.inner.server_pool.create()).await {
-                    Ok(Ok(obj)) => obj,
-                    Ok(Err(e)) => return Err(PoolError::Backend(e)),
-                    Err(_) => return Err(PoolError::Timeout(TimeoutType::Create)),
-                }
-            }
-            None => self
-                .inner
-                .server_pool
-                .create()
-                .await
-                .map_err(PoolError::Backend)?,
-        };
-
-        {
-            let mut slots = self.inner.slots.lock();
-            slots.size += 1;
-        }
-
+        // Main create path (no coordinator, or fast JIT succeeded).
+        let obj_inner = self
+            .inner
+            .create_connection(timeouts, coordinator_permit)
+            .await?;
         permit.forget();
-        let lifetime_ms = self.inner.server_pool.lifetime_ms();
-        let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
-        let epoch = self.inner.server_pool.current_epoch();
         Ok(Object {
-            inner: Some(ObjectInner {
-                obj,
-                metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
-                coordinator_permit,
-            }),
+            inner: Some(obj_inner),
             pool: Arc::downgrade(&self.inner),
         })
     }
