@@ -233,7 +233,52 @@ const PRE_REPLACE_THRESHOLD_PCT: u64 = 95;
 /// ensures each one gets a warm replacement without serialization.
 const MAX_CONCURRENT_PRE_REPLACEMENTS: usize = 3;
 
+/// Push a connection into the idle queue respecting the configured
+/// queue mode (FIFO/LIFO). Caller must hold the slots lock.
+#[inline(always)]
+fn push_idle(queue_mode: QueueMode, vec: &mut VecDeque<ObjectInner>, inner: ObjectInner) {
+    match queue_mode {
+        QueueMode::Fifo => vec.push_back(inner),
+        QueueMode::Lifo => vec.push_front(inner),
+    }
+}
+
 impl PoolInner {
+    /// Try to take a burst gate slot. On success, bumps `creates_started`
+    /// and returns a guard that releases the slot on drop.
+    fn try_acquire_burst_gate(&self) -> Option<BurstGateGuard<'_>> {
+        let max = self.config.scaling.max_parallel_creates as usize;
+        if try_take_burst_slot(&self.inflight_creates, max) {
+            self.scaling_stats
+                .creates_started
+                .fetch_add(1, Ordering::Relaxed);
+            Some(BurstGateGuard {
+                inflight_creates: &self.inflight_creates,
+                create_done: &self.create_done,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Build an ObjectInner from a freshly created Server connection,
+    /// stamped with the current server_pool epoch and jittered timeouts.
+    fn new_object_inner(
+        &self,
+        obj: Server,
+        coordinator_permit: Option<pool_coordinator::CoordinatorPermit>,
+    ) -> ObjectInner {
+        ObjectInner {
+            obj,
+            metrics: Metrics::new(
+                self.server_pool.lifetime_ms(),
+                self.server_pool.idle_timeout_ms(),
+                self.server_pool.current_epoch(),
+            ),
+            coordinator_permit,
+        }
+    }
+
     /// Background pre-replacement: create one connection ahead of lifetime
     /// expiry so the next checkout finds a warm replacement in the idle
     /// queue instead of paying for a fresh create.
@@ -276,8 +321,7 @@ impl PoolInner {
         };
 
         // Burst gate — non-blocking, like replenish.
-        let max_parallel = self.config.scaling.max_parallel_creates as usize;
-        if !try_take_burst_slot(&self.inflight_creates, max_parallel) {
+        let Some(_gate) = self.try_acquire_burst_gate() else {
             log::debug!(
                 "[{}@{}] pre-replace: skipped — burst gate full",
                 self.username,
@@ -287,14 +331,7 @@ impl PoolInner {
                 .pre_replacements_skipped
                 .fetch_add(1, Ordering::Relaxed);
             return;
-        }
-        self.scaling_stats
-            .creates_started
-            .fetch_add(1, Ordering::Relaxed);
-        let _gate = scopeguard::guard((), |_| {
-            self.inflight_creates.fetch_sub(1, Ordering::Release);
-            self.create_done.notify_one();
-        });
+        };
 
         // Create the replacement connection.
         let obj = match self.server_pool.create().await {
@@ -313,24 +350,14 @@ impl PoolInner {
             }
         };
 
-        let lifetime_ms = self.server_pool.lifetime_ms();
-        let idle_timeout_ms = self.server_pool.idle_timeout_ms();
-        let epoch = self.server_pool.current_epoch();
-        let inner = ObjectInner {
-            obj,
-            metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
-            coordinator_permit,
-        };
+        let inner = self.new_object_inner(obj, coordinator_permit);
 
         // Push to idle queue. Temporarily exceeds max_size by 1; returns
         // to max_size when the old connection fails recycle.
         {
             let mut slots = self.slots.lock();
             slots.size += 1;
-            match self.config.queue_mode {
-                QueueMode::Fifo => slots.vec.push_back(inner),
-                QueueMode::Lifo => slots.vec.push_front(inner),
-            }
+            push_idle(self.config.queue_mode, &mut slots.vec, inner);
         }
 
         // Add a semaphore permit so a client can reach the pre-created
@@ -377,14 +404,7 @@ impl PoolInner {
             slots.size += 1;
         }
 
-        let lifetime_ms = self.server_pool.lifetime_ms();
-        let idle_timeout_ms = self.server_pool.idle_timeout_ms();
-        let epoch = self.server_pool.current_epoch();
-        Ok(ObjectInner {
-            obj,
-            metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
-            coordinator_permit,
-        })
+        Ok(self.new_object_inner(obj, coordinator_permit))
     }
 
     /// Returns true when every permit is in use — clients are either holding
@@ -463,10 +483,7 @@ impl PoolInner {
         }
 
         // No waiters — normal path.
-        match self.config.queue_mode {
-            QueueMode::Fifo => slots.vec.push_back(inner),
-            QueueMode::Lifo => slots.vec.push_front(inner),
-        }
+        push_idle(self.config.queue_mode, &mut slots.vec, inner);
         drop(slots);
         self.semaphore.add_permits(1);
         self.notify_return_observers();
@@ -516,7 +533,322 @@ impl fmt::Debug for Pool {
     }
 }
 
+/// Outcome of the burst gate acquisition loop.
+enum BurstGateOutcome<'a> {
+    /// Slot acquired — caller proceeds to create a connection.
+    Acquired(BurstGateGuard<'a>),
+    /// A recycled connection was obtained while waiting for a slot.
+    Recycled(Box<ObjectInner>),
+    /// Non-blocking caller and gate is full — no connection available.
+    Timeout,
+}
+
+/// Outcome of JIT coordinator permit acquisition.
+enum CoordinatorJitResult<'a> {
+    /// Permit acquired (or no coordinator configured) — caller creates.
+    /// The gate guard is returned so the caller holds it until create
+    /// completes.
+    Create {
+        permit: Option<pool_coordinator::CoordinatorPermit>,
+        gate: BurstGateGuard<'a>,
+    },
+    /// A recycled connection was found during the slow-path wait.
+    Recycled(Box<ObjectInner>),
+}
+
 impl Pool {
+    /// Wrap a recycled/created ObjectInner into an Object, consuming
+    /// the semaphore permit so it stays with the connection until
+    /// Object::drop returns it.
+    #[inline(always)]
+    fn wrap_checkout(&self, inner: ObjectInner, permit: SemaphorePermit<'_>) -> Object {
+        permit.forget();
+        Object {
+            inner: Some(inner),
+            pool: Arc::downgrade(&self.inner),
+        }
+    }
+
+    /// Acquire a burst gate slot, waiting if necessary. While waiting,
+    /// attempts to recycle idle connections and registers as a
+    /// direct-handoff waiter so a returning connection can be delivered
+    /// without entering the idle queue.
+    async fn acquire_burst_gate(
+        &self,
+        timeouts: &Timeouts,
+        non_blocking: bool,
+    ) -> BurstGateOutcome<'_> {
+        loop {
+            if let Some(guard) = self.inner.try_acquire_burst_gate() {
+                return BurstGateOutcome::Acquired(guard);
+            }
+
+            self.inner
+                .scaling_stats
+                .burst_gate_waits
+                .fetch_add(1, Ordering::Relaxed);
+
+            if non_blocking {
+                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                    return BurstGateOutcome::Recycled(inner);
+                }
+                return BurstGateOutcome::Timeout;
+            }
+
+            // Try recycle BEFORE registering as a waiter to avoid
+            // leaving dead senders in the queue on success.
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                return BurstGateOutcome::Recycled(inner);
+            }
+
+            // Register a direct-handoff waiter AND listen on create_done.
+            let (tx, rx) = oneshot::channel();
+            self.inner.slots.lock().waiters.push_back(tx);
+            let on_create = self.inner.create_done.notified();
+
+            tokio::select! {
+                result = rx => {
+                    if let Ok(inner) = result {
+                        if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
+                            return BurstGateOutcome::Recycled(Box::new(inner));
+                        }
+                    }
+                }
+                _ = on_create => {}
+                _ = tokio::time::sleep(BURST_BACKOFF) => {}
+            }
+
+            // After wake — try recycle once before retrying the gate.
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                return BurstGateOutcome::Recycled(inner);
+            }
+        }
+    }
+
+    /// JIT coordinator permit acquisition. Takes the burst gate guard
+    /// by value — on the slow path the gate is released while waiting
+    /// on the coordinator, then re-acquired.
+    ///
+    /// Returns either a permit + gate (caller proceeds to create) or
+    /// a recycled connection found during the slow-path wait.
+    async fn acquire_coordinator_jit<'a>(
+        &'a self,
+        timeouts: &Timeouts,
+        gate: BurstGateGuard<'a>,
+    ) -> Result<CoordinatorJitResult<'a>, PoolError> {
+        let Some(ref coordinator) = self.inner.coordinator else {
+            return Ok(CoordinatorJitResult::Create { permit: None, gate });
+        };
+
+        // Fast path: non-blocking CAS.
+        if let Some(p) = coordinator.try_acquire() {
+            debug!(
+                "[{}@{}] coordinator: permit via fast JIT path \
+                 (permit_type=main)",
+                self.inner.username, self.inner.pool_name,
+            );
+            return Ok(CoordinatorJitResult::Create {
+                permit: Some(p),
+                gate,
+            });
+        }
+
+        // Slow path: release gate slot so peers can create while we wait.
+        drop(gate);
+        let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
+        let p = match coordinator
+            .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
+            .await
+        {
+            Ok(p) => p,
+            Err(pool_coordinator::AcquireError::NoConnection(info)) => {
+                return Err(PoolError::DbLimitExhausted(info));
+            }
+        };
+
+        debug!(
+            "[{}@{}] coordinator: permit via slow JIT path \
+             (permit_type={})",
+            self.inner.username,
+            self.inner.pool_name,
+            if p.is_reserve { "reserve" } else { "main" },
+        );
+
+        // Re-check idle: a sibling may have returned a connection
+        // while we waited on the coordinator.
+        if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+            return Ok(CoordinatorJitResult::Recycled(inner));
+        }
+
+        // Re-acquire burst gate slot.
+        match self.acquire_burst_gate(timeouts, false).await {
+            BurstGateOutcome::Acquired(new_gate) => Ok(CoordinatorJitResult::Create {
+                permit: Some(p),
+                gate: new_gate,
+            }),
+            BurstGateOutcome::Recycled(inner) => Ok(CoordinatorJitResult::Recycled(inner)),
+            BurstGateOutcome::Timeout => unreachable!("non_blocking=false"),
+        }
+    }
+
+    /// Block if the pool is paused, waiting for resume or timeout.
+    ///
+    /// IMPORTANT: `resume_notified()` must be called BEFORE `is_paused()`
+    /// to avoid a race where RESUME fires between the two calls and the
+    /// notification is lost.
+    async fn wait_if_paused(&self, timeouts: &Timeouts) -> Result<(), PoolError> {
+        let resume_notify = self.inner.server_pool.resume_notified();
+        if self.inner.server_pool.is_paused() {
+            match timeouts.wait {
+                Some(duration) => {
+                    if tokio::time::timeout(duration, resume_notify).await.is_err() {
+                        return Err(PoolError::Timeout(TimeoutType::Wait));
+                    }
+                }
+                None => resume_notify.await,
+            }
+        }
+        Ok(())
+    }
+
+    /// Acquire a semaphore permit: fast spin path, then blocking fallback.
+    async fn acquire_semaphore(
+        &self,
+        timeouts: &Timeouts,
+    ) -> Result<SemaphorePermit<'_>, PoolError> {
+        let mut try_fast = 0;
+        loop {
+            if try_fast < MAX_FAST_RETRY {
+                if let Ok(p) = self.inner.semaphore.try_acquire() {
+                    return Ok(p);
+                }
+                try_fast += 1;
+                for _ in 0..4 {
+                    std::hint::spin_loop();
+                }
+                tokio::task::yield_now().await;
+                continue;
+            }
+
+            let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
+            return if non_blocking {
+                self.inner.semaphore.try_acquire().map_err(|e| match e {
+                    TryAcquireError::Closed => PoolError::Closed,
+                    TryAcquireError::NoPermits => PoolError::Timeout(TimeoutType::Wait),
+                })
+            } else {
+                match timeouts.wait {
+                    Some(duration) => {
+                        match tokio::time::timeout(duration, self.inner.semaphore.acquire()).await {
+                            Ok(Ok(p)) => Ok(p),
+                            Ok(Err(_)) => Err(PoolError::Closed),
+                            Err(_) => Err(PoolError::Timeout(TimeoutType::Wait)),
+                        }
+                    }
+                    None => self
+                        .inner
+                        .semaphore
+                        .acquire()
+                        .await
+                        .map_err(|_| PoolError::Closed),
+                }
+            };
+        }
+    }
+
+    /// Anticipation zone: try to recycle a connection before creating
+    /// a new one. Returns `Some(ObjectInner)` if a connection was
+    /// obtained, `None` if the caller should proceed to the create path.
+    async fn try_anticipate(
+        &self,
+        timeouts: &Timeouts,
+        start: tokio::time::Instant,
+    ) -> Option<ObjectInner> {
+        let should_anticipate = {
+            let slots = self.inner.slots.lock();
+            let warm_threshold = std::cmp::max(
+                1,
+                (slots.max_size as f32 * self.inner.config.scaling.warm_pool_ratio) as usize,
+            );
+            slots.size >= warm_threshold
+        };
+        if !should_anticipate {
+            return None;
+        }
+
+        let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
+
+        // Phase A: yield_now spin — catches microsecond races without sleeping.
+        let fast_retries = self.inner.config.scaling.fast_retries;
+        for _ in 0..fast_retries {
+            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+                return Some(*inner);
+            }
+            for _ in 0..4 {
+                std::hint::spin_loop();
+            }
+            tokio::task::yield_now().await;
+        }
+
+        // Capacity deficit: pool has room to grow but idle queue is empty.
+        // Skip anticipation — creating a new connection is cheaper.
+        // Disabled when a coordinator is configured: anticipation acts as
+        // a natural throttle preventing one pool from grabbing all permits.
+        let capacity_deficit = self.inner.coordinator.is_none() && {
+            let slots = self.inner.slots.lock();
+            slots.vec.is_empty() && slots.size < slots.max_size
+        };
+
+        // Phase B: direct handoff via oneshot channel.
+        if !capacity_deficit && !non_blocking {
+            const CREATE_RESERVE: Duration = Duration::from_millis(500);
+            const FALLBACK_BUDGET_MS: u64 = 100;
+
+            let total_budget = match timeouts.wait {
+                Some(wait) => wait
+                    .saturating_sub(start.elapsed())
+                    .saturating_sub(CREATE_RESERVE),
+                None => Duration::from_millis(FALLBACK_BUDGET_MS),
+            };
+
+            if !total_budget.is_zero() {
+                const PHASE_4_HARD_CAP_BASE_MS: u64 = 500;
+                const PHASE_4_HARD_CAP_JITTER_MS: u64 = 200;
+                let cap_ms = PHASE_4_HARD_CAP_BASE_MS
+                    - rand::rng().random_range(0..=PHASE_4_HARD_CAP_JITTER_MS);
+                let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
+
+                let (tx, rx) = oneshot::channel();
+                self.inner.slots.lock().waiters.push_back(tx);
+
+                match tokio::time::timeout(effective_budget, rx).await {
+                    Ok(Ok(inner)) => {
+                        self.inner
+                            .scaling_stats
+                            .anticipation_wakes_notify
+                            .fetch_add(1, Ordering::Relaxed);
+                        if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
+                            return Some(inner);
+                        }
+                    }
+                    _ => {
+                        self.inner
+                            .scaling_stats
+                            .anticipation_wakes_timeout
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+
+        // Anticipation either was skipped or timed out.
+        self.inner
+            .scaling_stats
+            .create_fallback
+            .fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
     /// Instantiates a builder for a new Pool.
     pub fn builder(server_pool: ServerPool) -> PoolBuilder {
         PoolBuilder::new(server_pool)
@@ -559,455 +891,64 @@ impl Pool {
             self.inner.users.fetch_sub(1, Ordering::Relaxed);
         }
 
-        // Single deadline for the whole acquire path. Phase 1/2 semaphore wait
-        // and Phase 4 anticipation loop both consume from this deadline so
-        // their cumulative time cannot exceed the caller's `wait_timeout`.
         let start = tokio::time::Instant::now();
 
-        // PAUSE check: wait for resume or timeout.
-        // IMPORTANT: `resume_notified()` must be called BEFORE `is_paused()` to avoid
-        // a race condition where RESUME fires between the two calls and the notification
-        // is lost, causing the client to wait until query_wait_timeout (or forever).
-        let resume_notify = self.inner.server_pool.resume_notified();
-        if self.inner.server_pool.is_paused() {
-            match timeouts.wait {
-                Some(duration) => {
-                    if tokio::time::timeout(duration, resume_notify).await.is_err() {
-                        return Err(PoolError::Timeout(TimeoutType::Wait));
-                    }
-                }
-                None => resume_notify.await,
-            }
-        }
+        // Phase 1: Wait for unpause.
+        self.wait_if_paused(timeouts).await?;
 
-        let mut try_fast = 0;
-        let permit: SemaphorePermit<'_>;
-        loop {
-            if try_fast < MAX_FAST_RETRY {
-                if let Ok(p) = self.inner.semaphore.try_acquire() {
-                    permit = p;
-                    break;
-                }
-                try_fast += 1;
-                // Short spin before yielding - gives chance for permit
-                // to be released on another hyperthread
-                for _ in 0..4 {
-                    std::hint::spin_loop();
-                }
-                tokio::task::yield_now().await;
-                continue;
-            }
+        // Phase 2: Acquire semaphore permit.
+        let permit = self.acquire_semaphore(timeouts).await?;
 
-            let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
-            permit = if non_blocking {
-                self.inner.semaphore.try_acquire().map_err(|e| match e {
-                    TryAcquireError::Closed => PoolError::Closed,
-                    TryAcquireError::NoPermits => PoolError::Timeout(TimeoutType::Wait),
-                })?
-            } else {
-                match timeouts.wait {
-                    Some(duration) => {
-                        match tokio::time::timeout(duration, self.inner.semaphore.acquire()).await {
-                            Ok(Ok(p)) => p,
-                            Ok(Err(_)) => return Err(PoolError::Closed),
-                            Err(_) => return Err(PoolError::Timeout(TimeoutType::Wait)),
-                        }
-                    }
-                    None => self
-                        .inner
-                        .semaphore
-                        .acquire()
-                        .await
-                        .map_err(|_| PoolError::Closed)?,
-                }
-            };
-            break;
-        }
-
-        // Hot path: try to get an existing connection
+        // Phase 3: Hot-path recycle.
         if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-            // If this connection is approaching lifetime expiry, spawn a
-            // background task to create a replacement so the NEXT checkout
-            // finds a warm connection in the idle queue instead of paying
-            // for a fresh create after recycle rejects the expired one.
             self.maybe_trigger_pre_replacement(&inner.metrics);
-            permit.forget();
-            return Ok(Object {
-                inner: Some(*inner),
-                pool: Arc::downgrade(&self.inner),
-            });
+            return Ok(self.wrap_checkout(*inner, permit));
         }
 
-        // No connection available - check if we should use the anticipation zone
-        let should_anticipate = {
-            let slots = self.inner.slots.lock();
-            let warm_threshold = std::cmp::max(
-                1,
-                (slots.max_size as f32 * self.inner.config.scaling.warm_pool_ratio) as usize,
-            );
-            slots.size >= warm_threshold
-        };
-
-        // Non-blocking checkout (wait_timeout == 0) skips anticipation entirely:
-        // the caller wants either an immediate idle hit or a fresh create, no waits.
-        let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
-
-        if should_anticipate {
-            // Phase A: yield_now spin — catches microsecond races without sleeping.
-            let fast_retries = self.inner.config.scaling.fast_retries;
-            for _ in 0..fast_retries {
-                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(*inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
-                }
-
-                for _ in 0..4 {
-                    std::hint::spin_loop();
-                }
-                tokio::task::yield_now().await;
-            }
-
-            // Capacity deficit: the pool has room to grow (size < max_size)
-            // but the idle queue is empty. Phase B anticipation is futile
-            // here — no amount of waiting for a recycle will help when the
-            // pool genuinely needs a NEW backend connection. Waiting wastes
-            // up to 500 ms of the client's budget on race-loss retries that
-            // produce nothing; skipping straight to the create path lets the
-            // pool recover from lifetime expiry or load spikes immediately.
-            //
-            // When size == max_size the pool is full and anticipation is the
-            // right strategy: a return WILL arrive within the query latency
-            // window and recycling avoids a wasted create that would exceed
-            // the pool cap anyway.
-            //
-            // Disabled when a coordinator is configured: anticipation acts as
-            // a natural throttle that prevents one pool from grabbing all
-            // coordinator permits in a burst. Without it, a high-traffic
-            // pool can instantly consume max_db_connections permits, leaving
-            // peer pools starved and forcing them onto the reserve path.
-            let capacity_deficit = self.inner.coordinator.is_none() && {
-                let slots = self.inner.slots.lock();
-                slots.vec.is_empty() && slots.size < slots.max_size
-            };
-
-            // Phase B: direct handoff via oneshot channel.
-            // Register as a waiter; `return_object` delivers the connection
-            // directly — no VecDeque race, no FIFO position loss.
-            //
-            // Skipped when `capacity_deficit` is true: the pool has room to
-            // grow, so creating a new connection is cheaper than waiting for
-            // a return.
-            if !capacity_deficit && !non_blocking {
-                const CREATE_RESERVE: Duration = Duration::from_millis(500);
-                const FALLBACK_BUDGET_MS: u64 = 100;
-
-                let total_budget = match timeouts.wait {
-                    Some(wait) => wait
-                        .saturating_sub(start.elapsed())
-                        .saturating_sub(CREATE_RESERVE),
-                    None => Duration::from_millis(FALLBACK_BUDGET_MS),
-                };
-
-                if !total_budget.is_zero() {
-                    // Jitter the hard cap so clients that entered Phase B at
-                    // the same instant exit at staggered times (300-500ms).
-                    // Without jitter, N clients timeout simultaneously and
-                    // stampede into the burst gate, creating N new connections
-                    // for a pool that needs far fewer.  With jitter the first
-                    // batch creates connections; by the time the last batch
-                    // exits, those connections have been used and returned.
-                    const PHASE_4_HARD_CAP_BASE_MS: u64 = 500;
-                    const PHASE_4_HARD_CAP_JITTER_MS: u64 = 200;
-                    let cap_ms = PHASE_4_HARD_CAP_BASE_MS
-                        - rand::rng().random_range(0..=PHASE_4_HARD_CAP_JITTER_MS);
-                    let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
-
-                    let (tx, rx) = oneshot::channel();
-                    self.inner.slots.lock().waiters.push_back(tx);
-
-                    match tokio::time::timeout(effective_budget, rx).await {
-                        Ok(Ok(inner)) => {
-                            self.inner
-                                .scaling_stats
-                                .anticipation_wakes_notify
-                                .fetch_add(1, Ordering::Relaxed);
-                            if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
-                                permit.forget();
-                                return Ok(Object {
-                                    inner: Some(inner),
-                                    pool: Arc::downgrade(&self.inner),
-                                });
-                            }
-                        }
-                        _ => {
-                            // Timeout or channel closed. The sender is still
-                            // in the waiters queue but the receiver is dropped,
-                            // so return_object will skip it (send returns Err).
-                            self.inner
-                                .scaling_stats
-                                .anticipation_wakes_timeout
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
-
-            // Anticipation either was skipped (non_blocking / zero budget) or
-            // the oneshot timed out without receiving a connection.
-            // Fall through to the create path.
-            self.inner
-                .scaling_stats
-                .create_fallback
-                .fetch_add(1, Ordering::Relaxed);
+        // Phase 4: Anticipation (spin + direct handoff).
+        if let Some(inner) = self.try_anticipate(timeouts, start).await {
+            return Ok(self.wrap_checkout(inner, permit));
         }
 
-        // Drain any remaining recyclable connections before creating a new one
+        // Phase 5: Drain remaining recyclable connections.
         loop {
             match self.inner.try_recycle_one(timeouts).await {
                 RecycleOutcome::Reused(inner) => {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(*inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
+                    return Ok(self.wrap_checkout(*inner, permit));
                 }
                 RecycleOutcome::Failed => continue,
                 RecycleOutcome::Empty => break,
             }
         }
 
-        // Bounded burst gate: cap the number of concurrent server creates per
-        // pool. Without this gate, N parallel callers that all miss the idle
-        // pool each independently issue a backend connect, producing
-        // thundering-herd bursts under load. With the cap, only `max_parallel_creates`
-        // creates run concurrently; the rest wait on a Notify woken by either
-        // an idle return or a peer create completion, then re-check recycle.
-        //
-        // The gate is taken BEFORE the coordinator permit (JIT permit
-        // acquisition). Old ordering (coordinator → gate) caused phantom
-        // permits: N callers each took a coordinator permit then queued
-        // behind the gate, inflating `total_connections` far beyond the
-        // actual connection count and triggering false reserve grants.
-        //
-        // New ordering (gate → coordinator) ensures permits are only held
-        // during actual connection creation. Head-of-line blocking is
-        // avoided by releasing the gate slot when the coordinator needs a
-        // slow path (eviction/wait), then re-acquiring after the permit
-        // arrives.
-        let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
-        let _create_gate = loop {
-            if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
-                // Got a create slot — guard releases it on drop, no matter
-                // whether create() succeeds, fails, or unwinds. Bump
-                // `creates_started` here (slot acquisition), not at release,
-                // so the counter tracks the in-flight intent rather than
-                // post-hoc completions.
-                self.inner
-                    .scaling_stats
-                    .creates_started
-                    .fetch_add(1, Ordering::Relaxed);
-                break scopeguard::guard((), |_| {
-                    self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
-                    self.inner.create_done.notify_one();
-                });
+        // Phase 6: Burst gate + coordinator + create.
+        let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
+        let _create_gate = match self.acquire_burst_gate(timeouts, non_blocking).await {
+            BurstGateOutcome::Acquired(guard) => guard,
+            BurstGateOutcome::Recycled(inner) => {
+                return Ok(self.wrap_checkout(*inner, permit));
             }
-
-            self.inner
-                .scaling_stats
-                .burst_gate_waits
-                .fetch_add(1, Ordering::Relaxed);
-
-            if non_blocking {
-                // Non-blocking caller: one last recycle attempt, then fail.
-                // The coordinator permit dropped here releases the cross-pool
-                // slot we briefly held while attempting the gate.
-                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(*inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
-                }
+            BurstGateOutcome::Timeout => {
                 return Err(PoolError::Timeout(TimeoutType::Wait));
             }
-
-            // Try recycle BEFORE registering as a waiter to avoid
-            // leaving dead senders in the queue on success.
-            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                permit.forget();
-                return Ok(Object {
-                    inner: Some(*inner),
-                    pool: Arc::downgrade(&self.inner),
-                });
-            }
-
-            // Register a direct-handoff waiter AND listen on create_done.
-            let (tx, rx) = oneshot::channel();
-            self.inner.slots.lock().waiters.push_back(tx);
-            let on_create = self.inner.create_done.notified();
-
-            tokio::select! {
-                result = rx => {
-                    if let Ok(inner) = result {
-                        if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-                    }
-                }
-                _ = on_create => {}
-                _ = tokio::time::sleep(BURST_BACKOFF) => {}
-            }
-
-            // After wake — try recycle once before retrying the gate.
-            if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                permit.forget();
-                return Ok(Object {
-                    inner: Some(*inner),
-                    pool: Arc::downgrade(&self.inner),
-                });
-            }
-            // Loop back to retry the gate.
         };
 
-        // JIT coordinator permit: acquired AFTER the burst gate slot so
-        // that waiters queued behind the gate do not inflate
-        // `total_connections` with phantom permits. Only callers that
-        // actually have a create slot (and will immediately connect) hold
-        // a coordinator permit.
-        //
-        // Fast path (try_acquire): non-blocking CAS, succeeds when the
-        // database has headroom. No burst-gate slot is wasted on a wait.
-        //
-        // Slow path: if the fast try fails, release the burst gate slot
-        // so other callers can create while we wait on eviction / peer
-        // return. After the coordinator grants the permit, re-acquire a
-        // burst gate slot (loop back) — this is rare and acceptable
-        // because it only happens under genuine cross-pool pressure.
-        // JIT coordinator permit: acquired AFTER the burst gate slot so
-        // that waiters queued behind the gate do not inflate
-        // `total_connections` with phantom permits. Only callers that
-        // actually have a create slot (and will immediately connect) hold
-        // a coordinator permit.
-        //
-        // Fast path (try_acquire): non-blocking CAS, succeeds when the
-        // database has headroom. No burst-gate slot is wasted on a wait.
-        //
-        // Slow path: if the fast try fails, drop the gate guard (releases
-        // the slot), wait on the coordinator (may evict / wait for a peer
-        // return), re-acquire a gate slot, then proceed to create.
-        let coordinator_permit = if let Some(ref coordinator) = self.inner.coordinator {
-            let eviction = super::PoolEvictionSource::new(&self.inner.pool_name);
-            if let Some(p) = coordinator.try_acquire() {
-                debug!(
-                    "[{}@{}] coordinator: permit via fast JIT path \
-                     (permit_type=main)",
-                    self.inner.username, self.inner.pool_name,
-                );
-                Some(p)
-            } else {
-                // Release gate slot so peers can create while we wait.
-                drop(_create_gate);
-                let p = match coordinator
-                    .acquire(&self.inner.pool_name, &self.inner.username, &eviction)
-                    .await
-                {
-                    Ok(p) => p,
-                    Err(pool_coordinator::AcquireError::NoConnection(info)) => {
-                        return Err(PoolError::DbLimitExhausted(info));
-                    }
-                };
-
-                debug!(
-                    "[{}@{}] coordinator: permit via slow JIT path \
-                     (permit_type={})",
-                    self.inner.username,
-                    self.inner.pool_name,
-                    if p.is_reserve { "reserve" } else { "main" },
-                );
-
-                // Re-check idle: a sibling may have returned a connection
-                // while we waited on the coordinator.
-                if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                    permit.forget();
-                    return Ok(Object {
-                        inner: Some(*inner),
-                        pool: Arc::downgrade(&self.inner),
-                    });
+        let (coordinator_permit, _gate) =
+            match self.acquire_coordinator_jit(timeouts, _create_gate).await? {
+                CoordinatorJitResult::Create {
+                    permit: cp,
+                    gate: g,
+                } => (cp, g),
+                CoordinatorJitResult::Recycled(inner) => {
+                    return Ok(self.wrap_checkout(*inner, permit));
                 }
+            };
 
-                // Re-acquire burst gate slot and create.
-                let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
-                let _create_gate = loop {
-                    if try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
-                        self.inner
-                            .scaling_stats
-                            .creates_started
-                            .fetch_add(1, Ordering::Relaxed);
-                        break scopeguard::guard((), |_| {
-                            self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
-                            self.inner.create_done.notify_one();
-                        });
-                    }
-
-                    if let RecycleOutcome::Reused(inner) =
-                        self.inner.try_recycle_one(timeouts).await
-                    {
-                        permit.forget();
-                        return Ok(Object {
-                            inner: Some(*inner),
-                            pool: Arc::downgrade(&self.inner),
-                        });
-                    }
-
-                    let (tx, rx) = oneshot::channel();
-                    self.inner.slots.lock().waiters.push_back(tx);
-                    let on_create = self.inner.create_done.notified();
-
-                    tokio::select! {
-                        result = rx => {
-                            if let Ok(inner) = result {
-                                if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
-                                    permit.forget();
-                                    return Ok(Object {
-                                        inner: Some(inner),
-                                        pool: Arc::downgrade(&self.inner),
-                                    });
-                                }
-                            }
-                        }
-                        _ = on_create => {}
-                        _ = tokio::time::sleep(BURST_BACKOFF) => {}
-                    }
-                };
-
-                let obj_inner = self.inner.create_connection(timeouts, Some(p)).await?;
-                permit.forget();
-                return Ok(Object {
-                    inner: Some(obj_inner),
-                    pool: Arc::downgrade(&self.inner),
-                });
-            }
-        } else {
-            None
-        };
-
-        // Main create path (no coordinator, or fast JIT succeeded).
         let obj_inner = self
             .inner
             .create_connection(timeouts, coordinator_permit)
             .await?;
-        permit.forget();
-        Ok(Object {
-            inner: Some(obj_inner),
-            pool: Arc::downgrade(&self.inner),
-        })
+        Ok(self.wrap_checkout(obj_inner, permit))
     }
 
     /// Resizes the pool.
@@ -1291,7 +1232,6 @@ impl Pool {
     /// Returns the number of connections successfully created.
     /// Stops on the first creation failure to avoid hammering a failing server.
     pub async fn replenish(&self, count: usize) -> usize {
-        let max_parallel = self.inner.config.scaling.max_parallel_creates as usize;
         let mut created = 0;
         for _ in 0..count {
             // Check if there's still room in the pool
@@ -1328,7 +1268,7 @@ impl Pool {
             // defer the work to the next retain cycle and let `timeout_get`
             // callers own the budget. The dropped `coordinator_permit` returns
             // its slot to the cross-pool semaphore.
-            if !try_take_burst_slot(&self.inner.inflight_creates, max_parallel) {
+            let Some(_create_gate) = self.inner.try_acquire_burst_gate() else {
                 self.inner
                     .scaling_stats
                     .replenish_deferred
@@ -1339,18 +1279,7 @@ impl Pool {
                     self.inner.pool_name
                 );
                 break;
-            }
-            // Slot is taken — guard releases it on every exit path (success,
-            // error, panic) and wakes any task waiting at the bounded burst
-            // gate so it can retry recycle or take the slot.
-            self.inner
-                .scaling_stats
-                .creates_started
-                .fetch_add(1, Ordering::Relaxed);
-            let _create_gate = scopeguard::guard((), |_| {
-                self.inner.inflight_creates.fetch_sub(1, Ordering::Release);
-                self.inner.create_done.notify_one();
-            });
+            };
 
             // Create a new connection
             let obj = match self.inner.server_pool.create().await {
@@ -1366,14 +1295,7 @@ impl Pool {
                 }
             };
 
-            let lifetime_ms = self.inner.server_pool.lifetime_ms();
-            let idle_timeout_ms = self.inner.server_pool.idle_timeout_ms();
-            let epoch = self.inner.server_pool.current_epoch();
-            let inner = ObjectInner {
-                obj,
-                metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
-                coordinator_permit,
-            };
+            let inner = self.inner.new_object_inner(obj, coordinator_permit);
 
             {
                 let mut slots = self.inner.slots.lock();
@@ -1381,10 +1303,7 @@ impl Pool {
                     break;
                 }
                 slots.size += 1;
-                match self.inner.config.queue_mode {
-                    QueueMode::Fifo => slots.vec.push_back(inner),
-                    QueueMode::Lifo => slots.vec.push_front(inner),
-                }
+                push_idle(self.inner.config.queue_mode, &mut slots.vec, inner);
             }
 
             created += 1;
@@ -1492,8 +1411,8 @@ impl Pool {
     }
 
     /// Recycle a connection received via direct handoff. On success,
-    /// returns `Ok(ObjectInner)` — the caller must `permit.forget()`
-    /// and wrap in `Object`. On failure, decrements `slots.size` (the
+    /// returns `Ok(ObjectInner)` — the caller wraps it via
+    /// `wrap_checkout`. On failure, decrements `slots.size` (the
     /// backend is gone) and returns `Err(())`.
     async fn recycle_handoff(
         &self,
@@ -1678,10 +1597,70 @@ fn try_take_burst_slot(counter: &AtomicUsize, max: usize) -> bool {
     false
 }
 
+/// RAII guard for a burst gate slot. Decrements `inflight_creates`
+/// and wakes one burst-gate waiter on drop.
+struct BurstGateGuard<'a> {
+    inflight_creates: &'a AtomicUsize,
+    create_done: &'a Notify,
+}
+
+impl Drop for BurstGateGuard<'_> {
+    fn drop(&mut self) {
+        self.inflight_creates.fetch_sub(1, Ordering::Release);
+        self.create_done.notify_one();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    // ------------------------------------------------------------------
+    // BurstGateGuard — RAII burst gate slot
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn burst_gate_guard_decrements_on_drop() {
+        let counter = AtomicUsize::new(1);
+        let notify = Notify::new();
+        {
+            let _g = BurstGateGuard {
+                inflight_creates: &counter,
+                create_done: &notify,
+            };
+            assert_eq!(counter.load(Ordering::Acquire), 1);
+        }
+        assert_eq!(counter.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn burst_gate_guard_notifies_on_drop() {
+        let counter = AtomicUsize::new(1);
+        let notify = Notify::new();
+        let fut = notify.notified();
+        {
+            let _g = BurstGateGuard {
+                inflight_creates: &counter,
+                create_done: &notify,
+            };
+        }
+        tokio::time::timeout(Duration::from_millis(50), fut)
+            .await
+            .expect("drop must fire notify_one");
+    }
+
+    #[test]
+    fn burst_gate_guard_no_decrement_on_forget() {
+        let counter = AtomicUsize::new(1);
+        let notify = Notify::new();
+        let g = BurstGateGuard {
+            inflight_creates: &counter,
+            create_done: &notify,
+        };
+        std::mem::forget(g);
+        assert_eq!(counter.load(Ordering::Acquire), 1);
+    }
 
     // ------------------------------------------------------------------
     // try_take_burst_slot — soft burst limiter
