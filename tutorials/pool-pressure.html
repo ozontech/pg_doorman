@@ -421,6 +421,56 @@ the pool above <code>min_pool_size</code> anyway. The <code>replenish_deferred</
 increments each time the background task backs off this way.</p>
 <p>Consequence: <code>min_pool_size</code> is best-effort under load. For a hard
 floor, see the troubleshooting section.</p>
+<h3 id="conditional-notify-on-return"><a class="header" href="#conditional-notify-on-return">Conditional notify on return</a></h3>
+<p>When a connection is returned to the idle queue, <code>return_object</code> signals
+two channels: <code>semaphore.add_permits(1)</code> to wake a Phase 1/2 waiter,
+and <code>idle_returned.notify_one()</code> to wake a Phase 4 anticipation waiter.</p>
+<p>At high concurrency (10k+ clients, pool fully utilized) the idle queue
+cycles rapidly and no callers sit in Phase 4 — every checkout hits the
+hot path. Calling <code>notify_one()</code> on every return in this case wakes a
+task that races the semaphore waiter for the same connection, loses, and
+wastes ~2-5 us of CPU per return. At 200k returns/sec this adds up to
+~10% throughput loss.</p>
+<p>To avoid this, <code>return_object</code> checks an <code>idle_returned_listeners</code>
+atomic counter before calling <code>notify_one()</code>. Phase 4 anticipation and
+the burst gate both increment the counter when they register a
+<code>Notified</code> future and decrement it when their wait ends. When the
+counter is zero (the common case under high throughput), <code>notify_one()</code>
+is skipped entirely — one atomic load (~3 ns) instead of a notify cycle
+(~104 ns) plus a wasted task wake.</p>
+<p>Safety net: if a listener registers between the load and a missed
+notify, Phase 4's <code>SLEEP_CAP</code> (100 ms) and the burst gate's
+<code>BURST_BACKOFF</code> (5 ms) guarantee progress on the next iteration.</p>
+<h3 id="pre-replacement-for-lifetime-expiry"><a class="header" href="#pre-replacement-for-lifetime-expiry">Pre-replacement for lifetime expiry</a></h3>
+<p>When <code>server_lifetime</code> is configured, backend connections are closed
+after reaching their individual lifetime limit (base ± 20% jitter).
+Closing a connection means the pool has one fewer idle backend —
+subsequent checkouts may enter the anticipation loop or create path,
+adding several milliseconds to p99 during lifetime expiry clusters.</p>
+<p><strong>Pre-replacement</strong> removes this spike. When a checkout recycles a
+connection whose age has reached <strong>95%</strong> of its lifetime, a background
+task creates a replacement connection and places it in the idle queue.
+When the old connection eventually fails recycle at 100% lifetime, the
+next checkout finds the pre-created replacement via the hot path —
+zero wait.</p>
+<p>Up to 3 concurrent pre-replacements may run per pool. During the
+overlap window the pool temporarily holds <code>max_size + 3</code> connections
+and a matching number of extra semaphore permits. When old connections
+die, <code>slots.size</code> drops back to <code>max_size</code>.</p>
+<p>Guards that prevent runaway growth:</p>
+<div class="table-wrapper"><table><thead><tr><th>Guard</th><th>Prevents</th></tr></thead><tbody>
+<tr><td><code>!under_pressure()</code></td><td>Creating extras when pool is saturated (old connection would survive via <code>skip_lifetime</code> anyway)</td></tr>
+<tr><td><code>idle_ratio &lt; 25%</code></td><td>Replacing connections in an oversized pool that should shrink</td></tr>
+<tr><td><code>coordinator headroom &gt;= 2</code></td><td>Stealing the last coordinator permit from a peer pool</td></tr>
+<tr><td><code>lifetime &gt;= 60 s</code></td><td>Firing on tiny lifetimes where the overlap window is too narrow</td></tr>
+<tr><td><code>slots.size &lt;= max_size + cap</code></td><td>Stacking multiple pre-replacement overshoots</td></tr>
+<tr><td><code>try_take_burst_slot</code> (cap=3)</td><td>Limiting concurrent background creates</td></tr>
+</tbody></table>
+</div>
+<p>Pre-replacement only fires on the <strong>checkout</strong> path (<code>try_recycle_one</code>),
+not from the retain loop. Idle connections that expire without being
+checked out are closed by the retain loop <strong>without replacement</strong> — this
+is how the pool shrinks naturally when load drops.</p>
 <h2 id="sizing-the-cap-against-postgresql"><a class="header" href="#sizing-the-cap-against-postgresql">Sizing the cap against PostgreSQL</a></h2>
 <p>Before reading about the coordinator, check that your worst-case backend
 connection count fits PostgreSQL. Without <code>max_db_connections</code> set, the
@@ -479,13 +529,14 @@ are served first by the arbiter.</p>
 <p><strong>Eviction.</strong> Fallback when the reserve is either disabled
 (<code>reserve_pool_size = 0</code>) or already fully used: the coordinator
 closes an idle connection from a different user's pool to free a
-main slot. The evicted pool loses a connection; the requesting
-pool gets one. This is fair: users with the largest surplus above
-their <strong>effective minimum</strong> lose connections first, and only
-connections older than <code>min_connection_lifetime</code> (default
-30 000 ms) are eligible. The 30-second floor is deliberate: it
-suppresses cyclic reconnect between peer pools that take turns
-stealing slots from each other.</p>
+main slot. Candidates are sorted by <strong>p95 transaction time</strong>
+(descending): slow pools donate first because they tolerate the
+re-create cost better (1 ms of pool wait adds 6.7% to a 15 ms p95
+but 104% to a 0.96 ms p95). Spare count above effective minimum
+is the tiebreaker among pools with similar p95. Only connections
+older than <code>min_connection_lifetime</code> (default 30 000 ms) are
+eligible. The 30-second floor suppresses cyclic reconnect between
+peer pools that take turns stealing slots from each other.</p>
 <p>The <strong>effective minimum</strong> for a user pool is
 <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>. Both
 knobs protect connections from eviction; whichever is larger wins.
@@ -516,11 +567,14 @@ caller).</p>
 permit: either <code>reserve_pool_size = 0</code>, or the reserve semaphore was
 fully in use at the check (<code>reserve_in_use == reserve_pool_size</code>), or
 the arbiter denied the grant. Walk all <em>other</em> user pools for the
-same database, find the one with the largest surplus above its
-<strong>effective minimum</strong>, and close one of its idle connections older
-than <code>min_connection_lifetime</code>. The evicted permit drops
-synchronously, freeing the slot. Re-try the semaphore acquire. If
-two callers race, the loser falls through to the next phase.</p>
+same database, sort by <strong>p95 transaction time</strong> (descending, slow pools
+first) with spare count as tiebreaker, and close one idle connection
+older than <code>min_connection_lifetime</code> from the top candidate. The
+evicted permit drops synchronously, freeing the slot. Re-try the
+semaphore acquire. If two callers race, the loser falls through to the
+next phase. The p95 value is cached every 15 seconds (stats cycle) as
+an atomic, so the eviction scan reads one <code>AtomicU64</code> per candidate
+without locking the histogram.</p>
 <p><strong>Phase C — Wait.</strong> Reached when reserve is disabled or fully in use
 <em>and</em> Phase B found nothing evictable. Register a <code>Notify</code> woken on
 two events:</p>
@@ -603,22 +657,27 @@ backends that could not be upgraded and have been idle longer than
 burst is actually in flight <em>or</em> finished within the last
 <code>retain_connections_time</code>. Historical reserve usage converges back
 to zero as soon as main has headroom.</p>
-<h3 id="why-coordinator-runs-before-the-burst-gate"><a class="header" href="#why-coordinator-runs-before-the-burst-gate">Why coordinator runs before the burst gate</a></h3>
-<p>Inside the per-pool acquisition flow, the coordinator permit is
-acquired <strong>before</strong> the burst gate. The order is deliberate.</p>
-<p>The coordinator can wait <em>seconds</em> (up to <code>reserve_pool_timeout</code>,
-default 3000 ms). The burst gate wakes in <em>milliseconds</em>. If the gate
-came first, two callers in one pool could grab the only two slots,
-both block on the coordinator for seconds waiting for a peer pool to
-return, and the rest of the clients in their own pool would starve
-waiting for those two, even though the pool itself has nothing to do
-but <code>connect()</code>. This is <strong>head-of-line blocking inside one pool</strong>.</p>
-<p>With coordinator first, the gate caps <strong>actual <code>connect()</code> calls</strong>,
-not <em>waiting time on a peer pool</em>. A caller blocked in coordinator
-wait holds zero burst slots. The gate sees at most one caller per
-slot, each about to issue <code>connect()</code>.</p>
-<pre><code>        Coordinator + plain mode acquisition flow
-        -----------------------------------------
+<h3 id="jit-coordinator-permits-burst-gate-first"><a class="header" href="#jit-coordinator-permits-burst-gate-first">JIT coordinator permits (burst gate first)</a></h3>
+<p>Inside the per-pool acquisition flow, the burst gate runs <strong>before</strong>
+the coordinator permit is acquired. This is the <strong>JIT (just-in-time)</strong>
+ordering: a coordinator permit is taken only when the caller actually
+holds a burst gate slot and is about to call <code>connect()</code>.</p>
+<p>The previous ordering (coordinator first, then gate) caused <strong>phantom
+permits</strong>: N callers each acquired a coordinator permit and then queued
+behind the burst gate (cap=2). Only 2 callers were actually creating
+connections, but the coordinator saw N permits in use and started
+issuing reserve permits to peer pools — even though the database was
+far from full.</p>
+<p>With JIT ordering, at most <code>max_parallel_creates</code> callers hold
+coordinator permits at any instant. The rest wait for a gate slot
+without consuming coordinator budget.</p>
+<p><strong>Head-of-line blocking</strong> is avoided by splitting the coordinator
+acquire into a fast and a slow path. The fast path is a non-blocking
+<code>try_acquire()</code> inside the gate slot — no time is wasted. If it fails,
+the caller <strong>releases the gate slot</strong>, waits on the coordinator (may
+evict / wait for a peer return), and then re-acquires a gate slot.</p>
+<pre><code>        Coordinator + plain mode acquisition flow (JIT)
+        -----------------------------------------------
 
    pool.get()
        |
@@ -637,29 +696,25 @@ slot, each about to issue <code>connect()</code>.</p>
        v                                    |
        | &lt;----------------------------------+
        v
-   +----------------------+
-   |  Coordinator acquire |   &lt;-- inserted between phase 4 and phase 5
-   |   A: try_acquire     |       only when max_db_connections &gt; 0
-   |   R: reserve-first   |   sub-ms arbiter round-trip
-   |   B: evict from peer |
-   |   C: wait for return |   up to reserve_pool_timeout
-   |   D: reserve retry   |   scored priority
-   |   E: error           |   client gets DB exhausted error
-   +----------+-----------+
-              | permit granted
-              v
    Phase 5: bounded burst gate (scaling_max_parallel_creates)
               | slot acquired
               v
+   +---------------------------+
+   | JIT coordinator acquire   |  only when max_db_connections &gt; 0
+   |  fast: try_acquire()      |  non-blocking CAS
+   |  slow: release gate slot  |  wait on coordinator (evict/return)
+   |        → re-acquire slot  |  then proceed to create
+   +------------+--------------+
+                | permit granted
+                v
    Phase 6: server_pool.create()
-              |
-              v
-              return new connection
+                |
+                v
+                return new connection
 </code></pre>
 <p>The phases are numbered identically to plain mode. The coordinator
-acquire is <strong>not</strong> a numbered phase: it is a separate gate inserted
-between phase 4 and phase 5 when <code>max_db_connections &gt; 0</code>. In plain
-mode it does not run.</p>
+acquire is <strong>not</strong> a numbered phase: it runs inside the burst gate
+slot when <code>max_db_connections &gt; 0</code>. In plain mode it does not run.</p>
 <h3 id="when-the-coordinator-is-configured-but-the-cap-is-not-reached"><a class="header" href="#when-the-coordinator-is-configured-but-the-cap-is-not-reached">When the coordinator is configured but the cap is not reached</a></h3>
 <p>If <code>max_db_connections = 80</code> and current usage is 30, the coordinator's
 phase A always succeeds. Phases B–E never run. The behaviour is
