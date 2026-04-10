@@ -449,11 +449,9 @@ impl PoolInner {
                 Ok(()) => {
                     drop(slots);
                     // No semaphore.add_permits — the waiter already holds
-                    // a permit. Coordinator still needs the idle signal
-                    // for peer eviction.
-                    if let Some(coordinator) = self.coordinator.as_ref() {
-                        coordinator.notify_idle_returned();
-                    }
+                    // a permit. No coordinator notify — the connection was
+                    // handed off, not placed in the idle queue, so a peer
+                    // eviction scan would find nothing.
                     return;
                 }
                 Err(returned_inner) => {
@@ -825,14 +823,8 @@ impl Pool {
                 return Err(PoolError::Timeout(TimeoutType::Wait));
             }
 
-            // Register a direct-handoff waiter AND listen on create_done.
-            // If return_object delivers a connection via oneshot, use it.
-            // If a peer create completes, retry the gate.
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            self.inner.slots.lock().waiters.push_back(tx);
-
-            let on_create = self.inner.create_done.notified();
-
+            // Try recycle BEFORE registering as a waiter to avoid
+            // leaving dead senders in the queue on success.
             if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
                 permit.forget();
                 return Ok(Object {
@@ -840,6 +832,11 @@ impl Pool {
                     pool: Arc::downgrade(&self.inner),
                 });
             }
+
+            // Register a direct-handoff waiter AND listen on create_done.
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            self.inner.slots.lock().waiters.push_back(tx);
+            let on_create = self.inner.create_done.notified();
 
             tokio::select! {
                 result = rx => {
@@ -948,11 +945,6 @@ impl Pool {
                         });
                     }
 
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    self.inner.slots.lock().waiters.push_back(tx);
-
-                    let on_create = self.inner.create_done.notified();
-
                     if let RecycleOutcome::Reused(inner) =
                         self.inner.try_recycle_one(timeouts).await
                     {
@@ -962,6 +954,10 @@ impl Pool {
                             pool: Arc::downgrade(&self.inner),
                         });
                     }
+
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    self.inner.slots.lock().waiters.push_back(tx);
+                    let on_create = self.inner.create_done.notified();
 
                     tokio::select! {
                         result = rx => {
