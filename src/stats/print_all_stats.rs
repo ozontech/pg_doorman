@@ -22,6 +22,7 @@ pub fn print_all_stats() {
                 | servers={} active={} idle={} \
                 | query_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
                 | xact_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
+                | wait_ms p50={:.2} p90={:.2} p95={:.2} p99={:.2} \
                 | avg_wait={:.3}ms",
                 identifier.user,
                 identifier.db,
@@ -42,6 +43,10 @@ pub fn print_all_stats() {
                 pool_stats.xact_percentile.p90 as f64 / 1_000f64,
                 pool_stats.xact_percentile.p95 as f64 / 1_000f64,
                 pool_stats.xact_percentile.p99 as f64 / 1_000f64,
+                pool_stats.wait_percentile.p50 as f64 / 1_000f64,
+                pool_stats.wait_percentile.p90 as f64 / 1_000f64,
+                pool_stats.wait_percentile.p95 as f64 / 1_000f64,
+                pool_stats.wait_percentile.p99 as f64 / 1_000f64,
                 pool_stats.avg_wait_time as f64 / 1_000f64,
             );
         }
