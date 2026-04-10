@@ -546,7 +546,13 @@ impl Pool {
             // right strategy: a return WILL arrive within the query latency
             // window and recycling avoids a wasted create that would exceed
             // the pool cap anyway.
-            let capacity_deficit = {
+            //
+            // Disabled when a coordinator is configured: anticipation acts as
+            // a natural throttle that prevents one pool from grabbing all
+            // coordinator permits in a burst. Without it, a high-traffic
+            // pool can instantly consume max_db_connections permits, leaving
+            // peer pools starved and forcing them onto the reserve path.
+            let capacity_deficit = self.inner.coordinator.is_none() && {
                 let slots = self.inner.slots.lock();
                 slots.vec.is_empty() && slots.size < slots.max_size
             };
