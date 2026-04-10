@@ -10,14 +10,13 @@ use std::{
 };
 
 use log::debug;
+use rand::Rng as _;
 
 use crate::utils::clock;
 
 use parking_lot::Mutex;
 
-use tokio::sync::{
-    oneshot, Notify, Semaphore, SemaphorePermit, TryAcquireError,
-};
+use tokio::sync::{oneshot, Notify, Semaphore, SemaphorePermit, TryAcquireError};
 
 use super::errors::{PoolError, RecycleError, TimeoutType};
 use super::pool_coordinator;
@@ -713,8 +712,18 @@ impl Pool {
                 };
 
                 if !total_budget.is_zero() {
-                    const PHASE_4_HARD_CAP: Duration = Duration::from_millis(500);
-                    let effective_budget = total_budget.min(PHASE_4_HARD_CAP);
+                    // Jitter the hard cap so clients that entered Phase B at
+                    // the same instant exit at staggered times (300-500ms).
+                    // Without jitter, N clients timeout simultaneously and
+                    // stampede into the burst gate, creating N new connections
+                    // for a pool that needs far fewer.  With jitter the first
+                    // batch creates connections; by the time the last batch
+                    // exits, those connections have been used and returned.
+                    const PHASE_4_HARD_CAP_BASE_MS: u64 = 500;
+                    const PHASE_4_HARD_CAP_JITTER_MS: u64 = 200;
+                    let cap_ms = PHASE_4_HARD_CAP_BASE_MS
+                        - rand::rng().random_range(0..=PHASE_4_HARD_CAP_JITTER_MS);
+                    let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
 
                     let (tx, rx) = oneshot::channel();
                     self.inner.slots.lock().waiters.push_back(tx);

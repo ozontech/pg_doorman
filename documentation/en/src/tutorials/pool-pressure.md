@@ -164,10 +164,19 @@ This way timed-out waiters are cleaned up lazily without a separate
 garbage-collection pass.
 
 The deadline is `min(query_wait_timeout - 500 ms, PHASE_4_HARD_CAP)`
-where `PHASE_4_HARD_CAP = 500 ms`, measured against a timestamp
-captured at the top of `timeout_get`. Phase 1/2 semaphore wait
-consumes from the same budget, so the cumulative wait across phases
-cannot exceed the caller's `query_wait_timeout`.
+where `PHASE_4_HARD_CAP` is randomly chosen between **300 ms and
+500 ms** (uniform jitter) for each checkout attempt, measured against
+a timestamp captured at the top of `timeout_get`. Phase 1/2 semaphore
+wait consumes from the same budget, so the cumulative wait across
+phases cannot exceed the caller's `query_wait_timeout`.
+
+The jitter prevents a **timeout cliff**: without it, N clients that
+entered Phase B at the same instant all exit simultaneously and
+stampede into the burst gate, creating N new backend connections for a
+pool that needs far fewer. With jitter, clients exit in staggered
+batches — early exiters create connections, and by the time later
+exiters time out, those connections have already been used and returned
+to the idle queue for recycling.
 
 **Phase 5 — Bounded burst gate.** Try to take one of
 `scaling_max_parallel_creates` slots (default 2) for in-flight backend
@@ -1477,9 +1486,11 @@ section.
   Phase A and Phase B. When the database is full but the reserve pool
   has headroom, Phase R grants a reserve permit directly via the
   arbiter instead of closing a peer backend or parking in Phase C.
-- **`PHASE_4_HARD_CAP`** — compile-time constant (500 ms). Upper
+- **`PHASE_4_HARD_CAP`** — compile-time constant with uniform jitter:
+  each checkout draws a random cap between 300 ms and 500 ms. Upper
   bound on Phase 4 anticipation wall time, regardless of
-  `query_wait_timeout`. Not configurable.
+  `query_wait_timeout`. Not configurable. The jitter prevents
+  synchronized timeouts that cause burst-gate stampedes.
 - **reserve arbiter** — single tokio task that owns the reserve
   permits. Reserve requests are scored by `(starving, queued_clients)`
   and drained from a priority heap so the neediest users are served
