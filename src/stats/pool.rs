@@ -304,6 +304,7 @@ impl PoolStats {
             ("pool_size", DataType::Numeric),
             ("maxwait", DataType::Numeric),
             ("maxwait_us", DataType::Numeric),
+            ("avg_xact_time", DataType::Numeric),
             ("paused", DataType::Text),
         ]
     }
@@ -375,6 +376,7 @@ impl PoolStats {
             Cow::Owned(self.pool_size.to_string()),
             Cow::Owned((self.maxwait / 1_000_000).to_string()),
             Cow::Owned((self.maxwait % 1_000_000).to_string()),
+            Cow::Owned(self.avg_xact_time_microsecons.to_string()),
             Cow::Borrowed(if self.paused { "1" } else { "0" }),
         ]
     }

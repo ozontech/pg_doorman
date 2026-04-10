@@ -80,6 +80,12 @@ pub struct AddressStats {
     /// mean (`avg_wait_time`) drowns spikes; this histogram is how operators
     /// correlate client-side tail latency with pg_doorman state.
     pub wait_histogram: Mutex<Histogram<u64>>,
+
+    /// Cached p95 transaction time in microseconds. Updated every stats cycle
+    /// (15s) from `xact_histogram`. Used by the coordinator's eviction scoring
+    /// to prefer slow pools as connection donors — one atomic load per candidate
+    /// instead of locking the histogram mutex on every eviction call.
+    pub p95_xact_time_us: AtomicU64,
 }
 
 impl Default for AddressStats {
@@ -92,6 +98,7 @@ impl Default for AddressStats {
             xact_histogram: Mutex::new(new_histogram()),
             query_histogram: Mutex::new(new_histogram()),
             wait_histogram: Mutex::new(new_histogram()),
+            p95_xact_time_us: AtomicU64::new(0),
         }
     }
 }
@@ -374,6 +381,11 @@ impl AddressStats {
     /// Called at the end of each stats period (15 seconds) to start fresh.
     pub fn reset_histograms(&self) {
         if let Some(mut histogram) = self.xact_histogram.try_lock() {
+            // Cache p95 before reset — used by eviction scoring to prefer
+            // slow pools as donors without locking the histogram on every
+            // eviction call.
+            self.p95_xact_time_us
+                .store(histogram.value_at_quantile(0.95), Ordering::Relaxed);
             histogram.reset();
         }
         if let Some(mut histogram) = self.query_histogram.try_lock() {
