@@ -428,13 +428,14 @@ Three things:
 3. **Eviction.** Fallback when the reserve is either disabled
    (`reserve_pool_size = 0`) or already fully used: the coordinator
    closes an idle connection from a different user's pool to free a
-   main slot. The evicted pool loses a connection; the requesting
-   pool gets one. This is fair: users with the largest surplus above
-   their **effective minimum** lose connections first, and only
-   connections older than `min_connection_lifetime` (default
-   30 000 ms) are eligible. The 30-second floor is deliberate: it
-   suppresses cyclic reconnect between peer pools that take turns
-   stealing slots from each other.
+   main slot. Candidates are sorted by **p95 transaction time**
+   (descending): slow pools donate first because they tolerate the
+   re-create cost better (1 ms of pool wait adds 6.7% to a 15 ms p95
+   but 104% to a 0.96 ms p95). Spare count above effective minimum
+   is the tiebreaker among pools with similar p95. Only connections
+   older than `min_connection_lifetime` (default 30 000 ms) are
+   eligible. The 30-second floor suppresses cyclic reconnect between
+   peer pools that take turns stealing slots from each other.
 
    The **effective minimum** for a user pool is
    `max(user.min_pool_size, pool.min_guaranteed_pool_size)`. Both
@@ -470,11 +471,14 @@ caller).
 permit: either `reserve_pool_size = 0`, or the reserve semaphore was
 fully in use at the check (`reserve_in_use == reserve_pool_size`), or
 the arbiter denied the grant. Walk all *other* user pools for the
-same database, find the one with the largest surplus above its
-**effective minimum**, and close one of its idle connections older
-than `min_connection_lifetime`. The evicted permit drops
-synchronously, freeing the slot. Re-try the semaphore acquire. If
-two callers race, the loser falls through to the next phase.
+same database, sort by **p95 transaction time** (descending, slow pools
+first) with spare count as tiebreaker, and close one idle connection
+older than `min_connection_lifetime` from the top candidate. The
+evicted permit drops synchronously, freeing the slot. Re-try the
+semaphore acquire. If two callers race, the loser falls through to the
+next phase. The p95 value is cached every 15 seconds (stats cycle) as
+an atomic, so the eviction scan reads one `AtomicU64` per candidate
+without locking the histogram.
 
 **Phase C — Wait.** Reached when reserve is disabled or fully in use
 *and* Phase B found nothing evictable. Register a `Notify` woken on
