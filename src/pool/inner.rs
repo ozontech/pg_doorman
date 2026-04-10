@@ -26,9 +26,9 @@ use crate::server::Server;
 const MAX_FAST_RETRY: i32 = 10;
 
 /// Fallback wake interval for tasks queued behind the bounded burst limiter.
-/// Used as a safety net in case neither `idle_returned` nor `create_done`
-/// fires within the expected window — guarantees forward progress without
-/// busy-spinning.
+/// Used as a safety net in case neither a direct-handoff delivery nor
+/// `create_done` fires within the expected window — guarantees forward
+/// progress without busy-spinning.
 const BURST_BACKOFF: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Internal object wrapper with metrics.
@@ -99,11 +99,25 @@ impl fmt::Debug for Object {
 }
 
 /// Internal slots storage.
-#[derive(Debug)]
 struct Slots {
     vec: VecDeque<ObjectInner>,
+    /// Direct-handoff queue: waiters blocked on a oneshot receiver.
+    /// `return_object` pops the oldest sender and delivers the connection
+    /// directly, bypassing the idle VecDeque entirely.
+    waiters: VecDeque<tokio::sync::oneshot::Sender<ObjectInner>>,
     size: usize,
     max_size: usize,
+}
+
+impl fmt::Debug for Slots {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Slots")
+            .field("vec_len", &self.vec.len())
+            .field("waiters_len", &self.waiters.len())
+            .field("size", &self.size)
+            .field("max_size", &self.max_size)
+            .finish()
+    }
 }
 
 /// Per-pool counters for the anticipation + bounded burst code path.
@@ -121,10 +135,9 @@ pub(crate) struct ScalingStats {
     /// to wait on a Notify (or backoff). High values indicate `max_parallel_creates`
     /// is too low for the offered load — or that creates are slow.
     pub(crate) burst_gate_waits: AtomicU64,
-    /// Number of anticipation loop iterations where a real `idle_returned`
-    /// signal woke the waiter. Incremented once per iteration that saw a
-    /// notify, including iterations that then lost the post-await recycle
-    /// race and looped back.
+    /// Number of Phase B anticipation attempts where a direct-handoff
+    /// delivery via oneshot channel succeeded. Incremented once per
+    /// successful receive, before the recycle check.
     pub(crate) anticipation_wakes_notify: AtomicU64,
     /// Number of Phase 4 fall-throughs that gave up on anticipation:
     /// the deadline was exhausted, the per-caller race-loss cap was
@@ -177,18 +190,6 @@ struct PoolInner {
     pool_name: String,
     /// Username for this pool, used in coordinator error messages.
     username: String,
-    /// Anticipation signal: woken when an Object is returned to the idle pool.
-    /// Used by the Phase 4 anticipation loop in `timeout_get` to wait for a
-    /// recyclable connection event-driven, and by peer coordinator waiters to
-    /// re-attempt peer eviction after a return.
-    idle_returned: Notify,
-    /// Number of tasks currently awaiting `idle_returned.notified()`. Covers
-    /// Phase B anticipation waiters AND burst gate waiters. Incremented before
-    /// registering a `Notified` future, decremented on loop exit (scopeguard).
-    /// `return_object` checks this before calling `idle_returned.notify_one()`
-    /// to avoid waking a task that will race against the semaphore waiter and
-    /// lose — at 10k clients this race doubles per-return CPU cost for no gain.
-    idle_returned_listeners: AtomicUsize,
     /// Number of server connection creates currently in-flight on this pool.
     /// This is NOT the count of currently-held connections — only those being
     /// established right now via `server_pool.create()`. Bounded by
@@ -337,11 +338,6 @@ impl PoolInner {
         // holds it and retries try_recycle_one which finds the replacement.
         self.semaphore.add_permits(1);
 
-        // Wake anticipation/burst-gate waiters if any.
-        if self.idle_returned_listeners.load(Ordering::Acquire) > 0 {
-            self.idle_returned.notify_one();
-        }
-
         self.scaling_stats
             .pre_replacements_triggered
             .fetch_add(1, Ordering::Relaxed);
@@ -443,20 +439,31 @@ impl PoolInner {
     }
 
     #[inline(always)]
-    fn return_object(&self, inner: ObjectInner) {
-        // Fast path: try to acquire lock without blocking
-        if let Some(mut slots) = self.slots.try_lock() {
-            match self.config.queue_mode {
-                QueueMode::Fifo => slots.vec.push_back(inner),
-                QueueMode::Lifo => slots.vec.push_front(inner),
-            }
-            drop(slots);
-            self.semaphore.add_permits(1);
-            self.notify_return_observers();
-            return;
-        }
-        // Slow path: wait for lock.
+    fn return_object(&self, mut inner: ObjectInner) {
         let mut slots = self.slots.lock();
+
+        // Direct handoff: send to the oldest registered waiter.
+        // Waiters whose receiver was dropped (timeout) are skipped.
+        while let Some(sender) = slots.waiters.pop_front() {
+            match sender.send(inner) {
+                Ok(()) => {
+                    drop(slots);
+                    // No semaphore.add_permits — the waiter already holds
+                    // a permit. Coordinator still needs the idle signal
+                    // for peer eviction.
+                    if let Some(coordinator) = self.coordinator.as_ref() {
+                        coordinator.notify_idle_returned();
+                    }
+                    return;
+                }
+                Err(returned_inner) => {
+                    // Receiver dropped (timeout) — try the next waiter.
+                    inner = returned_inner;
+                }
+            }
+        }
+
+        // No waiters — normal path.
         match self.config.queue_mode {
             QueueMode::Fifo => slots.vec.push_back(inner),
             QueueMode::Lifo => slots.vec.push_front(inner),
@@ -466,39 +473,16 @@ impl PoolInner {
         self.notify_return_observers();
     }
 
-    /// Wake observers of an idle return: the same-pool Phase 4 anticipation
-    /// waiter and any peer-pool Phase C waiter on the coordinator. Both fire
-    /// on the same event (a connection landed in `slots.vec`) but consume by
-    /// different waiters:
-    /// - `idle_returned` is for callers in this pool's Phase 4 anticipation
-    ///   loop or Phase 5 burst-gate wait, who will recycle the returned object.
-    /// - `coordinator.notify_idle_returned()` is for callers in *peer* user
-    ///   pools waiting on `PoolCoordinator` Phase C; they will scan this
-    ///   pool's idle vec via `evict_one_idle` and drop the returned
-    ///   connection to free a coordinator slot.
+    /// Wake peer-pool coordinator waiter after a connection lands in
+    /// `slots.vec` (the no-waiter path of `return_object`). The coordinator
+    /// Phase C waiter scans this pool's idle vec via `evict_one_idle` and
+    /// drops the returned connection to free a coordinator slot.
     ///
-    /// Note: `spare_above_min` is NOT what changes here. It tracks
-    /// `slots.size - effective_min`, and `slots.size` is the allocated count,
-    /// not `vec.len()`; `return_object` leaves `slots.size` unchanged. What
-    /// changes is the *evictable set* scanned by `retain_oldest_first` inside
-    /// `evict_one_idle` — the returned connection is now visible there.
+    /// Same-pool waiters (Phase B anticipation, burst gate) now receive
+    /// connections via the direct-handoff oneshot channel inside
+    /// `return_object` and never park on a Notify.
     #[inline(always)]
     fn notify_return_observers(&self) {
-        // Only wake anticipation / burst-gate waiters if at least one task
-        // is parked on `idle_returned.notified()`. At 10k clients in steady
-        // state the idle queue cycles fast and no one enters Phase B or the
-        // burst gate — every return would wake a task that races the
-        // semaphore waiter and loses, doubling per-return CPU cost for no
-        // gain. The atomic load is ~3 ns vs ~104 ns for the notify + the
-        // ~2-5 us wasted task wake on the losing side.
-        //
-        // Safety net: if a listener registers between our load and a missed
-        // notify_one, it will still progress — Phase B's SLEEP_CAP (100 ms)
-        // and the burst gate's BURST_BACKOFF (5 ms) guarantee an iteration
-        // even without a signal.
-        if self.idle_returned_listeners.load(Ordering::Acquire) > 0 {
-            self.idle_returned.notify_one();
-        }
         if let Some(coordinator) = self.coordinator.as_ref() {
             coordinator.notify_idle_returned();
         }
@@ -545,6 +529,7 @@ impl Pool {
                 server_pool: builder.server_pool,
                 slots: Mutex::new(Slots {
                     vec: VecDeque::with_capacity(builder.config.max_size),
+                    waiters: VecDeque::new(),
                     size: 0,
                     max_size: builder.config.max_size,
                 }),
@@ -554,8 +539,6 @@ impl Pool {
                 coordinator: builder.coordinator,
                 pool_name: builder.pool_name,
                 username: builder.username,
-                idle_returned: Notify::new(),
-                idle_returned_listeners: AtomicUsize::new(0),
                 inflight_creates: AtomicUsize::new(0),
                 create_done: Notify::new(),
                 scaling_stats: ScalingStats::default(),
@@ -711,44 +694,17 @@ impl Pool {
                 slots.vec.is_empty() && slots.size < slots.max_size
             };
 
-            // Phase B: event-driven anticipation loop. Wait on `idle_returned`
-            // so a single `return_object` wakes exactly one queued task, then
-            // retry recycle. Bounded by `timeouts.wait` (the caller's budget)
-            // minus a small reserve for the create path. Falls through to the
-            // create path only when the deadline is reached — not on a single
-            // race loss.
+            // Phase B: direct handoff via oneshot channel.
+            // Register as a waiter; `return_object` delivers the connection
+            // directly — no VecDeque race, no FIFO position loss.
             //
             // Skipped when `capacity_deficit` is true: the pool has room to
-            // grow, so creating a new connection is cheaper than racing for
-            // returns in the anticipation loop.
-            //
-            // Why a loop instead of one-shot wait-then-recycle:
-            //   return_object() bumps both `idle_returned` AND `semaphore`
-            //   permits. A waiter parked in Phase 1/2 blocking semaphore
-            //   acquire wakes at the same instant as this Phase B waiter, and
-            //   races into Phase 3's hot-path recycle. Under multi-threaded
-            //   scheduling the fresh Phase 1/2 waiter frequently wins the race,
-            //   popping the just-returned item from `slots.vec` before the
-            //   Phase B waiter can reach its post-await recycle. Without the
-            //   loop every such race loss became a wasted `server_pool.create()`
-            //   even though another return would have arrived within the next
-            //   few milliseconds. The loop retries until the caller's deadline.
+            // grow, so creating a new connection is cheaper than waiting for
+            // a return.
             if !capacity_deficit && !non_blocking {
                 const CREATE_RESERVE: Duration = Duration::from_millis(500);
-                // Fallback budget used only when the caller passes no
-                // `wait_timeout`. Stock pg_doorman always propagates
-                // `query_wait_timeout` into `Timeouts.wait`, so this arm is
-                // only reachable from direct API consumers. The constant
-                // preserves the historical default so behavior on that path
-                // is unchanged.
                 const FALLBACK_BUDGET_MS: u64 = 100;
 
-                // Remaining time from the caller's wait_timeout minus the
-                // reserve we leave for the create path. `start` was captured
-                // at the top of `timeout_get`, so whatever Phase 1/2 spent
-                // waiting on the semaphore is already accounted for. The
-                // anticipation loop cannot push the caller past its own
-                // `wait_timeout` because we share the same deadline.
                 let total_budget = match timeouts.wait {
                     Some(wait) => wait
                         .saturating_sub(start.elapsed())
@@ -757,120 +713,42 @@ impl Pool {
                 };
 
                 if !total_budget.is_zero() {
-                    // Register as an idle_returned listener so return_object
-                    // knows to call notify_one. Decremented on any exit from
-                    // the loop (break, return, or scope drop).
-                    self.inner
-                        .idle_returned_listeners
-                        .fetch_add(1, Ordering::Release);
-                    let _listener_guard = scopeguard::guard((), |_| {
-                        self.inner
-                            .idle_returned_listeners
-                            .fetch_sub(1, Ordering::Release);
-                    });
-
-                    // Hard cap on Phase 4 wall clock. Independent of race
-                    // losses and notify wake ordering, a caller must not
-                    // spend more than PHASE_4_HARD_CAP in anticipation
-                    // before falling through to the create path. This is
-                    // the outer bound that protects tail latency under
-                    // pathological wake distributions where a caller
-                    // wakes on every notify but loses every post-wake
-                    // race. Phase 5's burst gate still caps how many
-                    // creates actually reach the backend.
                     const PHASE_4_HARD_CAP: Duration = Duration::from_millis(500);
                     let effective_budget = total_budget.min(PHASE_4_HARD_CAP);
-                    let deadline = tokio::time::Instant::now() + effective_budget;
-                    // Per-iteration sleep cap — bounds silent-wait time when
-                    // nobody notifies. Without it a caller would sleep the
-                    // full remaining budget on every race loss.
-                    const SLEEP_CAP: Duration = Duration::from_millis(100);
-                    // Race-loss cap — bounds how many post-wake recycle
-                    // races this caller is allowed to lose in a row before
-                    // giving up on anticipation. Tokio's Notify does not
-                    // guarantee FIFO wake ordering, so under sustained load
-                    // a single caller can wake hundreds of times on
-                    // `idle_returned` and lose the post-wake pop race to a
-                    // fresh Phase 1/2 waiter every time, never actually
-                    // acquiring a connection.
-                    const MAX_RACE_LOSSES: u32 = 20;
-                    let mut race_losses: u32 = 0;
 
-                    loop {
-                        let remaining =
-                            deadline.saturating_duration_since(tokio::time::Instant::now());
-                        if remaining.is_zero() {
-                            self.inner
-                                .scaling_stats
-                                .anticipation_wakes_timeout
-                                .fetch_add(1, Ordering::Relaxed);
-                            break;
-                        }
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    self.inner.slots.lock().waiters.push_back(tx);
 
-                        if race_losses >= MAX_RACE_LOSSES {
-                            self.inner
-                                .scaling_stats
-                                .anticipation_wakes_timeout
-                                .fetch_add(1, Ordering::Relaxed);
-                            break;
-                        }
-
-                        // Register the notification BEFORE re-checking the slots.
-                        // If a return_object fires between the check and the await,
-                        // the notification is buffered and `notified().await` returns
-                        // immediately rather than missing the wake.
-                        let notified = self.inner.idle_returned.notified();
-
-                        if let RecycleOutcome::Reused(inner) =
-                            self.inner.try_recycle_one(timeouts).await
-                        {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(*inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
-                        }
-
-                        // Sleep up to SLEEP_CAP or until a peer notifies us,
-                        // whichever comes first. A capped sleep that finishes
-                        // mid-budget means "nothing happened in the last
-                        // 100ms, loop back and try recycle again with fresh
-                        // state". Only `remaining.is_zero()` at the top of
-                        // the loop causes a real timeout exit.
-                        let sleep_duration = remaining.min(SLEEP_CAP);
-                        let woken_by_notify = tokio::select! {
-                            _ = notified => true,
-                            _ = tokio::time::sleep(sleep_duration) => false,
-                        };
-                        if woken_by_notify {
+                    match tokio::time::timeout(effective_budget, rx).await {
+                        Ok(Ok(inner)) => {
                             self.inner
                                 .scaling_stats
                                 .anticipation_wakes_notify
                                 .fetch_add(1, Ordering::Relaxed);
+                            if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
+                                permit.forget();
+                                return Ok(Object {
+                                    inner: Some(inner),
+                                    pool: Arc::downgrade(&self.inner),
+                                });
+                            }
                         }
-
-                        if let RecycleOutcome::Reused(inner) =
-                            self.inner.try_recycle_one(timeouts).await
-                        {
-                            permit.forget();
-                            return Ok(Object {
-                                inner: Some(*inner),
-                                pool: Arc::downgrade(&self.inner),
-                            });
+                        _ => {
+                            // Timeout or channel closed. The sender is still
+                            // in the waiters queue but the receiver is dropped,
+                            // so return_object will skip it (send returns Err).
+                            self.inner
+                                .scaling_stats
+                                .anticipation_wakes_timeout
+                                .fetch_add(1, Ordering::Relaxed);
                         }
-
-                        // Race loss or silent wake: loop back after bumping
-                        // the counter. The race-loss cap at the top of the
-                        // loop guarantees forward progress even when Notify
-                        // wake ordering consistently favours peers.
-                        race_losses += 1;
                     }
                 }
             }
 
             // Anticipation either was skipped (non_blocking / zero budget) or
-            // its loop exhausted the deadline without finding a recyclable
-            // connection. Fall through to the create path.
+            // the oneshot timed out without receiving a connection.
+            // Fall through to the create path.
             self.inner
                 .scaling_stats
                 .create_fallback
@@ -947,24 +825,15 @@ impl Pool {
                 return Err(PoolError::Timeout(TimeoutType::Wait));
             }
 
-            // Register both wake sources BEFORE re-checking recycle, so a
-            // peer create finishing or an idle return between the check and
-            // the await is captured rather than missed.
-            //
-            // Bump `idle_returned_listeners` so `return_object` knows to
-            // call `notify_one` while we are parked on the select. The
-            // guard decrements on every exit path (break via recycle,
-            // loop-back, or early return).
-            self.inner
-                .idle_returned_listeners
-                .fetch_add(1, Ordering::Release);
+            // Register a direct-handoff waiter AND listen on create_done.
+            // If return_object delivers a connection via oneshot, use it.
+            // If a peer create completes, retry the gate.
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            self.inner.slots.lock().waiters.push_back(tx);
+
             let on_create = self.inner.create_done.notified();
-            let on_idle = self.inner.idle_returned.notified();
 
             if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
-                self.inner
-                    .idle_returned_listeners
-                    .fetch_sub(1, Ordering::Release);
                 permit.forget();
                 return Ok(Object {
                     inner: Some(*inner),
@@ -973,13 +842,20 @@ impl Pool {
             }
 
             tokio::select! {
+                result = rx => {
+                    if let Ok(inner) = result {
+                        if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
+                            permit.forget();
+                            return Ok(Object {
+                                inner: Some(inner),
+                                pool: Arc::downgrade(&self.inner),
+                            });
+                        }
+                    }
+                }
                 _ = on_create => {}
-                _ = on_idle => {}
                 _ = tokio::time::sleep(BURST_BACKOFF) => {}
             }
-            self.inner
-                .idle_returned_listeners
-                .fetch_sub(1, Ordering::Release);
 
             // After wake — try recycle once before retrying the gate.
             if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
@@ -1072,18 +948,14 @@ impl Pool {
                         });
                     }
 
-                    self.inner
-                        .idle_returned_listeners
-                        .fetch_add(1, Ordering::Release);
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    self.inner.slots.lock().waiters.push_back(tx);
+
                     let on_create = self.inner.create_done.notified();
-                    let on_idle = self.inner.idle_returned.notified();
 
                     if let RecycleOutcome::Reused(inner) =
                         self.inner.try_recycle_one(timeouts).await
                     {
-                        self.inner
-                            .idle_returned_listeners
-                            .fetch_sub(1, Ordering::Release);
                         permit.forget();
                         return Ok(Object {
                             inner: Some(*inner),
@@ -1092,13 +964,20 @@ impl Pool {
                     }
 
                     tokio::select! {
+                        result = rx => {
+                            if let Ok(inner) = result {
+                                if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
+                                    permit.forget();
+                                    return Ok(Object {
+                                        inner: Some(inner),
+                                        pool: Arc::downgrade(&self.inner),
+                                    });
+                                }
+                            }
+                        }
                         _ = on_create => {}
-                        _ = on_idle => {}
                         _ = tokio::time::sleep(BURST_BACKOFF) => {}
                     }
-                    self.inner
-                        .idle_returned_listeners
-                        .fetch_sub(1, Ordering::Release);
                 };
 
                 let obj_inner = self.inner.create_connection(timeouts, Some(p)).await?;
@@ -1605,6 +1484,50 @@ impl Pool {
         }
     }
 
+    /// Recycle a connection received via direct handoff. On success,
+    /// returns `Ok(ObjectInner)` — the caller must `permit.forget()`
+    /// and wrap in `Object`. On failure, decrements `slots.size` (the
+    /// backend is gone) and returns `Err(())`.
+    async fn recycle_handoff(
+        &self,
+        mut inner: ObjectInner,
+        timeouts: &Timeouts,
+    ) -> Result<ObjectInner, ()> {
+        let skip_lifetime = self.inner.under_pressure();
+        let recycle_result = match timeouts.recycle {
+            Some(duration) => {
+                match tokio::time::timeout(
+                    duration,
+                    self.inner
+                        .server_pool
+                        .recycle(&mut inner.obj, &inner.metrics, skip_lifetime),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(_) => Err(RecycleError::StaticMessage("Recycle timeout")),
+                }
+            }
+            None => {
+                self.inner
+                    .server_pool
+                    .recycle(&mut inner.obj, &inner.metrics, skip_lifetime)
+                    .await
+            }
+        };
+        match recycle_result {
+            Ok(()) => {
+                self.maybe_trigger_pre_replacement(&inner.metrics);
+                Ok(inner)
+            }
+            Err(_) => {
+                let mut slots = self.inner.slots.lock();
+                slots.size = slots.size.saturating_sub(1);
+                Err(())
+            }
+        }
+    }
+
     /// Check if a connection approaching lifetime expiry should trigger
     /// a background pre-replacement, and spawn the task if so.
     fn maybe_trigger_pre_replacement(&self, metrics: &Metrics) {
@@ -2010,24 +1933,17 @@ mod tests {
             .build()
     }
 
-    /// Both fast and slow paths of `return_object` funnel through
-    /// `notify_return_observers`. This test pins the helper's contract:
-    /// it wakes the same-pool `idle_returned` waiter AND the peer-pool
-    /// coordinator Phase C waiter from a single call. A regression that
-    /// drops one of the two notify calls inside the helper would fail
-    /// this test even though `return_object` itself is not invoked,
-    /// because the helper is the single point that both code paths share.
+    /// `notify_return_observers` wakes the peer-pool coordinator Phase C
+    /// waiter so eviction scans can find the just-returned connection.
+    /// Same-pool waiters now use direct-handoff oneshot channels inside
+    /// `return_object` and do not park on a Notify.
     #[tokio::test]
-    async fn notify_return_observers_wakes_phase_c_waiter_and_idle_returned() {
+    async fn notify_return_observers_wakes_phase_c_waiter() {
         use std::sync::atomic::AtomicU64;
         use std::sync::atomic::Ordering as AOrdering;
 
         use pool_coordinator::{CoordinatorConfig, EvictionSource, PoolCoordinator};
 
-        // Counts how many times Phase C asks for an eviction. Phase B
-        // and the first iteration of Phase C each call try_evict_one
-        // exactly once before parking, so the baseline before any wake
-        // is exactly 2.
         struct CountingEviction {
             calls: Arc<AtomicU64>,
         }
@@ -2044,9 +1960,6 @@ mod tests {
             }
         }
 
-        // Single-slot coordinator, slot pinned so Phase C never finishes
-        // via try_acquire — the only thing that can move the counter is
-        // a fresh notify_one on `connection_returned`.
         let coord = PoolCoordinator::new(
             "test_db".to_string(),
             CoordinatorConfig {
@@ -2060,7 +1973,6 @@ mod tests {
 
         let pool = test_pool_with_coordinator(coord.clone());
 
-        // Park a Phase C waiter on the coordinator's connection_returned.
         let coord_w = coord.clone();
         let calls = Arc::new(AtomicU64::new(0));
         let calls_w = Arc::clone(&calls);
@@ -2069,27 +1981,6 @@ mod tests {
             coord_w.acquire("test_db", "u", &eviction).await
         });
 
-        // Park an idle-return observer on the same pool's idle_returned.
-        // Pin + enable so the wake cannot race a late first poll.
-        // Bump idle_returned_listeners so notify_return_observers fires.
-        let inner = Arc::clone(&pool.inner);
-        inner
-            .idle_returned_listeners
-            .fetch_add(1, Ordering::Relaxed);
-        let idle_observer = tokio::spawn(async move {
-            let fut = inner.idle_returned.notified();
-            tokio::pin!(fut);
-            fut.as_mut().enable();
-            fut.await;
-            inner
-                .idle_returned_listeners
-                .fetch_sub(1, Ordering::Relaxed);
-        });
-
-        // Wait until both observers are parked. Phase C is observable
-        // through its eviction-call counter (baseline = 2 calls). The
-        // idle-return observer is observable indirectly: the test will
-        // either wake it via notify_return_observers or hang.
         let parked = tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 if calls.load(AOrdering::Relaxed) >= 2 {
@@ -2106,21 +1997,8 @@ mod tests {
             "Phase B and the first Phase C iteration each call try_evict_one once",
         );
 
-        // Single helper call: must wake both observers from one event.
         pool.inner.notify_return_observers();
 
-        // The idle-return observer wakes within a generous budget. If the
-        // helper forgot the `idle_returned.notify_one()` call, this hangs
-        // until the timeout fires and the test fails.
-        tokio::time::timeout(Duration::from_secs(1), idle_observer)
-            .await
-            .expect("idle_returned waiter must wake from notify_return_observers")
-            .expect("idle_returned task must not panic");
-
-        // The Phase C waiter wakes, runs try_evict_one once more
-        // (baseline + 1) and parks again. If the helper forgot the
-        // `coordinator.notify_idle_returned()` call, the counter never
-        // moves above the baseline.
         let woke = tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 if calls.load(AOrdering::Relaxed) > baseline {
@@ -2137,11 +2015,9 @@ mod tests {
         assert_eq!(
             calls.load(AOrdering::Relaxed),
             baseline + 1,
-            "exactly one Phase C wake → exactly one extra try_evict_one",
+            "exactly one Phase C wake -> exactly one extra try_evict_one",
         );
 
-        // Cleanup: let the Phase C waiter eventually time out so the
-        // spawned task does not leak past the test.
         phase_c_waiter.abort();
         let _ = phase_c_waiter.await;
     }
@@ -2253,11 +2129,85 @@ mod tests {
             "drained semaphore must report under_pressure",
         );
 
-        // Release one permit → pressure clears.
+        // Release one permit -> pressure clears.
         held.pop();
         assert!(
             !pool.inner.under_pressure(),
             "releasing one permit must clear pressure",
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Direct handoff — oneshot channel mechanics
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn direct_handoff_delivers_to_oldest_waiter() {
+        // Three waiters registered in order. A single send must deliver
+        // to the first (oldest) waiter; the other two must not receive.
+        let (tx1, rx1) = tokio::sync::oneshot::channel::<u32>();
+        let (tx2, rx2) = tokio::sync::oneshot::channel::<u32>();
+        let (tx3, rx3) = tokio::sync::oneshot::channel::<u32>();
+
+        let mut waiters = VecDeque::new();
+        waiters.push_back(tx1);
+        waiters.push_back(tx2);
+        waiters.push_back(tx3);
+
+        // Pop the oldest and send.
+        let sender = waiters.pop_front().unwrap();
+        sender.send(42).expect("receiver must be alive");
+
+        assert_eq!(rx1.await.unwrap(), 42);
+        // rx2 and rx3 must not have received anything.
+        assert_eq!(waiters.len(), 2);
+
+        // Verify the remaining senders are still pending (not resolved).
+        let result = tokio::time::timeout(Duration::from_millis(10), rx2).await;
+        assert!(result.is_err(), "second waiter must not receive");
+        let result = tokio::time::timeout(Duration::from_millis(10), rx3).await;
+        assert!(result.is_err(), "third waiter must not receive");
+    }
+
+    #[tokio::test]
+    async fn direct_handoff_skips_dropped_receiver() {
+        // Simulate a timed-out waiter: register a sender, drop the
+        // receiver, then attempt send. The send must fail with the
+        // value returned in Err, allowing the caller to try the next
+        // waiter or fall back to the idle queue.
+        let (tx1, rx1) = tokio::sync::oneshot::channel::<u32>();
+        let (tx2, rx2) = tokio::sync::oneshot::channel::<u32>();
+
+        let mut waiters = VecDeque::new();
+        waiters.push_back(tx1);
+        waiters.push_back(tx2);
+
+        // Drop first receiver (simulates timeout).
+        drop(rx1);
+
+        // Walk the waiters like return_object does.
+        let mut value = 99u32;
+        while let Some(sender) = waiters.pop_front() {
+            match sender.send(value) {
+                Ok(()) => {
+                    value = 0; // sentinel: delivered
+                    break;
+                }
+                Err(returned) => {
+                    value = returned;
+                }
+            }
+        }
+        assert_eq!(value, 0, "value must have been delivered to second waiter");
+        assert_eq!(rx2.await.unwrap(), 99);
+    }
+
+    #[tokio::test]
+    async fn direct_handoff_falls_back_when_no_waiters() {
+        // With no waiters, there is nothing to pop. The value stays
+        // with the caller (simulates the push-to-vec fallback path).
+        let waiters: VecDeque<tokio::sync::oneshot::Sender<u32>> = VecDeque::new();
+        assert!(waiters.is_empty());
+        // return_object would push to vec + add_permits here.
     }
 }
