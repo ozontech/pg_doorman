@@ -3,7 +3,7 @@ use std::{
     fmt,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Weak,
     },
     time::Duration,
@@ -141,6 +141,11 @@ pub(crate) struct ScalingStats {
     /// and deferred its work to the next retain cycle. Persistent non-zero
     /// values indicate `min_pool_size` cannot be sustained under current load.
     pub(crate) replenish_deferred: AtomicU64,
+    /// Number of pre-replacement connections created ahead of lifetime expiry.
+    pub(crate) pre_replacements_triggered: AtomicU64,
+    /// Number of pre-replacement attempts skipped (coordinator full, pressure,
+    /// pool not tight, or another pre-replacement already in flight).
+    pub(crate) pre_replacements_skipped: AtomicU64,
 }
 
 /// Snapshot of per-pool scaling counters, returned to admin/prometheus exporters.
@@ -154,6 +159,8 @@ pub struct ScalingStatsSnapshot {
     pub replenish_deferred: u64,
     /// Current `inflight_creates` value (gauge, not a counter).
     pub inflight_creates: usize,
+    pub pre_replacements_triggered: u64,
+    pub pre_replacements_skipped: u64,
 }
 
 /// Internal pool state.
@@ -195,6 +202,10 @@ struct PoolInner {
     /// Counters exposed via SHOW POOLS and Prometheus for tuning the
     /// anticipation + bounded burst path.
     scaling_stats: ScalingStats,
+    /// Guards concurrent pre-replacement: at most one background create
+    /// per pool at a time. Set to `true` when a pre-replacement task is
+    /// spawned, cleared when it finishes (success or failure).
+    pre_replacement_active: AtomicBool,
 }
 
 enum RecycleOutcome {
@@ -203,7 +214,138 @@ enum RecycleOutcome {
     Empty,
 }
 
+/// Minimum `server_lifetime` for pre-replacement to be worthwhile.
+/// With shorter lifetimes the overlap window is too narrow for the
+/// replacement to be ready in time.
+const PRE_REPLACE_MIN_LIFETIME_MS: u64 = 60_000;
+
+/// Pre-replacement threshold as a percentage of `metrics.lifetime_ms`.
+/// At 95% of a 5-minute lifetime the overlap window is ~15 seconds —
+/// 15 000x the ~1 ms Unix-socket connect time. For TCP deployments this
+/// can be lowered to 85%.
+const PRE_REPLACE_THRESHOLD_PCT: u64 = 95;
+
 impl PoolInner {
+    /// Background pre-replacement: create one connection ahead of lifetime
+    /// expiry so the next checkout finds a warm replacement in the idle
+    /// queue instead of paying for a fresh create.
+    ///
+    /// Called via `tokio::spawn` from `Pool::trigger_pre_replacement`.
+    /// On success the pool temporarily holds `max_size + 1` connections
+    /// until the old one dies during the next recycle.
+    async fn pre_replace_one(&self) {
+        // Coordinator permit — non-blocking, with headroom guard.
+        let coordinator_permit = if let Some(ref coord) = self.coordinator {
+            // Keep at least 2 permits free so a peer pool can still create
+            // without being forced onto the slow eviction/reserve path.
+            if coord.available_main_permits() < 2 {
+                log::debug!(
+                    "[{}@{}] pre-replace: skipped — coordinator headroom < 2",
+                    self.username,
+                    self.pool_name,
+                );
+                self.scaling_stats
+                    .pre_replacements_skipped
+                    .fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            match coord.try_acquire() {
+                Some(p) => Some(p),
+                None => {
+                    log::debug!(
+                        "[{}@{}] pre-replace: skipped — coordinator full",
+                        self.username,
+                        self.pool_name,
+                    );
+                    self.scaling_stats
+                        .pre_replacements_skipped
+                        .fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        // Burst gate — non-blocking, like replenish.
+        let max_parallel = self.config.scaling.max_parallel_creates as usize;
+        if !try_take_burst_slot(&self.inflight_creates, max_parallel) {
+            log::debug!(
+                "[{}@{}] pre-replace: skipped — burst gate full",
+                self.username,
+                self.pool_name,
+            );
+            self.scaling_stats
+                .pre_replacements_skipped
+                .fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        self.scaling_stats
+            .creates_started
+            .fetch_add(1, Ordering::Relaxed);
+        let _gate = scopeguard::guard((), |_| {
+            self.inflight_creates.fetch_sub(1, Ordering::Release);
+            self.create_done.notify_one();
+        });
+
+        // Create the replacement connection.
+        let obj = match self.server_pool.create().await {
+            Ok(obj) => obj,
+            Err(e) => {
+                log::debug!(
+                    "[{}@{}] pre-replace: create failed — {}",
+                    self.username,
+                    self.pool_name,
+                    e,
+                );
+                self.scaling_stats
+                    .pre_replacements_skipped
+                    .fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        };
+
+        let lifetime_ms = self.server_pool.lifetime_ms();
+        let idle_timeout_ms = self.server_pool.idle_timeout_ms();
+        let epoch = self.server_pool.current_epoch();
+        let inner = ObjectInner {
+            obj,
+            metrics: Metrics::new(lifetime_ms, idle_timeout_ms, epoch),
+            coordinator_permit,
+        };
+
+        // Push to idle queue. Temporarily exceeds max_size by 1; returns
+        // to max_size when the old connection fails recycle.
+        {
+            let mut slots = self.slots.lock();
+            slots.size += 1;
+            match self.config.queue_mode {
+                QueueMode::Fifo => slots.vec.push_back(inner),
+                QueueMode::Lifo => slots.vec.push_front(inner),
+            }
+        }
+
+        // Add a semaphore permit so a client can reach the pre-created
+        // connection through the normal checkout path. The extra permit
+        // is consumed when the old connection fails recycle: the caller
+        // holds it and retries try_recycle_one which finds the replacement.
+        self.semaphore.add_permits(1);
+
+        // Wake anticipation/burst-gate waiters if any.
+        if self.idle_returned_listeners.load(Ordering::Acquire) > 0 {
+            self.idle_returned.notify_one();
+        }
+
+        self.scaling_stats
+            .pre_replacements_triggered
+            .fetch_add(1, Ordering::Relaxed);
+        log::info!(
+            "[{}@{}] pre-replace: replacement connection created ahead of lifetime expiry",
+            self.username,
+            self.pool_name,
+        );
+    }
+
     /// Create a new backend connection via `server_pool.create()`, respecting
     /// the caller's `create` timeout. On success, increments `slots.size` and
     /// returns the `ObjectInner` ready for wrapping into an `Object`.
@@ -411,6 +553,7 @@ impl Pool {
                 inflight_creates: AtomicUsize::new(0),
                 create_done: Notify::new(),
                 scaling_stats: ScalingStats::default(),
+                pre_replacement_active: AtomicBool::new(false),
             }),
         }
     }
@@ -495,6 +638,11 @@ impl Pool {
 
         // Hot path: try to get an existing connection
         if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
+            // If this connection is approaching lifetime expiry, spawn a
+            // background task to create a replacement so the NEXT checkout
+            // finds a warm connection in the idle queue instead of paying
+            // for a fresh create after recycle rejects the expired one.
+            self.maybe_trigger_pre_replacement(&inner.metrics);
             permit.forget();
             return Ok(Object {
                 inner: Some(*inner),
@@ -1446,7 +1594,63 @@ impl Pool {
             create_fallback: s.create_fallback.load(Ordering::Relaxed),
             replenish_deferred: s.replenish_deferred.load(Ordering::Relaxed),
             inflight_creates: self.inner.inflight_creates.load(Ordering::Relaxed),
+            pre_replacements_triggered: s.pre_replacements_triggered.load(Ordering::Relaxed),
+            pre_replacements_skipped: s.pre_replacements_skipped.load(Ordering::Relaxed),
         }
+    }
+
+    /// Check if a connection approaching lifetime expiry should trigger
+    /// a background pre-replacement, and spawn the task if so.
+    fn maybe_trigger_pre_replacement(&self, metrics: &Metrics) {
+        // Quick checks that don't need a lock.
+        if metrics.lifetime_ms < PRE_REPLACE_MIN_LIFETIME_MS {
+            return;
+        }
+        let age_ms = metrics.age().as_millis() as u64;
+        let threshold = metrics.lifetime_ms * PRE_REPLACE_THRESHOLD_PCT / 100;
+        if age_ms < threshold || age_ms >= metrics.lifetime_ms {
+            return;
+        }
+        if self.inner.under_pressure() {
+            return;
+        }
+        if self.inner.server_pool.is_paused() {
+            return;
+        }
+
+        // Pool tightness + overshoot check under lock.
+        {
+            let slots = self.inner.slots.lock();
+            if slots.size > slots.max_size {
+                return; // already have a pre-replacement overshoot
+            }
+            // Idle ratio: only pre-replace when < 25% of connections are idle.
+            // If the pool has plenty of idle connections it can absorb the
+            // loss of one to lifetime expiry without a spike.
+            let idle_pct = if slots.size > 0 {
+                slots.vec.len() * 100 / slots.size
+            } else {
+                100
+            };
+            if idle_pct >= 25 {
+                return;
+            }
+        }
+
+        // One at a time per pool.
+        if self
+            .inner
+            .pre_replacement_active
+            .swap(true, Ordering::AcqRel)
+        {
+            return; // another pre-replacement already in flight
+        }
+
+        let inner = Arc::clone(&self.inner);
+        tokio::spawn(async move {
+            inner.pre_replace_one().await;
+            inner.pre_replacement_active.store(false, Ordering::Release);
+        });
     }
 }
 
