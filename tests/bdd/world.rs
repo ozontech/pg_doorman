@@ -76,6 +76,8 @@ pub struct DoormanWorld {
     pub session_messages: HashMap<String, Vec<(char, Vec<u8>)>>,
     /// Benchmark results: target name -> tps (transactions per second)
     pub bench_results: HashMap<String, f64>,
+    /// Benchmark latency percentiles: target name -> (p50, p95, p99) in milliseconds
+    pub bench_latency: HashMap<String, crate::pgbench_helper::LatencyPercentiles>,
     /// Temporary pgbench script file (created once, reused for all benchmarks)
     pub pgbench_script_file: Option<NamedTempFile>,
     /// Flag indicating if this is a benchmark scenario (affects log level)

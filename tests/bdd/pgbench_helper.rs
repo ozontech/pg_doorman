@@ -5,9 +5,93 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use tempfile::TempDir;
 
 /// Default timeout for pgbench commands (60 seconds)
 const PGBENCH_TIMEOUT_SECS: u64 = 60;
+
+/// Latency percentiles (p50, p95, p99) in milliseconds
+#[derive(Debug, Clone)]
+pub struct LatencyPercentiles {
+    pub p50: f64,
+    pub p95: f64,
+    pub p99: f64,
+}
+
+/// Status of a pgbench execution
+enum PgbenchStatus {
+    Success,
+    Failed,
+    TimedOut,
+    SpawnError,
+}
+
+/// Result from a pgbench run, carrying output text and log directory for latency computation
+struct PgbenchResult {
+    /// Combined stdout+stderr output
+    output: String,
+    /// Execution status
+    status: PgbenchStatus,
+    /// Temp directory containing --log files (auto-cleaned on drop)
+    log_dir: Option<TempDir>,
+}
+
+/// Compute a specific percentile index for a given collection size.
+/// Uses nearest-rank method: index = ceil(n * p) - 1, clamped to valid range.
+fn percentile_index(n: usize, p: f64) -> usize {
+    ((n as f64 * p).ceil() as usize)
+        .saturating_sub(1)
+        .min(n - 1)
+}
+
+/// Parse pgbench --log files and compute latency percentiles (p50, p95, p99) in milliseconds.
+/// pgbench log format (PG14): client_id transaction_no time_us script_no epoch epoch_us
+/// Column 2 (0-indexed) = transaction latency in microseconds.
+fn compute_latency_percentiles(log_dir: &std::path::Path) -> Option<LatencyPercentiles> {
+    let mut latencies_us: Vec<f64> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(log_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.starts_with("pgbench_log") {
+                continue;
+            }
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                for line in contents.lines() {
+                    if let Some(Ok(latency)) =
+                        line.split_whitespace().nth(2).map(|s| s.parse::<f64>())
+                    {
+                        latencies_us.push(latency);
+                    }
+                }
+            }
+        }
+    }
+
+    if latencies_us.is_empty() {
+        return None;
+    }
+
+    let n = latencies_us.len();
+
+    // Sort once — needed for multiple percentiles.
+    // For 3 percentiles, full sort is simpler and not much slower than 3x select_nth.
+    latencies_us.sort_unstable_by(f64::total_cmp);
+
+    let p50_us = latencies_us[percentile_index(n, 0.50)];
+    let p95_us = latencies_us[percentile_index(n, 0.95)];
+    let p99_us = latencies_us[percentile_index(n, 0.99)];
+
+    Some(LatencyPercentiles {
+        p50: p50_us / 1000.0,
+        p95: p95_us / 1000.0,
+        p99: p99_us / 1000.0,
+    })
+}
 
 /// Create a pgbench script file once at the beginning of the scenario
 /// The file will be reused for all pgbench runs via ${PGBENCH_FILE} placeholder
@@ -27,8 +111,9 @@ pub async fn create_pgbench_script_file(world: &mut DoormanWorld, step: &Step) {
     world.pgbench_script_file = Some(script_file);
 }
 
-/// Run pgbench command and return stdout/stderr
-fn run_pgbench(command: &str, target: &str, timeout: Duration) -> Result<String, String> {
+/// Run pgbench command, injecting --log flags for latency collection.
+/// Returns PgbenchResult with output text, status, and temp log directory.
+fn run_pgbench(command: &str, target: &str, timeout: Duration) -> PgbenchResult {
     let shell = if cfg!(target_os = "windows") {
         "cmd"
     } else {
@@ -40,8 +125,21 @@ fn run_pgbench(command: &str, target: &str, timeout: Duration) -> Result<String,
         "-c"
     };
 
+    // Create temp directory for pgbench log files
+    let log_dir = TempDir::new().ok();
+    let command = if let Some(ref dir) = log_dir {
+        let prefix = format!("{}/pgbench_log", dir.path().display());
+        command.replacen(
+            "pgbench ",
+            &format!("pgbench -l --log-prefix={} ", prefix),
+            1,
+        )
+    } else {
+        command.to_string()
+    };
+
     let mut cmd = Command::new(shell);
-    cmd.arg(shell_arg).arg(command);
+    cmd.arg(shell_arg).arg(&command);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -67,7 +165,6 @@ fn run_pgbench(command: &str, target: &str, timeout: Duration) -> Result<String,
                     let reader = BufReader::new(stdout);
                     let mut collected = String::new();
                     for line in reader.lines().map_while(Result::ok) {
-                        // Always print pgbench output to stderr (bench tests should show progress)
                         eprintln!("[{} stdout] {}", target_stdout, line);
                         collected.push_str(&line);
                         collected.push('\n');
@@ -82,7 +179,6 @@ fn run_pgbench(command: &str, target: &str, timeout: Duration) -> Result<String,
                     let reader = BufReader::new(stderr);
                     let mut collected = String::new();
                     for line in reader.lines().map_while(Result::ok) {
-                        // Always print pgbench output to stderr (bench tests should show progress)
                         eprintln!("[{} stderr] {}", target_stderr, line);
                         collected.push_str(&line);
                         collected.push('\n');
@@ -103,32 +199,35 @@ fn run_pgbench(command: &str, target: &str, timeout: Duration) -> Result<String,
                             let _ = t.join();
                         }
 
-                        // Collect output from channels
                         let stdout = stdout_rx.recv().unwrap_or_default();
                         let stderr = stderr_rx.recv().unwrap_or_default();
 
                         return if status.success() {
-                            // Combine stdout and stderr for parsing
-                            Ok(format!("{}\n{}", stdout, stderr))
+                            PgbenchResult {
+                                output: format!("{}\n{}", stdout, stderr),
+                                status: PgbenchStatus::Success,
+                                log_dir,
+                            }
                         } else {
-                            Err(format!(
-                                "pgbench failed with exit code {:?}\nstdout:\n{}\nstderr:\n{}",
-                                status.code(),
-                                stdout,
-                                stderr
-                            ))
+                            PgbenchResult {
+                                output: format!(
+                                    "pgbench failed with exit code {:?}\nstdout:\n{}\nstderr:\n{}",
+                                    status.code(),
+                                    stdout,
+                                    stderr
+                                ),
+                                status: PgbenchStatus::Failed,
+                                log_dir,
+                            }
                         };
                     }
                     Ok(None) => {
                         let elapsed = start.elapsed();
 
-                        // Check timeout
                         if elapsed > timeout {
-                            // Timeout reached, kill the process
                             let _ = child.kill();
                             let _ = child.wait();
 
-                            // Wait for output threads
                             if let Some(t) = stdout_thread {
                                 let _ = t.join();
                             }
@@ -139,23 +238,34 @@ fn run_pgbench(command: &str, target: &str, timeout: Duration) -> Result<String,
                             let stdout = stdout_rx.recv().unwrap_or_default();
                             let stderr = stderr_rx.recv().unwrap_or_default();
 
-                            return Err(format!(
-                                "pgbench timed out after {} seconds\nstdout:\n{}\nstderr:\n{}",
-                                timeout.as_secs(),
-                                stdout,
-                                stderr
-                            ));
+                            return PgbenchResult {
+                                output: format!(
+                                    "pgbench timed out after {} seconds\nstdout:\n{}\nstderr:\n{}",
+                                    timeout.as_secs(),
+                                    stdout,
+                                    stderr
+                                ),
+                                status: PgbenchStatus::TimedOut,
+                                log_dir,
+                            };
                         }
-                        // Sleep a bit before checking again
                         std::thread::sleep(Duration::from_millis(100));
                     }
                     Err(e) => {
-                        return Err(format!("Error waiting for pgbench: {}", e));
+                        return PgbenchResult {
+                            output: format!("Error waiting for pgbench: {}", e),
+                            status: PgbenchStatus::SpawnError,
+                            log_dir,
+                        };
                     }
                 }
             }
         }
-        Err(e) => Err(format!("Failed to execute pgbench: {}", e)),
+        Err(e) => PgbenchResult {
+            output: format!("Failed to execute pgbench: {}", e),
+            status: PgbenchStatus::SpawnError,
+            log_dir,
+        },
     }
 }
 
@@ -216,50 +326,78 @@ fn parse_progress_tps(output: &str) -> Option<f64> {
     }
 }
 
-/// Handle pgbench result: parse TPS from Ok/Err output and store in bench_results
+/// Handle pgbench result: parse TPS, compute latency percentiles, store both
 fn handle_pgbench_result(
-    result: Result<String, String>,
+    result: PgbenchResult,
     target: &str,
     bench_results: &mut HashMap<String, f64>,
+    bench_latency: &mut HashMap<String, LatencyPercentiles>,
 ) {
-    match result {
-        Ok(output) => {
-            if let Some(tps) = parse_tps(&output) {
+    // Compute latency percentiles from log files (before log_dir drops)
+    let percentiles = result
+        .log_dir
+        .as_ref()
+        .and_then(|dir| compute_latency_percentiles(dir.path()));
+
+    match result.status {
+        PgbenchStatus::Success => {
+            if let Some(tps) = parse_tps(&result.output) {
                 eprintln!("\x1b[1;32m✓ TPS for {}: {:.2}\x1b[0m", target, tps);
                 bench_results.insert(target.to_string(), tps);
             } else {
                 panic!(
                     "Failed to parse TPS from pgbench output for {}:\n{}",
-                    target, output
+                    target, result.output
                 );
             }
         }
-        Err(e) => {
-            if e.contains("prepared statement") && e.contains("does not exist") {
+        PgbenchStatus::Failed => {
+            if result.output.contains("prepared statement")
+                && result.output.contains("does not exist")
+            {
                 eprintln!(
                     "\x1b[1;33m⚠ TPS for {}: 0.00 (prepared statements not supported)\x1b[0m",
                     target
                 );
                 bench_results.insert(target.to_string(), 0.0);
-            } else if e.contains("timed out") {
-                if let Some(tps) = parse_tps(&e).or_else(|| parse_progress_tps(&e)) {
-                    eprintln!(
-                        "\x1b[1;33m⚠ TPS for {} (from progress, timed out): {:.2}\x1b[0m",
-                        target, tps
-                    );
-                    bench_results.insert(target.to_string(), tps);
-                } else {
-                    eprintln!(
-                        "\x1b[1;31m✗ TPS for {}: 0.00 (timed out, no progress data)\x1b[0m",
-                        target
-                    );
-                    bench_results.insert(target.to_string(), 0.0);
-                }
             } else {
-                panic!("pgbench failed for {}: {}", target, e);
+                panic!("pgbench failed for {}: {}", target, result.output);
             }
         }
+        PgbenchStatus::TimedOut => {
+            if let Some(tps) =
+                parse_tps(&result.output).or_else(|| parse_progress_tps(&result.output))
+            {
+                eprintln!(
+                    "\x1b[1;33m⚠ TPS for {} (from progress, timed out): {:.2}\x1b[0m",
+                    target, tps
+                );
+                bench_results.insert(target.to_string(), tps);
+            } else {
+                eprintln!(
+                    "\x1b[1;31m✗ TPS for {}: 0.00 (timed out, no progress data)\x1b[0m",
+                    target
+                );
+                bench_results.insert(target.to_string(), 0.0);
+            }
+        }
+        PgbenchStatus::SpawnError => {
+            panic!(
+                "Failed to execute pgbench for {}: {}",
+                target, result.output
+            );
+        }
     }
+
+    // Store latency percentiles if computed
+    if let Some(p) = percentiles {
+        eprintln!(
+            "\x1b[1;36m  latency for {}: p50={:.2} ms, p95={:.2} ms, p99={:.2} ms\x1b[0m",
+            target, p.p50, p.p95, p.p99
+        );
+        bench_latency.insert(target.to_string(), p);
+    }
+    // result.log_dir drops here, cleaning up temp files
 }
 
 /// Run pgbench and store result for a target
@@ -276,7 +414,12 @@ pub async fn run_pgbench_for_target(world: &mut DoormanWorld, target: String, st
     eprintln!("Running pgbench for {}: {}", target, command);
 
     let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
-    handle_pgbench_result(result, &target, &mut world.bench_results);
+    handle_pgbench_result(
+        result,
+        &target,
+        &mut world.bench_results,
+        &mut world.bench_latency,
+    );
 }
 
 /// Run pgbench with inline command (single line)
@@ -300,7 +443,12 @@ pub async fn run_pgbench_for_target_inline(
     eprintln!("Running pgbench for {}: {}", target, command);
 
     let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
-    handle_pgbench_result(result, &target, &mut world.bench_results);
+    handle_pgbench_result(
+        result,
+        &target,
+        &mut world.bench_results,
+        &mut world.bench_latency,
+    );
 }
 
 /// Run pgbench with inline command and explicit environment variables
@@ -325,7 +473,12 @@ pub async fn run_pgbench_for_target_with_env(
     eprintln!("Running pgbench for {}: {}", target, command);
 
     let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
-    handle_pgbench_result(result, &target, &mut world.bench_results);
+    handle_pgbench_result(
+        result,
+        &target,
+        &mut world.bench_results,
+        &mut world.bench_latency,
+    );
 }
 
 /// Run pgbench with a script file (script content in docstring, options inline)
@@ -367,7 +520,12 @@ pub async fn run_pgbench_with_script(
     eprintln!("Script content:\n{}", script_content);
 
     let result = run_pgbench(&command, &target, Duration::from_secs(PGBENCH_TIMEOUT_SECS));
-    handle_pgbench_result(result, &target, &mut world.bench_results);
+    handle_pgbench_result(
+        result,
+        &target,
+        &mut world.bench_results,
+        &mut world.bench_latency,
+    );
 }
 
 /// Extract environment variable prefix from options string
@@ -430,6 +588,17 @@ pub async fn print_benchmark_results(world: &mut DoormanWorld) {
         for (target, tps) in &world.bench_results {
             if target.ends_with(&format!("_{}", client_count)) && !target.starts_with("postgresql_")
             {
+                let latency_info = world
+                    .bench_latency
+                    .get(target)
+                    .map(|p| {
+                        format!(
+                            " | p50={:.2}ms p95={:.2}ms p99={:.2}ms",
+                            p.p50, p.p95, p.p99
+                        )
+                    })
+                    .unwrap_or_default();
+
                 if let Some(baseline) = baseline_tps {
                     if baseline > 0.0 {
                         let normalized = tps / baseline;
@@ -437,12 +606,12 @@ pub async fn print_benchmark_results(world: &mut DoormanWorld) {
                             .strip_suffix(&format!("_{}", client_count))
                             .unwrap_or(target);
                         eprintln!(
-                            "  {}: {:.2} tps (normalized: {:.4}x)",
-                            pooler_name, tps, normalized
+                            "  {}: {:.2} tps (normalized: {:.4}x){}",
+                            pooler_name, tps, normalized, latency_info
                         );
                     }
                 } else {
-                    eprintln!("  {}: {:.2} tps", target, tps);
+                    eprintln!("  {}: {:.2} tps{}", target, tps, latency_info);
                 }
             }
         }
@@ -587,6 +756,46 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
     let extended_table = generate_table(&extended_configs, &world.bench_results);
     let prepared_table = generate_table(&prepared_configs, &world.bench_results);
 
+    // Helper to generate latency percentile table.
+    // Each cell shows "p50 / p95 / p99" in ms — compact enough for 4 columns.
+    let generate_latency_table =
+        |configs: &[(&str, &str)],
+         latency: &std::collections::HashMap<String, LatencyPercentiles>|
+         -> Vec<String> {
+            let mut rows = Vec::new();
+            rows.push("| Test | pg_doorman (ms) | pgbouncer (ms) | odyssey (ms) |".to_string());
+            rows.push("|------|----------------|----------------|--------------|".to_string());
+
+            let fmt = |key: &str| -> String {
+                match latency.get(key) {
+                    Some(p) => format!("{:.2} / {:.2} / {:.2}", p.p50, p.p95, p.p99),
+                    None => "-".to_string(),
+                }
+            };
+
+            for (suffix, display_name) in configs {
+                let doorman_key = format!("pg_doorman_{}", suffix);
+                if !latency.contains_key(&doorman_key) {
+                    continue;
+                }
+                let pgbouncer_key = format!("pgbouncer_{}", suffix);
+                let odyssey_key = format!("odyssey_{}", suffix);
+
+                rows.push(format!(
+                    "| {} | {} | {} | {} |",
+                    display_name,
+                    fmt(&doorman_key),
+                    fmt(&pgbouncer_key),
+                    fmt(&odyssey_key)
+                ));
+            }
+            rows
+        };
+
+    let simple_latency = generate_latency_table(&simple_configs, &world.bench_latency);
+    let extended_latency = generate_latency_table(&extended_configs, &world.bench_latency);
+    let prepared_latency = generate_latency_table(&prepared_configs, &world.bench_latency);
+
     // Environment and parameter info
     let fargate_cpu = std::env::var("FARGATE_CPU").ok().filter(|s| !s.is_empty());
     let fargate_memory = std::env::var("FARGATE_MEMORY")
@@ -654,34 +863,37 @@ pub async fn generate_benchmark_markdown_table(world: &mut DoormanWorld) {
 
     // Generate the full markdown content
     let now = chrono::Utc::now();
-    let markdown_content = format!(
+    let header = format!(
         r#"---
 title: Benchmarks
 ---
 
-# Performance Benchmarks
+# Benchmarks
 
-## Automated Benchmark Results
+pg_doorman vs pgbouncer vs odyssey. Each test runs `pgbench` for 30 seconds through a 40-connection pool.
 
 Last updated: {}
 
-These benchmarks are automatically generated by the CI pipeline using `pgbench`.
+### Environment
 
-### Test Environment
-
-- **Pool size**: 40 connections
-- **Test duration**: 30 seconds per test
 {}
 {}
 
-### Legend
+### Reading the tables
 
-- **+N%**: pg_doorman is N% faster than competitor (e.g., +10% means pg_doorman is 10% faster)
-- **-N%**: pg_doorman is N% slower than competitor (e.g., -10% means pg_doorman is 10% slower)
-- **≈0%**: Equal performance (difference less than 3%)
-- **∞**: Competitor failed (0 TPS), pg_doorman wins
-- **N/A**: Test not supported by this pooler
-- **-**: Test not executed
+**Throughput** — pg_doorman TPS relative to each competitor:
+
+| Value | Meaning |
+|-------|---------|
+| +N% | Faster by N% |
+| -N% | Slower by N% |
+| ≈0% | Within 3% |
+| xN | N times faster or slower |
+| ∞ | Competitor got 0 TPS |
+| N/A | Unsupported |
+| - | Not tested |
+
+**Latency** — per-transaction latency in ms. Each cell: `p50 / p95 / p99`. Lower is better.
 "#,
         now.format("%Y-%m-%d %H:%M UTC"),
         env_info.join("\n"),
@@ -690,11 +902,30 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
 
     // Combine sections
     let full_markdown = format!(
-        "{}\n---\n\n## Simple Protocol\n\n{}\n\n---\n\n## Extended Protocol\n\n{}\n\n---\n\n## Prepared Protocol\n\n{}\n\n---\n\n### Notes\n\n- Odyssey has poor support for extended query protocol in transaction pooling mode, resulting in significantly lower performance compared to pg_doorman and pgbouncer\n- **Important**: The values shown are **relative performance ratios**, not absolute TPS numbers. While absolute TPS values may vary depending on hardware and system load, the relative ratios between poolers should remain consistent when tests are run sequentially in a short timeframe (30 seconds each). This allows for fair comparison across different connection poolers under identical conditions\n",
-        markdown_content,
+        "{}\n---\n\n\
+         ## Simple protocol\n\n\
+         ### Throughput\n\n{}\n\n\
+         ### Latency — p50 / p95 / p99 (ms)\n\n{}\n\n\
+         ---\n\n\
+         ## Extended protocol\n\n\
+         ### Throughput\n\n{}\n\n\
+         ### Latency — p50 / p95 / p99 (ms)\n\n{}\n\n\
+         ---\n\n\
+         ## Prepared protocol\n\n\
+         ### Throughput\n\n{}\n\n\
+         ### Latency — p50 / p95 / p99 (ms)\n\n{}\n\n\
+         ---\n\n\
+         ### Notes\n\n\
+         - Odyssey performs poorly with extended query protocol in transaction pooling mode\n\
+         - Throughput values are relative ratios — comparable across runs on identical hardware\n\
+         - Latency values are absolute, measured per-transaction\n",
+        header,
         simple_table.join("\n"),
+        simple_latency.join("\n"),
         extended_table.join("\n"),
-        prepared_table.join("\n")
+        extended_latency.join("\n"),
+        prepared_table.join("\n"),
+        prepared_latency.join("\n")
     );
 
     // Write to file
@@ -705,7 +936,7 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
                 "\x1b[1;32m✓ Benchmark table written to {}\x1b[0m",
                 file_path
             );
-            eprintln!("\n{}", markdown_content);
+            eprintln!("\n{}", header);
         }
         Err(e) => {
             eprintln!(
@@ -717,7 +948,10 @@ These benchmarks are automatically generated by the CI pipeline using `pgbench`.
 }
 
 #[cfg(test)]
+#[allow(unused)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_parse_tps() {
         let output1 = r#"
@@ -742,5 +976,104 @@ tps = 1234.567890 (without initial connection time)
 
         let output4 = "tps = 0.0 (without initial connection time)";
         assert_eq!(parse_tps(output4), Some(0.0));
+    }
+
+    #[test]
+    fn test_compute_latency_percentiles_100_values() {
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("pgbench_log.12345");
+
+        // 100 transactions: latencies 1000, 2000, ..., 100000 microseconds
+        let mut content = String::new();
+        for i in 1..=100 {
+            // client_id  transaction_no  time_us  script_no  epoch  epoch_us
+            content.push_str(&format!("0 {} {} 0 0 0\n", i, i * 1000));
+        }
+        std::fs::write(&log_path, &content).unwrap();
+
+        let p = compute_latency_percentiles(dir.path()).unwrap();
+        assert!((p.p50 - 50.0).abs() < 0.01);
+        assert!((p.p95 - 95.0).abs() < 0.01);
+        assert!((p.p99 - 99.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_compute_latency_percentiles_empty_log() {
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("pgbench_log.12345");
+        std::fs::write(&log_path, "").unwrap();
+
+        assert!(compute_latency_percentiles(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_compute_latency_percentiles_no_files() {
+        let dir = TempDir::new().unwrap();
+        assert!(compute_latency_percentiles(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_compute_latency_percentiles_multiple_thread_files() {
+        let dir = TempDir::new().unwrap();
+
+        // Thread 0: latencies 1000..50000
+        let mut content1 = String::new();
+        for i in 1..=50 {
+            content1.push_str(&format!("0 {} {} 0 0 0\n", i, i * 1000));
+        }
+        std::fs::write(dir.path().join("pgbench_log.123.0"), &content1).unwrap();
+
+        // Thread 1: latencies 51000..100000
+        let mut content2 = String::new();
+        for i in 51..=100 {
+            content2.push_str(&format!("0 {} {} 0 0 0\n", i, i * 1000));
+        }
+        std::fs::write(dir.path().join("pgbench_log.123.1"), &content2).unwrap();
+
+        let p = compute_latency_percentiles(dir.path()).unwrap();
+        assert!((p.p50 - 50.0).abs() < 0.01);
+        assert!((p.p95 - 95.0).abs() < 0.01);
+        assert!((p.p99 - 99.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_compute_latency_percentiles_single_transaction() {
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("pgbench_log.12345");
+        std::fs::write(&log_path, "0 1 5000 0 0 0\n").unwrap();
+
+        let p = compute_latency_percentiles(dir.path()).unwrap();
+        // Single value: all percentiles equal
+        assert!((p.p50 - 5.0).abs() < 0.01);
+        assert!((p.p95 - 5.0).abs() < 0.01);
+        assert!((p.p99 - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_compute_latency_percentiles_ignores_non_log_files() {
+        let dir = TempDir::new().unwrap();
+
+        // Valid log file
+        std::fs::write(
+            dir.path().join("pgbench_log.123"),
+            "0 1 1000 0 0 0\n0 2 2000 0 0 0\n",
+        )
+        .unwrap();
+
+        // Non-log file that should be ignored
+        std::fs::write(dir.path().join("other_file.txt"), "0 1 99999999 0 0 0\n").unwrap();
+
+        let p = compute_latency_percentiles(dir.path()).unwrap();
+        // Only 2 values: 1000 and 2000 us -> 1.0 and 2.0 ms
+        assert!(p.p99 <= 2.0);
+    }
+
+    #[test]
+    fn test_percentile_index() {
+        assert_eq!(percentile_index(100, 0.99), 98);
+        assert_eq!(percentile_index(100, 0.50), 49);
+        assert_eq!(percentile_index(100, 0.95), 94);
+        assert_eq!(percentile_index(1, 0.99), 0);
+        assert_eq!(percentile_index(10, 0.99), 9);
     }
 }
