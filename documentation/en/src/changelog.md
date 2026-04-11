@@ -1,42 +1,62 @@
 # Changelog
 
-### 3.4.0 <small>Apr 1, 2026</small>
+### 3.4.0 <small>Apr 11, 2026</small>
 
-**New Features:**
+#### Pool Coordinator — database-level connection limits
 
-- **Pool Coordinator — database-level connection limits.** New `max_db_connections` setting caps total server connections per database across all user pools. When the limit is reached, the coordinator evicts idle connections from users with the largest surplus (respecting `min_guaranteed_pool_size`), then waits for a connection to be returned, and falls back to a reserve pool as last resort. Disabled by default (`max_db_connections = 0`) — zero overhead when not configured. Five new pool-level config fields: `max_db_connections`, `min_connection_lifetime` (eviction age threshold), `reserve_pool_size` (extra slots beyond the limit), `reserve_pool_timeout` (wait before using reserve), `min_guaranteed_pool_size` (per-user eviction protection independent of `min_pool_size`).
+When multiple user pools share one PostgreSQL database, the sum of their `pool_size` values can exceed `max_connections`. A spike in one pool starves the others, or PostgreSQL rejects connections outright.
 
-- **`SHOW POOL_COORDINATOR` admin command.** Displays per-database coordinator status: configured limits, current connection count, reserve usage, cumulative evictions, reserve acquisitions, and client exhaustion errors.
+`max_db_connections` caps total backend connections per database across all user pools. When the cap is reached, the coordinator frees capacity through three mechanisms, tried in order:
 
-- **Pool Coordinator Prometheus metrics.** Seven new metrics under `pg_doorman_pool_coordinator{type, database}`: `connections` (current), `reserve_in_use` (current), `max_connections` (configured limit), `reserve_pool_size` (configured reserve), `evictions_total`, `reserve_acquisitions_total`, `exhaustions_total` (client errors from full exhaustion — primary pager signal).
+1. **Reserve pool.** If `reserve_pool_size > 0` and the reserve has headroom, a permit is granted immediately — no eviction, no wait. The reserve is a burst buffer: idle reserve connections are upgraded to main permits by the retain cycle once pressure drops, and closed if they stay idle longer than `min_connection_lifetime`.
 
-- **Reserve pressure relief.** Idle reserve connections (created under `max_db_connections` pressure) are closed early by the retain cycle once idle longer than `min_connection_lifetime`, returning reserve capacity before the regular `idle_timeout` fires.
+2. **Eviction.** The coordinator closes one idle connection from a peer pool with the largest surplus above its `min_guaranteed_pool_size` floor. Candidates are ranked by p95 transaction time — slow pools donate first, because a 1 ms reconnect cost is negligible against a 15 ms p95 but doubles a 0.96 ms one. Only connections older than `min_connection_lifetime` (default 30 s) are eligible, which suppresses cyclic reconnect between pools that take turns stealing slots.
 
-- **Runtime log level control via admin `SET` command.** Change log level without restarting the pooler: `SET log_level = 'debug'` for global, `SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'` for per-module (RUST_LOG syntax). View current level with `SHOW LOG_LEVEL`. Changes are ephemeral (lost on restart). Zero overhead on the hot path at production log levels — filtering uses lock-free `ArcSwap` instead of `RwLock`.
+3. **Wait.** If nothing is evictable, the caller parks for up to `reserve_pool_timeout` (default 3 s), waking on any peer connection return or permit drop. After the wait, the reserve is retried once more before the client receives an error.
 
-- **Anticipation + bounded burst for connection creation.** Replaces the per-task blind cooldown sleep with two coordinated mechanisms that suppress thundering-herd backend connects under load. (1) Returns to the idle pool now signal a `tokio::sync::Notify`. Callers that miss the idle pool above the warm threshold enter an event-driven loop: register the notify, try recycle, wait on `select{notify, sleep}`, try recycle again, and on a race loss (a peer waiter popped the return first) loop back and wait for the next return. The loop exits on a successful recycle, a sleep-driven wake with no notify in flight, or when its deadline is reached. The deadline is the client's remaining `query_wait_timeout` minus a 500 ms reserve for the create path, measured against a single `start` timestamp captured at the top of `timeout_get` so Phase 1/2 semaphore wait and the anticipation loop share one budget. (2) Concurrent server creates per pool are capped by an atomic burst gate; overflow callers wait for either an idle return or a peer create completion before retrying recycle. The legacy `scaling_cooldown_sleep` knob is replaced by `scaling_max_parallel_creates` (default `2`, the per-pool create cap), a global setting — per-pool overrides are intentionally not supported. The retain-loop replenish path also respects the burst cap so background replenishment does not compete with client-driven creates during a load spike. On a busy shard with ~55% Phase B race loss rate, the loop fix drove `create_fallback` to zero and cut `creates_started` by 90× against the same workload. Hot-path overhead is ~3 ns on the burst gate atomic and ~104 ns on a buffered notify wake.
+Disabled by default (`max_db_connections = 0`) — zero overhead when not configured. The hot path (idle connection reuse) never touches the coordinator; only new connection creation does, at the cost of one atomic operation.
+
+New pool-level config fields:
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `max_db_connections` | `0` (disabled) | Hard cap on backend connections per database |
+| `min_connection_lifetime` | `30000` ms | Eviction age floor — connections younger than this are immune |
+| `reserve_pool_size` | `0` (disabled) | Extra permits above the cap, granted on burst |
+| `reserve_pool_timeout` | `3000` ms | Coordinator wait budget before error |
+| `min_guaranteed_pool_size` | `0` | Per-user eviction protection floor |
+
+New admin commands: `SHOW POOL_COORDINATOR` (per-database coordinator state), `SHOW POOL_SCALING` (per-pool checkout counters). Both are also exported as Prometheus metrics under `pg_doorman_pool_coordinator{type, database}` and `pg_doorman_pool_scaling{type, user, database}`.
+
+See the [pool pressure tutorial](tutorials/pool-pressure.md) for acquisition phases, tuning recipes, and alert examples.
+
+#### Connection checkout under pressure
+
+Replaces `scaling_cooldown_sleep` (a fixed 10 ms delay before creating a backend connection) with a multi-phase checkout that reuses connections about to be returned before resorting to `connect()`.
+
+When the idle pool is empty and the pool is above its warm threshold (`scaling_warm_pool_ratio`, default 20%), a caller first spins briefly (`scaling_fast_retries`, default 10 yield iterations), then registers a direct-handoff waiter. Connections returned by other clients are delivered through the waiter channel — no idle-queue round-trip, no race with other checkout attempts. The waiter deadline is bounded by `query_wait_timeout` minus a 500 ms reserve for the create path. If no connection arrives, the caller proceeds to create.
+
+Backend `connect()` calls are capped at `scaling_max_parallel_creates` (default 2) per pool. Callers above the cap wait for a peer create to finish or a connection to be returned. Background replenish (`min_pool_size`) respects the same cap and defers to the next retain cycle when the gate is full, so it does not compete with client-driven creates during spikes.
+
+Connections nearing `server_lifetime` expiry (95% of age) trigger a pre-replacement: a background task creates a successor before the old connection fails recycle, so the next checkout hits the hot path.
+
+The direct-handoff queue is FIFO. On a 500-client / 40-connection AWS Fargate benchmark, p99/p50 ratio is 1.08 (pg_doorman) vs 25.5 (Odyssey). Every client pays roughly the same queue cost.
+
+**Migration:** remove `scaling_cooldown_sleep` from your config if present. Replace with `scaling_max_parallel_creates` (default 2) if you need to tune the concurrency cap.
 
 **Improvements:**
 
-- **Log readability overhaul.** All operational log messages use a consistent `[user@pool]` identity prefix with `pid=N` for server connections, replacing three different formats. Stats line switched to logfmt (`query_ms p50=... | xact_ms p50=...`). Durations formatted as `4m30s` instead of raw milliseconds or `0d 00:04:30.134`. PG error messages sanitized (newlines escaped) to prevent log line splitting.
+- **Runtime log level control.** `SET log_level = 'debug'` changes the log filter without restart; `SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'` targets specific modules. `SHOW LOG_LEVEL` displays the current filter. Changes are ephemeral (lost on restart).
 
-- **Auth failure logs include client IP.** SCRAM, MD5, JWT, and PAM authentication failures now show the source address, visible during brute-force attempts.
+- **Log readability overhaul.** Consistent `[user@pool #cN]` prefix. Durations as `4m30s` instead of raw milliseconds. Stats line in logfmt. PG error newlines escaped. Expensive debug computations guarded by `log_enabled!()` to avoid allocations at production log levels.
 
-- **Replenish failure noise suppression.** When `min_pool_size` replenish repeatedly fails (e.g., SCRAM user missing on a replica), only the first failure is logged at warn level. Subsequent failures are suppressed with a periodic reminder every ~10 minutes showing the consecutive failure count. Recovery is logged when replenish succeeds after a failure streak.
+- **Auth failure logs include client IP.** SCRAM, MD5, JWT, and PAM failures show the source address.
 
-- **Client disconnect logs include identity.** Disconnect messages show `[user@pool]` when the client completed authentication, not just the IP address.
+- **Replenish failure noise suppression.** Repeated `min_pool_size` failures log once at warn, then a periodic reminder every ~10 minutes with the failure count.
 
-- **Prepared statement cache eviction log.** Shows truncated query text and current cache size (`size=99/100`) to help diagnose cache sizing issues.
+- **`avg_xact_time` column in `SHOW POOLS`.** Average transaction time per pool, visible alongside existing connection counts.
 
-- **`min_connection_lifetime` default raised from 5 s to 30 s.** With the old 5-second floor, a loaded shard with two or more user pools sharing the same database would thrash idle slots between peers every few seconds: user A's connection would age past the floor, peer B would evict it the next time it needed a permit, A would replace it and start ageing again. Canary observations were in the 120-270 evictions/minute range on busy shards despite no configuration change. The 30-second floor lets connections stay "sticky" to their current user long enough that routine bursts are absorbed by returns rather than cross-pool evictions, reducing eviction churn to the natural rate of sustained imbalance between user pools. Operators with very short, very uneven workloads and real reason to want faster cross-pool rebalancing can still set a smaller value explicitly.
-
-**Security:**
-
-- **Removed password hash from logs.** The "unsupported password type" warning no longer includes the password hash value.
-
-**Bug Fixes:**
-
-- **Client-side session reset batch no longer triggers a second `RESET ALL` on checkin.** When a client (e.g. `jackc/pgx` on an internal context deadline) kept the server connection alive by running its own cleanup batch (`SET SESSION AUTHORIZATION DEFAULT; RESET ALL; CLOSE ALL; UNLISTEN *; DISCARD PLANS; DISCARD SEQUENCES; DISCARD TEMP`), pg_doorman saw only the `SET` tag from `SET SESSION AUTHORIZATION DEFAULT`, marked the connection dirty, and sent its own `RESET ROLE; RESET ALL;` when the connection returned to the pool. Every dangling client query tripled the traffic to PostgreSQL: the original query, the client's cleanup batch, and pg_doorman's redundant reset. Fixed by recognising the CommandComplete tags that restore session state (`RESET`, `CLOSE CURSOR ALL`, `DEALLOCATE ALL`, `DISCARD ALL`) and clearing the matching `needs_cleanup_*` flags. Baseline behaviour is unchanged: a `SET statement_timeout = 1000` without a follow-up reset still provokes `RESET ROLE; RESET ALL;` on checkin.
+- **Smart session cleanup in transaction mode.** pg_doorman tracks which session state a client dirtied (`SET`, `DECLARE CURSOR`, prepared statements) and sends the matching reset on checkin. If the client cleaned up after itself — `RESET ALL`, `CLOSE ALL`, `DEALLOCATE ALL`, or `DISCARD ALL` — pg_doorman sees the confirmation and skips its own reset. Drivers like `jackc/pgx` that send a cleanup batch on disconnect no longer cause a redundant round-trip to PostgreSQL. A `SET` without a follow-up reset still triggers cleanup as before.
 
 ### 3.3.5 <small>Mar 31, 2026</small>
 

@@ -20,9 +20,11 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 **Built for operations.** `pg_doorman generate --host your-db` creates a config by introspecting PostgreSQL — no manual user/database enumeration. `pg_doorman -t` validates config before deploy (PgBouncer and Odyssey lack this). YAML config with human-readable durations (`"30s"`, `"5m"`, `"1h"`). Built-in Prometheus endpoint — no external exporter needed (PgBouncer requires a separate process; Odyssey's built-in metrics segfault when combined with standard logging).
 
-**Database-level connection limits with eviction.** `max_db_connections` caps total server connections per database. When the limit is reached, idle connections are evicted from users with the largest surplus — respecting per-user minimums. PgBouncer has `max_db_connections` but without eviction or fairness guarantees. Odyssey has no equivalent.
+**Database-level connection limits with eviction.** `max_db_connections` caps total server connections per database. When the limit is reached, idle connections are evicted from users with the largest surplus — ranked by p95 transaction time so slow pools donate first, respecting per-user minimums. A reserve pool absorbs short bursts without evicting anyone. PgBouncer has `max_db_connections` but without eviction, fairness, or reserve. Odyssey has no equivalent.
 
-**Bounded tail latency.** The pool hands returned connections to the longest-waiting client first (strict FIFO via oneshot channels). This keeps p99 latency within 10% of p50 regardless of client count. Poolers that use broadcast-notify or LIFO scheduling show 10-25x p99/p50 ratios under contention — some clients get instant service while others starve. [Latency breakdown by percentile](https://ozontech.github.io/pg_doorman/benchmarks.html).
+**Thundering herd suppression.** When 200 clients request a connection and the pool has 4 idle, a naive pooler fires 196 backend `connect()` calls at once — saturating PostgreSQL's `accept()` queue and `pg_authid` lookups. pg_doorman caps concurrent backend creates at `scaling_max_parallel_creates` (default 2) per pool and routes waiting callers to reuse connections being returned by other clients via direct handoff. Most clients land on a recycled connection within microseconds instead of waiting for a fresh `connect()`.
+
+**Bounded tail latency.** The pool hands returned connections to the longest-waiting client first (strict FIFO via direct-handoff channels). This keeps p99 latency within 10% of p50 regardless of client count. Poolers that use broadcast-notify or LIFO scheduling show 10-25x p99/p50 ratios under contention — some clients get instant service while others starve. When connections approach `server_lifetime` expiry, a replacement is created in the background before the old one dies — zero latency spike during rotation. [Latency breakdown by percentile](https://ozontech.github.io/pg_doorman/benchmarks.html).
 
 **Dead backend detection.** When a client holds a transaction open, pg_doorman probes the backend and returns an error immediately if the server is gone (failover, OOM kill). Other poolers rely on TCP keepalive, leaving clients hanging for minutes.
 
@@ -59,6 +61,8 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | PAM auth | Yes | Yes | Yes |
 | LDAP auth | No | Since 1.25 | Yes |
 | Database-level connection limits (`max_db_connections`) | Yes | Yes (no eviction) | No |
+| Pre-replacement on `server_lifetime` expiry | Yes | No | No |
+| Runtime log level control (`SET log_level`) | Yes | No | No |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
 | TLS: minimum TLS 1.2, Mozilla ciphers | Yes | Yes | No (allows TLS 1.0, weak ciphers) |
 | Prometheus metrics | Built-in | External | Built-in |
