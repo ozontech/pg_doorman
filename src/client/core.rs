@@ -380,6 +380,12 @@ pub struct Client<S, T> {
     /// When client sends standalone "begin;", we synthesize response
     /// and defer actual BEGIN until next query arrives.
     pub(crate) client_pending_begin: Option<BytesMut>,
+
+    /// Raw fd of the client TCP socket. Stored before tokio::io::split()
+    /// because ReadHalf/WriteHalf do not expose as_raw_fd().
+    /// Used for client migration during graceful reload.
+    #[cfg(unix)]
+    pub(crate) raw_fd: Option<std::os::unix::io::RawFd>,
 }
 
 impl<S, T> Client<S, T>

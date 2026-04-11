@@ -3,6 +3,8 @@ pub mod buffer_pool;
 mod core;
 mod entrypoint;
 mod error_handling;
+#[cfg(unix)]
+pub mod migration;
 mod protocol;
 mod startup;
 mod transaction;

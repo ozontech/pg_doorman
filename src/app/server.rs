@@ -40,6 +40,14 @@ pub static SHUTDOWN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// Global counter for clients currently in transactions (holding server connections)
 pub static CLIENTS_IN_TRANSACTIONS: AtomicI64 = AtomicI64::new(0);
 
+/// Global flag: migration to new process is active. Clients should self-migrate at idle points.
+pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Channel sender for migration payloads. Set once when migration starts.
+pub static MIGRATION_TX: std::sync::OnceLock<
+    tokio::sync::mpsc::Sender<crate::client::migration::MigrationPayload>,
+> = std::sync::OnceLock::new();
+
 pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::Error>> {
     if args.daemon {
         let pid_file = config.general.daemon_pid_file.clone();
@@ -263,6 +271,22 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 }
                 // Remove the env var so it's not inherited by any future child processes
                 std::env::remove_var("PG_DOORMAN_READY_FD");
+            }
+        }
+
+        // Spawn migration receiver if parent passed a migration socket
+        #[cfg(not(windows))]
+        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD") {
+            if let Ok(migration_fd) = fd_str.parse::<i32>() {
+                info!(
+                    "Migration socket received from parent (fd={})",
+                    migration_fd
+                );
+                std::env::remove_var("PG_DOORMAN_MIGRATION_FD");
+                tokio::spawn(crate::client::migration::migration_receiver_task(
+                    migration_fd,
+                    client_server_map.clone(),
+                ));
             }
         }
 
@@ -641,17 +665,39 @@ async fn binary_upgrade_and_shutdown(
                 let pipe_read_fd = pipe_fds[0];
                 let pipe_write_fd = pipe_fds[1];
 
-                // Spawn child process with inherited listener fd and pipe write fd
+                // Create a Unix socketpair for client migration
+                let mut migration_fds: [libc::c_int; 2] = [0; 2];
+                let migration_ok = unsafe {
+                    libc::socketpair(
+                        libc::AF_UNIX,
+                        libc::SOCK_STREAM,
+                        0,
+                        migration_fds.as_mut_ptr(),
+                    )
+                } == 0;
+                if !migration_ok {
+                    warn!("Failed to create migration socketpair, clients will not be migrated");
+                }
+                let migration_parent_fd = migration_fds[0]; // kept by old process
+                let migration_child_fd = migration_fds[1]; // passed to new process
+
+                // Spawn child process with inherited listener fd, pipe, and migration socket
                 let child_result = unsafe {
                     let mut cmd = process::Command::new(exe_path);
                     cmd.args(&exe_args)
                         .arg("--inherit-fd")
                         .arg(listener_fd.to_string())
-                        .env("PG_DOORMAN_READY_FD", pipe_write_fd.to_string())
-                        .current_dir(std::env::current_dir().unwrap())
+                        .env("PG_DOORMAN_READY_FD", pipe_write_fd.to_string());
+                    if migration_ok {
+                        cmd.env("PG_DOORMAN_MIGRATION_FD", migration_child_fd.to_string());
+                    }
+                    cmd.current_dir(std::env::current_dir().unwrap())
                         .pre_exec(move || {
                             libc::fcntl(listener_fd, libc::F_SETFD, 0);
                             libc::fcntl(pipe_write_fd, libc::F_SETFD, 0);
+                            if migration_ok {
+                                libc::fcntl(migration_child_fd, libc::F_SETFD, 0);
+                            }
                             libc::setpgid(0, current_pgid);
                             Ok(())
                         });
@@ -662,6 +708,9 @@ async fn binary_upgrade_and_shutdown(
                     Ok(_child) => {
                         unsafe {
                             libc::close(pipe_write_fd);
+                            if migration_ok {
+                                libc::close(migration_child_fd);
+                            }
                         }
 
                         let mut buf: [u8; 1] = [0];
@@ -697,6 +746,19 @@ async fn binary_upgrade_and_shutdown(
                             libc::close(pipe_read_fd);
                         }
                         *listener = None;
+
+                        // Start client migration if socketpair was created
+                        if migration_ok {
+                            let (tx, rx) = tokio::sync::mpsc::channel(1024);
+                            let _ = MIGRATION_TX.set(tx);
+                            MIGRATION_IN_PROGRESS.store(true, Ordering::SeqCst);
+                            tokio::spawn(crate::client::migration::migration_sender_task(
+                                migration_parent_fd,
+                                rx,
+                            ));
+                            info!("Client migration enabled");
+                        }
+
                         info!("Foreground binary upgrade complete, listener released");
                     }
                     Err(e) => {
@@ -704,6 +766,10 @@ async fn binary_upgrade_and_shutdown(
                         unsafe {
                             libc::close(pipe_read_fd);
                             libc::close(pipe_write_fd);
+                            if migration_ok {
+                                libc::close(migration_parent_fd);
+                                libc::close(migration_child_fd);
+                            }
                         }
                     }
                 }

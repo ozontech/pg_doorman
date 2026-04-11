@@ -1,4 +1,6 @@
 use log::{error, info, warn};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 use std::sync::atomic::Ordering;
 use tokio::io::split;
 use tokio::net::TcpStream;
@@ -156,6 +158,8 @@ pub async fn client_entrypoint(
                 match get_startup::<TcpStream>(&mut stream).await {
                     // Client accepted unencrypted connection.
                     Ok((ClientConnectionType::Startup, bytes)) => {
+                        #[cfg(unix)]
+                        let raw_fd = Some(stream.as_raw_fd());
                         let (read, write) = split(stream);
 
                         // Continue with regular startup.
@@ -168,6 +172,8 @@ pub async fn client_entrypoint(
                             admin_only,
                             false,
                             connection_id,
+                            #[cfg(unix)]
+                            raw_fd,
                         )
                         .await
                         {
@@ -216,6 +222,8 @@ pub async fn client_entrypoint(
                 return Err(Error::ProtocolSyncError("ssl is required".to_string()));
             }
             PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            #[cfg(unix)]
+            let raw_fd = Some(stream.as_raw_fd());
             let (read, write) = split(stream);
 
             // Continue with regular startup.
@@ -228,6 +236,8 @@ pub async fn client_entrypoint(
                 admin_only,
                 false,
                 connection_id,
+                #[cfg(unix)]
+                raw_fd,
             )
             .await
             {

@@ -9,7 +9,9 @@ use std::time::Duration;
 use crate::utils::clock::now;
 
 use crate::admin::handle_admin;
-use crate::app::server::{CLIENTS_IN_TRANSACTIONS, SHUTDOWN_IN_PROGRESS};
+use crate::app::server::{
+    CLIENTS_IN_TRANSACTIONS, MIGRATION_IN_PROGRESS, MIGRATION_TX, SHUTDOWN_IN_PROGRESS,
+};
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
 use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
@@ -564,6 +566,31 @@ where
         let mut query_start_at: quanta::Instant;
         loop {
             self.stats.idle_read();
+
+            // Try to migrate this client to the new process during graceful reload.
+            // At this point: no server checked out, no pending transaction,
+            // write buffer flushed from previous iteration.
+            #[cfg(unix)]
+            if MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
+                && !self.admin
+                && self.client_pending_begin.is_none()
+                && self.read.buffer().is_empty()
+            {
+                if let Some(tx) = MIGRATION_TX.get() {
+                    if let Ok(payload) = self.prepare_migration() {
+                        if tx.try_send(payload).is_ok() {
+                            info!(
+                                "[{}@{} #c{}] client {} migrated to new process",
+                                self.username, self.pool_name, self.connection_id, self.addr
+                            );
+                            crate::app::server::CURRENT_CLIENT_COUNT
+                                .fetch_add(-1, Ordering::SeqCst);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
             let message =
                 match read_message_reuse(&mut self.read, &mut self.read_buf, self.max_memory_usage)
                     .await

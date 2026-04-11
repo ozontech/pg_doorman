@@ -137,6 +137,8 @@ pub async fn startup_tls(
                 admin_only,
                 true,
                 connection_id,
+                #[cfg(unix)]
+                None, // TLS migration handled in a later phase
             )
             .await
         }
@@ -173,6 +175,7 @@ where
         admin_only: bool,
         use_tls: bool,
         connection_id: u64,
+        #[cfg(unix)] raw_fd: Option<std::os::unix::io::RawFd>,
     ) -> Result<Client<S, T>, Error> {
         let parameters = parse_startup(bytes)?;
 
@@ -402,6 +405,8 @@ where
             max_memory_usage: config.general.max_memory_usage.as_bytes(),
             pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
             client_pending_begin: None,
+            #[cfg(unix)]
+            raw_fd,
         })
     }
 
@@ -440,6 +445,8 @@ where
             max_memory_usage: 128 * 1024 * 1024,
             pooler_check_query_request_vec: Vec::new(),
             client_pending_begin: None,
+            #[cfg(unix)]
+            raw_fd: None,
         })
     }
 }
