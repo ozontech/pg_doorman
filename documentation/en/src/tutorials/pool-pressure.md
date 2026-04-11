@@ -171,7 +171,7 @@ wait consumes from the same budget, so the cumulative wait across
 phases cannot exceed the caller's `query_wait_timeout`.
 
 The jitter prevents a **timeout cliff**: without it, N clients that
-entered Phase B at the same instant all exit simultaneously and
+entered Phase 4 at the same instant all exit simultaneously and
 stampede into the burst gate, creating N new backend connections for a
 pool that needs far fewer. With jitter, clients exit in staggered
 batches — early exiters create connections, and by the time later
