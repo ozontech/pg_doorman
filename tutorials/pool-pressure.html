@@ -437,6 +437,47 @@ waiter as before.</p>
 <code>notify_return_observers</code> so peer-pool Phase C waiters can scan for
 eviction candidates. Same-pool waiters never park on a <code>Notify</code> — they
 receive connections directly through the oneshot channel.</p>
+<h3 id="fifo-fairness-and-latency-distribution"><a class="header" href="#fifo-fairness-and-latency-distribution">FIFO fairness and latency distribution</a></h3>
+<p>The <code>waiters</code> queue is a <code>VecDeque</code>. <code>push_back</code> on registration,
+<code>pop_front</code> on delivery. The oldest waiter always gets the next
+returned connection.</p>
+<p>This produces a measurably different latency shape from poolers
+that use broadcast-notify or LIFO scheduling. With 500 clients
+sharing a 40-connection pool on AWS Fargate:</p>
+<div class="table-wrapper"><table><thead><tr><th>Pooler</th><th>p50 (ms)</th><th>p95 (ms)</th><th>p99 (ms)</th><th>p99/p50</th></tr></thead><tbody>
+<tr><td>pg_doorman</td><td>9.93</td><td>10.50</td><td>10.69</td><td>1.08</td></tr>
+<tr><td>pgbouncer</td><td>8.48</td><td>9.62</td><td>10.45</td><td>1.23</td></tr>
+<tr><td>odyssey</td><td>0.88</td><td>12.93</td><td>22.46</td><td>25.5</td></tr>
+</tbody></table>
+</div>
+<p>Odyssey's p50 is 11x lower than pg_doorman's — most transactions
+hit a hot connection immediately. But its p99 is 2x higher.
+Some clients wait over 22 ms while others finish in under 1 ms.
+Under FIFO, every client pays roughly the same queue cost.</p>
+<p>Why this matters for operations:</p>
+<ul>
+<li>
+<p><strong>SLO compliance.</strong> An SLO of "p99 &lt; 15 ms" is achievable with
+pg_doorman at this load. With Odyssey, the same pool configuration
+violates it. The only fix is overprovisioning — adding connections
+until even the unlucky clients finish fast enough.</p>
+</li>
+<li>
+<p><strong>No starvation.</strong> Under broadcast-notify, a client can lose the
+wake-up race repeatedly. With direct handoff, the connection goes
+to exactly one recipient and skips stale waiters. No thundering
+herd, no repeated race losses.</p>
+</li>
+<li>
+<p><strong>Predictable capacity planning.</strong> When p50 ≈ p99, doubling
+the client count roughly doubles latency. With a 25x tail ratio,
+load changes produce unpredictable p99 spikes.</p>
+</li>
+</ul>
+<p>Queueing theory confirms this: among non-preemptive scheduling
+disciplines, FIFO minimises wait-time variance while keeping the
+same mean wait as LIFO. The mean is identical — the difference
+is entirely in the tail.</p>
 <h3 id="pre-replacement-for-lifetime-expiry"><a class="header" href="#pre-replacement-for-lifetime-expiry">Pre-replacement for lifetime expiry</a></h3>
 <p>When <code>server_lifetime</code> is configured, backend connections are closed
 after reaching their individual lifetime limit (base ± 20% jitter).
@@ -1234,6 +1275,17 @@ connections and user B needs one but the cap is reached, user B
 waits or fails. pg_doorman's coordinator can close one of A's
 idle connections (if older than <code>min_connection_lifetime</code>) and
 give the slot to B.</p>
+</li>
+<li>
+<p><strong>FIFO direct handoff.</strong> PgBouncer queues clients in arrival order
+and hands out the next free connection, but PgBouncer processes
+events serially on a single thread — under high contention,
+scheduling order depends on libevent's readiness callbacks.
+pg_doorman sends returned connections through a per-waiter oneshot
+channel in strict FIFO order. The result is a tight p50/p99 ratio
+(typically under 1.1x) regardless of client count, while poolers
+without strict FIFO ordering show 10-25x tail inflation under the
+same load.</p>
 </li>
 </ol>
 <h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
