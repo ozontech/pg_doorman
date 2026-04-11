@@ -22,6 +22,8 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 **Database-level connection limits with eviction.** `max_db_connections` caps total server connections per database. When the limit is reached, idle connections are evicted from users with the largest surplus — respecting per-user minimums. PgBouncer has `max_db_connections` but without eviction or fairness guarantees. Odyssey has no equivalent.
 
+**Bounded tail latency.** The pool hands returned connections to the longest-waiting client first (strict FIFO via oneshot channels). This keeps p99 latency within 10% of p50 regardless of client count. Poolers that use broadcast-notify or LIFO scheduling show 10-25x p99/p50 ratios under contention — some clients get instant service while others starve. [Latency breakdown by percentile](https://ozontech.github.io/pg_doorman/benchmarks.html).
+
 **Dead backend detection.** When a client holds a transaction open, pg_doorman probes the backend and returns an error immediately if the server is gone (failover, OOM kill). Other poolers rely on TCP keepalive, leaving clients hanging for minutes.
 
 ## Benchmarks
