@@ -220,13 +220,22 @@ The old process sends each client over a Unix domain socket via `sendmsg()`/`rec
 │ │ username: [u8]                                 │ │
 │ │ database_len: u16                              │ │
 │ │ database: [u8]                                 │ │
-│ │ application_name_len: u16                      │ │
-│ │ application_name: [u8]                         │ │
-│ │ server_parameters: serialized key-value pairs  │ │
+│ │ transaction_mode: u8                           │ │
+│ │ server_parameters_count: u16                   │ │
+│ │   [key_len: u16][key][value_len: u16][value].. │ │
 │ │ process_id: u32   (BackendKeyData sent to      │ │
 │ │ secret_key: u32    client, for cancel protocol) │ │
-│ │ client_state: u8 (idle / in_transaction / ...)  │ │
-│ │ ... (pool assignment, session vars, etc.)       │ │
+│ ├─ Prepared Statements ──────────────────────────┤ │
+│ │ prepared_enabled: u8                           │ │
+│ │ async_client: u8                               │ │
+│ │ cache_count: u32                               │ │
+│ │   for each entry:                              │ │
+│ │     key_type: u8 (0=Named, 1=Anonymous)        │ │
+│ │     key_name/key_hash: variable                │ │
+│ │     hash: u64                                  │ │
+│ │     query_len: u32, query: [u8]                │ │
+│ │     num_params: i16, params: [i32; N]          │ │
+│ │ addr_port: u16, addr_ip_len: u8, addr_ip: [u8] │ │
 │ └─────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────┘
 ```
@@ -387,6 +396,50 @@ Clients in `session` mode with an open transaction wait for the transaction to c
 ### Phase 5: plain TCP migration (implement first)
 
 Plain TCP connections use the same protocol without TLS state. Implement this first as a test of the migration socket, app state serialization, and client reconstruction.
+
+## Prepared statements
+
+Prepared statements exist in three caches simultaneously:
+
+1. **Client cache** (`PreparedStatementCache` per client) maps client-facing name → `CachedStatement` (internal name, query text, param types, hash)
+2. **Pool cache** (`DashMap<u64, Arc<Parse>>` per pool) deduplicates statements across clients by query hash
+3. **Server cache** (`LruCache<String, ()>` per backend connection) tracks which statements are registered on the PostgreSQL backend
+
+On `Bind("my_stmt")`, pg_doorman looks up the client cache (1), rewrites the name to the internal `DOORMAN_N`, and checks if it exists on the current server (3). If not, it sends `Parse` to register it.
+
+### Why client cache must be serialized
+
+Without the client cache, `process_bind_immediate()` returns `"prepared statement does not exist"` for any Bind referencing a previously prepared statement. The client receives an error it does not expect.
+
+### What to serialize per client
+
+For each entry in the client cache:
+- Key: `Named(String)` or `Anonymous(u64)`
+- Query text (`Arc<str>` in `Parse`)
+- Parameter types (`Vec<i32>` in `Parse`)
+- Hash (`u64`)
+
+NOT serialized:
+- Internal statement names (`DOORMAN_N`) — the new process assigns its own via `register_parse_to_cache()`
+- `async_name` — async clients get fresh unique names
+- Batch state (`skipped_parses`, `batch_operations`) — empty at idle point
+
+### Reconstruction in new process
+
+1. Deserialize each entry into `(key, query, param_types, hash)`
+2. Build a `Parse` struct
+3. Call `pool.register_parse_to_cache(hash, &parse)` — pool assigns a new internal name (`DOORMAN_M`), returns shared `Arc<Parse>`
+4. Store in client's `PreparedStatementCache` under the original key as `CachedStatement`
+
+The pool-level cache and `PREPARED_STATEMENT_COUNTER` are not migrated. The new process has its own counter and cache. Internal names diverge (`DOORMAN_N` in old vs `DOORMAN_M` in new), but client-facing names stay the same. The Bind rewriting layer maps client names to internal names transparently.
+
+### Session mode
+
+The client holds a dedicated backend connection with statements registered on PostgreSQL. Without migrating the backend connection, those server-side statements are gone. After migration, the client gets a new backend. On the first `Bind`, `ensure_prepared_statement_is_on_server()` detects the statement is missing on the new server and sends `Parse` to register it. The client cache provides the query text needed.
+
+### Async clients
+
+Async clients (those that sent `Flush`) have caching disabled (`prepared.enabled = false`). All `Parse`/`Bind` messages pass through without rewriting. Migration serializes the `async_client` flag. In the new process, the flag is restored and caching stays disabled.
 
 ## Open questions
 
