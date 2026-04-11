@@ -756,9 +756,10 @@ impl Pool {
         }
     }
 
-    /// Anticipation zone: try to recycle a connection before creating
-    /// a new one. Returns `Some(ObjectInner)` if a connection was
-    /// obtained, `None` if the caller should proceed to the create path.
+    /// Anticipation zone: warm threshold gate, fast spin, and direct
+    /// handoff via oneshot channel. Returns `Some(ObjectInner)` if a
+    /// recycled connection was obtained, `None` to proceed to the create
+    /// path.
     async fn try_anticipate(
         &self,
         timeouts: &Timeouts,
@@ -778,7 +779,7 @@ impl Pool {
 
         let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
 
-        // Phase A: yield_now spin — catches microsecond races without sleeping.
+        // Fast spin — catches microsecond races without sleeping.
         let fast_retries = self.inner.config.scaling.fast_retries;
         for _ in 0..fast_retries {
             if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
@@ -799,7 +800,7 @@ impl Pool {
             slots.vec.is_empty() && slots.size < slots.max_size
         };
 
-        // Phase B: direct handoff via oneshot channel.
+        // Direct handoff via oneshot channel.
         if !capacity_deficit && !non_blocking {
             const CREATE_RESERVE: Duration = Duration::from_millis(500);
             const FALLBACK_BUDGET_MS: u64 = 100;
@@ -893,24 +894,21 @@ impl Pool {
 
         let start = tokio::time::Instant::now();
 
-        // Phase 1: Wait for unpause.
         self.wait_if_paused(timeouts).await?;
-
-        // Phase 2: Acquire semaphore permit.
         let permit = self.acquire_semaphore(timeouts).await?;
 
-        // Phase 3: Hot-path recycle.
+        // Hot-path recycle: pop an idle connection if available.
         if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
             self.maybe_trigger_pre_replacement(&inner.metrics);
             return Ok(self.wrap_checkout(*inner, permit));
         }
 
-        // Phase 4: Anticipation (spin + direct handoff).
+        // Anticipation: warm zone gate → fast spin → direct handoff.
         if let Some(inner) = self.try_anticipate(timeouts, start).await {
             return Ok(self.wrap_checkout(inner, permit));
         }
 
-        // Phase 5: Drain remaining recyclable connections.
+        // Drain remaining recyclable connections before creating new ones.
         loop {
             match self.inner.try_recycle_one(timeouts).await {
                 RecycleOutcome::Reused(inner) => {
@@ -921,7 +919,7 @@ impl Pool {
             }
         }
 
-        // Phase 6: Burst gate + coordinator + create.
+        // Burst gate + coordinator + backend connect.
         let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
         let _create_gate = match self.acquire_burst_gate(timeouts, non_blocking).await {
             BurstGateOutcome::Acquired(guard) => guard,
