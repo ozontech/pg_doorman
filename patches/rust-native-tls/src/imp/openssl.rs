@@ -6,6 +6,8 @@ use self::foreign_types_shared::{ForeignType, ForeignTypeRef};
 
 // FFI declarations for our patched OpenSSL migration functions.
 // These are not in openssl-sys because we added them via C patch.
+// Only available when built with the tls-migration feature (vendored patched OpenSSL).
+#[cfg(feature = "tls-migration")]
 extern "C" {
     fn SSL_export_migration_state(
         ssl: *mut openssl_sys::SSL,
@@ -424,6 +426,7 @@ impl TlsAcceptor {
     }
 }
 
+#[cfg(feature = "tls-migration")]
 impl TlsAcceptor {
     /// Reconstruct a TLS stream from migrated cipher state.
     /// Calls SSL_import_migration_state to create an SSL* in "established" mode,
@@ -543,15 +546,16 @@ impl<S: io::Read + io::Write> TlsStream<S> {
 
     /// Returns the raw SSL* pointer for use by migration FFI calls.
     /// The pointer is valid for the lifetime of this TlsStream.
+    #[cfg(feature = "tls-migration")]
     pub fn ssl_raw_ptr(&self) -> *mut openssl_sys::SSL {
         self.0.ssl().as_ptr()
     }
 
     /// Export TLS cipher state for connection migration.
     /// Returns an opaque blob that can be passed to import_migration_state().
+    #[cfg(feature = "tls-migration")]
     pub fn export_migration_state(&self) -> Result<Vec<u8>, Error> {
         unsafe {
-
             let ssl_ptr = self.0.ssl().as_ptr();
             let mut out: *mut u8 = std::ptr::null_mut();
             let mut out_len: usize = 0;

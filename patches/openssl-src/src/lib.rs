@@ -9,46 +9,103 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const OPENSSL_VERSION: &str = "3.5.5";
+const OPENSSL_SHA256: &str = "b28c91532a8b65a1f983b4c28b7488174e4a01008e29ce8e69bd789f28bc2a89";
 
 pub fn source_dir() -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("openssl");
     if dir.join("Configure").exists() {
         return dir;
     }
-    // Download and extract OpenSSL source on first build
-    download_openssl_source(&dir);
+    resolve_openssl_source(&dir);
     dir
 }
 
-fn download_openssl_source(target_dir: &Path) {
-    let url = format!(
-        "https://github.com/openssl/openssl/releases/download/openssl-{v}/openssl-{v}.tar.gz",
-        v = OPENSSL_VERSION
-    );
+fn resolve_openssl_source(target_dir: &Path) {
+    // Priority 1: pre-downloaded tarball via env var
+    if let Ok(tarball_path) = env::var("OPENSSL_SOURCE_TARBALL") {
+        let tarball = PathBuf::from(&tarball_path);
+        if !tarball.exists() {
+            panic!(
+                "OPENSSL_SOURCE_TARBALL={tarball_path} does not exist.\n\
+                 Provide a valid path to openssl-{OPENSSL_VERSION}.tar.gz"
+            );
+        }
+        println!(
+            "cargo:warning=openssl-src: using pre-downloaded tarball {tarball_path}"
+        );
+        verify_sha256(&tarball);
+        extract_tarball(&tarball, target_dir);
+        return;
+    }
+
+    // Priority 2: download from GitHub
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap_or_else(|_| "/tmp".into()));
     let tarball = out_dir.join(format!("openssl-{OPENSSL_VERSION}.tar.gz"));
 
     if !tarball.exists() {
+        let url = format!(
+            "https://github.com/openssl/openssl/releases/download/openssl-{v}/openssl-{v}.tar.gz",
+            v = OPENSSL_VERSION
+        );
+        println!("cargo:warning=openssl-src: downloading OpenSSL {OPENSSL_VERSION} from {url}");
         let status = Command::new("curl")
             .args(["-fL", "-o"])
             .arg(&tarball)
             .arg(&url)
             .status()
-            .expect("curl not found");
-        assert!(status.success(), "failed to download OpenSSL source");
+            .unwrap_or_else(|_| panic!(
+                "curl not found. For offline builds, set OPENSSL_SOURCE_TARBALL=/path/to/openssl-{OPENSSL_VERSION}.tar.gz"
+            ));
+        if !status.success() {
+            panic!(
+                "Failed to download OpenSSL source.\n\
+                 For offline builds, set OPENSSL_SOURCE_TARBALL=/path/to/openssl-{OPENSSL_VERSION}.tar.gz"
+            );
+        }
     }
 
-    // Extract
+    verify_sha256(&tarball);
+    extract_tarball(&tarball, target_dir);
+}
+
+fn verify_sha256(tarball: &Path) {
+    let output = Command::new("sha256sum")
+        .arg(tarball)
+        .output()
+        .unwrap_or_else(|_| {
+            // macOS uses shasum instead of sha256sum
+            Command::new("shasum")
+                .args(["-a", "256"])
+                .arg(tarball)
+                .output()
+                .expect("neither sha256sum nor shasum found")
+        });
+    assert!(output.status.success(), "SHA-256 checksum command failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let computed = stdout
+        .split_whitespace()
+        .next()
+        .expect("sha256sum produced no output");
+    assert_eq!(
+        computed, OPENSSL_SHA256,
+        "SHA-256 mismatch for {}.\n  Expected: {}\n  Got:      {}\n  \
+         The tarball may be corrupted or tampered with.",
+        tarball.display(),
+        OPENSSL_SHA256,
+        computed
+    );
+}
+
+fn extract_tarball(tarball: &Path, target_dir: &Path) {
     let status = Command::new("tar")
         .args(["xzf"])
-        .arg(&tarball)
+        .arg(tarball)
         .arg("-C")
         .arg(target_dir.parent().unwrap())
         .status()
         .expect("tar failed");
     assert!(status.success(), "failed to extract OpenSSL source");
 
-    // Rename openssl-X.Y.Z → openssl
     let extracted = target_dir
         .parent()
         .unwrap()

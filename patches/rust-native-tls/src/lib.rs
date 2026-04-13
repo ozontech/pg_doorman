@@ -655,7 +655,10 @@ impl TlsAcceptor {
     }
 
     /// Reconstruct a TLS stream from migrated cipher state (OpenSSL backend only).
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    #[cfg(all(
+        not(any(target_os = "macos", target_os = "windows", target_os = "ios")),
+        feature = "tls-migration"
+    ))]
     pub fn import_migration_state<S>(
         &self,
         stream: S,
@@ -724,16 +727,19 @@ impl<S: io::Read + io::Write> TlsStream<S> {
     }
 
     /// Export TLS cipher state for connection migration between processes.
-    /// Returns an opaque blob to pass to SSL_import_migration_state on the
-    /// receiving side. Only available with the OpenSSL backend.
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    #[cfg(all(
+        not(any(target_os = "macos", target_os = "windows", target_os = "ios")),
+        feature = "tls-migration"
+    ))]
     pub fn export_migration_state(&self) -> Result<Vec<u8>> {
         Ok(self.0.export_migration_state()?)
     }
 
     /// Returns the raw SSL* pointer for migration FFI.
-    /// Valid for the lifetime of this TlsStream.
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    #[cfg(all(
+        not(any(target_os = "macos", target_os = "windows", target_os = "ios")),
+        feature = "tls-migration"
+    ))]
     pub fn ssl_raw_ptr(&self) -> *mut std::ffi::c_void {
         self.0.ssl_raw_ptr() as *mut std::ffi::c_void
     }

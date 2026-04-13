@@ -344,7 +344,10 @@ impl TlsAcceptor {
 
     /// Reconstruct a TLS stream from migrated cipher state (OpenSSL backend only).
     /// No handshake occurs — the imported SSL object is already in established state.
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    #[cfg(all(
+        not(any(target_os = "macos", target_os = "windows", target_os = "ios")),
+        feature = "tls-migration"
+    ))]
     pub fn import_migration_state<S>(
         &self,
         stream: S,

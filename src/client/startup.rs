@@ -135,13 +135,11 @@ pub async fn startup_tls(
         Ok((ClientConnectionType::Startup, bytes)) => {
             #[cfg(unix)]
             let raw_fd = Some(tcp_raw_fd);
-            // SSL* pointer for TLS migration — only on Linux (OpenSSL backend)
-            #[cfg(target_os = "linux")]
+            // SSL* pointer for TLS migration — only with vendored patched OpenSSL on Linux
+            #[cfg(all(target_os = "linux", feature = "tls-migration"))]
             let ssl_ptr = Some(crate::client::core::SslRawPtr(
                 stream.get_ref().ssl_raw_ptr(),
             ));
-            #[cfg(all(unix, not(target_os = "linux")))]
-            let ssl_ptr = None;
             let (read, write) = split(stream);
 
             Client::startup(
@@ -155,7 +153,7 @@ pub async fn startup_tls(
                 connection_id,
                 #[cfg(unix)]
                 raw_fd,
-                #[cfg(unix)]
+                #[cfg(all(unix, feature = "tls-migration"))]
                 ssl_ptr,
             )
             .await
@@ -194,7 +192,7 @@ where
         use_tls: bool,
         connection_id: u64,
         #[cfg(unix)] raw_fd: Option<std::os::unix::io::RawFd>,
-        #[cfg(unix)] ssl_ptr: Option<super::core::SslRawPtr>,
+        #[cfg(all(unix, feature = "tls-migration"))] ssl_ptr: Option<super::core::SslRawPtr>,
     ) -> Result<Client<S, T>, Error> {
         let parameters = parse_startup(bytes)?;
 
@@ -426,7 +424,7 @@ where
             client_pending_begin: None,
             #[cfg(unix)]
             raw_fd,
-            #[cfg(unix)]
+            #[cfg(all(unix, feature = "tls-migration"))]
             ssl_ptr,
         })
     }
@@ -468,7 +466,7 @@ where
             client_pending_begin: None,
             #[cfg(unix)]
             raw_fd: None,
-            #[cfg(unix)]
+            #[cfg(all(unix, feature = "tls-migration"))]
             ssl_ptr: None,
         })
     }

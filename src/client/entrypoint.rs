@@ -174,7 +174,7 @@ pub async fn client_entrypoint(
                             connection_id,
                             #[cfg(unix)]
                             raw_fd,
-                            #[cfg(unix)]
+                            #[cfg(all(unix, feature = "tls-migration"))]
                             None, // no SSL for plain TCP
                         )
                         .await
@@ -240,7 +240,7 @@ pub async fn client_entrypoint(
                 connection_id,
                 #[cfg(unix)]
                 raw_fd,
-                #[cfg(unix)]
+                #[cfg(all(unix, feature = "tls-migration"))]
                 None, // no SSL for plain TCP
             )
             .await

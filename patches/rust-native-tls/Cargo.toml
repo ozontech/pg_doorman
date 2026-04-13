@@ -15,6 +15,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 vendored = ["openssl/vendored"]
 alpn = ["security-framework/alpn"]
+tls-migration = []
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 security-framework = "2.0.0"

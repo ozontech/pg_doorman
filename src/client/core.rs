@@ -388,9 +388,7 @@ pub struct Client<S, T> {
     pub(crate) raw_fd: Option<std::os::unix::io::RawFd>,
 
     /// Raw pointer to the OpenSSL SSL object for TLS migration export.
-    /// None for plain TCP clients. The pointer remains valid for the
-    /// lifetime of the TlsStream (which owns the SSL object).
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "tls-migration"))]
     pub(crate) ssl_ptr: Option<SslRawPtr>,
 }
 
@@ -399,12 +397,12 @@ pub struct Client<S, T> {
 /// SAFETY: the pointer is only used at the idle point in handle() to call
 /// SSL_export_migration_state, which reads TLS state without mutation.
 /// The Client task is the sole user — no concurrent access.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "tls-migration"))]
 #[derive(Clone, Copy)]
 pub struct SslRawPtr(pub(crate) *mut std::ffi::c_void);
-#[cfg(unix)]
+#[cfg(all(unix, feature = "tls-migration"))]
 unsafe impl Send for SslRawPtr {}
-#[cfg(unix)]
+#[cfg(all(unix, feature = "tls-migration"))]
 unsafe impl Sync for SslRawPtr {}
 
 impl<S, T> Client<S, T>

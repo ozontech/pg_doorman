@@ -6,6 +6,7 @@ use tokio::io::{split, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
+#[cfg(feature = "tls-migration")]
 use std::ffi::c_void;
 
 use crate::client::buffer_pool::PooledBuffer;
@@ -29,7 +30,8 @@ const MAX_QUERY_LEN: usize = 10 * 1024 * 1024; // 10 MB
 const MAX_RECV_BUF: usize = 64 * 1024;
 
 // FFI for our patched OpenSSL migration functions.
-// import is used only on Linux; export_tls_state_from_ptr calls export.
+// Only available with the tls-migration feature (vendored patched OpenSSL).
+#[cfg(feature = "tls-migration")]
 #[allow(dead_code)]
 extern "C" {
     fn SSL_export_migration_state(ssl: *mut c_void, out: *mut *mut u8, out_len: *mut usize) -> i32;
@@ -45,6 +47,7 @@ extern "C" {
 }
 
 /// Export TLS cipher state from a raw SSL* pointer.
+#[cfg(feature = "tls-migration")]
 fn export_tls_state_from_ptr(ssl_ptr: *mut c_void) -> Result<Vec<u8>, Error> {
     if ssl_ptr.is_null() {
         return Err(Error::ClientError("null SSL pointer".into()));
@@ -134,12 +137,15 @@ where
             .ok_or_else(|| Error::ClientError("no raw_fd for migration".into()))?;
 
         // Export TLS state if this is a TLS connection
+        #[cfg(feature = "tls-migration")]
         let tls_state = if let Some(ssl_ptr) = self.ssl_ptr {
             let blob = export_tls_state_from_ptr(ssl_ptr.0)?;
             Some(blob)
         } else {
             None
         };
+        #[cfg(not(feature = "tls-migration"))]
+        let tls_state: Option<Vec<u8>> = None;
 
         // SAFETY: raw_fd is a valid open fd stored before tokio::io::split().
         // dup() creates an independent copy; if it fails we return an error.
@@ -435,13 +441,13 @@ pub async fn reconstruct_client(
         client_pending_begin: None,
         #[cfg(unix)]
         raw_fd,
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "tls-migration"))]
         ssl_ptr: None,
     })
 }
 
 /// Reconstruct a TLS Client from a migrated fd + serialized state + TLS blob.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "tls-migration"))]
 pub async fn reconstruct_tls_client(
     fd: RawFd,
     state_buf: BytesMut,
@@ -531,7 +537,7 @@ pub async fn reconstruct_tls_client(
         client_pending_begin: None,
         #[cfg(unix)]
         raw_fd,
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "tls-migration"))]
         ssl_ptr,
     })
 }
@@ -828,7 +834,7 @@ pub async fn migration_receiver_task(
     client_server_map: ClientServerMap,
     _tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
 ) {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "tls-migration"))]
     let tls_acceptor = _tls_acceptor;
     use crate::app::server::CURRENT_CLIENT_COUNT;
     use std::sync::atomic::Ordering;
@@ -841,7 +847,7 @@ pub async fn migration_receiver_task(
         match result {
             Ok(Ok((fd, state_buf, tls_state))) => {
                 if let Some(_tls_blob) = tls_state {
-                    #[cfg(target_os = "linux")]
+                    #[cfg(all(target_os = "linux", feature = "tls-migration"))]
                     {
                         let csm = client_server_map.clone();
                         let acceptor = tls_acceptor.clone();
@@ -872,9 +878,9 @@ pub async fn migration_receiver_task(
                             }
                         });
                     }
-                    #[cfg(not(target_os = "linux"))]
+                    #[cfg(not(all(target_os = "linux", feature = "tls-migration")))]
                     {
-                        warn!("TLS migration requires Linux; closing fd");
+                        warn!("TLS migration not available; closing fd");
                         let _ = (state_buf, _tls_blob);
                         unsafe { libc::close(fd) };
                     }

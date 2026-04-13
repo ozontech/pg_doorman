@@ -70,6 +70,7 @@ features = ["full"]
 
 [features]
 vendored = ["native-tls/vendored"]
+tls-migration = ["native-tls/tls-migration"]
 
 [target."cfg(all(not(target_os = \"macos\"), not(windows), not(target_os = \"ios\")))".dev-dependencies.openssl]
 version = "0.10"
