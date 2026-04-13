@@ -1,6 +1,23 @@
 extern crate openssl;
 extern crate openssl_probe;
 
+// FFI declarations for our patched OpenSSL migration functions.
+// These are not in openssl-sys because we added them via C patch.
+extern "C" {
+    fn SSL_export_migration_state(
+        ssl: *mut openssl_sys::SSL,
+        out: *mut *mut std::os::raw::c_uchar,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    fn SSL_import_migration_state(
+        ctx: *mut openssl_sys::SSL_CTX,
+        fd: std::os::raw::c_int,
+        buf: *const std::os::raw::c_uchar,
+        len: usize,
+    ) -> *mut openssl_sys::SSL;
+}
+
 use self::openssl::error::ErrorStack;
 use self::openssl::hash::MessageDigest;
 use self::openssl::nid::Nid;
@@ -469,6 +486,31 @@ impl<S: io::Read + io::Write> TlsStream<S> {
         let digest = cert.digest(md)?;
 
         Ok(Some(digest.to_vec()))
+    }
+
+    /// Export TLS cipher state for connection migration.
+    /// Returns an opaque blob that can be passed to import_migration_state().
+    pub fn export_migration_state(&self) -> Result<Vec<u8>, Error> {
+        unsafe {
+            use self::foreign_types_shared::ForeignTypeRef;
+
+            let ssl_ptr = self.0.ssl().as_ptr();
+            let mut out: *mut u8 = std::ptr::null_mut();
+            let mut out_len: usize = 0;
+
+            let ret = SSL_export_migration_state(
+                ssl_ptr,
+                &mut out as *mut *mut u8 as *mut *mut std::os::raw::c_uchar,
+                &mut out_len,
+            );
+            if ret != 1 {
+                return Err(Error(ssl::Error::get()));
+            }
+
+            let data = std::slice::from_raw_parts(out, out_len).to_vec();
+            openssl_sys::OPENSSL_free(out as *mut std::os::raw::c_void);
+            Ok(data)
+        }
     }
 
     pub fn shutdown(&mut self) -> io::Result<()> {

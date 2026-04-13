@@ -707,6 +707,14 @@ impl<S: io::Read + io::Write> TlsStream<S> {
         self.0.shutdown()?;
         Ok(())
     }
+
+    /// Export TLS cipher state for connection migration between processes.
+    /// Returns an opaque blob to pass to SSL_import_migration_state on the
+    /// receiving side. Only available with the OpenSSL backend.
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    pub fn export_migration_state(&self) -> Result<Vec<u8>> {
+        Ok(self.0.export_migration_state()?)
+    }
 }
 
 impl<S: io::Read + io::Write> io::Read for TlsStream<S> {
