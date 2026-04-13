@@ -31,6 +31,9 @@ const MAX_RECV_BUF: usize = 64 * 1024;
 pub struct MigrationPayload {
     pub state: BytesMut,
     pub fd: RawFd,
+    /// Opaque TLS cipher state from SSL_export_migration_state.
+    /// None for plain TCP connections.
+    pub tls_state: Option<Vec<u8>>,
 }
 
 impl Drop for MigrationPayload {
@@ -84,7 +87,8 @@ where
     /// Serialize client state and dup the fd for migration.
     /// Called at the idle point in handle() — no server checked out,
     /// no pending begin, no buffered reads.
-    pub fn prepare_migration(&self) -> Result<MigrationPayload, Error> {
+    /// `tls_state` is None for plain TCP, Some(blob) for TLS clients.
+    pub fn prepare_migration(&self, tls_state: Option<Vec<u8>>) -> Result<MigrationPayload, Error> {
         let raw_fd = self
             .raw_fd
             .ok_or_else(|| Error::ClientError("no raw_fd for migration".into()))?;
@@ -98,11 +102,15 @@ where
             ));
         }
 
-        let state = self.serialize_state();
-        Ok(MigrationPayload { state, fd: dup_fd })
+        let state = self.serialize_state(tls_state.is_some());
+        Ok(MigrationPayload {
+            state,
+            fd: dup_fd,
+            tls_state,
+        })
     }
 
-    fn serialize_state(&self) -> BytesMut {
+    fn serialize_state(&self, use_tls: bool) -> BytesMut {
         let mut buf = BytesMut::with_capacity(512);
 
         buf.put_u32(MIGRATION_MAGIC);
@@ -130,8 +138,7 @@ where
 
         serialize_prepared_state(&mut buf, &self.prepared);
 
-        // TLS flag (for future use)
-        buf.put_u8(0); // plain TCP
+        buf.put_u8(use_tls as u8);
 
         buf
     }
@@ -417,10 +424,14 @@ fn reconstruct_prepared_state(
 /// Send a migration payload (fd + state) over a Unix socket.
 /// After successful send, the fd in payload is set to -1 to prevent double-close.
 pub fn send_migration_fd(socket_fd: RawFd, payload: &mut MigrationPayload) -> Result<(), Error> {
+    let tls_data = payload.tls_state.as_deref().unwrap_or(&[]);
     let state_len = payload.state.len() as u32;
-    let mut msg_buf = Vec::with_capacity(4 + payload.state.len());
+    let tls_len = tls_data.len() as u32;
+    let mut msg_buf = Vec::with_capacity(4 + payload.state.len() + 4 + tls_data.len());
     msg_buf.extend_from_slice(&state_len.to_be_bytes());
     msg_buf.extend_from_slice(&payload.state);
+    msg_buf.extend_from_slice(&tls_len.to_be_bytes());
+    msg_buf.extend_from_slice(tls_data);
 
     let iov = libc::iovec {
         iov_base: msg_buf.as_ptr() as *mut libc::c_void,
@@ -470,9 +481,9 @@ pub fn send_migration_fd(socket_fd: RawFd, payload: &mut MigrationPayload) -> Re
     Ok(())
 }
 
-/// Receive a migration payload (fd + state) from a Unix socket.
-/// Returns (raw_fd, state_bytes) or error on EOF/failure.
-pub fn recv_migration_fd(socket_fd: RawFd) -> Result<(RawFd, BytesMut), Error> {
+/// Receive a migration payload (fd + state + optional TLS state) from a Unix socket.
+/// Returns (raw_fd, state_bytes, tls_state) or error on EOF/failure.
+pub fn recv_migration_fd(socket_fd: RawFd) -> Result<(RawFd, BytesMut, Option<Vec<u8>>), Error> {
     let mut recv_buf = vec![0u8; MAX_RECV_BUF];
     let iov = libc::iovec {
         iov_base: recv_buf.as_mut_ptr() as *mut libc::c_void,
@@ -563,7 +574,82 @@ pub fn recv_migration_fd(socket_fd: RawFd) -> Result<(RawFd, BytesMut), Error> {
         state.put_slice(&recv_buf[..n as usize]);
     }
 
-    Ok((received_fd, state))
+    // Read TLS state length + data (follows the app state)
+    // May need to read more data from socket if not all arrived in first recvmsg
+    let mut tls_header = [0u8; 4];
+    let mut tls_header_read = 0usize;
+
+    // Check if tls_len header is already in our buffer
+    let leftover = data_received.saturating_sub(state_len);
+    if leftover >= 4 {
+        // TLS length header is in the buffer
+        let off = 4 + state_len;
+        tls_header.copy_from_slice(&recv_buf[off..off + 4]);
+        tls_header_read = 4;
+    } else if leftover > 0 {
+        tls_header[..leftover].copy_from_slice(&recv_buf[4 + state_len..4 + state_len + leftover]);
+        tls_header_read = leftover;
+    }
+
+    // Read remaining TLS header bytes if needed
+    while tls_header_read < 4 {
+        // SAFETY: recv_buf is valid, socket_fd is a valid connected Unix socket.
+        let n = unsafe {
+            libc::recv(
+                socket_fd,
+                recv_buf.as_mut_ptr() as *mut libc::c_void,
+                4 - tls_header_read,
+                0,
+            )
+        };
+        if n <= 0 {
+            unsafe { libc::close(received_fd) };
+            return Err(Error::SocketError("migration: truncated tls header".into()));
+        }
+        let n = n as usize;
+        tls_header[tls_header_read..tls_header_read + n].copy_from_slice(&recv_buf[..n]);
+        tls_header_read += n;
+    }
+
+    let tls_len = u32::from_be_bytes(tls_header) as usize;
+    let tls_state = if tls_len > 0 {
+        let mut tls_buf = vec![0u8; tls_len];
+        // Check if some TLS data was already in the original recv buffer
+        let tls_data_offset = 4 + state_len + 4;
+        let mut tls_read = if n > tls_data_offset {
+            let avail = (n - tls_data_offset).min(tls_len);
+            tls_buf[..avail].copy_from_slice(&recv_buf[tls_data_offset..tls_data_offset + avail]);
+            avail
+        } else {
+            0
+        };
+
+        while tls_read < tls_len {
+            let remaining = tls_len - tls_read;
+            let chunk = remaining.min(recv_buf.len());
+            // SAFETY: recv_buf and socket_fd are valid.
+            let nr = unsafe {
+                libc::recv(
+                    socket_fd,
+                    recv_buf.as_mut_ptr() as *mut libc::c_void,
+                    chunk,
+                    0,
+                )
+            };
+            if nr <= 0 {
+                unsafe { libc::close(received_fd) };
+                return Err(Error::SocketError("migration: truncated tls state".into()));
+            }
+            let nr = nr as usize;
+            tls_buf[tls_read..tls_read + nr].copy_from_slice(&recv_buf[..nr]);
+            tls_read += nr;
+        }
+        Some(tls_buf)
+    } else {
+        None
+    };
+
+    Ok((received_fd, state, tls_state))
 }
 
 // ---------------------------------------------------------------------------
@@ -599,7 +685,8 @@ pub async fn migration_receiver_task(socket_fd: RawFd, client_server_map: Client
         let result = tokio::task::spawn_blocking(move || recv_migration_fd(socket_fd)).await;
 
         match result {
-            Ok(Ok((fd, state_buf))) => {
+            Ok(Ok((fd, state_buf, _tls_state))) => {
+                // TODO: pass tls_state to reconstruct_client for TLS migration
                 let csm = client_server_map.clone();
                 tokio::spawn(async move {
                     match reconstruct_client(fd, state_buf, csm).await {
