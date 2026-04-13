@@ -1,12 +1,66 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use base64::{engine::general_purpose, Engine as _};
 use hmac::{Hmac, Mac};
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 
+pub enum StreamKind {
+    Plain(TcpStream),
+    Tls(tokio_native_tls::TlsStream<TcpStream>),
+    /// Temporary state during TLS upgrade. Never used for I/O.
+    Upgrading,
+}
+
+impl AsyncRead for StreamKind {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamKind::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            StreamKind::Tls(s) => Pin::new(s).poll_read(cx, buf),
+            StreamKind::Upgrading => unreachable!("I/O on upgrading stream"),
+        }
+    }
+}
+
+impl AsyncWrite for StreamKind {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            StreamKind::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            StreamKind::Tls(s) => Pin::new(s).poll_write(cx, buf),
+            StreamKind::Upgrading => unreachable!("I/O on upgrading stream"),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamKind::Plain(s) => Pin::new(s).poll_flush(cx),
+            StreamKind::Tls(s) => Pin::new(s).poll_flush(cx),
+            StreamKind::Upgrading => unreachable!("I/O on upgrading stream"),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamKind::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            StreamKind::Tls(s) => Pin::new(s).poll_shutdown(cx),
+            StreamKind::Upgrading => unreachable!("I/O on upgrading stream"),
+        }
+    }
+}
+
 pub struct PgConnection {
-    stream: TcpStream,
+    stream: StreamKind,
     /// Process ID from BackendKeyData (used for cancel requests)
     process_id: Option<i32>,
     /// Secret key from BackendKeyData (used for cancel requests)
@@ -17,10 +71,55 @@ impl PgConnection {
     pub async fn connect(addr: &str) -> tokio::io::Result<Self> {
         let stream = TcpStream::connect(addr).await?;
         Ok(Self {
-            stream,
+            stream: StreamKind::Plain(stream),
             process_id: None,
             secret_key: None,
         })
+    }
+
+    /// Upgrade a plain TCP connection to TLS via PostgreSQL SSLRequest protocol.
+    /// Must be called after connect() and before send_startup().
+    pub async fn upgrade_to_tls(&mut self) -> tokio::io::Result<()> {
+        let mut tcp = match std::mem::replace(&mut self.stream, StreamKind::Upgrading) {
+            StreamKind::Plain(s) => s,
+            other => {
+                self.stream = other;
+                return Err(tokio::io::Error::new(
+                    tokio::io::ErrorKind::Other,
+                    "Connection is not in plain TCP state",
+                ));
+            }
+        };
+
+        // SSLRequest: length=8, code=80877103
+        let mut ssl_request = [0u8; 8];
+        ssl_request[..4].copy_from_slice(&8i32.to_be_bytes());
+        ssl_request[4..].copy_from_slice(&80877103i32.to_be_bytes());
+        tcp.write_all(&ssl_request).await?;
+
+        let response = tcp.read_u8().await?;
+        if response != b'S' {
+            self.stream = StreamKind::Plain(tcp);
+            return Err(tokio::io::Error::new(
+                tokio::io::ErrorKind::ConnectionRefused,
+                format!("Server refused TLS: '{}'", response as char),
+            ));
+        }
+
+        let connector = native_tls::TlsConnector::builder()
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .build()
+            .map_err(|e| tokio::io::Error::new(tokio::io::ErrorKind::Other, e))?;
+        let connector = tokio_native_tls::TlsConnector::from(connector);
+
+        let tls_stream = connector
+            .connect("localhost", tcp)
+            .await
+            .map_err(|e| tokio::io::Error::new(tokio::io::ErrorKind::Other, e))?;
+
+        self.stream = StreamKind::Tls(tls_stream);
+        Ok(())
     }
 
     pub async fn send_startup(&mut self, user: &str, database: &str) -> tokio::io::Result<()> {
@@ -561,21 +660,35 @@ impl PgConnection {
         Ok(messages)
     }
 
-    /// Abruptly close the TCP connection (simulates network failure)
+    /// Abruptly close the connection (simulates network failure)
     pub async fn abort_connection(self) {
-        // Drop the stream without proper shutdown - simulates network failure
         drop(self.stream);
     }
 
     /// Send TCP RST instead of FIN. SO_LINGER with timeout=0 makes the kernel
     /// send RST on close, which triggers BrokenPipe/ConnectionReset on the peer.
     pub async fn abort_connection_with_rst(self) {
-        let std_stream = self.stream.into_std().unwrap();
-        let linger = socket2::SockRef::from(&std_stream);
-        linger
-            .set_linger(Some(std::time::Duration::from_secs(0)))
-            .expect("Failed to set SO_LINGER");
-        drop(std_stream);
+        match self.stream {
+            StreamKind::Plain(s) => {
+                let std_stream = s.into_std().unwrap();
+                let linger = socket2::SockRef::from(&std_stream);
+                linger
+                    .set_linger(Some(std::time::Duration::from_secs(0)))
+                    .expect("Failed to set SO_LINGER");
+                drop(std_stream);
+            }
+            StreamKind::Tls(tls) => {
+                #[cfg(unix)]
+                {
+                    let linger = socket2::SockRef::from(&tls);
+                    linger
+                        .set_linger(Some(std::time::Duration::from_secs(0)))
+                        .expect("Failed to set SO_LINGER");
+                }
+                drop(tls);
+            }
+            StreamKind::Upgrading => unreachable!(),
+        }
     }
 
     /// Read a limited number of bytes from the stream (for partial read tests)

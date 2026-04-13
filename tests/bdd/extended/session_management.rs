@@ -30,6 +30,35 @@ pub async fn create_named_session(
 }
 
 #[when(
+    regex = r#"^we create TLS session "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
+)]
+pub async fn create_tls_named_session(
+    world: &mut DoormanWorld,
+    session_name: String,
+    user: String,
+    password: String,
+    database: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    let mut conn = PgConnection::connect(&doorman_addr)
+        .await
+        .expect("Failed to connect to pg_doorman");
+    conn.upgrade_to_tls()
+        .await
+        .expect("Failed to upgrade to TLS");
+    conn.send_startup(&user, &database)
+        .await
+        .expect("Failed to send startup to pg_doorman");
+    conn.authenticate(&user, &password)
+        .await
+        .expect("Failed to authenticate to pg_doorman");
+
+    world.named_sessions.insert(session_name, conn);
+}
+
+#[when(
     regex = r#"^we create session "([^"]+)" to postgres as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
 )]
 pub async fn create_named_session_to_postgres(
