@@ -219,6 +219,10 @@ jobs:
               openssl-devel \
               cmake \
               clang \
+              patch \
+              perl \
+              perl-FindBin \
+              perl-IPC-Cmd \
               ca-certificates
           else
             yum install -y \
@@ -231,6 +235,10 @@ jobs:
               openssl-devel \
               cmake \
               clang \
+              patch \
+              perl \
+              perl-FindBin \
+              perl-IPC-Cmd \
               ca-certificates
           fi
 
