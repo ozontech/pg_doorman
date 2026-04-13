@@ -421,6 +421,54 @@ impl TlsAcceptor {
     }
 }
 
+impl TlsAcceptor {
+    /// Reconstruct a TLS stream from migrated cipher state.
+    /// Calls SSL_import_migration_state to create an SSL* in "established" mode,
+    /// then wraps it in SslStream. No handshake occurs — the imported SSL object
+    /// has hand_state=TLS_ST_OK so SSL_do_handshake returns immediately.
+    pub fn import_migration_state<S>(
+        &self,
+        stream: S,
+        tls_state: &[u8],
+        fd: std::os::raw::c_int,
+    ) -> Result<TlsStream<S>, Error>
+    where
+        S: io::Read + io::Write,
+    {
+        unsafe {
+            use self::foreign_types_shared::ForeignType;
+
+            let ctx_ptr = self.0.context().as_ptr() as *mut openssl_sys::SSL_CTX;
+            let ssl_ptr = SSL_import_migration_state(
+                ctx_ptr as *mut std::os::raw::c_void,
+                fd,
+                tls_state.as_ptr(),
+                tls_state.len(),
+            );
+            if ssl_ptr.is_null() {
+                return Err(Error(ssl::Error::get()));
+            }
+
+            // Take ownership of the SSL* into an openssl::ssl::Ssl
+            let ssl = openssl::ssl::Ssl::from_ptr(ssl_ptr as *mut openssl_sys::SSL);
+
+            // Create SslStream via accept() — SSL_do_handshake returns immediately
+            // because our import function set hand_state=TLS_ST_OK and in_init=0.
+            let ssl_stream = ssl.accept(stream).map_err(|e| match e {
+                openssl::ssl::HandshakeError::SetupFailure(e) => Error(e),
+                openssl::ssl::HandshakeError::Failure(mid) => {
+                    Error(mid.into_error())
+                }
+                openssl::ssl::HandshakeError::WouldBlock(mid) => {
+                    Error(mid.into_error())
+                }
+            })?;
+
+            Ok(TlsStream(ssl_stream))
+        }
+    }
+}
+
 pub struct TlsStream<S>(ssl::SslStream<S>);
 
 impl<S: fmt::Debug> fmt::Debug for TlsStream<S> {

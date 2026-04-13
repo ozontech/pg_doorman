@@ -653,6 +653,21 @@ impl TlsAcceptor {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// Reconstruct a TLS stream from migrated cipher state (OpenSSL backend only).
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    pub fn import_migration_state<S>(
+        &self,
+        stream: S,
+        tls_state: &[u8],
+        fd: i32,
+    ) -> Result<TlsStream<S>>
+    where
+        S: io::Read + io::Write,
+    {
+        let s = self.0.import_migration_state(stream, tls_state, fd)?;
+        Ok(TlsStream(s))
+    }
 }
 
 /// A stream managing a TLS session.

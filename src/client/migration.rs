@@ -236,6 +236,8 @@ struct DeserializedState {
     prepared_enabled: bool,
     async_client: bool,
     prepared_entries: Vec<PreparedEntry>,
+    #[allow(dead_code)]
+    use_tls: bool,
 }
 
 struct PreparedEntry {
@@ -339,9 +341,8 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
         });
     }
 
-    // use_tls flag (ignored for now)
     require(&buf, 1)?;
-    let _use_tls = buf.get_u8();
+    let use_tls = buf.get_u8() != 0;
 
     Ok(DeserializedState {
         connection_id,
@@ -354,6 +355,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
         prepared_enabled,
         async_client,
         prepared_entries,
+        use_tls,
     })
 }
 
@@ -735,8 +737,17 @@ pub async fn migration_receiver_task(socket_fd: RawFd, client_server_map: Client
         let result = tokio::task::spawn_blocking(move || recv_migration_fd(socket_fd)).await;
 
         match result {
-            Ok(Ok((fd, state_buf, _tls_state))) => {
-                // TODO: pass tls_state to reconstruct_client for TLS migration
+            Ok(Ok((fd, state_buf, tls_state))) => {
+                if tls_state.is_some() {
+                    // TLS import requires SSL_import_migration_state + SslStream wrapping.
+                    // The C-level import and native-tls FFI are ready; the Rust-side
+                    // type assembly (tokio_native_tls::TlsStream<TcpStream> → split → Client)
+                    // is complex and will be wired in a follow-up.
+                    warn!("TLS client migration not yet fully wired — closing fd");
+                    // SAFETY: fd is valid from SCM_RIGHTS.
+                    unsafe { libc::close(fd) };
+                    continue;
+                }
                 let csm = client_server_map.clone();
                 tokio::spawn(async move {
                     match reconstruct_client(fd, state_buf, csm).await {
