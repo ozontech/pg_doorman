@@ -133,6 +133,7 @@
             gcc
             gnumake
             cmake
+            perl
             git
 
             # Additional build tools
