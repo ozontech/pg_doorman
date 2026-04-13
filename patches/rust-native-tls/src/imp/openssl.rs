@@ -1,3 +1,4 @@
+extern crate foreign_types_shared;
 extern crate openssl;
 extern crate openssl_probe;
 
@@ -436,8 +437,6 @@ impl TlsAcceptor {
         S: io::Read + io::Write,
     {
         unsafe {
-            use self::foreign_types_shared::ForeignType;
-
             let ctx_ptr = self.0.context().as_ptr() as *mut openssl_sys::SSL_CTX;
             let ssl_ptr = SSL_import_migration_state(
                 ctx_ptr as *mut std::os::raw::c_void,
@@ -446,21 +445,23 @@ impl TlsAcceptor {
                 tls_state.len(),
             );
             if ssl_ptr.is_null() {
-                return Err(Error(ssl::Error::get()));
+                return Err(Error::Normal(ErrorStack::get()));
             }
 
-            // Take ownership of the SSL* into an openssl::ssl::Ssl
+            // Take ownership of the SSL* into an openssl::ssl::Ssl.
+            // from_ptr is available via the ForeignType trait, re-exported by openssl.
+            use foreign_types_shared::ForeignType;
             let ssl = openssl::ssl::Ssl::from_ptr(ssl_ptr as *mut openssl_sys::SSL);
 
-            // Create SslStream via accept() — SSL_do_handshake returns immediately
-            // because our import function set hand_state=TLS_ST_OK and in_init=0.
+            // SSL_do_handshake returns immediately because our import function
+            // set hand_state=TLS_ST_OK and in_init=0.
             let ssl_stream = ssl.accept(stream).map_err(|e| match e {
-                openssl::ssl::HandshakeError::SetupFailure(e) => Error(e),
+                openssl::ssl::HandshakeError::SetupFailure(e) => Error::Normal(e),
                 openssl::ssl::HandshakeError::Failure(mid) => {
-                    Error(mid.into_error())
+                    Error::Ssl(mid.into_error(), X509VerifyResult::OK)
                 }
                 openssl::ssl::HandshakeError::WouldBlock(mid) => {
-                    Error(mid.into_error())
+                    Error::Ssl(mid.into_error(), X509VerifyResult::OK)
                 }
             })?;
 
@@ -539,7 +540,7 @@ impl<S: io::Read + io::Write> TlsStream<S> {
     /// Returns the raw SSL* pointer for use by migration FFI calls.
     /// The pointer is valid for the lifetime of this TlsStream.
     pub fn ssl_raw_ptr(&self) -> *mut openssl_sys::SSL {
-        use self::foreign_types_shared::ForeignTypeRef;
+        use foreign_types_shared::ForeignTypeRef;
         self.0.ssl().as_ptr()
     }
 
@@ -547,7 +548,7 @@ impl<S: io::Read + io::Write> TlsStream<S> {
     /// Returns an opaque blob that can be passed to import_migration_state().
     pub fn export_migration_state(&self) -> Result<Vec<u8>, Error> {
         unsafe {
-            use self::foreign_types_shared::ForeignTypeRef;
+            use foreign_types_shared::ForeignTypeRef;
 
             let ssl_ptr = self.0.ssl().as_ptr();
             let mut out: *mut u8 = std::ptr::null_mut();
@@ -559,7 +560,7 @@ impl<S: io::Read + io::Write> TlsStream<S> {
                 &mut out_len,
             );
             if ret != 1 {
-                return Err(Error(ssl::Error::get()));
+                return Err(Error::Normal(ErrorStack::get()));
             }
 
             let data = std::slice::from_raw_parts(out, out_len).to_vec();

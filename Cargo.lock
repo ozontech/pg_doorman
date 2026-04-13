@@ -1611,6 +1611,7 @@ dependencies = [
 name = "native-tls"
 version = "0.2.14"
 dependencies = [
+ "foreign-types-shared",
  "libc",
  "log",
  "openssl",
