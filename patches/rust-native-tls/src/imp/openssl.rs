@@ -1,5 +1,8 @@
+extern crate foreign_types_shared;
 extern crate openssl;
 extern crate openssl_probe;
+
+use self::foreign_types_shared::{ForeignType, ForeignTypeRef};
 
 // FFI declarations for our patched OpenSSL migration functions.
 // These are not in openssl-sys because we added them via C patch.
@@ -436,8 +439,6 @@ impl TlsAcceptor {
         S: io::Read + io::Write,
     {
         unsafe {
-            extern crate foreign_types_shared as fts;
-            use fts::ForeignTypeRef;
             let ctx_ptr = self.0.context().as_ptr() as *mut openssl_sys::SSL_CTX;
             let ssl_ptr = SSL_import_migration_state(
                 ctx_ptr as *mut std::os::raw::c_void,
@@ -453,8 +454,6 @@ impl TlsAcceptor {
             let ssl = {
                 // ForeignType::from_ptr — we use the trait from the foreign-types crate
                 // which openssl depends on. Access through the macro-generated inherent method.
-                extern crate foreign_types_shared as fts;
-                use fts::ForeignType;
                 openssl::ssl::Ssl::from_ptr(ssl_ptr as *mut openssl_sys::SSL)
             };
 
@@ -545,8 +544,6 @@ impl<S: io::Read + io::Write> TlsStream<S> {
     /// Returns the raw SSL* pointer for use by migration FFI calls.
     /// The pointer is valid for the lifetime of this TlsStream.
     pub fn ssl_raw_ptr(&self) -> *mut openssl_sys::SSL {
-        extern crate foreign_types_shared as fts;
-        use fts::ForeignTypeRef;
         self.0.ssl().as_ptr()
     }
 
@@ -554,8 +551,6 @@ impl<S: io::Read + io::Write> TlsStream<S> {
     /// Returns an opaque blob that can be passed to import_migration_state().
     pub fn export_migration_state(&self) -> Result<Vec<u8>, Error> {
         unsafe {
-            extern crate foreign_types_shared as fts;
-            use fts::ForeignTypeRef;
 
             let ssl_ptr = self.0.ssl().as_ptr();
             let mut out: *mut u8 = std::ptr::null_mut();
