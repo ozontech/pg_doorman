@@ -72,6 +72,7 @@ hdrhistogram = "7.5"
 
 [patch.crates-io]
 native-tls = { path = "patches/rust-native-tls" }
+tokio-native-tls = { path = "patches/tokio-native-tls" }
 openssl-src = { path = "patches/openssl-src" }
 
 [dev-dependencies]

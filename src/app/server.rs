@@ -274,21 +274,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             }
         }
 
-        // Spawn migration receiver if parent passed a migration socket
-        #[cfg(not(windows))]
-        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD") {
-            if let Ok(migration_fd) = fd_str.parse::<i32>() {
-                info!(
-                    "Migration socket received from parent (fd={})",
-                    migration_fd
-                );
-                std::env::remove_var("PG_DOORMAN_MIGRATION_FD");
-                tokio::spawn(crate::client::migration::migration_receiver_task(
-                    migration_fd,
-                    client_server_map.clone(),
-                ));
-            }
-        }
+        // Migration receiver is spawned below after tls_acceptor is available
 
         #[cfg(windows)]
         let mut term_signal = win_signal::ctrl_close().unwrap();
@@ -324,6 +310,23 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         let tls_rate_limiter = tls_state.rate_limiter.clone();
         let tls_acceptor = tls_state.acceptor.clone();
+
+        // Spawn migration receiver if parent passed a migration socket
+        #[cfg(not(windows))]
+        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD") {
+            if let Ok(migration_fd) = fd_str.parse::<i32>() {
+                info!(
+                    "Migration socket received from parent (fd={})",
+                    migration_fd
+                );
+                std::env::remove_var("PG_DOORMAN_MIGRATION_FD");
+                tokio::spawn(crate::client::migration::migration_receiver_task(
+                    migration_fd,
+                    client_server_map.clone(),
+                    tls_acceptor.clone(),
+                ));
+            }
+        }
 
         // Wrap listener in Option to allow dropping it during foreground binary upgrade
         // while still continuing the graceful shutdown process

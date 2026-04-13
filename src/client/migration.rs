@@ -440,6 +440,102 @@ pub async fn reconstruct_client(
     })
 }
 
+/// Reconstruct a TLS Client from a migrated fd + serialized state + TLS blob.
+#[cfg(target_os = "linux")]
+pub async fn reconstruct_tls_client(
+    fd: RawFd,
+    state_buf: BytesMut,
+    client_server_map: ClientServerMap,
+    tls_blob: &[u8],
+    tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
+) -> Result<
+    Client<
+        tokio::io::ReadHalf<tokio_native_tls::TlsStream<TcpStream>>,
+        tokio::io::WriteHalf<tokio_native_tls::TlsStream<TcpStream>>,
+    >,
+    Error,
+> {
+    let state = deserialize_state(state_buf)?;
+    let acceptor = tls_acceptor.ok_or_else(|| Error::ClientError("no TLS acceptor".into()))?;
+
+    // SAFETY: fd was received via SCM_RIGHTS and is a valid TCP socket.
+    let std_stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+    std_stream
+        .set_nonblocking(true)
+        .map_err(|e| Error::SocketError(format!("set_nonblocking: {e}")))?;
+    let tcp_stream = TcpStream::from_std(std_stream)
+        .map_err(|e| Error::SocketError(format!("from_std: {e}")))?;
+    configure_tcp_socket(&tcp_stream);
+
+    let raw_fd = Some(tcp_stream.as_raw_fd());
+
+    let tls_stream = acceptor
+        .import_migration_state(tcp_stream, tls_blob, fd)
+        .map_err(|e| Error::ClientError(format!("TLS import failed: {e}")))?;
+
+    let ssl_ptr = Some(crate::client::core::SslRawPtr(
+        tls_stream.get_ref().ssl_raw_ptr(),
+    ));
+    let (read, write) = split(tls_stream);
+
+    let config = get_config();
+    let pool = get_pool(&state.pool_name, &state.username);
+    let prepared = reconstruct_prepared_state(
+        state.prepared_enabled,
+        state.async_client,
+        &state.prepared_entries,
+        pool.as_ref(),
+        config.general.client_prepared_statements_cache_size,
+    );
+
+    let application_name = state
+        .server_parameters
+        .as_hashmap()
+        .get("application_name")
+        .cloned()
+        .unwrap_or_default();
+
+    let stats = Arc::new(ClientStats::new(
+        state.connection_id,
+        &application_name,
+        &state.username,
+        &state.pool_name,
+        &state.addr.to_string(),
+        crate::utils::clock::now(),
+        true, // TLS
+    ));
+
+    Ok(Client {
+        read: BufReader::new(read),
+        write,
+        buffer: PooledBuffer::new(),
+        addr: state.addr,
+        addr_str: state.addr.to_string(),
+        read_buf: BytesMut::with_capacity(8192),
+        connection_id: state.connection_id,
+        cancel_mode: false,
+        transaction_mode: state.transaction_mode,
+        secret_key: state.secret_key,
+        client_server_map,
+        stats,
+        admin: false,
+        last_server_stats: None,
+        connected_to_server: false,
+        pool_name: state.pool_name,
+        username: state.username,
+        server_parameters: state.server_parameters,
+        prepared,
+        client_last_messages_in_tx: PooledBuffer::new(),
+        max_memory_usage: config.general.max_memory_usage.as_bytes(),
+        pooler_check_query_request_vec: config.general.poller_check_query_request_bytes_vec(),
+        client_pending_begin: None,
+        #[cfg(unix)]
+        raw_fd,
+        #[cfg(unix)]
+        ssl_ptr,
+    })
+}
+
 fn reconstruct_prepared_state(
     enabled: bool,
     async_client: bool,
@@ -727,7 +823,13 @@ pub async fn migration_sender_task(socket_fd: RawFd, mut rx: mpsc::Receiver<Migr
 
 /// Receiver task: runs in the NEW process.
 /// Reads migrated clients from Unix socket, reconstructs and spawns them.
-pub async fn migration_receiver_task(socket_fd: RawFd, client_server_map: ClientServerMap) {
+pub async fn migration_receiver_task(
+    socket_fd: RawFd,
+    client_server_map: ClientServerMap,
+    _tls_acceptor: Option<tokio_native_tls::TlsAcceptor>,
+) {
+    #[cfg(target_os = "linux")]
+    let tls_acceptor = _tls_acceptor;
     use crate::app::server::CURRENT_CLIENT_COUNT;
     use std::sync::atomic::Ordering;
 
@@ -738,14 +840,44 @@ pub async fn migration_receiver_task(socket_fd: RawFd, client_server_map: Client
 
         match result {
             Ok(Ok((fd, state_buf, tls_state))) => {
-                if tls_state.is_some() {
-                    // TLS import requires SSL_import_migration_state + SslStream wrapping.
-                    // The C-level import and native-tls FFI are ready; the Rust-side
-                    // type assembly (tokio_native_tls::TlsStream<TcpStream> → split → Client)
-                    // is complex and will be wired in a follow-up.
-                    warn!("TLS client migration not yet fully wired — closing fd");
-                    // SAFETY: fd is valid from SCM_RIGHTS.
-                    unsafe { libc::close(fd) };
+                if let Some(_tls_blob) = tls_state {
+                    #[cfg(target_os = "linux")]
+                    {
+                        let csm = client_server_map.clone();
+                        let acceptor = tls_acceptor.clone();
+                        let tls_blob = _tls_blob;
+                        tokio::spawn(async move {
+                            match reconstruct_tls_client(fd, state_buf, csm, &tls_blob, acceptor)
+                                .await
+                            {
+                                Ok(mut client) => {
+                                    CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
+                                    info!(
+                                        "[{}@{} #c{}] migrated TLS client from {}",
+                                        client.username,
+                                        client.pool_name,
+                                        client.connection_id,
+                                        client.addr
+                                    );
+                                    let result = client.handle().await;
+                                    if !client.is_admin() && result.is_err() {
+                                        client.disconnect_stats();
+                                    }
+                                    CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                                }
+                                Err(e) => {
+                                    error!("failed to reconstruct migrated TLS client: {e}");
+                                    unsafe { libc::close(fd) };
+                                }
+                            }
+                        });
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        warn!("TLS migration requires Linux; closing fd");
+                        let _ = (state_buf, _tls_blob);
+                        unsafe { libc::close(fd) };
+                    }
                     continue;
                 }
                 let csm = client_server_map.clone();
