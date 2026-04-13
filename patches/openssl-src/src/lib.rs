@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 extern crate cc;
 
 use std::env;
@@ -7,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const OPENSSL_VERSION: &str = "3.5.5";
-const OPENSSL_SHA256: &str = "b28c91532a8b65a1f983b4c28b7488174e4a01008e29ce8e69bd789f28bc2a89";
 
 pub fn source_dir() -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("openssl");
