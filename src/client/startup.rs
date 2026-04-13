@@ -110,6 +110,13 @@ pub async fn startup_tls(
         }
     };
 
+    // Capture TCP fd before TLS wrapping — needed for migration
+    #[cfg(unix)]
+    let tcp_raw_fd = {
+        use std::os::unix::io::AsRawFd;
+        stream.as_raw_fd()
+    };
+
     let mut stream = match tls_acceptor.accept(stream).await {
         Ok(stream) => stream,
 
@@ -126,6 +133,15 @@ pub async fn startup_tls(
         // Got good startup message, proceeding like normal except we
         // are encrypted now.
         Ok((ClientConnectionType::Startup, bytes)) => {
+            #[cfg(unix)]
+            let raw_fd = Some(tcp_raw_fd);
+            // SSL* pointer for TLS migration — only on Linux (OpenSSL backend)
+            #[cfg(target_os = "linux")]
+            let ssl_ptr = Some(crate::client::core::SslRawPtr(
+                stream.get_ref().ssl_raw_ptr(),
+            ));
+            #[cfg(all(unix, not(target_os = "linux")))]
+            let ssl_ptr = None;
             let (read, write) = split(stream);
 
             Client::startup(
@@ -138,7 +154,9 @@ pub async fn startup_tls(
                 true,
                 connection_id,
                 #[cfg(unix)]
-                None, // TLS migration handled in a later phase
+                raw_fd,
+                #[cfg(unix)]
+                ssl_ptr,
             )
             .await
         }
@@ -176,6 +194,7 @@ where
         use_tls: bool,
         connection_id: u64,
         #[cfg(unix)] raw_fd: Option<std::os::unix::io::RawFd>,
+        #[cfg(unix)] ssl_ptr: Option<super::core::SslRawPtr>,
     ) -> Result<Client<S, T>, Error> {
         let parameters = parse_startup(bytes)?;
 
@@ -407,6 +426,8 @@ where
             client_pending_begin: None,
             #[cfg(unix)]
             raw_fd,
+            #[cfg(unix)]
+            ssl_ptr,
         })
     }
 
@@ -447,6 +468,8 @@ where
             client_pending_begin: None,
             #[cfg(unix)]
             raw_fd: None,
+            #[cfg(unix)]
+            ssl_ptr: None,
         })
     }
 }

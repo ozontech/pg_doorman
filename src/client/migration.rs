@@ -6,6 +6,8 @@ use tokio::io::{split, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
+use std::ffi::c_void;
+
 use crate::client::buffer_pool::PooledBuffer;
 use crate::client::core::{CachedStatement, Client, PreparedStatementKey};
 use crate::config::get_config;
@@ -25,6 +27,44 @@ const HEADER_SIZE: usize = 4 + 2 + 8 + 4 + 1;
 const MAX_PREPARED_ENTRIES: usize = 100_000;
 const MAX_QUERY_LEN: usize = 10 * 1024 * 1024; // 10 MB
 const MAX_RECV_BUF: usize = 64 * 1024;
+
+// FFI for our patched OpenSSL migration functions.
+// import is used only on Linux; export_tls_state_from_ptr calls export.
+#[allow(dead_code)]
+extern "C" {
+    fn SSL_export_migration_state(ssl: *mut c_void, out: *mut *mut u8, out_len: *mut usize) -> i32;
+
+    fn SSL_import_migration_state(
+        ctx: *mut c_void,
+        fd: i32,
+        buf: *const u8,
+        len: usize,
+    ) -> *mut c_void;
+
+    fn OPENSSL_free(ptr: *mut c_void);
+}
+
+/// Export TLS cipher state from a raw SSL* pointer.
+fn export_tls_state_from_ptr(ssl_ptr: *mut c_void) -> Result<Vec<u8>, Error> {
+    if ssl_ptr.is_null() {
+        return Err(Error::ClientError("null SSL pointer".into()));
+    }
+    unsafe {
+        let mut out: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        // SAFETY: ssl_ptr is a valid SSL* from the TlsStream, which is still alive
+        // at the idle point when migration runs.
+        let ret = SSL_export_migration_state(ssl_ptr, &mut out, &mut out_len);
+        if ret != 1 || out.is_null() {
+            return Err(Error::ClientError(
+                "SSL_export_migration_state failed".into(),
+            ));
+        }
+        let data = std::slice::from_raw_parts(out, out_len).to_vec();
+        OPENSSL_free(out as *mut c_void);
+        Ok(data)
+    }
+}
 
 /// Payload sent over the migration socket.
 /// Drop closes the dup'd fd if it was not consumed by sendmsg.
@@ -87,11 +127,19 @@ where
     /// Serialize client state and dup the fd for migration.
     /// Called at the idle point in handle() — no server checked out,
     /// no pending begin, no buffered reads.
-    /// `tls_state` is None for plain TCP, Some(blob) for TLS clients.
-    pub fn prepare_migration(&self, tls_state: Option<Vec<u8>>) -> Result<MigrationPayload, Error> {
+    /// If ssl_ptr is set, exports TLS cipher state via SSL_export_migration_state.
+    pub fn prepare_migration(&self) -> Result<MigrationPayload, Error> {
         let raw_fd = self
             .raw_fd
             .ok_or_else(|| Error::ClientError("no raw_fd for migration".into()))?;
+
+        // Export TLS state if this is a TLS connection
+        let tls_state = if let Some(ssl_ptr) = self.ssl_ptr {
+            let blob = export_tls_state_from_ptr(ssl_ptr.0)?;
+            Some(blob)
+        } else {
+            None
+        };
 
         // SAFETY: raw_fd is a valid open fd stored before tokio::io::split().
         // dup() creates an independent copy; if it fails we return an error.
@@ -385,6 +433,8 @@ pub async fn reconstruct_client(
         client_pending_begin: None,
         #[cfg(unix)]
         raw_fd,
+        #[cfg(unix)]
+        ssl_ptr: None,
     })
 }
 

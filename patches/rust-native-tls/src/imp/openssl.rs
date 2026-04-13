@@ -488,6 +488,13 @@ impl<S: io::Read + io::Write> TlsStream<S> {
         Ok(Some(digest.to_vec()))
     }
 
+    /// Returns the raw SSL* pointer for use by migration FFI calls.
+    /// The pointer is valid for the lifetime of this TlsStream.
+    pub fn ssl_raw_ptr(&self) -> *mut openssl_sys::SSL {
+        use self::foreign_types_shared::ForeignTypeRef;
+        self.0.ssl().as_ptr()
+    }
+
     /// Export TLS cipher state for connection migration.
     /// Returns an opaque blob that can be passed to import_migration_state().
     pub fn export_migration_state(&self) -> Result<Vec<u8>, Error> {

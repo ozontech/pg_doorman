@@ -577,7 +577,7 @@ where
                 && self.read.buffer().is_empty()
             {
                 if let Some(tx) = MIGRATION_TX.get() {
-                    if let Ok(payload) = self.prepare_migration(None) {
+                    if let Ok(payload) = self.prepare_migration() {
                         if tx.try_send(payload).is_ok() {
                             info!(
                                 "[{}@{} #c{}] client {} migrated to new process",

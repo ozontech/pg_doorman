@@ -715,6 +715,13 @@ impl<S: io::Read + io::Write> TlsStream<S> {
     pub fn export_migration_state(&self) -> Result<Vec<u8>> {
         Ok(self.0.export_migration_state()?)
     }
+
+    /// Returns the raw SSL* pointer for migration FFI.
+    /// Valid for the lifetime of this TlsStream.
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+    pub fn ssl_raw_ptr(&self) -> *mut std::ffi::c_void {
+        self.0.ssl_raw_ptr() as *mut std::ffi::c_void
+    }
 }
 
 impl<S: io::Read + io::Write> io::Read for TlsStream<S> {
