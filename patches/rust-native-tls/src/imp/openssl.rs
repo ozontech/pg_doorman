@@ -1,8 +1,10 @@
+#[cfg(feature = "tls-migration")]
 extern crate foreign_types_shared;
 extern crate openssl;
 extern crate openssl_probe;
 
-use self::foreign_types_shared::{ForeignType, ForeignTypeRef};
+#[cfg(feature = "tls-migration")]
+use self::foreign_types_shared::ForeignType;
 
 // FFI declarations for our patched OpenSSL migration functions.
 // These are not in openssl-sys because we added them via C patch.
