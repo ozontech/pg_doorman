@@ -9,7 +9,9 @@ Build-Depends: debhelper-compat (= 13),
                pkg-config,
                cmake,
                clang,
-               g++
+               g++,
+               patch,
+               perl
 Standards-Version: 4.6.0
 Homepage: https://github.com/ozontech/pg_doorman
 Vcs-Git: https://github.com/ozontech/pg_doorman.git

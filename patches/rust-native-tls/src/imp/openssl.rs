@@ -441,7 +441,7 @@ impl TlsAcceptor {
         unsafe {
             let ctx_ptr = self.0.context().as_ptr() as *mut openssl_sys::SSL_CTX;
             let ssl_ptr = SSL_import_migration_state(
-                ctx_ptr as *mut std::os::raw::c_void,
+                ctx_ptr,
                 fd,
                 tls_state.as_ptr(),
                 tls_state.len(),

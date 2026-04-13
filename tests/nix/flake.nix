@@ -136,6 +136,7 @@
             git
 
             # Additional build tools
+            gnupatch
             cacert
             coreutils
             bash
