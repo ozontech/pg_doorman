@@ -10,7 +10,8 @@ use crate::utils::clock::now;
 
 use crate::admin::handle_admin;
 use crate::app::server::{
-    CLIENTS_IN_TRANSACTIONS, MIGRATION_IN_PROGRESS, MIGRATION_TX, SHUTDOWN_IN_PROGRESS,
+    CLIENTS_IN_TRANSACTIONS, CURRENT_CLIENT_COUNT, MIGRATION_IN_PROGRESS, MIGRATION_TX,
+    SHUTDOWN_IN_PROGRESS,
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
@@ -573,21 +574,54 @@ where
             #[cfg(unix)]
             if MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
                 && !self.admin
+                && (self.client_pending_begin.is_some() || !self.read.buffer().is_empty())
+            {
+                debug!(
+                    "[{}@{} #c{}] migration deferred: pending_begin={} read_buf={}",
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    self.client_pending_begin.is_some(),
+                    self.read.buffer().len()
+                );
+            }
+            #[cfg(unix)]
+            if MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
+                && !self.admin
                 && self.client_pending_begin.is_none()
                 && self.read.buffer().is_empty()
             {
-                if let Some(tx) = MIGRATION_TX.get() {
-                    if let Ok(payload) = self.prepare_migration() {
-                        if tx.try_send(payload).is_ok() {
-                            info!(
-                                "[{}@{} #c{}] client {} migrated to new process",
-                                self.username, self.pool_name, self.connection_id, self.addr
-                            );
-                            crate::app::server::CURRENT_CLIENT_COUNT
-                                .fetch_add(-1, Ordering::SeqCst);
-                            return Ok(());
-                        }
+                match MIGRATION_TX.get() {
+                    None => {
+                        warn!(
+                            "[{}@{} #c{}] migration channel not ready",
+                            self.username, self.pool_name, self.connection_id
+                        );
                     }
+                    Some(tx) => match self.prepare_migration() {
+                        Err(e) => {
+                            warn!(
+                                "[{}@{} #c{}] prepare_migration failed: {e}",
+                                self.username, self.pool_name, self.connection_id
+                            );
+                        }
+                        Ok(payload) => match tx.try_send(payload) {
+                            Err(e) => {
+                                warn!(
+                                    "[{}@{} #c{}] migration channel send failed: {e}",
+                                    self.username, self.pool_name, self.connection_id
+                                );
+                            }
+                            Ok(()) => {
+                                info!(
+                                    "[{}@{} #c{}] client {} migrated to new process",
+                                    self.username, self.pool_name, self.connection_id, self.addr
+                                );
+                                CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                                return Ok(());
+                            }
+                        },
+                    },
                 }
             }
 
@@ -606,7 +640,10 @@ where
                 self.stats.disconnect();
                 return Ok(());
             }
-            if SHUTDOWN_IN_PROGRESS.load(Ordering::Relaxed) && !self.admin {
+            if SHUTDOWN_IN_PROGRESS.load(Ordering::Relaxed)
+                && !MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
+                && !self.admin
+            {
                 warn!(
                     "[{}@{} #c{}] dropping client {}: shutting down",
                     self.username, self.pool_name, self.connection_id, self.addr
@@ -990,8 +1027,8 @@ where
             // TransactionGuard dropped at end of block above, counter already decremented.
             self.connected_to_server = false;
 
-            // If shutdown is in progress, send error to client and exit
-            if shutdown_in_progress {
+            // If shutdown is in progress (and not migration), send error to client and exit
+            if shutdown_in_progress && !MIGRATION_IN_PROGRESS.load(Ordering::Relaxed) {
                 error_response_terminal(&mut self.write, "pooler is shut down now", "58006")
                     .await?;
                 self.stats.disconnect();
