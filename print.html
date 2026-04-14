@@ -328,7 +328,7 @@ docker run -p 6432:6432 \
 <h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
 <p>After installation, see the <a href="tutorials/./basic-usage.html">Basic Usage guide</a> to configure and start using PgDoorman.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="pgdoorman-basic-usage-guide"><a class="header" href="#pgdoorman-basic-usage-guide">PgDoorman Basic Usage Guide</a></h1>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. This comprehensive guide will help you get started with configuring, running, and managing PgDoorman for your PostgreSQL environment.</p>
+<p>PgDoorman is a PostgreSQL connection pooler based on PgCat. This guide covers configuration, operation, and administration.</p>
 <h2 id="command-line-options"><a class="header" href="#command-line-options">Command Line Options</a></h2>
 <p>PgDoorman offers several command-line options to customize its behavior when starting the service:</p>
 <pre><code class="language-bash">$ pg_doorman --help
@@ -418,9 +418,9 @@ pool_size = 40
 username = "doorman"
 password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
 </code></pre>
-<p>For a complete list of configuration options and their descriptions, see the <a href="tutorials/../reference/general.html">Settings Reference Guide</a>.</p>
+<p>For a complete list of configuration options, run <code>pg_doorman generate --reference --output ref.yaml</code> to get an annotated config with all parameters and defaults.</p>
 <h3 id="automatic-configuration-generation"><a class="header" href="#automatic-configuration-generation">Automatic Configuration Generation</a></h3>
-<p>PgDoorman provides a powerful <code>generate</code> command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users. By default, the generated config includes detailed inline comments explaining every parameter.</p>
+<p>The <code>generate</code> command creates a configuration file by connecting to your PostgreSQL server and detecting databases and users. By default, the generated config includes inline comments explaining every parameter.</p>
 <pre><code class="language-bash"># View all available options
 pg_doorman generate --help
 
@@ -457,7 +457,7 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
 <tr><td><code>--format</code>, <code>-f</code></td><td>Output format: <code>yaml</code> (default) or <code>toml</code>. If <code>--output</code> is specified, format is auto-detected from file extension. This flag overrides auto-detection</td></tr>
 </tbody></table>
 </div>
-<p>The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file. This is especially useful for quickly setting up PgDoorman in new environments.</p>
+<p>The command connects to PostgreSQL, detects databases and users, and creates a documented configuration file.</p>
 <div id="admonition-postgresql-environment-variables" class="admonition admonish-note" role="note" aria-labelledby="admonition-postgresql-environment-variables-title">
 <div class="admonition-title">
 <div id="admonition-postgresql-environment-variables-title">
@@ -485,7 +485,7 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
     server_username: "pg_app_user"    # different backend PostgreSQL user
     server_password: "real_password"  # plaintext password for that user
 </code></pre>
-<p>See also <a href="tutorials/../reference/pool.html#server_username">Pool User Settings</a>.</p>
+<p>See <code>server_username</code> and <code>server_password</code> fields in the generated reference config for details.</p>
 </div>
 </div>
 <div id="admonition-superuser-privileges" class="admonition admonish-warning" role="note" aria-labelledby="admonition-superuser-privileges-title">
@@ -519,17 +519,16 @@ mirroring PostgreSQL behavior. TLS-related rule types are honored: <code>hostssl
 <p>PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.</p>
 <h2 id="administration-1"><a class="header" href="#administration-1">Administration</a></h2>
 <h3 id="admin-console"><a class="header" href="#admin-console">Admin Console</a></h3>
-<p>PgDoorman provides a powerful administrative interface that allows you to monitor and manage the connection pooler. You can access this interface by connecting to the special administration database named <strong>pgdoorman</strong>:</p>
+<p>PgDoorman exposes an administrative interface through the special database <strong>pgdoorman</strong> (or <strong>pgbouncer</strong> for backward compatibility):</p>
 <pre><code class="language-bash">$ psql -h localhost -p 6432 -U admin pgdoorman
 </code></pre>
 <p>Once connected, you can view available commands:</p>
 <pre><code class="language-sql">pgdoorman=&gt; SHOW HELP;
 NOTICE:  Console usage
 DETAIL:
-	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|LOG_LEVEL|VERSION
-	SHOW LISTS
-	SHOW CONNECTIONS
-	SHOW STATS
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|POOL_COORDINATOR|POOL_SCALING
+	SHOW CLIENTS|SERVERS|USERS|CONNECTIONS|STATS|PREPARED_STATEMENTS|AUTH_QUERY
+	SHOW LISTS|SOCKETS|LOG_LEVEL|VERSION
 	SET log_level = '&lt;filter&gt;'
 	RELOAD
 	SHUTDOWN
@@ -597,24 +596,26 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <p>The <code>SHOW STATS</code> command displays comprehensive statistics about PgDoorman's operation:</p>
 <pre><code class="language-sql">pgdoorman=&gt; SHOW STATS;
 </code></pre>
-<p>Statistics are presented per database with the following metrics:</p>
+<p>Statistics are presented per (database, user) pair:</p>
 <div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>database</code></td><td>The database name these statistics apply to</td></tr>
-<tr><td><code>total_xact_count</code></td><td>Total number of SQL transactions processed since startup</td></tr>
-<tr><td><code>total_query_count</code></td><td>Total number of SQL commands processed since startup</td></tr>
-<tr><td><code>total_received</code></td><td>Total bytes of network traffic received from clients</td></tr>
-<tr><td><code>total_sent</code></td><td>Total bytes of network traffic sent to clients</td></tr>
-<tr><td><code>total_xact_time</code></td><td>Total microseconds spent in transactions (including idle in transaction)</td></tr>
-<tr><td><code>total_query_time</code></td><td>Total microseconds spent actively executing queries</td></tr>
+<tr><td><code>database</code></td><td>Database name</td></tr>
+<tr><td><code>user</code></td><td>Username</td></tr>
+<tr><td><code>total_xact_count</code></td><td>Total SQL transactions since startup</td></tr>
+<tr><td><code>total_query_count</code></td><td>Total SQL commands since startup</td></tr>
+<tr><td><code>total_received</code></td><td>Total bytes received from clients</td></tr>
+<tr><td><code>total_sent</code></td><td>Total bytes sent to clients</td></tr>
+<tr><td><code>total_xact_time</code></td><td>Total microseconds in transactions (including idle in transaction)</td></tr>
+<tr><td><code>total_query_time</code></td><td>Total microseconds executing queries</td></tr>
 <tr><td><code>total_wait_time</code></td><td>Total microseconds clients spent waiting for a server connection</td></tr>
+<tr><td><code>total_errors</code></td><td>Total error count since startup</td></tr>
 <tr><td><code>avg_xact_count</code></td><td>Average transactions per second in the last 15-second period</td></tr>
 <tr><td><code>avg_query_count</code></td><td>Average queries per second in the last 15-second period</td></tr>
-<tr><td><code>avg_server_assignment_count</code></td><td>Average server assignments per second in the last 15-second period</td></tr>
 <tr><td><code>avg_recv</code></td><td>Average bytes received per second from clients</td></tr>
 <tr><td><code>avg_sent</code></td><td>Average bytes sent per second to clients</td></tr>
+<tr><td><code>avg_errors</code></td><td>Average errors per second in the last 15-second period</td></tr>
 <tr><td><code>avg_xact_time</code></td><td>Average transaction duration in microseconds</td></tr>
 <tr><td><code>avg_query_time</code></td><td>Average query duration in microseconds</td></tr>
-<tr><td><code>avg_wait_time</code></td><td>Average time clients spent waiting for a server in microseconds</td></tr>
+<tr><td><code>avg_wait_time</code></td><td>Average wait time for a server in microseconds</td></tr>
 </tbody></table>
 </div><div id="admonition-performance-monitoring" class="admonition admonish-tip" role="note" aria-labelledby="admonition-performance-monitoring-title">
 <div class="admonition-title">
@@ -671,12 +672,14 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <tr><td><code>client_id</code></td><td>Unique identifier for the client connection</td></tr>
 <tr><td><code>database</code></td><td>Name of the database (pool) the client is connected to</td></tr>
 <tr><td><code>user</code></td><td>Username the client used to connect</td></tr>
+<tr><td><code>application_name</code></td><td>Application name reported by the client</td></tr>
 <tr><td><code>addr</code></td><td>Client's IP address and port (IP:port)</td></tr>
 <tr><td><code>tls</code></td><td>Whether the connection uses TLS encryption (<strong>true</strong> or <strong>false</strong>)</td></tr>
 <tr><td><code>state</code></td><td>Current state of the client connection: <strong>active</strong>, <strong>idle</strong>, or <strong>waiting</strong></td></tr>
 <tr><td><code>wait</code></td><td>Wait state of the client connection: <strong>idle</strong>, <strong>read</strong>, or <strong>write</strong></td></tr>
 <tr><td><code>transaction_count</code></td><td>Total number of transactions processed for this client</td></tr>
 <tr><td><code>query_count</code></td><td>Total number of queries processed for this client</td></tr>
+<tr><td><code>error_count</code></td><td>Total number of errors for this client</td></tr>
 <tr><td><code>age_seconds</code></td><td>Lifetime of the client connection in seconds</td></tr>
 </tbody></table>
 </div><div id="admonition-monitoring-long-running-connections" class="admonition admonish-tip" role="note" aria-labelledby="admonition-monitoring-long-running-connections-title">
@@ -698,13 +701,18 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <tr><td><code>database</code></td><td>Name of the database</td></tr>
 <tr><td><code>user</code></td><td>Username associated with this pool</td></tr>
 <tr><td><code>pool_mode</code></td><td>Pooling mode in use: <strong>session</strong> or <strong>transaction</strong></td></tr>
+<tr><td><code>cl_idle</code></td><td>Number of idle client connections (not in a transaction)</td></tr>
 <tr><td><code>cl_active</code></td><td>Number of active client connections (linked to servers or idle)</td></tr>
 <tr><td><code>cl_waiting</code></td><td>Number of client connections waiting for a server connection</td></tr>
+<tr><td><code>cl_cancel_req</code></td><td>Number of cancel requests from clients</td></tr>
 <tr><td><code>sv_active</code></td><td>Number of server connections linked to clients</td></tr>
 <tr><td><code>sv_idle</code></td><td>Number of idle server connections available for immediate use</td></tr>
+<tr><td><code>sv_used</code></td><td>Number of server connections recently used but not yet idle</td></tr>
 <tr><td><code>sv_login</code></td><td>Number of server connections currently in the login process</td></tr>
+<tr><td><code>pool_size</code></td><td>Configured maximum pool size for this (database, user) pair</td></tr>
 <tr><td><code>maxwait</code></td><td>Maximum wait time in seconds for the oldest client in the queue</td></tr>
 <tr><td><code>maxwait_us</code></td><td>Microsecond part of the maximum waiting time</td></tr>
+<tr><td><code>avg_xact_time</code></td><td>Average transaction time in microseconds</td></tr>
 <tr><td><code>paused</code></td><td>Whether the pool is paused: <strong>1</strong> (paused) or <strong>0</strong> (active)</td></tr>
 </tbody></table>
 </div><div id="admonition-performance-alert" class="admonition admonish-warning" role="note" aria-labelledby="admonition-performance-alert-title">
@@ -732,15 +740,17 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 <pre><code class="language-sql">pgdoorman=&gt; SHOW DATABASES;
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Column</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>database</code></td><td>Name of the configured database pool</td></tr>
-<tr><td><code>host</code></td><td>Hostname of the PostgreSQL server PgDoorman connects to</td></tr>
+<tr><td><code>name</code></td><td>Name of the configured pool</td></tr>
+<tr><td><code>host</code></td><td>Hostname of the PostgreSQL server</td></tr>
 <tr><td><code>port</code></td><td>Port number of the PostgreSQL server</td></tr>
-<tr><td><code>pool_size</code></td><td>Maximum number of server connections for this database</td></tr>
+<tr><td><code>database</code></td><td>Actual database name on the backend (may differ from pool name if <code>server_database</code> is set)</td></tr>
+<tr><td><code>force_user</code></td><td>User forced for this pool (if configured)</td></tr>
+<tr><td><code>pool_size</code></td><td>Maximum number of server connections for this pool</td></tr>
 <tr><td><code>min_pool_size</code></td><td>Minimum number of server connections to maintain</td></tr>
-<tr><td><code>reserve_pool_size</code></td><td>Maximum number of additional connections allowed</td></tr>
-<tr><td><code>pool_mode</code></td><td>Default pooling mode for this database</td></tr>
+<tr><td><code>reserve_pool</code></td><td>Maximum number of additional reserve connections</td></tr>
+<tr><td><code>pool_mode</code></td><td>Default pooling mode for this pool</td></tr>
 <tr><td><code>max_connections</code></td><td>Maximum allowed server connections (from <code>max_db_connections</code>)</td></tr>
-<tr><td><code>current_connections</code></td><td>Current number of server connections for this database</td></tr>
+<tr><td><code>current_connections</code></td><td>Current number of server connections for this pool</td></tr>
 </tbody></table>
 </div><div id="admonition-connection-management" class="admonition admonish-tip" role="note" aria-labelledby="admonition-connection-management-title">
 <div class="admonition-title">
@@ -754,10 +764,10 @@ host  pgdoorman  admin  127.0.0.1/32  trust
 </div>
 </div>
 <h4 id="show-sockets"><a class="header" href="#show-sockets">SHOW SOCKETS</a></h4>
-<p>The <code>SHOW SOCKETS</code> command displays low-level information about network sockets:</p>
+<p>The <code>SHOW SOCKETS</code> command displays TCP/TCP6/Unix socket state counts (Linux only):</p>
 <pre><code class="language-sql">pgdoorman=&gt; SHOW SOCKETS;
 </code></pre>
-<p>This command includes all information shown in <code>SHOW CLIENTS</code> and <code>SHOW SERVERS</code> plus additional low-level details about the socket connections.</p>
+<p>Shows aggregated counts of socket states (ESTABLISHED, SYN_SENT, etc.) parsed from <code>/proc/net/tcp</code>, <code>/proc/net/tcp6</code>, and <code>/proc/net/unix</code>.</p>
 <h4 id="show-version"><a class="header" href="#show-version">SHOW VERSION</a></h4>
 <p>The <code>SHOW VERSION</code> command displays the PgDoorman version information:</p>
 <pre><code class="language-sql">pgdoorman=&gt; SHOW VERSION;
@@ -915,11 +925,12 @@ PAUSE → RECONNECT → RESUME — pausing first ensures no new transactions sta
 </tbody></table>
 </div>
 <h2 id="signal-handling"><a class="header" href="#signal-handling">Signal Handling</a></h2>
-<p>PgDoorman responds to standard Unix signals for control and management. These signals can be sent using the <code>kill</code> command (e.g., <code>kill -HUP &lt;pid&gt;</code>).</p>
-<div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Description</th><th>Effect</th></tr></thead><tbody>
-<tr><td><strong>SIGHUP</strong></td><td>Configuration reload</td><td>Equivalent to the <code>RELOAD</code> command in the admin console. Rereads the configuration file and applies changes to settings.</td></tr>
-<tr><td><strong>SIGTERM</strong></td><td>Immediate shutdown</td><td>Forces PgDoorman to exit immediately. Active connections may be terminated abruptly.</td></tr>
-<tr><td><strong>SIGINT</strong></td><td>Graceful shutdown</td><td>Initiates a binary upgrade process. The current process starts a new instance and gracefully transfers connections. See <a href="tutorials/binary-upgrade.html">Binary Upgrade Process</a> for details.</td></tr>
+<p>PgDoorman responds to standard Unix signals for control and management. Send signals using <code>kill</code> (e.g., <code>kill -HUP &lt;pid&gt;</code>).</p>
+<div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Effect</th></tr></thead><tbody>
+<tr><td><strong>SIGHUP</strong></td><td>Configuration reload — equivalent to the <code>RELOAD</code> admin command.</td></tr>
+<tr><td><strong>SIGUSR2</strong></td><td>Binary upgrade + graceful shutdown. Validates the new binary with <code>-t</code>, spawns a new process, then shuts down. <strong>Recommended for upgrades.</strong> See <a href="tutorials/binary-upgrade.html">Binary Upgrade Process</a>.</td></tr>
+<tr><td><strong>SIGINT</strong></td><td><strong>Foreground + TTY</strong> (Ctrl+C): graceful shutdown only (no binary upgrade). <strong>Daemon / no TTY</strong>: binary upgrade + graceful shutdown (legacy behavior).</td></tr>
+<tr><td><strong>SIGTERM</strong></td><td>Immediate shutdown. Active connections are terminated.</td></tr>
 </tbody></table>
 </div><div id="admonition-process-management" class="admonition admonish-note" role="note" aria-labelledby="admonition-process-management-title">
 <div class="admonition-title">
@@ -929,7 +940,7 @@ PAUSE → RECONNECT → RESUME — pausing first ensures no new transactions sta
 <a class="admonition-anchor-link" href="tutorials/basic-usage.html#admonition-process-management"></a>
 </div>
 <div>
-<p>In systemd-based environments, you can use <code>systemctl reload pg_doorman</code> to send SIGHUP and <code>systemctl restart pg_doorman</code> for a complete restart.</p>
+<p>In systemd-based environments, the default unit file uses <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code> to trigger binary upgrade on <code>systemctl reload</code>.</p>
 </div>
 </div>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="binary-upgrade-process"><a class="header" href="#binary-upgrade-process">Binary Upgrade Process</a></h1>
@@ -4264,11 +4275,14 @@ make shell
 </ul>
 <h3 id="available-test-tags"><a class="header" href="#available-test-tags">Available Test Tags</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Tag</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>@go</code></td><td>Go client tests</td></tr>
-<tr><td><code>@python</code></td><td>Python client tests</td></tr>
-<tr><td><code>@nodejs</code></td><td>Node.js client tests</td></tr>
-<tr><td><code>@dotnet</code></td><td>.NET client tests</td></tr>
+<tr><td><code>@go</code></td><td>Go client tests (lib/pq, pgx)</td></tr>
+<tr><td><code>@python</code></td><td>Python client tests (asyncpg, psycopg2)</td></tr>
+<tr><td><code>@nodejs</code></td><td>Node.js client tests (pg)</td></tr>
+<tr><td><code>@dotnet</code></td><td>.NET client tests (Npgsql)</td></tr>
+<tr><td><code>@java</code></td><td>Java client tests (JDBC)</td></tr>
+<tr><td><code>@php</code></td><td>PHP client tests (PDO)</td></tr>
 <tr><td><code>@rust</code></td><td>Rust protocol-level tests</td></tr>
+<tr><td><code>@auth-query</code></td><td>Auth query authentication tests</td></tr>
 <tr><td><code>@copy-protocol</code></td><td>COPY protocol tests</td></tr>
 <tr><td><code>@cancel</code></td><td>Query cancellation tests</td></tr>
 <tr><td><code>@admin-commands</code></td><td>Admin console commands</td></tr>
@@ -4277,12 +4291,16 @@ make shell
 <tr><td><code>@rollback</code></td><td>Rollback functionality tests</td></tr>
 <tr><td><code>@hba</code></td><td>HBA authentication tests</td></tr>
 <tr><td><code>@prometheus</code></td><td>Prometheus metrics tests</td></tr>
+<tr><td><code>@fuzz</code></td><td>Fuzz resilience tests</td></tr>
+<tr><td><code>@bench</code></td><td>Performance benchmarks</td></tr>
+<tr><td><code>@binary-upgrade-grac-shutdown</code></td><td>Binary upgrade / daemon tests</td></tr>
+<tr><td><code>@static-passthrough</code></td><td>Static passthrough auth tests</td></tr>
 </tbody></table>
 </div>
 <h2 id="writing-new-tests"><a class="header" href="#writing-new-tests">Writing New Tests</a></h2>
 <p>Tests are organized as BDD feature files in <code>tests/bdd/features/</code>. Each feature file describes test scenarios using Gherkin syntax.</p>
 <h3 id="shell-tests-recommended-for-client-libraries"><a class="header" href="#shell-tests-recommended-for-client-libraries">Shell Tests (Recommended for Client Libraries)</a></h3>
-<p>Shell tests run external test commands (Go, Python, Node.js, etc.) and verify their output. This is the simplest way to test client library compatibility.</p>
+<p>Shell tests run external test commands (Go, Python, Node.js, .NET, Java, PHP) and verify their output. This is the simplest way to test client library compatibility.</p>
 <p><strong>Example</strong> (<code>tests/bdd/features/my-feature.feature</code>):</p>
 <pre><code class="language-gherkin">@go @mytag
 Feature: My feature description

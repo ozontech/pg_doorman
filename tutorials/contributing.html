@@ -270,11 +270,14 @@ make shell
 </ul>
 <h3 id="available-test-tags"><a class="header" href="#available-test-tags">Available Test Tags</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Tag</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>@go</code></td><td>Go client tests</td></tr>
-<tr><td><code>@python</code></td><td>Python client tests</td></tr>
-<tr><td><code>@nodejs</code></td><td>Node.js client tests</td></tr>
-<tr><td><code>@dotnet</code></td><td>.NET client tests</td></tr>
+<tr><td><code>@go</code></td><td>Go client tests (lib/pq, pgx)</td></tr>
+<tr><td><code>@python</code></td><td>Python client tests (asyncpg, psycopg2)</td></tr>
+<tr><td><code>@nodejs</code></td><td>Node.js client tests (pg)</td></tr>
+<tr><td><code>@dotnet</code></td><td>.NET client tests (Npgsql)</td></tr>
+<tr><td><code>@java</code></td><td>Java client tests (JDBC)</td></tr>
+<tr><td><code>@php</code></td><td>PHP client tests (PDO)</td></tr>
 <tr><td><code>@rust</code></td><td>Rust protocol-level tests</td></tr>
+<tr><td><code>@auth-query</code></td><td>Auth query authentication tests</td></tr>
 <tr><td><code>@copy-protocol</code></td><td>COPY protocol tests</td></tr>
 <tr><td><code>@cancel</code></td><td>Query cancellation tests</td></tr>
 <tr><td><code>@admin-commands</code></td><td>Admin console commands</td></tr>
@@ -283,12 +286,16 @@ make shell
 <tr><td><code>@rollback</code></td><td>Rollback functionality tests</td></tr>
 <tr><td><code>@hba</code></td><td>HBA authentication tests</td></tr>
 <tr><td><code>@prometheus</code></td><td>Prometheus metrics tests</td></tr>
+<tr><td><code>@fuzz</code></td><td>Fuzz resilience tests</td></tr>
+<tr><td><code>@bench</code></td><td>Performance benchmarks</td></tr>
+<tr><td><code>@binary-upgrade-grac-shutdown</code></td><td>Binary upgrade / daemon tests</td></tr>
+<tr><td><code>@static-passthrough</code></td><td>Static passthrough auth tests</td></tr>
 </tbody></table>
 </div>
 <h2 id="writing-new-tests"><a class="header" href="#writing-new-tests">Writing New Tests</a></h2>
 <p>Tests are organized as BDD feature files in <code>tests/bdd/features/</code>. Each feature file describes test scenarios using Gherkin syntax.</p>
 <h3 id="shell-tests-recommended-for-client-libraries"><a class="header" href="#shell-tests-recommended-for-client-libraries">Shell Tests (Recommended for Client Libraries)</a></h3>
-<p>Shell tests run external test commands (Go, Python, Node.js, etc.) and verify their output. This is the simplest way to test client library compatibility.</p>
+<p>Shell tests run external test commands (Go, Python, Node.js, .NET, Java, PHP) and verify their output. This is the simplest way to test client library compatibility.</p>
 <p><strong>Example</strong> (<code>tests/bdd/features/my-feature.feature</code>):</p>
 <pre><code class="language-gherkin">@go @mytag
 Feature: My feature description
