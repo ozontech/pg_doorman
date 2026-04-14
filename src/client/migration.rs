@@ -43,8 +43,6 @@ extern "C" {
         buf: *const u8,
         len: usize,
     ) -> *mut c_void;
-
-    fn OPENSSL_free(ptr: *mut c_void);
 }
 
 /// Export TLS cipher state from a raw SSL* pointer.
@@ -65,7 +63,7 @@ fn export_tls_state_from_ptr(ssl_ptr: *mut c_void) -> Result<Vec<u8>, Error> {
             ));
         }
         let data = std::slice::from_raw_parts(out, out_len).to_vec();
-        OPENSSL_free(out as *mut c_void);
+        openssl_sys::OPENSSL_free(out as *mut c_void);
         Ok(data)
     }
 }
