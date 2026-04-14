@@ -135,7 +135,7 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
 pub async fn set_shutdown_only_mode(world: &mut DoormanWorld) {
     world
         .doorman_env
-        .push(("PG_DOORMAN_SHUTDOWN_ONLY".into(), "1".into()));
+        .push(("PG_DOORMAN_CI_SHUTDOWN_ONLY".into(), "1".into()));
 }
 
 /// Helper function to wait for pg_doorman to be ready (max 5 seconds)

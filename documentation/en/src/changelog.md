@@ -8,8 +8,6 @@
 
 - **TLS connection migration (opt-in).** Build with `--features tls-migration` to migrate TLS sessions without re-handshake. A patched vendored OpenSSL 3.5.5 exports/imports symmetric cipher state (keys, IVs, sequence numbers). Linux-only. Offline builds supported via `OPENSSL_SOURCE_TARBALL` env var with SHA-256 verification.
 
-- **`PG_DOORMAN_SHUTDOWN_ONLY` environment variable.** Forces SIGINT to perform graceful shutdown without binary upgrade, regardless of TTY detection. For CI/CD pipelines and automated environments.
-
 When multiple user pools share one PostgreSQL database, the sum of their `pool_size` values can exceed `max_connections`. A spike in one pool starves the others, or PostgreSQL rejects connections outright.
 
 `max_db_connections` caps total backend connections per database across all user pools. When the cap is reached, the coordinator frees capacity through three mechanisms, tried in order:

@@ -182,7 +182,7 @@ LRU отбросит часть записей.
   binary upgrade. Используйте `kill -USR2`.
 - **Daemon mode без migration socketpair.** Daemon mode не использует
   fd-based миграцию — клиенты дренируются.
-- **`PG_DOORMAN_SHUTDOWN_ONLY=1` установлен.** Принудительный
+- **`PG_DOORMAN_CI_SHUTDOWN_ONLY=1` установлен.** Принудительный
   shutdown-only mode.
 
 ### Старый процесс не завершается

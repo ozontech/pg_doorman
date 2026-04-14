@@ -302,12 +302,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         let mut admin_only = false;
 
         // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade).
-        // PG_DOORMAN_SHUTDOWN_ONLY=1 forces shutdown-only mode for testing in non-TTY environments.
+        // PG_DOORMAN_CI_SHUTDOWN_ONLY=1 forces shutdown-only mode for testing in non-TTY environments.
         let is_foreground_tty = {
             #[cfg(not(windows))]
             {
                 use std::io::IsTerminal;
-                let force_shutdown = std::env::var("PG_DOORMAN_SHUTDOWN_ONLY")
+                let force_shutdown = std::env::var("PG_DOORMAN_CI_SHUTDOWN_ONLY")
                     .map(|v| v == "1")
                     .unwrap_or(false);
                 force_shutdown || (!args.daemon && std::io::stdin().is_terminal())

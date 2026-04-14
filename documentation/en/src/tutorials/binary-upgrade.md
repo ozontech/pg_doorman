@@ -175,7 +175,7 @@ excess entries.
 
 - **Ctrl+C in foreground mode.** SIGINT in TTY = shutdown without upgrade. Use `kill -USR2`.
 - **Daemon mode.** Daemon mode does not use fd-based migration — clients drain.
-- **`PG_DOORMAN_SHUTDOWN_ONLY=1` is set.** Forces shutdown-only mode.
+- **`PG_DOORMAN_CI_SHUTDOWN_ONLY=1` is set.** Forces shutdown-only mode.
 
 ### Old process does not exit
 
