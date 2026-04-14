@@ -645,12 +645,25 @@ async fn binary_upgrade_and_shutdown(
         }
     }
 
+    // Set MIGRATION_IN_PROGRESS before SHUTDOWN_IN_PROGRESS so that
+    // idle clients in the handle() loop see migration=true and wait
+    // to migrate instead of disconnecting with "pooler is shut down".
+    // If the upgrade fails later (spawn error), we clear the flag.
+    if !admin_only {
+        MIGRATION_IN_PROGRESS.store(true, Ordering::Relaxed);
+    }
     SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
 
     let mut migration_handles: Option<MigrationHandles> = None;
 
-    // Drain all idle connections from pools to release PostgreSQL connections
-    retain::drain_all_pools();
+    // Drain idle server connections — but only when there is no client
+    // migration. During migration, in-transaction clients still need
+    // their server connections to finish the current query and COMMIT.
+    // Draining here would mark those servers bad, causing "pooler is
+    // shut down" errors before clients get a chance to migrate.
+    if admin_only {
+        retain::drain_all_pools();
+    }
 
     if !admin_only {
         // Binary upgrade: start new process with inherited listener fd
@@ -796,7 +809,7 @@ async fn binary_upgrade_and_shutdown(
                         if migration_ok {
                             let (tx, rx) = mpsc::channel(MIGRATION_CHANNEL_CAPACITY);
                             let _ = MIGRATION_TX.set(tx);
-                            MIGRATION_IN_PROGRESS.store(true, Ordering::SeqCst);
+                            // MIGRATION_IN_PROGRESS already set above (before SHUTDOWN)
                             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
                             let sender_handle = tokio::spawn(migration_sender_task(migration_parent_fd, rx, shutdown_rx));
                             migration_handles = Some(MigrationHandles { shutdown_tx, sender_handle });
@@ -807,6 +820,7 @@ async fn binary_upgrade_and_shutdown(
                     }
                     Err(e) => {
                         error!("Failed to spawn new process: {}", e);
+                        MIGRATION_IN_PROGRESS.store(false, Ordering::Relaxed);
                         unsafe {
                             libc::close(pipe_read_fd);
                             libc::close(pipe_write_fd);
@@ -852,7 +866,11 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
         loop {
             interval.tick().await;
 
-            if last_drain.elapsed() >= Duration::from_secs(1) {
+            // Only drain pools when NOT migrating. During migration,
+            // in-transaction clients need their server connections.
+            if !MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
+                && last_drain.elapsed() >= Duration::from_secs(1)
+            {
                 retain::drain_all_pools();
                 last_drain = std::time::Instant::now();
             }
