@@ -808,15 +808,20 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
 
         // Poll frequently to detect client count reaching zero quickly,
         // but enforce the overall shutdown_timeout deadline.
+        // Drain idle server connections once per second (not every poll tick)
+        // to avoid interfering with binary upgrade readiness.
         let poll_interval = Duration::from_millis(250);
         let mut interval = tokio::time::interval(poll_interval);
         let start = std::time::Instant::now();
+        let mut last_drain = std::time::Instant::now();
 
         loop {
             interval.tick().await;
 
-            // Drain all idle connections from pools to release PostgreSQL connections
-            retain::drain_all_pools();
+            if last_drain.elapsed() >= Duration::from_secs(1) {
+                retain::drain_all_pools();
+                last_drain = std::time::Instant::now();
+            }
 
             let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
             let clients_total = CURRENT_CLIENT_COUNT.load(Ordering::Relaxed);
