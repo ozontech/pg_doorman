@@ -161,4 +161,3 @@ Feature: Foreground mode binary upgrade
     And we send SimpleQuery "COMMIT" to session "one" expecting error after ready
     Then session "one" should receive error containing "pooler is shut down now" with code "58006"
     When we close session "one"
-    When we close session "two"
