@@ -301,12 +301,16 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         let (exit_tx, mut exit_rx) = mpsc::channel::<()>(1);
         let mut admin_only = false;
 
-        // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade)
+        // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade).
+        // PG_DOORMAN_SHUTDOWN_ONLY=1 forces shutdown-only mode for testing in non-TTY environments.
         let is_foreground_tty = {
             #[cfg(not(windows))]
             {
                 use std::io::IsTerminal;
-                !args.daemon && std::io::stdin().is_terminal()
+                let force_shutdown = std::env::var("PG_DOORMAN_SHUTDOWN_ONLY")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                force_shutdown || (!args.daemon && std::io::stdin().is_terminal())
             }
             #[cfg(windows)]
             {
@@ -802,7 +806,10 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
             if clients_in_tx == 1 { "" } else { "s" }
         );
 
-        let mut interval = tokio::time::interval(shutdown_timeout);
+        // Poll frequently to detect client count reaching zero quickly,
+        // but enforce the overall shutdown_timeout deadline.
+        let poll_interval = Duration::from_millis(250);
+        let mut interval = tokio::time::interval(poll_interval);
         let start = std::time::Instant::now();
 
         loop {

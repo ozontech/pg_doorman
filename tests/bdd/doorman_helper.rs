@@ -114,6 +114,12 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         .arg(&config_path)
         .arg("-l")
         .arg(log_level)
+        .envs(
+            world
+                .doorman_env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str())),
+        )
         .stdout(stdout_cfg)
         .stderr(stderr_cfg)
         .spawn()
@@ -123,6 +129,13 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
 
     // Wait for pg_doorman to be ready (custom implementation with log capture)
     wait_for_doorman_ready(doorman_port, world.doorman_process.as_mut().unwrap()).await;
+}
+
+#[given("pg_doorman shutdown-only mode")]
+pub async fn set_shutdown_only_mode(world: &mut DoormanWorld) {
+    world
+        .doorman_env
+        .push(("PG_DOORMAN_SHUTDOWN_ONLY".into(), "1".into()));
 }
 
 /// Helper function to wait for pg_doorman to be ready (max 5 seconds)
@@ -260,6 +273,12 @@ pub async fn start_doorman_daemon_with_config(world: &mut DoormanWorld, step: &S
         .arg("--daemon")
         .arg("-l")
         .arg(log_level)
+        .envs(
+            world
+                .doorman_env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str())),
+        )
         .output()
         .expect("Failed to start pg_doorman in daemon mode");
 
@@ -540,7 +559,9 @@ pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: Strin
     );
 }
 
-/// Verify that stored foreground pg_doorman PID no longer exists (process terminated)
+/// Verify that stored foreground pg_doorman PID no longer exists (process terminated).
+/// Polls for up to 5 seconds since the old process needs time to detect zero clients
+/// and exit via the shutdown timer.
 #[then(regex = r#"stored foreground PID "([^"]+)" should not exist"#)]
 pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: String) {
     let pid = world
@@ -548,11 +569,13 @@ pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: St
         .get(&(name.clone(), "foreground_pid".to_string()))
         .expect("Stored foreground PID not found");
 
-    assert!(
-        !is_process_running(*pid as u32),
-        "Process with PID {} should not exist, but it is still running",
-        pid
-    );
+    for _ in 0..20 {
+        if !is_process_running(*pid as u32) {
+            return;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+    panic!("Process with PID {} should not exist after 5s", pid);
 }
 
 /// Overwrite the pg_doorman config file with new content (with placeholder substitution)

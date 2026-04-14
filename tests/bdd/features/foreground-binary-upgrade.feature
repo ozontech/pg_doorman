@@ -127,7 +127,8 @@ Feature: Foreground mode binary upgrade
 
   @grac-shutdown-debug
   Scenario: Graceful shutdown rejects new queries after transaction completes
-    Given pg_doorman started with config:
+    Given pg_doorman shutdown-only mode
+    And pg_doorman started with config:
       """
       [general]
       host = "127.0.0.1"

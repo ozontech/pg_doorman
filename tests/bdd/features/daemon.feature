@@ -135,7 +135,8 @@ Feature: Daemon mode with PID file synchronization
 
   @daemon-grac-shutdown-debug
   Scenario: Graceful shutdown rejects new queries after transaction completes in daemon mode
-    Given pg_doorman started in daemon mode with config:
+    Given pg_doorman shutdown-only mode
+    And pg_doorman started in daemon mode with config:
       """
       [general]
       host = "127.0.0.1"

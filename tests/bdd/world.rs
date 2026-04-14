@@ -104,6 +104,8 @@ pub struct DoormanWorld {
     pub auth_query_last_result: Option<Result<Option<String>, pg_doorman::errors::Error>>,
     /// Dynamic variables for placeholder substitution (e.g., extracted password hashes)
     pub vars: HashMap<String, String>,
+    /// Extra environment variables to pass to pg_doorman process
+    pub doorman_env: Vec<(String, String)>,
 }
 
 impl DoormanWorld {

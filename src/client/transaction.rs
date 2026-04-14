@@ -1027,7 +1027,9 @@ where
             // TransactionGuard dropped at end of block above, counter already decremented.
             self.connected_to_server = false;
 
-            // If shutdown is in progress (and not migration), send error to client and exit
+            // If shutdown is in progress and migration is not available,
+            // send error to client and exit. When migration is active,
+            // let the client return to idle loop where it will migrate.
             if shutdown_in_progress && !MIGRATION_IN_PROGRESS.load(Ordering::Relaxed) {
                 error_response_terminal(&mut self.write, "pooler is shut down now", "58006")
                     .await?;
