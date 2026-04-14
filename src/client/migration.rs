@@ -819,17 +819,34 @@ pub fn recv_migration_fd(socket_fd: RawFd) -> Result<(RawFd, BytesMut, Option<Ve
 
 /// Sender task: runs in the OLD process.
 /// Reads MigrationPayload from channel, sends over Unix socket.
-pub async fn migration_sender_task(socket_fd: RawFd, mut rx: mpsc::Receiver<MigrationPayload>) {
-    while let Some(mut payload) = rx.recv().await {
-        match send_migration_fd(socket_fd, &mut payload) {
-            Ok(()) => {}
-            Err(e) => {
-                warn!("migration send failed: {e}");
-                // payload Drop will close the dup'd fd
+/// Accepts a shutdown receiver: when the main loop exits, it drops the
+/// sender half, which makes shutdown_rx.recv() return None, breaking
+/// the loop. Without this the task blocks forever on rx.recv() because
+/// MIGRATION_TX lives in a static OnceLock and is never dropped.
+pub async fn migration_sender_task(
+    socket_fd: RawFd,
+    mut rx: mpsc::Receiver<MigrationPayload>,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            payload = rx.recv() => {
+                match payload {
+                    Some(mut p) => {
+                        if let Err(e) = send_migration_fd(socket_fd, &mut p) {
+                            warn!("migration send failed: {e}");
+                        }
+                    }
+                    None => break,
+                }
+            }
+            _ = &mut shutdown_rx => {
+                info!("migration sender: shutdown signal received");
+                break;
             }
         }
     }
-    info!("migration sender: channel closed, closing socket");
+    info!("migration sender: closing socket");
     // SAFETY: socket_fd is the parent end of the socketpair, owned by this task.
     unsafe { libc::close(socket_fd) };
 }

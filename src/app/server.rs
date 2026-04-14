@@ -300,6 +300,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         let (exit_tx, mut exit_rx) = mpsc::channel::<()>(1);
         let mut admin_only = false;
+        // Oneshot sender to stop migration_sender_task on shutdown.
+        // Dropped after the main loop exits, which unblocks the task.
+        #[cfg(unix)]
+        let mut migration_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>> = None;
 
         // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade).
         // PG_DOORMAN_CI_SHUTDOWN_ONLY=1 forces shutdown-only mode for testing in non-TTY environments.
@@ -509,10 +513,9 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             }
         }
         info!("Shutting down...");
-        // Exit immediately. Spawned tasks (migration_sender_task) hold
-        // references to OnceLock channels that cannot be dropped, so the
-        // tokio runtime would wait for them indefinitely on drop.
-        std::process::exit(0);
+        // Signal migration_sender_task to exit so the runtime can shut down.
+        #[cfg(unix)]
+        drop(migration_shutdown_tx.take());
     });
 
     Ok(())
@@ -769,7 +772,9 @@ async fn binary_upgrade_and_shutdown(
                             let (tx, rx) = mpsc::channel(MIGRATION_CHANNEL_CAPACITY);
                             let _ = MIGRATION_TX.set(tx);
                             MIGRATION_IN_PROGRESS.store(true, Ordering::SeqCst);
-                            tokio::spawn(migration_sender_task(migration_parent_fd, rx));
+                            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+                            migration_shutdown_tx = Some(shutdown_tx);
+                            tokio::spawn(migration_sender_task(migration_parent_fd, rx, shutdown_rx));
                             info!("Client migration enabled");
                         }
 
