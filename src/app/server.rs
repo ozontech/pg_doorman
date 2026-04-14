@@ -30,6 +30,9 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
 
 use crate::app::tls::init_tls;
+use crate::client::migration::MigrationPayload;
+#[cfg(unix)]
+use crate::client::migration::{migration_receiver_task, migration_sender_task};
 
 /// Global counter for clients currently connected to the pg_doorman
 pub static CURRENT_CLIENT_COUNT: AtomicI64 = AtomicI64::new(0);
@@ -44,9 +47,12 @@ pub static CLIENTS_IN_TRANSACTIONS: AtomicI64 = AtomicI64::new(0);
 pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Channel sender for migration payloads. Set once when migration starts.
-pub static MIGRATION_TX: std::sync::OnceLock<
-    tokio::sync::mpsc::Sender<crate::client::migration::MigrationPayload>,
-> = std::sync::OnceLock::new();
+pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
+    std::sync::OnceLock::new();
+
+/// Max buffered migration payloads before sender blocks.
+/// Sized to handle all clients migrating simultaneously without contention.
+const MIGRATION_CHANNEL_CAPACITY: usize = 4096;
 
 pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::Error>> {
     if args.daemon {
@@ -320,7 +326,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     migration_fd
                 );
                 std::env::remove_var("PG_DOORMAN_MIGRATION_FD");
-                tokio::spawn(crate::client::migration::migration_receiver_task(
+                tokio::spawn(migration_receiver_task(
                     migration_fd,
                     client_server_map.clone(),
                     tls_acceptor.clone(),
@@ -752,13 +758,10 @@ async fn binary_upgrade_and_shutdown(
 
                         // Start client migration if socketpair was created
                         if migration_ok {
-                            let (tx, rx) = tokio::sync::mpsc::channel(1024);
+                            let (tx, rx) = mpsc::channel(MIGRATION_CHANNEL_CAPACITY);
                             let _ = MIGRATION_TX.set(tx);
                             MIGRATION_IN_PROGRESS.store(true, Ordering::SeqCst);
-                            tokio::spawn(crate::client::migration::migration_sender_task(
-                                migration_parent_fd,
-                                rx,
-                            ));
+                            tokio::spawn(migration_sender_task(migration_parent_fd, rx));
                             info!("Client migration enabled");
                         }
 
