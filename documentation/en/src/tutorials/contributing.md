@@ -118,11 +118,14 @@ This is useful when:
 
 | Tag | Description |
 |-----|-------------|
-| `@go` | Go client tests |
-| `@python` | Python client tests |
-| `@nodejs` | Node.js client tests |
-| `@dotnet` | .NET client tests |
+| `@go` | Go client tests (lib/pq, pgx) |
+| `@python` | Python client tests (asyncpg, psycopg2) |
+| `@nodejs` | Node.js client tests (pg) |
+| `@dotnet` | .NET client tests (Npgsql) |
+| `@java` | Java client tests (JDBC) |
+| `@php` | PHP client tests (PDO) |
 | `@rust` | Rust protocol-level tests |
+| `@auth-query` | Auth query authentication tests |
 | `@copy-protocol` | COPY protocol tests |
 | `@cancel` | Query cancellation tests |
 | `@admin-commands` | Admin console commands |
@@ -131,6 +134,10 @@ This is useful when:
 | `@rollback` | Rollback functionality tests |
 | `@hba` | HBA authentication tests |
 | `@prometheus` | Prometheus metrics tests |
+| `@fuzz` | Fuzz resilience tests |
+| `@bench` | Performance benchmarks |
+| `@binary-upgrade-grac-shutdown` | Binary upgrade / daemon tests |
+| `@static-passthrough` | Static passthrough auth tests |
 
 ## Writing New Tests
 
@@ -138,7 +145,7 @@ Tests are organized as BDD feature files in `tests/bdd/features/`. Each feature 
 
 ### Shell Tests (Recommended for Client Libraries)
 
-Shell tests run external test commands (Go, Python, Node.js, etc.) and verify their output. This is the simplest way to test client library compatibility.
+Shell tests run external test commands (Go, Python, Node.js, .NET, Java, PHP) and verify their output. This is the simplest way to test client library compatibility.
 
 **Example** (`tests/bdd/features/my-feature.feature`):
 
