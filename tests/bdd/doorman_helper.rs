@@ -569,13 +569,21 @@ pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: St
         .get(&(name.clone(), "foreground_pid".to_string()))
         .expect("Stored foreground PID not found");
 
-    for _ in 0..20 {
+    // Budget: shutdown_timeout (5s in tests) does not start at SIGUSR2.
+    // It starts after binary_upgrade_and_shutdown() finishes setup:
+    //   ~0-10s  readiness handshake (select() on pipe, 10s max)
+    //   ~0s     MIGRATION_IN_PROGRESS = true, spawn sender task
+    //   then    spawn_shutdown_timer(shutdown_timeout) starts the clock
+    // In practice readiness takes ~2s, so the old process may live up to
+    // ~2s (setup) + 5s (shutdown_timeout) = ~7s after SIGUSR2.
+    // We poll for 10s (40 × 250ms) to have comfortable margin.
+    for _ in 0..40 {
         if !is_process_running(*pid as u32) {
             return;
         }
         sleep(Duration::from_millis(250)).await;
     }
-    panic!("Process with PID {} should not exist after 5s", pid);
+    panic!("Process with PID {} should not exist after 10s", pid);
 }
 
 /// Overwrite the pg_doorman config file with new content (with placeholder substitution)
