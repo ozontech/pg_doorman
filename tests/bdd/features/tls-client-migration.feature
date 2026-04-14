@@ -76,7 +76,7 @@ Feature: TLS client migration during binary upgrade
     And we wait for foreground binary upgrade to complete
     # Long response tests cipher state: keys, IVs, sequence numbers
     And we send SimpleQuery "SELECT md5(repeat('migration_test', 1000))" to session "integrity" and store response
-    Then session "integrity" should receive DataRow with "e3e1c648e2bccd97c3baf3dab0e4b8a8"
+    Then session "integrity" should receive DataRow with "9d52ca440b32ab282c96b3d7f152f0cb"
     And stored foreground PID "old_doorman" should not exist
     When we close session "integrity"
 

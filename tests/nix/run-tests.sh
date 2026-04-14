@@ -154,7 +154,12 @@ run_bdd_tests() {
     local tags="${1:-}"
     log_info "Running BDD tests${tags:+ with tags: ${tags}}"
 
-    local cmd="cargo test --test bdd"
+    local cmd="cargo test"
+    # Enable tls-migration feature when running TLS migration tests
+    if [ -n "$tags" ] && echo "$tags" | grep -q "tls-migration"; then
+        cmd="${cmd} --features tls-migration"
+    fi
+    cmd="${cmd} --test bdd"
     if [ -n "$tags" ]; then
         cmd="${cmd} -- --tags ${tags}"
     fi
