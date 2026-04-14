@@ -119,6 +119,107 @@ Feature: Client migration during binary upgrade
     And stored foreground PID "old_doorman" should not exist
     When we close session "ps"
 
+  Scenario: Multiple prepared statements with parameters survive migration
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      pool_mode = "transaction"
+      shutdown_timeout = 5000
+      prepared_statements_cache_size = 100
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we sleep 1000ms
+    And we create session "mps" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    # Statement 1: no params
+    And we send Parse "s1" with query "SELECT 100 AS val" to session "mps"
+    And we send Bind "" to "s1" with params "" to session "mps"
+    And we send Execute "" to session "mps"
+    And we send Sync to session "mps"
+    Then session "mps" should receive DataRow with "100"
+    # Statement 2: int params
+    When we send Parse "s2" with query "SELECT $1::int + $2::int AS sum" to session "mps"
+    And we send Bind "" to "s2" with params "3,7" to session "mps"
+    And we send Execute "" to session "mps"
+    And we send Sync to session "mps"
+    Then session "mps" should receive DataRow with "10"
+    # Statement 3: text param
+    When we send Parse "s3" with query "SELECT length($1::text) AS len" to session "mps"
+    And we send Bind "" to "s3" with params "hello" to session "mps"
+    And we send Execute "" to session "mps"
+    And we send Sync to session "mps"
+    Then session "mps" should receive DataRow with "5"
+    # Migrate
+    When we store foreground pg_doorman PID as "old_doorman"
+    And we send SIGUSR2 to foreground pg_doorman
+    And we wait for foreground binary upgrade to complete
+    # Re-execute all three with different params after migration
+    And we send Bind "" to "s1" with params "" to session "mps"
+    And we send Execute "" to session "mps"
+    And we send Sync to session "mps"
+    Then session "mps" should receive DataRow with "100"
+    When we send Bind "" to "s2" with params "10,20" to session "mps"
+    And we send Execute "" to session "mps"
+    And we send Sync to session "mps"
+    Then session "mps" should receive DataRow with "30"
+    When we send Bind "" to "s3" with params "migration" to session "mps"
+    And we send Execute "" to session "mps"
+    And we send Sync to session "mps"
+    Then session "mps" should receive DataRow with "9"
+    And stored foreground PID "old_doorman" should not exist
+    When we close session "mps"
+
+  Scenario: Anonymous prepared statement survives migration
+    Given pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      pool_mode = "transaction"
+      shutdown_timeout = 5000
+      prepared_statements_cache_size = 100
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we sleep 1000ms
+    And we create session "anon" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    # Anonymous prepared statement (empty name)
+    And we send Parse "" with query "SELECT $1::int * 2 AS doubled" to session "anon"
+    And we send Bind "" to "" with params "21" to session "anon"
+    And we send Execute "" to session "anon"
+    And we send Sync to session "anon"
+    Then session "anon" should receive DataRow with "42"
+    # Migrate
+    When we store foreground pg_doorman PID as "old_doorman"
+    And we send SIGUSR2 to foreground pg_doorman
+    And we wait for foreground binary upgrade to complete
+    # Re-parse same anonymous statement after migration and execute
+    And we send Parse "" with query "SELECT $1::int * 2 AS doubled" to session "anon"
+    And we send Bind "" to "" with params "50" to session "anon"
+    And we send Execute "" to session "anon"
+    And we send Sync to session "anon"
+    Then session "anon" should receive DataRow with "100"
+    And stored foreground PID "old_doorman" should not exist
+    When we close session "anon"
+
   Scenario: Client mid-transaction finishes then migrates
     Given pg_doorman started with config:
       """

@@ -11,6 +11,7 @@ use std::ffi::c_void;
 
 use crate::client::buffer_pool::PooledBuffer;
 use crate::client::core::{CachedStatement, Client, PreparedStatementKey};
+use crate::client::util::PREPARED_STATEMENT_COUNTER;
 use crate::config::get_config;
 use crate::errors::Error;
 use crate::messages::config_socket::configure_tcp_socket;
@@ -561,10 +562,18 @@ fn reconstruct_prepared_state(
         let Some(shared_parse) = pool.register_parse_to_cache(hash, &parse) else {
             continue;
         };
+        let async_name = if async_client {
+            Some(format!(
+                "DOORMAN_async_{}",
+                PREPARED_STATEMENT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            ))
+        } else {
+            None
+        };
         let cached = CachedStatement {
             parse: shared_parse,
             hash,
-            async_name: None,
+            async_name,
         };
         prepared.cache.put(entry.key.clone(), cached);
     }
