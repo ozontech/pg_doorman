@@ -1,6 +1,6 @@
 # PgDoorman Basic Usage Guide
 
-PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. This comprehensive guide will help you get started with configuring, running, and managing PgDoorman for your PostgreSQL environment.
+PgDoorman is a PostgreSQL connection pooler based on PgCat. This guide covers configuration, operation, and administration.
 
 ## Command Line Options
 
@@ -102,11 +102,11 @@ username = "doorman"
 password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
 ```
 
-For a complete list of configuration options and their descriptions, see the [Settings Reference Guide](../reference/general.md).
+For a complete list of configuration options, run `pg_doorman generate --reference --output ref.yaml` to get an annotated config with all parameters and defaults.
 
 ### Automatic Configuration Generation
 
-PgDoorman provides a powerful `generate` command that can automatically create a configuration file by connecting to your PostgreSQL server and detecting databases and users. By default, the generated config includes detailed inline comments explaining every parameter.
+The `generate` command creates a configuration file by connecting to your PostgreSQL server and detecting databases and users. By default, the generated config includes inline comments explaining every parameter.
 
 ```bash
 # View all available options
@@ -147,7 +147,7 @@ The `generate` command supports several options:
 | `--russian-comments`, `--ru` | Generate comments in Russian for quick start guide |
 | `--format`, `-f` | Output format: `yaml` (default) or `toml`. If `--output` is specified, format is auto-detected from file extension. This flag overrides auto-detection |
 
-The command connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete, well-documented configuration file. This is especially useful for quickly setting up PgDoorman in new environments.
+The command connects to PostgreSQL, detects databases and users, and creates a documented configuration file.
 
 ```admonish note title="PostgreSQL Environment Variables"
 The `generate` command also respects standard PostgreSQL environment variables like `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE`.
@@ -166,7 +166,7 @@ users:
     server_password: "real_password"  # plaintext password for that user
 ```
 
-See also [Pool User Settings](../reference/pool.md#server_username).
+See `server_username` and `server_password` fields in the generated reference config for details.
 `````
 
 ```admonish warning title="Superuser Privileges"
@@ -211,7 +211,7 @@ PgDoorman will handle the connection pooling transparently, so your application 
 
 ### Admin Console
 
-PgDoorman provides a powerful administrative interface that allows you to monitor and manage the connection pooler. You can access this interface by connecting to the special administration database named **pgdoorman**:
+PgDoorman exposes an administrative interface through the special database **pgdoorman** (or **pgbouncer** for backward compatibility):
 
 ```bash
 $ psql -h localhost -p 6432 -U admin pgdoorman
@@ -223,10 +223,9 @@ Once connected, you can view available commands:
 pgdoorman=> SHOW HELP;
 NOTICE:  Console usage
 DETAIL:
-	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|CLIENTS|SERVERS|USERS|LOG_LEVEL|VERSION
-	SHOW LISTS
-	SHOW CONNECTIONS
-	SHOW STATS
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|POOL_COORDINATOR|POOL_SCALING
+	SHOW CLIENTS|SERVERS|USERS|CONNECTIONS|STATS|PREPARED_STATEMENTS|AUTH_QUERY
+	SHOW LISTS|SOCKETS|LOG_LEVEL|VERSION
 	SET log_level = '<filter>'
 	RELOAD
 	SHUTDOWN
@@ -299,26 +298,28 @@ The `SHOW STATS` command displays comprehensive statistics about PgDoorman's ope
 pgdoorman=> SHOW STATS;
 ```
 
-Statistics are presented per database with the following metrics:
+Statistics are presented per (database, user) pair:
 
 | Metric | Description |
 |--------|-------------|
-| `database` | The database name these statistics apply to |
-| `total_xact_count` | Total number of SQL transactions processed since startup |
-| `total_query_count` | Total number of SQL commands processed since startup |
-| `total_received` | Total bytes of network traffic received from clients |
-| `total_sent` | Total bytes of network traffic sent to clients |
-| `total_xact_time` | Total microseconds spent in transactions (including idle in transaction) |
-| `total_query_time` | Total microseconds spent actively executing queries |
+| `database` | Database name |
+| `user` | Username |
+| `total_xact_count` | Total SQL transactions since startup |
+| `total_query_count` | Total SQL commands since startup |
+| `total_received` | Total bytes received from clients |
+| `total_sent` | Total bytes sent to clients |
+| `total_xact_time` | Total microseconds in transactions (including idle in transaction) |
+| `total_query_time` | Total microseconds executing queries |
 | `total_wait_time` | Total microseconds clients spent waiting for a server connection |
+| `total_errors` | Total error count since startup |
 | `avg_xact_count` | Average transactions per second in the last 15-second period |
 | `avg_query_count` | Average queries per second in the last 15-second period |
-| `avg_server_assignment_count` | Average server assignments per second in the last 15-second period |
 | `avg_recv` | Average bytes received per second from clients |
 | `avg_sent` | Average bytes sent per second to clients |
+| `avg_errors` | Average errors per second in the last 15-second period |
 | `avg_xact_time` | Average transaction duration in microseconds |
 | `avg_query_time` | Average query duration in microseconds |
-| `avg_wait_time` | Average time clients spent waiting for a server in microseconds |
+| `avg_wait_time` | Average wait time for a server in microseconds |
 
 ```admonish tip title="Performance Monitoring"
 Pay special attention to the `avg_wait_time` metric. If this value is consistently high, it may indicate that your pool size is too small for your workload.
@@ -369,12 +370,14 @@ pgdoorman=> SHOW CLIENTS;
 | `client_id` | Unique identifier for the client connection |
 | `database` | Name of the database (pool) the client is connected to |
 | `user` | Username the client used to connect |
+| `application_name` | Application name reported by the client |
 | `addr` | Client's IP address and port (IP:port) |
 | `tls` | Whether the connection uses TLS encryption (**true** or **false**) |
 | `state` | Current state of the client connection: **active**, **idle**, or **waiting** |
 | `wait` | Wait state of the client connection: **idle**, **read**, or **write** |
 | `transaction_count` | Total number of transactions processed for this client |
 | `query_count` | Total number of queries processed for this client |
+| `error_count` | Total number of errors for this client |
 | `age_seconds` | Lifetime of the client connection in seconds |
 
 ```admonish tip title="Monitoring Long-Running Connections"
@@ -394,13 +397,18 @@ pgdoorman=> SHOW POOLS;
 | `database` | Name of the database |
 | `user` | Username associated with this pool |
 | `pool_mode` | Pooling mode in use: **session** or **transaction** |
+| `cl_idle` | Number of idle client connections (not in a transaction) |
 | `cl_active` | Number of active client connections (linked to servers or idle) |
 | `cl_waiting` | Number of client connections waiting for a server connection |
+| `cl_cancel_req` | Number of cancel requests from clients |
 | `sv_active` | Number of server connections linked to clients |
 | `sv_idle` | Number of idle server connections available for immediate use |
+| `sv_used` | Number of server connections recently used but not yet idle |
 | `sv_login` | Number of server connections currently in the login process |
+| `pool_size` | Configured maximum pool size for this (database, user) pair |
 | `maxwait` | Maximum wait time in seconds for the oldest client in the queue |
 | `maxwait_us` | Microsecond part of the maximum waiting time |
+| `avg_xact_time` | Average transaction time in microseconds |
 | `paused` | Whether the pool is paused: **1** (paused) or **0** (active) |
 
 ```admonish warning title="Performance Alert"
@@ -430,15 +438,17 @@ pgdoorman=> SHOW DATABASES;
 
 | Column | Description |
 |--------|-------------|
-| `database` | Name of the configured database pool |
-| `host` | Hostname of the PostgreSQL server PgDoorman connects to |
+| `name` | Name of the configured pool |
+| `host` | Hostname of the PostgreSQL server |
 | `port` | Port number of the PostgreSQL server |
-| `pool_size` | Maximum number of server connections for this database |
+| `database` | Actual database name on the backend (may differ from pool name if `server_database` is set) |
+| `force_user` | User forced for this pool (if configured) |
+| `pool_size` | Maximum number of server connections for this pool |
 | `min_pool_size` | Minimum number of server connections to maintain |
-| `reserve_pool_size` | Maximum number of additional connections allowed |
-| `pool_mode` | Default pooling mode for this database |
+| `reserve_pool` | Maximum number of additional reserve connections |
+| `pool_mode` | Default pooling mode for this pool |
 | `max_connections` | Maximum allowed server connections (from `max_db_connections`) |
-| `current_connections` | Current number of server connections for this database |
+| `current_connections` | Current number of server connections for this pool |
 
 ```admonish tip title="Connection Management"
 Monitor the ratio between `current_connections` and `pool_size` to ensure your pool is properly sized. If `current_connections` frequently reaches `pool_size`, consider increasing the pool size.
@@ -446,13 +456,13 @@ Monitor the ratio between `current_connections` and `pool_size` to ensure your p
 
 #### SHOW SOCKETS
 
-The `SHOW SOCKETS` command displays low-level information about network sockets:
+The `SHOW SOCKETS` command displays TCP/TCP6/Unix socket state counts (Linux only):
 
 ```sql
 pgdoorman=> SHOW SOCKETS;
 ```
 
-This command includes all information shown in `SHOW CLIENTS` and `SHOW SERVERS` plus additional low-level details about the socket connections.
+Shows aggregated counts of socket states (ESTABLISHED, SYN_SENT, etc.) parsed from `/proc/net/tcp`, `/proc/net/tcp6`, and `/proc/net/unix`.
 
 #### SHOW VERSION
 
@@ -615,14 +625,15 @@ The following table describes behavior in edge cases for PAUSE, RESUME, and RECO
 
 ## Signal Handling
 
-PgDoorman responds to standard Unix signals for control and management. These signals can be sent using the `kill` command (e.g., `kill -HUP <pid>`).
+PgDoorman responds to standard Unix signals for control and management. Send signals using `kill` (e.g., `kill -HUP <pid>`).
 
-| Signal | Description | Effect |
-|--------|-------------|--------|
-| **SIGHUP** | Configuration reload | Equivalent to the `RELOAD` command in the admin console. Rereads the configuration file and applies changes to settings. |
-| **SIGTERM** | Immediate shutdown | Forces PgDoorman to exit immediately. Active connections may be terminated abruptly. |
-| **SIGINT** | Graceful shutdown | Initiates a binary upgrade process. The current process starts a new instance and gracefully transfers connections. See [Binary Upgrade Process](binary-upgrade.md) for details. |
+| Signal | Effect |
+|--------|--------|
+| **SIGHUP** | Configuration reload — equivalent to the `RELOAD` admin command. |
+| **SIGUSR2** | Binary upgrade + graceful shutdown. Validates the new binary with `-t`, spawns a new process, then shuts down. **Recommended for upgrades.** See [Binary Upgrade Process](binary-upgrade.md). |
+| **SIGINT** | **Foreground + TTY** (Ctrl+C): graceful shutdown only (no binary upgrade). **Daemon / no TTY**: binary upgrade + graceful shutdown (legacy behavior). |
+| **SIGTERM** | Immediate shutdown. Active connections are terminated. |
 
 ```admonish note title="Process Management"
-In systemd-based environments, you can use `systemctl reload pg_doorman` to send SIGHUP and `systemctl restart pg_doorman` for a complete restart.
+In systemd-based environments, the default unit file uses `ExecReload=/bin/kill -SIGUSR2 $MAINPID` to trigger binary upgrade on `systemctl reload`.
 ```

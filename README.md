@@ -292,9 +292,17 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `pg_doorman_pools_transactions_count` | user, database | Total transactions executed                 |
 | `pg_doorman_pools_avg_wait_time` | user, database | Avg client wait for server (ms)             |
 | `pg_doorman_pools_bytes` | direction, user, database | Bytes sent / received                       |
-| `pg_doorman_pool_prepared_cache_entries` | user, database | Prepared statement cache entries            |
-| `pg_doorman_auth_query_cache` | event, database | Auth query cache hits / misses              |
-| `pg_doorman_auth_query_dynamic_pools` | database | Active dynamic user pools                    |
+| `pg_doorman_pool_prepared_cache_entries` | user, database | Pool-level prepared statement cache entries |
+| `pg_doorman_pool_prepared_cache_bytes` | user, database | Pool-level prepared statement cache bytes   |
+| `pg_doorman_clients_prepared_cache_entries` | user, database | Client-level prepared statement cache entries |
+| `pg_doorman_async_clients_count` | user, database | Clients using async protocol (Flush)        |
+| `pg_doorman_pools_transactions_percentile` | percentile, user, database | Transaction time p50 / p90 / p95 / p99 (ms) |
+| `pg_doorman_servers_prepared_hits` | user, database, backend_pid | Per-server prepared statement cache hits   |
+| `pg_doorman_servers_prepared_misses` | user, database, backend_pid | Per-server prepared statement cache misses |
+| `pg_doorman_auth_query_cache` | type, database | Auth query cache entries / hits / misses / refetches / rate_limited |
+| `pg_doorman_auth_query_auth` | result, database | Auth outcomes (success / failure)            |
+| `pg_doorman_auth_query_executor` | type, database | Auth query executor queries / errors         |
+| `pg_doorman_auth_query_dynamic_pools` | type, database | Dynamic pool lifecycle (current / created / destroyed) |
 | `pg_doorman_pool_coordinator` | type, database | Coordinator stats (connections, reserve, evictions, exhaustions) |
 | `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
 | `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |

@@ -51,7 +51,7 @@ cargo test --test bdd
 
 ## Benchmarks
 
-Benchmarks are located in `benches/bench.feature` and can be run using the `@bench` tag:
+Benchmarks are located in `tests/bdd/features/bench.feature` and can be run using the `@bench` tag:
 
 ```bash
 cargo test --test bdd -- --tags @bench

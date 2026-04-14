@@ -44,3 +44,6 @@ documentation/en/mermaid.min.js
 
 # Flamegraph profiling artifacts
 flamegraph-output/
+
+# Claude memory compiler (personal knowledge base)
+.claude-memory-compiler/
