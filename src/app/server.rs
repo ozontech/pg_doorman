@@ -300,10 +300,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         let (exit_tx, mut exit_rx) = mpsc::channel::<()>(1);
         let mut admin_only = false;
-        // Dropped after the main loop exits, which signals
-        // migration_sender_task to stop via oneshot channel.
         #[cfg(unix)]
-        let mut _migration_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>> = None;
+        let mut _migration_handles: Option<MigrationHandles> = None;
 
         // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade).
         // PG_DOORMAN_CI_SHUTDOWN_ONLY=1 forces shutdown-only mode for testing in non-TTY environments.
@@ -403,7 +401,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             &args, admin_only, &mut listener, shutdown_timeout, &exit_tx,
                         ).await {
                             None => continue,
-                            tx => { _migration_shutdown_tx = tx; }
+                            handles => { _migration_handles = handles; }
                         }
                         admin_only = true;
                     }
@@ -419,7 +417,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             &args, admin_only, &mut listener, shutdown_timeout, &exit_tx,
                         ).await {
                             None => continue,
-                            tx => { _migration_shutdown_tx = tx; }
+                            handles => { _migration_handles = handles; }
                         }
                         admin_only = true;
                     }
@@ -515,23 +513,39 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             }
         }
         info!("Shutting down...");
-        // _migration_shutdown_tx is dropped here, signaling
-        // migration_sender_task to exit via the oneshot channel.
 
-        // All clients have migrated or disconnected. Exit explicitly
-        // because background tokio tasks (stats, retain, prometheus)
-        // run in infinite loops — the runtime drop would hang waiting
-        // for worker threads to drain them.
+        // Signal migration_sender_task to stop, then wait for it to
+        // flush all pending payloads over the Unix socket. Without
+        // this, process::exit would kill the sender before it finishes
+        // sending data to the new process, losing migrated clients.
+        #[cfg(unix)]
+        if let Some(handles) = _migration_handles.take() {
+            drop(handles.shutdown_tx);
+            let _ = handles.sender_handle.await;
+            info!("Migration sender finished");
+        }
+
+        // Background tokio tasks (stats, retain, prometheus) run in
+        // infinite loops — the runtime drop would hang waiting for
+        // worker threads to drain them.
         std::process::exit(0);
     });
 
     Ok(())
 }
 
+/// Migration handles returned by binary_upgrade_and_shutdown.
+/// Dropping shutdown_tx signals the sender task to exit.
+/// Awaiting sender_handle ensures all payloads are flushed to the socket.
+#[cfg(not(windows))]
+struct MigrationHandles {
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    sender_handle: tokio::task::JoinHandle<()>,
+}
+
 /// Perform binary upgrade (spawn new process) and initiate graceful shutdown.
 /// Returns None if upgrade was aborted (e.g. config validation failed).
-/// Returns Some(oneshot::Sender) if upgrade started — dropping the sender
-/// signals migration_sender_task to exit.
+/// Returns Some(MigrationHandles) if upgrade started with client migration.
 #[cfg(not(windows))]
 async fn binary_upgrade_and_shutdown(
     args: &Args,
@@ -539,7 +553,7 @@ async fn binary_upgrade_and_shutdown(
     listener: &mut Option<tokio::net::TcpListener>,
     shutdown_timeout: Duration,
     exit_tx: &mpsc::Sender<()>,
-) -> Option<tokio::sync::oneshot::Sender<()>> {
+) -> Option<MigrationHandles> {
     // First, validate configuration of the new binary before proceeding with shutdown
     if !admin_only {
         let full_exe_args: Vec<_> = std::env::args().collect();
@@ -633,8 +647,7 @@ async fn binary_upgrade_and_shutdown(
 
     SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
 
-    // Will hold the shutdown signal for migration_sender_task (if started).
-    let mut migration_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>> = None;
+    let mut migration_handles: Option<MigrationHandles> = None;
 
     // Drain all idle connections from pools to release PostgreSQL connections
     retain::drain_all_pools();
@@ -785,8 +798,8 @@ async fn binary_upgrade_and_shutdown(
                             let _ = MIGRATION_TX.set(tx);
                             MIGRATION_IN_PROGRESS.store(true, Ordering::SeqCst);
                             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-                            migration_shutdown_tx = Some(shutdown_tx);
-                            tokio::spawn(migration_sender_task(migration_parent_fd, rx, shutdown_rx));
+                            let sender_handle = tokio::spawn(migration_sender_task(migration_parent_fd, rx, shutdown_rx));
+                            migration_handles = Some(MigrationHandles { shutdown_tx, sender_handle });
                             info!("Client migration enabled");
                         }
 
@@ -810,11 +823,11 @@ async fn binary_upgrade_and_shutdown(
 
     // Don't want this to happen more than once
     if admin_only {
-        return migration_shutdown_tx;
+        return migration_handles;
     }
 
     spawn_shutdown_timer(exit_tx.clone(), shutdown_timeout);
-    migration_shutdown_tx
+    migration_handles
 }
 
 /// Spawn a task that waits for all clients to disconnect (or timeout) and then signals exit.

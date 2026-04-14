@@ -1,4 +1,4 @@
-@client-migration @tls-migration @linux-only
+@tls-migration @linux-only
 Feature: TLS client migration during binary upgrade
   On SIGUSR2, idle TLS clients should migrate from the old process to the
   new one. The encrypted session continues on the same TCP socket — the
