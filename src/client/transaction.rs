@@ -10,7 +10,7 @@ use crate::utils::clock::now;
 
 use crate::admin::handle_admin;
 use crate::app::server::{
-    CLIENTS_IN_TRANSACTIONS, CURRENT_CLIENT_COUNT, MIGRATION_IN_PROGRESS, MIGRATION_TX,
+    CLIENTS_IN_TRANSACTIONS, MIGRATION_IN_PROGRESS, MIGRATION_TX,
     SHUTDOWN_IN_PROGRESS,
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
@@ -617,7 +617,9 @@ where
                                     "[{}@{} #c{}] client {} migrated to new process",
                                     self.username, self.pool_name, self.connection_id, self.addr
                                 );
-                                CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                                // Note: do NOT decrement CURRENT_CLIENT_COUNT here.
+                                // The caller (server.rs accept loop) decrements it
+                                // unconditionally after client_entrypoint() returns.
                                 return Ok(());
                             }
                         },
