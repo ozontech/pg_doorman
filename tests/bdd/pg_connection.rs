@@ -680,7 +680,9 @@ impl PgConnection {
             StreamKind::Tls(tls) => {
                 #[cfg(unix)]
                 {
-                    let linger = socket2::SockRef::from(&tls);
+                    use std::os::unix::io::AsRawFd;
+                    let fd = unsafe { std::os::unix::io::BorrowedFd::borrow_raw(tls.as_raw_fd()) };
+                    let linger = socket2::SockRef::from(&fd);
                     linger
                         .set_linger(Some(std::time::Duration::from_secs(0)))
                         .expect("Failed to set SO_LINGER");
