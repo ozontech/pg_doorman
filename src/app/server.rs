@@ -509,6 +509,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             }
         }
         info!("Shutting down...");
+        // Exit immediately. Spawned tasks (migration_sender_task) hold
+        // references to OnceLock channels that cannot be dropped, so the
+        // tokio runtime would wait for them indefinitely on drop.
+        std::process::exit(0);
     });
 
     Ok(())
