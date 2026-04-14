@@ -230,7 +230,17 @@ pub fn stop_doorman_daemon(pid: u32) {
 
 /// Check if a process is running by PID
 fn is_process_running(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    // kill(pid, 0) returns 0 for zombie processes, which gives false
+    // positives after binary upgrade: the old process has exited but
+    // its entry stays in the process table until the parent waits.
+    // Use waitpid(WNOHANG) to reap zombies, then retry kill.
+    unsafe {
+        let ret = libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG);
+        if ret == pid as i32 {
+            return false; // reaped — process is gone
+        }
+        libc::kill(pid as i32, 0) == 0
+    }
 }
 
 /// Start pg_doorman in daemon mode with config content
