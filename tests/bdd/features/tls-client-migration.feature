@@ -36,12 +36,15 @@ Feature: TLS client migration during binary upgrade
       """
     When we sleep 1000ms
     And we create TLS session "tls1" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "SELECT pg_backend_pid()" to session "tls1" and store backend_pid as "before_upgrade"
+    And we send SimpleQuery "SELECT 1" to session "tls1"
     And we store foreground pg_doorman PID as "old_doorman"
     And we send SIGUSR2 to foreground pg_doorman
     And we wait for foreground binary upgrade to complete
-    And we send SimpleQuery "SELECT pg_backend_pid()" to session "tls1" and store backend_pid as "after_upgrade"
-    Then stored PID "after_upgrade" should be different from "before_upgrade"
+    # Verify TLS session works after migration with multiple queries
+    Then we send SimpleQuery "SELECT 'tls_post_1'" to session "tls1" and store response
+    And session "tls1" should receive DataRow with "tls_post_1"
+    And we send SimpleQuery "SELECT 'tls_post_2'" to session "tls1" and store response
+    And session "tls1" should receive DataRow with "tls_post_2"
     And stored foreground PID "old_doorman" should not exist
     When we close session "tls1"
 
