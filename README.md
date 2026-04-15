@@ -315,9 +315,9 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `SIGUSR2` | Start binary upgrade + graceful shutdown of old process |
 | `SIGTERM` | Immediate shutdown |
 
-### Binary upgrade (zero downtime)
+### Binary upgrade with client migration (zero downtime)
 
-Replace the pg_doorman binary while clients stay connected:
+Replace the pg_doorman binary while clients stay connected — no reconnects, no errors, no re-authentication:
 
 ```bash
 # Replace the binary on disk, then:
@@ -327,13 +327,21 @@ kill -USR2 $(cat /tmp/pg_doorman.pid)
 UPGRADE;
 ```
 
-PgDoorman validates the new binary's configuration (`-t` flag) before starting it. If validation fails, the upgrade is aborted and the old process continues. Active clients experience no interruption — new connections are served by the new process, existing ones drain gracefully.
+PgDoorman validates the new binary's configuration (`-t` flag) before starting it. If validation fails, the upgrade is aborted and the old process continues.
+
+In foreground mode, idle clients are migrated to the new process via Unix socket fd passing (SCM_RIGHTS). The TCP connection stays the same — the client does not notice the upgrade. Clients inside a transaction finish on the old process and migrate after COMMIT. The old process exits when all clients have migrated or `shutdown_timeout` expires.
+
+Prepared statement caches are serialized and transferred. The new process transparently re-issues `Parse` commands to fresh backends on the first `Bind` — clients do not need to re-prepare anything.
+
+TLS clients can also be migrated without re-handshaking. Build with `--features tls-migration` to enable this: a patched OpenSSL 3.5.5 exports the symmetric cipher state (keys, IVs, sequence numbers) and the new process imports it to resume encryption. Linux only.
 
 For systemd services:
 
 ```ini
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
 ```
+
+See [binary upgrade documentation](https://ozontech.github.io/pg_doorman/tutorials/binary-upgrade.html) for the full protocol description, TLS migration build instructions, configuration, monitoring, and troubleshooting.
 
 ## Installation
 
