@@ -571,59 +571,54 @@ where
             // Try to migrate this client to the new process during graceful reload.
             // At this point: no server checked out, no pending transaction,
             // write buffer flushed from previous iteration.
+            // Single atomic load — reused for both the deferred-log branch
+            // and the actual migration branch to avoid redundant reads.
             #[cfg(unix)]
-            if MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
-                && !self.admin
-                && (self.client_pending_begin.is_some() || !self.read.buffer().is_empty())
-            {
-                debug!(
-                    "[{}@{} #c{}] migration deferred: pending_begin={} read_buf={}",
-                    self.username,
-                    self.pool_name,
-                    self.connection_id,
-                    self.client_pending_begin.is_some(),
-                    self.read.buffer().len()
-                );
-            }
-            #[cfg(unix)]
-            if MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
-                && !self.admin
-                && self.client_pending_begin.is_none()
-                && self.read.buffer().is_empty()
-            {
-                match MIGRATION_TX.get() {
-                    None => {
-                        warn!(
-                            "[{}@{} #c{}] migration channel not ready",
-                            self.username, self.pool_name, self.connection_id
-                        );
-                    }
-                    Some(tx) => match self.prepare_migration() {
-                        Err(e) => {
+            if MIGRATION_IN_PROGRESS.load(Ordering::Relaxed) && !self.admin {
+                if self.client_pending_begin.is_some() || !self.read.buffer().is_empty() {
+                    debug!(
+                        "[{}@{} #c{}] migration deferred: pending_begin={} read_buf={}",
+                        self.username,
+                        self.pool_name,
+                        self.connection_id,
+                        self.client_pending_begin.is_some(),
+                        self.read.buffer().len()
+                    );
+                } else {
+                    match MIGRATION_TX.get() {
+                        None => {
                             warn!(
-                                "[{}@{} #c{}] prepare_migration failed: {e}",
+                                "[{}@{} #c{}] migration channel not ready",
                                 self.username, self.pool_name, self.connection_id
                             );
                         }
-                        Ok(payload) => match tx.try_send(payload) {
+                        Some(tx) => match self.prepare_migration() {
                             Err(e) => {
                                 warn!(
-                                    "[{}@{} #c{}] migration channel send failed: {e}",
+                                    "[{}@{} #c{}] prepare_migration failed: {e}",
                                     self.username, self.pool_name, self.connection_id
                                 );
                             }
-                            Ok(()) => {
-                                info!(
-                                    "[{}@{} #c{}] client {} migrated to new process",
-                                    self.username, self.pool_name, self.connection_id, self.addr
-                                );
-                                // Note: do NOT decrement CURRENT_CLIENT_COUNT here.
-                                // The caller (server.rs accept loop) decrements it
-                                // unconditionally after client_entrypoint() returns.
-                                return Ok(());
-                            }
+                            Ok(payload) => match tx.try_send(payload) {
+                                Err(e) => {
+                                    warn!(
+                                        "[{}@{} #c{}] migration channel send failed: {e}",
+                                        self.username, self.pool_name, self.connection_id
+                                    );
+                                }
+                                Ok(()) => {
+                                    info!(
+                                        "[{}@{} #c{}] client {} migrated to new process",
+                                        self.username, self.pool_name, self.connection_id, self.addr
+                                    );
+                                    // Note: do NOT decrement CURRENT_CLIENT_COUNT here.
+                                    // The caller (server.rs accept loop) decrements it
+                                    // unconditionally after client_entrypoint() returns.
+                                    return Ok(());
+                                }
+                            },
                         },
-                    },
+                    }
                 }
             }
 
