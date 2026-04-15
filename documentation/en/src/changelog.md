@@ -1,12 +1,18 @@
 # Changelog
 
+### 3.5.0 <small>Apr 15, 2026</small>
+
+#### Client migration during binary upgrade
+
+Idle clients now transfer to the new process via Unix socket (`SCM_RIGHTS`) without reconnecting. Active-transaction clients finish their transaction on the old process, then migrate. Prepared statement caches are serialized and transparently re-parsed on the new backend. The old process exits once all clients have migrated or `shutdown_timeout` expires.
+
+#### TLS connection migration (opt-in)
+
+Build with `--features tls-migration` to migrate TLS sessions without re-handshake. A patched vendored OpenSSL 3.5.5 exports/imports symmetric cipher state (keys, IVs, sequence numbers). Linux-only. Offline builds supported via `OPENSSL_SOURCE_TARBALL` env var with SHA-256 verification.
+
 ### 3.4.0 <small>Apr 11, 2026</small>
 
 #### Pool Coordinator — database-level connection limits
-
-- **Client migration during binary upgrade.** Idle clients now transfer to the new process via Unix socket (`SCM_RIGHTS`) without reconnecting. Active-transaction clients finish their transaction on the old process, then migrate. Prepared statement caches are serialized and transparently re-parsed on the new backend. The old process exits once all clients have migrated or `shutdown_timeout` expires.
-
-- **TLS connection migration (opt-in).** Build with `--features tls-migration` to migrate TLS sessions without re-handshake. A patched vendored OpenSSL 3.5.5 exports/imports symmetric cipher state (keys, IVs, sequence numbers). Linux-only. Offline builds supported via `OPENSSL_SOURCE_TARBALL` env var with SHA-256 verification.
 
 When multiple user pools share one PostgreSQL database, the sum of their `pool_size` values can exceed `max_connections`. A spike in one pool starves the others, or PostgreSQL rejects connections outright.
 
