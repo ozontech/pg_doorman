@@ -1,7 +1,7 @@
 FROM rust:1.87.0-slim-bookworm AS builder
 
 RUN apt-get update && \
-    apt-get install -y build-essential pkg-config libssl-dev
+    apt-get install -y build-essential pkg-config libssl-dev perl
 
 COPY . /app
 WORKDIR /app

@@ -19,6 +19,10 @@ BuildRequires:  openssl-devel
 BuildRequires:  cmake
 BuildRequires:  clang
 BuildRequires:  tar
+BuildRequires:  patch
+BuildRequires:  perl
+BuildRequires:  perl-FindBin
+BuildRequires:  perl-IPC-Cmd
 
 Requires:       openssl
 

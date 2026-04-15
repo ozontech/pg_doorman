@@ -1,6 +1,6 @@
 [package]
 name = "pg_doorman"
-version = "3.4.0"
+version = "3.5.0"
 edition = "2021"
 rust-version = "1.87.0"
 license = "MIT"
@@ -54,7 +54,8 @@ native-tls = { version = "0.2.14" }
 tokio-native-tls = { version = "0.3.1" }
 serde-toml-merge = { version = "0.3.8"}
 jwt = { version = "0.16.0", features = ["openssl"] }
-openssl = { version = "0.10.72"}
+openssl = { version = "0.10.72" }
+openssl-sys = { version = "0.9" }
 iota = { version = "0.2.3" }
 pin-project-lite = "0.2.16"
 pam-client = { version =  "0.5.0", optional = true }
@@ -70,8 +71,10 @@ dashmap = "6.1"
 reqwest = { version = "0.11", features = ["json"] }
 hdrhistogram = "7.5"
 
-[replace]
-'native-tls:0.2.14' = {path = 'patches/rust-native-tls'}
+[patch.crates-io]
+native-tls = { path = "patches/rust-native-tls" }
+tokio-native-tls = { path = "patches/tokio-native-tls" }
+openssl-src = { path = "patches/openssl-src" }
 
 [dev-dependencies]
 cucumber = "0.21"
@@ -127,3 +130,4 @@ harness = false
 [features]
 default = []
 pam = ["dep:pam-client"]
+tls-migration = ["openssl/vendored", "native-tls/tls-migration", "tokio-native-tls/tls-migration"]

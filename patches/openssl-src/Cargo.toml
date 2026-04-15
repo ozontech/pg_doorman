@@ -1,0 +1,26 @@
+[package]
+name = "openssl-src"
+version = "300.5.5+3.5.5"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+build = false
+autolib = false
+
+[features]
+default = []
+camellia = []
+force-engine = []
+idea = []
+ktls = []
+legacy = []
+no-dso = []
+seed = []
+ssl3 = []
+weak-crypto = []
+
+[lib]
+name = "openssl_src"
+path = "src/lib.rs"
+
+[dependencies]
+cc = "1.0.79"

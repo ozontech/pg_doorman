@@ -133,9 +133,11 @@
             gcc
             gnumake
             cmake
+            perl
             git
 
             # Additional build tools
+            gnupatch
             cacert
             coreutils
             bash

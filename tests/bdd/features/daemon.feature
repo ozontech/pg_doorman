@@ -135,7 +135,8 @@ Feature: Daemon mode with PID file synchronization
 
   @daemon-grac-shutdown-debug
   Scenario: Graceful shutdown rejects new queries after transaction completes in daemon mode
-    Given pg_doorman started in daemon mode with config:
+    Given pg_doorman shutdown-only mode
+    And pg_doorman started in daemon mode with config:
       """
       [general]
       host = "127.0.0.1"
@@ -156,26 +157,16 @@ Feature: Daemon mode with PID file synchronization
       """
     # Wait for daemon to be fully ready
     When we sleep 1000ms
-    # Open session one and start a transaction
+    # Open session and start a transaction
     And we create session "one" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send SimpleQuery "BEGIN" to session "one"
-    # Store backend PID for comparison
-    And we send SimpleQuery "SELECT pg_backend_pid()" to session "one" and store backend_pid as "one_backend"
-    # Send SIGINT to trigger graceful shutdown
+    And we send SimpleQuery "SELECT 1" to session "one"
+    # Send SIGINT — shutdown-only mode, no binary upgrade
     And we send SIGINT to daemon from PID file "/tmp/pg_doorman_pid_scenario_5"
-    # Wait for new daemon to start and be ready
-    And we sleep 2000ms
-    # Open session two - should get a different backend (new connection through new daemon)
-    And we create session "two" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "SELECT pg_backend_pid()" to session "two" and store backend_pid as "two_backend"
-    # Verify session two has different backend PID
-    Then stored PID "two_backend" should be different from "one_backend"
-    # Session one can still execute queries in active transaction
-    When we send SimpleQuery "SELECT 1" to session "one"
-    # Commit the transaction in session one - after commit, pooler sends error and closes connection
+    And we sleep 500ms
+    # Session can still execute queries in active transaction
+    When we send SimpleQuery "SELECT 2" to session "one"
+    # Commit triggers shutdown error
     And we send SimpleQuery "COMMIT" to session "one" expecting error after ready
     Then session "one" should receive error containing "pooler is shut down now" with code "58006"
-    # Close session one (connection already closed by pooler)
     When we close session "one"
-    # Close session two
-    When we close session "two"

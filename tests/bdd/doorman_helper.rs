@@ -114,6 +114,12 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         .arg(&config_path)
         .arg("-l")
         .arg(log_level)
+        .envs(
+            world
+                .doorman_env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str())),
+        )
         .stdout(stdout_cfg)
         .stderr(stderr_cfg)
         .spawn()
@@ -123,6 +129,13 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
 
     // Wait for pg_doorman to be ready (custom implementation with log capture)
     wait_for_doorman_ready(doorman_port, world.doorman_process.as_mut().unwrap()).await;
+}
+
+#[given("pg_doorman shutdown-only mode")]
+pub async fn set_shutdown_only_mode(world: &mut DoormanWorld) {
+    world
+        .doorman_env
+        .push(("PG_DOORMAN_CI_SHUTDOWN_ONLY".into(), "1".into()));
 }
 
 /// Helper function to wait for pg_doorman to be ready (max 5 seconds)
@@ -217,7 +230,17 @@ pub fn stop_doorman_daemon(pid: u32) {
 
 /// Check if a process is running by PID
 fn is_process_running(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    // kill(pid, 0) returns 0 for zombie processes, which gives false
+    // positives after binary upgrade: the old process has exited but
+    // its entry stays in the process table until the parent waits.
+    // Use waitpid(WNOHANG) to reap zombies, then retry kill.
+    unsafe {
+        let ret = libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG);
+        if ret == pid as i32 {
+            return false; // reaped — process is gone
+        }
+        libc::kill(pid as i32, 0) == 0
+    }
 }
 
 /// Start pg_doorman in daemon mode with config content
@@ -260,6 +283,12 @@ pub async fn start_doorman_daemon_with_config(world: &mut DoormanWorld, step: &S
         .arg("--daemon")
         .arg("-l")
         .arg(log_level)
+        .envs(
+            world
+                .doorman_env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str())),
+        )
         .output()
         .expect("Failed to start pg_doorman in daemon mode");
 
@@ -540,7 +569,9 @@ pub async fn verify_foreground_pid_changed(world: &mut DoormanWorld, name: Strin
     );
 }
 
-/// Verify that stored foreground pg_doorman PID no longer exists (process terminated)
+/// Verify that stored foreground pg_doorman PID no longer exists (process terminated).
+/// Polls for up to 5 seconds since the old process needs time to detect zero clients
+/// and exit via the shutdown timer.
 #[then(regex = r#"stored foreground PID "([^"]+)" should not exist"#)]
 pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: String) {
     let pid = world
@@ -548,11 +579,21 @@ pub async fn verify_foreground_pid_not_exists(world: &mut DoormanWorld, name: St
         .get(&(name.clone(), "foreground_pid".to_string()))
         .expect("Stored foreground PID not found");
 
-    assert!(
-        !is_process_running(*pid as u32),
-        "Process with PID {} should not exist, but it is still running",
-        pid
-    );
+    // Budget: shutdown_timeout (5s in tests) does not start at SIGUSR2.
+    // It starts after binary_upgrade_and_shutdown() finishes setup:
+    //   ~0-10s  readiness handshake (select() on pipe, 10s max)
+    //   ~0s     MIGRATION_IN_PROGRESS = true, spawn sender task
+    //   then    spawn_shutdown_timer(shutdown_timeout) starts the clock
+    // In practice readiness takes ~2s, so the old process may live up to
+    // ~2s (setup) + 5s (shutdown_timeout) = ~7s after SIGUSR2.
+    // We poll for 10s (40 × 250ms) to have comfortable margin.
+    for _ in 0..40 {
+        if !is_process_running(*pid as u32) {
+            return;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+    panic!("Process with PID {} should not exist after 10s", pid);
 }
 
 /// Overwrite the pg_doorman config file with new content (with placeholder substitution)

@@ -435,23 +435,29 @@ mod tests {
     }
 
     /// Memory counter delta must be 0 after successful read.
-    /// Resets counter to isolate from parallel tests sharing the global atomic.
+    /// Uses delta instead of absolute value to avoid races with parallel tests.
     #[tokio::test]
     async fn reuse_memory_counter_balanced_on_success() {
         let data = wire_msg(b'Z', &[b'I']);
         let mut stream = Cursor::new(data);
         let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
 
-        CURRENT_MEMORY.store(0, Ordering::SeqCst);
+        let before = CURRENT_MEMORY.load(Ordering::SeqCst);
         let _ = read_message_reuse(&mut stream, &mut buf, u64::MAX)
             .await
             .unwrap();
         let after = CURRENT_MEMORY.load(Ordering::SeqCst);
 
-        assert_eq!(after, 0, "memory counter leaked: {after}");
+        assert_eq!(
+            after,
+            before,
+            "memory counter leaked: delta={}",
+            after - before
+        );
     }
 
     /// Memory counter delta must be 0 even on read failure (EOF mid-body).
+    /// Uses delta instead of absolute value to avoid races with parallel tests.
     #[tokio::test]
     async fn reuse_memory_counter_balanced_on_read_error() {
         let mut data = vec![b'D'];
@@ -459,12 +465,17 @@ mod tests {
         let mut stream = Cursor::new(data);
         let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
 
-        CURRENT_MEMORY.store(0, Ordering::SeqCst);
+        let before = CURRENT_MEMORY.load(Ordering::SeqCst);
         let result = read_message_reuse(&mut stream, &mut buf, u64::MAX).await;
         let after = CURRENT_MEMORY.load(Ordering::SeqCst);
 
         assert!(result.is_err());
-        assert_eq!(after, 0, "memory counter leaked on error: {after}");
+        assert_eq!(
+            after,
+            before,
+            "memory counter leaked on error: delta={}",
+            after - before
+        );
     }
 
     // =========================================================================

@@ -1,5 +1,29 @@
+#[cfg(feature = "tls-migration")]
+extern crate foreign_types_shared;
 extern crate openssl;
 extern crate openssl_probe;
+
+#[cfg(feature = "tls-migration")]
+use self::foreign_types_shared::{ForeignType, ForeignTypeRef};
+
+// FFI declarations for our patched OpenSSL migration functions.
+// These are not in openssl-sys because we added them via C patch.
+// Only available when built with the tls-migration feature (vendored patched OpenSSL).
+#[cfg(feature = "tls-migration")]
+extern "C" {
+    fn SSL_export_migration_state(
+        ssl: *mut openssl_sys::SSL,
+        out: *mut *mut std::os::raw::c_uchar,
+        out_len: *mut usize,
+    ) -> std::os::raw::c_int;
+
+    fn SSL_import_migration_state(
+        ctx: *mut openssl_sys::SSL_CTX,
+        fd: std::os::raw::c_int,
+        buf: *const std::os::raw::c_uchar,
+        len: usize,
+    ) -> *mut openssl_sys::SSL;
+}
 
 use self::openssl::error::ErrorStack;
 use self::openssl::hash::MessageDigest;
@@ -404,6 +428,57 @@ impl TlsAcceptor {
     }
 }
 
+#[cfg(feature = "tls-migration")]
+impl TlsAcceptor {
+    /// Reconstruct a TLS stream from migrated cipher state.
+    /// Calls SSL_import_migration_state to create an SSL* in "established" mode,
+    /// then wraps it in SslStream. No handshake occurs — the imported SSL object
+    /// has hand_state=TLS_ST_OK so SSL_do_handshake returns immediately.
+    pub fn import_migration_state<S>(
+        &self,
+        stream: S,
+        tls_state: &[u8],
+        fd: std::os::raw::c_int,
+    ) -> Result<TlsStream<S>, Error>
+    where
+        S: io::Read + io::Write,
+    {
+        unsafe {
+            let ctx_ptr = self.0.context().as_ptr() as *mut openssl_sys::SSL_CTX;
+            let ssl_ptr = SSL_import_migration_state(
+                ctx_ptr,
+                fd,
+                tls_state.as_ptr(),
+                tls_state.len(),
+            );
+            if ssl_ptr.is_null() {
+                return Err(Error::Normal(ErrorStack::get()));
+            }
+
+            // Take ownership of the SSL* into an openssl::ssl::Ssl.
+            let ssl = {
+                // ForeignType::from_ptr — we use the trait from the foreign-types crate
+                // which openssl depends on. Access through the macro-generated inherent method.
+                openssl::ssl::Ssl::from_ptr(ssl_ptr as *mut openssl_sys::SSL)
+            };
+
+            // SSL_do_handshake returns immediately because our import function
+            // set hand_state=TLS_ST_OK and in_init=0.
+            let ssl_stream = ssl.accept(stream).map_err(|e| match e {
+                openssl::ssl::HandshakeError::SetupFailure(e) => Error::Normal(e),
+                openssl::ssl::HandshakeError::Failure(mid) => {
+                    Error::Ssl(mid.into_error(), X509VerifyResult::OK)
+                }
+                openssl::ssl::HandshakeError::WouldBlock(mid) => {
+                    Error::Ssl(mid.into_error(), X509VerifyResult::OK)
+                }
+            })?;
+
+            Ok(TlsStream(ssl_stream))
+        }
+    }
+}
+
 pub struct TlsStream<S>(ssl::SslStream<S>);
 
 impl<S: fmt::Debug> fmt::Debug for TlsStream<S> {
@@ -469,6 +544,37 @@ impl<S: io::Read + io::Write> TlsStream<S> {
         let digest = cert.digest(md)?;
 
         Ok(Some(digest.to_vec()))
+    }
+
+    /// Returns the raw SSL* pointer for use by migration FFI calls.
+    /// The pointer is valid for the lifetime of this TlsStream.
+    #[cfg(feature = "tls-migration")]
+    pub fn ssl_raw_ptr(&self) -> *mut openssl_sys::SSL {
+        self.0.ssl().as_ptr()
+    }
+
+    /// Export TLS cipher state for connection migration.
+    /// Returns an opaque blob that can be passed to import_migration_state().
+    #[cfg(feature = "tls-migration")]
+    pub fn export_migration_state(&self) -> Result<Vec<u8>, Error> {
+        unsafe {
+            let ssl_ptr = self.0.ssl().as_ptr();
+            let mut out: *mut u8 = std::ptr::null_mut();
+            let mut out_len: usize = 0;
+
+            let ret = SSL_export_migration_state(
+                ssl_ptr,
+                &mut out as *mut *mut u8 as *mut *mut std::os::raw::c_uchar,
+                &mut out_len,
+            );
+            if ret != 1 {
+                return Err(Error::Normal(ErrorStack::get()));
+            }
+
+            let data = std::slice::from_raw_parts(out, out_len).to_vec();
+            openssl_sys::OPENSSL_free(out as *mut std::os::raw::c_void);
+            Ok(data)
+        }
     }
 
     pub fn shutdown(&mut self) -> io::Result<()> {

@@ -30,6 +30,9 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
 
 use crate::app::tls::init_tls;
+use crate::client::migration::MigrationPayload;
+#[cfg(unix)]
+use crate::client::migration::{migration_receiver_task, migration_sender_task};
 
 /// Global counter for clients currently connected to the pg_doorman
 pub static CURRENT_CLIENT_COUNT: AtomicI64 = AtomicI64::new(0);
@@ -39,6 +42,17 @@ pub static SHUTDOWN_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Global counter for clients currently in transactions (holding server connections)
 pub static CLIENTS_IN_TRANSACTIONS: AtomicI64 = AtomicI64::new(0);
+
+/// Global flag: migration to new process is active. Clients should self-migrate at idle points.
+pub static MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Channel sender for migration payloads. Set once when migration starts.
+pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
+    std::sync::OnceLock::new();
+
+/// Max buffered migration payloads before sender blocks.
+/// Sized to handle all clients migrating simultaneously without contention.
+const MIGRATION_CHANNEL_CAPACITY: usize = 4096;
 
 pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::Error>> {
     if args.daemon {
@@ -266,6 +280,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             }
         }
 
+        // Migration receiver is spawned below after tls_acceptor is available
+
         #[cfg(windows)]
         let mut term_signal = win_signal::ctrl_close().unwrap();
         #[cfg(windows)]
@@ -284,13 +300,19 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         let (exit_tx, mut exit_rx) = mpsc::channel::<()>(1);
         let mut admin_only = false;
+        #[cfg(unix)]
+        let mut _migration_handles: Option<MigrationHandles> = None;
 
-        // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade)
+        // Detect foreground + TTY mode: SIGINT should only do graceful shutdown (no binary upgrade).
+        // PG_DOORMAN_CI_SHUTDOWN_ONLY=1 forces shutdown-only mode for testing in non-TTY environments.
         let is_foreground_tty = {
             #[cfg(not(windows))]
             {
                 use std::io::IsTerminal;
-                !args.daemon && std::io::stdin().is_terminal()
+                let force_shutdown = std::env::var("PG_DOORMAN_CI_SHUTDOWN_ONLY")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                force_shutdown || (!args.daemon && std::io::stdin().is_terminal())
             }
             #[cfg(windows)]
             {
@@ -300,6 +322,23 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         let tls_rate_limiter = tls_state.rate_limiter.clone();
         let tls_acceptor = tls_state.acceptor.clone();
+
+        // Spawn migration receiver if parent passed a migration socket
+        #[cfg(not(windows))]
+        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD") {
+            if let Ok(migration_fd) = fd_str.parse::<i32>() {
+                info!(
+                    "Migration socket received from parent (fd={})",
+                    migration_fd
+                );
+                std::env::remove_var("PG_DOORMAN_MIGRATION_FD");
+                tokio::spawn(migration_receiver_task(
+                    migration_fd,
+                    client_server_map.clone(),
+                    tls_acceptor.clone(),
+                ));
+            }
+        }
 
         // Wrap listener in Option to allow dropping it during foreground binary upgrade
         // while still continuing the graceful shutdown process
@@ -358,10 +397,11 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     #[cfg(not(windows))]
                     {
                         info!("Got SIGINT, starting binary upgrade and graceful shutdown");
-                        if !binary_upgrade_and_shutdown(
+                        match binary_upgrade_and_shutdown(
                             &args, admin_only, &mut listener, shutdown_timeout, &exit_tx,
                         ).await {
-                            continue;
+                            None => continue,
+                            handles => { _migration_handles = handles; }
                         }
                         admin_only = true;
                     }
@@ -373,10 +413,11 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     #[cfg(not(windows))]
                     {
                         info!("Got SIGUSR2, starting binary upgrade and graceful shutdown");
-                        if !binary_upgrade_and_shutdown(
+                        match binary_upgrade_and_shutdown(
                             &args, admin_only, &mut listener, shutdown_timeout, &exit_tx,
                         ).await {
-                            continue;
+                            None => continue,
+                            handles => { _migration_handles = handles; }
                         }
                         admin_only = true;
                     }
@@ -472,13 +513,39 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
             }
         }
         info!("Shutting down...");
+
+        // Signal migration_sender_task to stop, then wait for it to
+        // flush all pending payloads over the Unix socket. Without
+        // this, process::exit would kill the sender before it finishes
+        // sending data to the new process, losing migrated clients.
+        #[cfg(unix)]
+        if let Some(handles) = _migration_handles.take() {
+            drop(handles.shutdown_tx);
+            let _ = handles.sender_handle.await;
+            info!("Migration sender finished");
+        }
+
+        // Background tokio tasks (stats, retain, prometheus) run in
+        // infinite loops — the runtime drop would hang waiting for
+        // worker threads to drain them.
+        std::process::exit(0);
     });
 
     Ok(())
 }
 
+/// Migration handles returned by binary_upgrade_and_shutdown.
+/// Dropping shutdown_tx signals the sender task to exit.
+/// Awaiting sender_handle ensures all payloads are flushed to the socket.
+#[cfg(not(windows))]
+struct MigrationHandles {
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    sender_handle: tokio::task::JoinHandle<()>,
+}
+
 /// Perform binary upgrade (spawn new process) and initiate graceful shutdown.
-/// Returns `true` if shutdown was initiated, `false` if upgrade was aborted (e.g. config validation failed).
+/// Returns None if upgrade was aborted (e.g. config validation failed).
+/// Returns Some(MigrationHandles) if upgrade started with client migration.
 #[cfg(not(windows))]
 async fn binary_upgrade_and_shutdown(
     args: &Args,
@@ -486,7 +553,7 @@ async fn binary_upgrade_and_shutdown(
     listener: &mut Option<tokio::net::TcpListener>,
     shutdown_timeout: Duration,
     exit_tx: &mpsc::Sender<()>,
-) -> bool {
+) -> Option<MigrationHandles> {
     // First, validate configuration of the new binary before proceeding with shutdown
     if !admin_only {
         let full_exe_args: Vec<_> = std::env::args().collect();
@@ -556,7 +623,7 @@ async fn binary_upgrade_and_shutdown(
                     error!(
                         "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
                     );
-                    return false;
+                    return None;
                 }
                 info!("Configuration validation successful");
             }
@@ -573,15 +640,30 @@ async fn binary_upgrade_and_shutdown(
                 error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                 error!("!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY      !!!");
                 error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                return false;
+                return None;
             }
         }
     }
 
+    // Set MIGRATION_IN_PROGRESS before SHUTDOWN_IN_PROGRESS so that
+    // idle clients in the handle() loop see migration=true and wait
+    // to migrate instead of disconnecting with "pooler is shut down".
+    // If the upgrade fails later (spawn error), we clear the flag.
+    if !admin_only {
+        MIGRATION_IN_PROGRESS.store(true, Ordering::Relaxed);
+    }
     SHUTDOWN_IN_PROGRESS.store(true, Ordering::SeqCst);
 
-    // Drain all idle connections from pools to release PostgreSQL connections
-    retain::drain_all_pools();
+    let mut migration_handles: Option<MigrationHandles> = None;
+
+    // Drain idle server connections — but only when there is no client
+    // migration. During migration, in-transaction clients still need
+    // their server connections to finish the current query and COMMIT.
+    // Draining here would mark those servers bad, causing "pooler is
+    // shut down" errors before clients get a chance to migrate.
+    if admin_only {
+        retain::drain_all_pools();
+    }
 
     if !admin_only {
         // Binary upgrade: start new process with inherited listener fd
@@ -641,17 +723,39 @@ async fn binary_upgrade_and_shutdown(
                 let pipe_read_fd = pipe_fds[0];
                 let pipe_write_fd = pipe_fds[1];
 
-                // Spawn child process with inherited listener fd and pipe write fd
+                // Create a Unix socketpair for client migration
+                let mut migration_fds: [libc::c_int; 2] = [0; 2];
+                let migration_ok = unsafe {
+                    libc::socketpair(
+                        libc::AF_UNIX,
+                        libc::SOCK_STREAM,
+                        0,
+                        migration_fds.as_mut_ptr(),
+                    )
+                } == 0;
+                if !migration_ok {
+                    warn!("Failed to create migration socketpair, clients will not be migrated");
+                }
+                let migration_parent_fd = migration_fds[0]; // kept by old process
+                let migration_child_fd = migration_fds[1]; // passed to new process
+
+                // Spawn child process with inherited listener fd, pipe, and migration socket
                 let child_result = unsafe {
                     let mut cmd = process::Command::new(exe_path);
                     cmd.args(&exe_args)
                         .arg("--inherit-fd")
                         .arg(listener_fd.to_string())
-                        .env("PG_DOORMAN_READY_FD", pipe_write_fd.to_string())
-                        .current_dir(std::env::current_dir().unwrap())
+                        .env("PG_DOORMAN_READY_FD", pipe_write_fd.to_string());
+                    if migration_ok {
+                        cmd.env("PG_DOORMAN_MIGRATION_FD", migration_child_fd.to_string());
+                    }
+                    cmd.current_dir(std::env::current_dir().unwrap())
                         .pre_exec(move || {
                             libc::fcntl(listener_fd, libc::F_SETFD, 0);
                             libc::fcntl(pipe_write_fd, libc::F_SETFD, 0);
+                            if migration_ok {
+                                libc::fcntl(migration_child_fd, libc::F_SETFD, 0);
+                            }
                             libc::setpgid(0, current_pgid);
                             Ok(())
                         });
@@ -662,6 +766,9 @@ async fn binary_upgrade_and_shutdown(
                     Ok(_child) => {
                         unsafe {
                             libc::close(pipe_write_fd);
+                            if migration_ok {
+                                libc::close(migration_child_fd);
+                            }
                         }
 
                         let mut buf: [u8; 1] = [0];
@@ -697,13 +804,30 @@ async fn binary_upgrade_and_shutdown(
                             libc::close(pipe_read_fd);
                         }
                         *listener = None;
+
+                        // Start client migration if socketpair was created
+                        if migration_ok {
+                            let (tx, rx) = mpsc::channel(MIGRATION_CHANNEL_CAPACITY);
+                            let _ = MIGRATION_TX.set(tx);
+                            // MIGRATION_IN_PROGRESS already set above (before SHUTDOWN)
+                            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+                            let sender_handle = tokio::spawn(migration_sender_task(migration_parent_fd, rx, shutdown_rx));
+                            migration_handles = Some(MigrationHandles { shutdown_tx, sender_handle });
+                            info!("Client migration enabled");
+                        }
+
                         info!("Foreground binary upgrade complete, listener released");
                     }
                     Err(e) => {
                         error!("Failed to spawn new process: {}", e);
+                        MIGRATION_IN_PROGRESS.store(false, Ordering::Relaxed);
                         unsafe {
                             libc::close(pipe_read_fd);
                             libc::close(pipe_write_fd);
+                            if migration_ok {
+                                libc::close(migration_parent_fd);
+                                libc::close(migration_child_fd);
+                            }
                         }
                     }
                 }
@@ -713,11 +837,11 @@ async fn binary_upgrade_and_shutdown(
 
     // Don't want this to happen more than once
     if admin_only {
-        return true;
+        return migration_handles;
     }
 
     spawn_shutdown_timer(exit_tx.clone(), shutdown_timeout);
-    true
+    migration_handles
 }
 
 /// Spawn a task that waits for all clients to disconnect (or timeout) and then signals exit.
@@ -730,14 +854,26 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
             if clients_in_tx == 1 { "" } else { "s" }
         );
 
-        let mut interval = tokio::time::interval(shutdown_timeout);
+        // Poll frequently to detect client count reaching zero quickly,
+        // but enforce the overall shutdown_timeout deadline.
+        // Drain idle server connections once per second (not every poll tick)
+        // to avoid interfering with binary upgrade readiness.
+        let poll_interval = Duration::from_millis(250);
+        let mut interval = tokio::time::interval(poll_interval);
         let start = std::time::Instant::now();
+        let mut last_drain = std::time::Instant::now();
 
         loop {
             interval.tick().await;
 
-            // Drain all idle connections from pools to release PostgreSQL connections
-            retain::drain_all_pools();
+            // Only drain pools when NOT migrating. During migration,
+            // in-transaction clients need their server connections.
+            if !MIGRATION_IN_PROGRESS.load(Ordering::Relaxed)
+                && last_drain.elapsed() >= Duration::from_secs(1)
+            {
+                retain::drain_all_pools();
+                last_drain = std::time::Instant::now();
+            }
 
             let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
             let clients_total = CURRENT_CLIENT_COUNT.load(Ordering::Relaxed);

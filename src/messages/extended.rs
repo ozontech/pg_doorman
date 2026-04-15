@@ -200,6 +200,23 @@ impl Parse {
         &self.query
     }
 
+    pub fn param_types(&self) -> &[i32] {
+        &self.param_types
+    }
+
+    /// Construct a Parse from raw parts. Used during client migration
+    /// to rebuild cache entries in the new process.
+    pub fn from_parts(query: &str, param_types: &[i32]) -> Self {
+        Parse {
+            code: 'P',
+            len: 0, // not used for cache registration
+            name: String::new(),
+            query: Arc::from(query),
+            num_params: param_types.len() as i16,
+            param_types: param_types.to_vec(),
+        }
+    }
+
     /// Approximate memory usage of the parse statement in bytes
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>()
@@ -719,5 +736,30 @@ mod tests {
     fn test_bind_rename_too_short() {
         let buf = BytesMut::from(&[0u8; 3][..]);
         assert!(Bind::rename(buf, "test").is_err());
+    }
+
+    #[test]
+    fn test_parse_from_parts_basic() {
+        let p = Parse::from_parts("SELECT $1::int", &[23]);
+        assert_eq!(p.query(), "SELECT $1::int");
+        assert_eq!(p.param_types(), &[23]);
+        assert!(p.anonymous()); // name is empty
+    }
+
+    #[test]
+    fn test_parse_from_parts_no_params() {
+        let p = Parse::from_parts("SELECT 1", &[]);
+        assert_eq!(p.query(), "SELECT 1");
+        assert_eq!(p.param_types(), &[] as &[i32]);
+    }
+
+    #[test]
+    fn test_parse_from_parts_hash_deterministic() {
+        let p1 = Parse::from_parts("SELECT $1", &[23]);
+        let p2 = Parse::from_parts("SELECT $1", &[23]);
+        assert_eq!(p1.get_hash(), p2.get_hash());
+
+        let p3 = Parse::from_parts("SELECT $1", &[25]); // different param type
+        assert_ne!(p1.get_hash(), p3.get_hash());
     }
 }

@@ -51,13 +51,21 @@ fn main() {
         // Create "not @todo-skip" filter
         let not_todo_skip = TagOperation::Not(Box::new(TagOperation::Tag("todo-skip".to_string())));
 
+        // On non-Linux platforms, also skip @linux-only scenarios
+        // (TLS migration requires patched OpenSSL which only builds on Linux)
+        #[cfg(not(target_os = "linux"))]
+        let base_filter = {
+            let not_linux_only =
+                TagOperation::Not(Box::new(TagOperation::Tag("linux-only".to_string())));
+            TagOperation::And(Box::new(not_todo_skip), Box::new(not_linux_only))
+        };
+        #[cfg(target_os = "linux")]
+        let base_filter = not_todo_skip;
+
         // Combine with existing tags filter if present
         cli.tags_filter = match cli.tags_filter.take() {
-            Some(existing) => Some(TagOperation::And(
-                Box::new(existing),
-                Box::new(not_todo_skip),
-            )),
-            None => Some(not_todo_skip),
+            Some(existing) => Some(TagOperation::And(Box::new(existing), Box::new(base_filter))),
+            None => Some(base_filter),
         };
 
         let writer = DoormanWorld::cucumber()

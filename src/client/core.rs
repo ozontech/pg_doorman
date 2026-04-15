@@ -380,7 +380,30 @@ pub struct Client<S, T> {
     /// When client sends standalone "begin;", we synthesize response
     /// and defer actual BEGIN until next query arrives.
     pub(crate) client_pending_begin: Option<BytesMut>,
+
+    /// Raw fd of the client TCP socket. Stored before tokio::io::split()
+    /// because ReadHalf/WriteHalf do not expose as_raw_fd().
+    /// Used for client migration during graceful reload.
+    #[cfg(unix)]
+    pub(crate) raw_fd: Option<std::os::unix::io::RawFd>,
+
+    /// Raw pointer to the OpenSSL SSL object for TLS migration export.
+    #[cfg(all(unix, feature = "tls-migration"))]
+    pub(crate) ssl_ptr: Option<SslRawPtr>,
 }
+
+/// Wrapper around *mut c_void that implements Send+Sync.
+/// Used to store the SSL* pointer for migration export.
+/// SAFETY: the pointer is only used at the idle point in handle() to call
+/// SSL_export_migration_state, which reads TLS state without mutation.
+/// The Client task is the sole user — no concurrent access.
+#[cfg(all(unix, feature = "tls-migration"))]
+#[derive(Clone, Copy)]
+pub struct SslRawPtr(pub(crate) *mut std::ffi::c_void);
+#[cfg(all(unix, feature = "tls-migration"))]
+unsafe impl Send for SslRawPtr {}
+#[cfg(all(unix, feature = "tls-migration"))]
+unsafe impl Sync for SslRawPtr {}
 
 impl<S, T> Client<S, T>
 where

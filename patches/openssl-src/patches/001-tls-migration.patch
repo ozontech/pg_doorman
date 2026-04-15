@@ -1,0 +1,301 @@
+--- ssl/ssl_local.h	2026-01-27 16:42:37
++++ ssl/ssl_local.h	2026-04-13 09:26:31
+@@ -1517,6 +1517,16 @@
+     unsigned char server_app_traffic_secret[EVP_MAX_MD_SIZE];
+     unsigned char exporter_master_secret[EVP_MAX_MD_SIZE];
+     unsigned char early_exporter_master_secret[EVP_MAX_MD_SIZE];
++
++    /* TLS connection migration: stashed raw key material.
++     * Populated by ssl_set_new_record_layer() before the key is consumed
++     * by EVP_CipherInit (after which only the expanded key schedule remains). */
++    struct {
++        unsigned char key[EVP_MAX_KEY_LENGTH];
++        size_t key_len;
++        unsigned char iv[EVP_MAX_IV_LENGTH];
++        size_t iv_len;
++    } migration_read, migration_write;
+ 
+     /* session info */
+     /* client cert? */
+--- ssl/record/rec_layer_s3.c	2026-01-27 16:42:37
++++ ssl/record/rec_layer_s3.c	2026-04-13 09:27:07
+@@ -1250,6 +1250,26 @@
+     int mactype, const EVP_MD *md,
+     const SSL_COMP *comp, const EVP_MD *kdfdigest)
+ {
++    /* Stash raw key/IV for TLS connection migration before the record layer
++     * consumes them via EVP_CipherInit (which expands to key schedule). */
++    if (key != NULL && keylen > 0 && keylen <= EVP_MAX_KEY_LENGTH) {
++        if (direction == OSSL_RECORD_DIRECTION_READ) {
++            memcpy(s->migration_read.key, key, keylen);
++            s->migration_read.key_len = keylen;
++            if (iv != NULL && ivlen > 0 && ivlen <= EVP_MAX_IV_LENGTH) {
++                memcpy(s->migration_read.iv, iv, ivlen);
++                s->migration_read.iv_len = ivlen;
++            }
++        } else {
++            memcpy(s->migration_write.key, key, keylen);
++            s->migration_write.key_len = keylen;
++            if (iv != NULL && ivlen > 0 && ivlen <= EVP_MAX_IV_LENGTH) {
++                memcpy(s->migration_write.iv, iv, ivlen);
++                s->migration_write.iv_len = ivlen;
++            }
++        }
++    }
++
+     OSSL_PARAM options[5], *opts = options;
+     OSSL_PARAM settings[6], *set = settings;
+     const OSSL_RECORD_METHOD **thismethod;
+--- ssl/ssl_lib.c	2026-01-27 16:42:37
++++ ssl/ssl_lib.c	2026-04-13 09:30:09
+@@ -29,6 +29,7 @@
+ #include "internal/refcount.h"
+ #include "internal/thread_once.h"
+ #include "internal/ktls.h"
++#include "record/methods/recmethod_local.h"
+ #include "internal/to_hex.h"
+ #include "internal/ssl_unwrap.h"
+ #include "quic/quic_local.h"
+@@ -8317,4 +8318,225 @@
+     *t = ctx->server_cert_type;
+     *len = ctx->server_cert_type_len;
+     return 1;
++}
++
++/*
++ * TLS connection migration: export/import symmetric cipher state.
++ */
++
++static void mig_put_be16(unsigned char *p, uint16_t v)
++{
++    p[0] = (v >> 8) & 0xff;
++    p[1] = v & 0xff;
++}
++
++static void mig_put_be32(unsigned char *p, uint32_t v)
++{
++    p[0] = (v >> 24) & 0xff;
++    p[1] = (v >> 16) & 0xff;
++    p[2] = (v >> 8) & 0xff;
++    p[3] = v & 0xff;
++}
++
++static uint16_t mig_get_be16(const unsigned char *p)
++{
++    return ((uint16_t)p[0] << 8) | p[1];
++}
++
++static uint32_t mig_get_be32(const unsigned char *p)
++{
++    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16)
++         | ((uint32_t)p[2] << 8) | p[3];
++}
++
++int SSL_export_migration_state(SSL *ssl, unsigned char **out, size_t *out_len)
++{
++    SSL_CONNECTION *sc = SSL_CONNECTION_FROM_SSL(ssl);
++    OSSL_RECORD_LAYER *rrl, *wrl;
++    size_t key_len, iv_len, secret_len, total;
++    unsigned char *buf, *p;
++
++    if (sc == NULL || out == NULL || out_len == NULL)
++        return 0;
++
++    rrl = sc->rlayer.rrl;
++    wrl = sc->rlayer.wrl;
++    if (rrl == NULL || wrl == NULL)
++        return 0;
++
++    key_len = sc->migration_write.key_len;
++    iv_len = sc->migration_write.iv_len;
++    if (key_len == 0)
++        return 0;
++
++    secret_len = 0;
++    if (sc->version == TLS1_3_VERSION) {
++        const EVP_MD *md = ssl_handshake_md(sc);
++        if (md != NULL)
++            secret_len = (size_t)EVP_MD_get_size(md);
++    }
++
++    total = 11 + 2 * (key_len + iv_len + 8) + 2 * secret_len;
++    buf = OPENSSL_malloc(total);
++    if (buf == NULL)
++        return 0;
++    p = buf;
++
++    *p++ = SSL_MIGRATION_VERSION;
++    mig_put_be16(p, (uint16_t)sc->version); p += 2;
++    mig_put_be32(p, sc->s3.tmp.new_cipher
++                    ? SSL_CIPHER_get_id(sc->s3.tmp.new_cipher) : 0);
++    p += 4;
++    *p++ = (unsigned char)wrl->taglen;
++    *p++ = (unsigned char)key_len;
++    *p++ = (unsigned char)iv_len;
++    *p++ = (unsigned char)secret_len;
++
++    memcpy(p, sc->migration_write.key, key_len); p += key_len;
++    memcpy(p, sc->migration_write.iv, iv_len); p += iv_len;
++    memcpy(p, wrl->sequence, 8); p += 8;
++
++    memcpy(p, sc->migration_read.key, key_len); p += key_len;
++    memcpy(p, sc->migration_read.iv, iv_len); p += iv_len;
++    memcpy(p, rrl->sequence, 8); p += 8;
++
++    if (secret_len > 0) {
++        memcpy(p, sc->server_app_traffic_secret, secret_len); p += secret_len;
++        memcpy(p, sc->client_app_traffic_secret, secret_len); p += secret_len;
++    }
++
++    *out = buf;
++    *out_len = total;
++    return 1;
++}
++
++SSL *SSL_import_migration_state(SSL_CTX *ctx, int fd,
++                                const unsigned char *buf, size_t len)
++{
++    SSL *ssl = NULL;
++    SSL_CONNECTION *sc;
++    const unsigned char *p;
++    uint8_t mig_ver, taglen, key_len, iv_len, secret_len;
++    uint16_t tls_ver;
++    uint32_t cipher_id;
++    const SSL_CIPHER *cipher = NULL;
++    const unsigned char *tx_key, *tx_iv, *tx_seq;
++    const unsigned char *rx_key, *rx_iv, *rx_seq;
++    const unsigned char *tx_secret = NULL, *rx_secret = NULL;
++    size_t expected;
++    BIO *rbio = NULL, *wbio = NULL;
++    STACK_OF(SSL_CIPHER) *ciphers;
++    int i;
++
++    if (ctx == NULL || buf == NULL || len < 11)
++        return NULL;
++
++    p = buf;
++    mig_ver = *p++;
++    if (mig_ver != SSL_MIGRATION_VERSION)
++        return NULL;
++    tls_ver = mig_get_be16(p); p += 2;
++    cipher_id = mig_get_be32(p); p += 4;
++    taglen = *p++;
++    key_len = *p++;
++    iv_len = *p++;
++    secret_len = *p++;
++
++    expected = 11 + 2 * ((size_t)key_len + iv_len + 8) + 2 * (size_t)secret_len;
++    if (len < expected)
++        return NULL;
++
++    tx_key = p; p += key_len;
++    tx_iv  = p; p += iv_len;
++    tx_seq = p; p += 8;
++    rx_key = p; p += key_len;
++    rx_iv  = p; p += iv_len;
++    rx_seq = p; p += 8;
++    if (secret_len > 0) {
++        tx_secret = p; p += secret_len;
++        rx_secret = p; p += secret_len;
++    }
++
++    /* Find cipher by ID */
++    ciphers = SSL_CTX_get_ciphers(ctx);
++    for (i = 0; i < sk_SSL_CIPHER_num(ciphers); i++) {
++        const SSL_CIPHER *c = sk_SSL_CIPHER_value(ciphers, i);
++        if (SSL_CIPHER_get_id(c) == cipher_id) {
++            cipher = c;
++            break;
++        }
++    }
++    if (cipher == NULL)
++        return NULL;
++
++    ssl = SSL_new(ctx);
++    if (ssl == NULL)
++        return NULL;
++    sc = SSL_CONNECTION_FROM_SSL(ssl);
++    if (sc == NULL)
++        goto err;
++
++    rbio = BIO_new_socket(fd, BIO_NOCLOSE);
++    wbio = BIO_new_socket(fd, BIO_NOCLOSE);
++    if (rbio == NULL || wbio == NULL)
++        goto err;
++    SSL_set_bio(ssl, rbio, wbio);
++    rbio = wbio = NULL;
++
++    sc->version = tls_ver;
++    SSL_set_accept_state(ssl);
++
++    memcpy(sc->migration_write.key, tx_key, key_len);
++    sc->migration_write.key_len = key_len;
++    memcpy(sc->migration_write.iv, tx_iv, iv_len);
++    sc->migration_write.iv_len = iv_len;
++    memcpy(sc->migration_read.key, rx_key, key_len);
++    sc->migration_read.key_len = key_len;
++    memcpy(sc->migration_read.iv, rx_iv, iv_len);
++    sc->migration_read.iv_len = iv_len;
++
++    if (secret_len > 0 && tx_secret != NULL && rx_secret != NULL) {
++        memcpy(sc->server_app_traffic_secret, tx_secret, secret_len);
++        memcpy(sc->client_app_traffic_secret, rx_secret, secret_len);
++    }
++
++    sc->s3.tmp.new_cipher = cipher;
++
++    if (!ssl_set_new_record_layer(sc, tls_ver,
++            OSSL_RECORD_DIRECTION_WRITE,
++            OSSL_RECORD_PROTECTION_LEVEL_APPLICATION,
++            tx_secret, secret_len,
++            (unsigned char *)tx_key, key_len,
++            (unsigned char *)tx_iv, iv_len,
++            NULL, 0,
++            EVP_get_cipherbynid(SSL_CIPHER_get_cipher_nid(cipher)), taglen,
++            NID_undef, NULL, NULL, NULL))
++        goto err;
++
++    if (!ssl_set_new_record_layer(sc, tls_ver,
++            OSSL_RECORD_DIRECTION_READ,
++            OSSL_RECORD_PROTECTION_LEVEL_APPLICATION,
++            rx_secret, secret_len,
++            (unsigned char *)rx_key, key_len,
++            (unsigned char *)rx_iv, iv_len,
++            NULL, 0,
++            EVP_get_cipherbynid(SSL_CIPHER_get_cipher_nid(cipher)), taglen,
++            NID_undef, NULL, NULL, NULL))
++        goto err;
++
++    if (sc->rlayer.wrl != NULL)
++        memcpy(sc->rlayer.wrl->sequence, tx_seq, 8);
++    if (sc->rlayer.rrl != NULL)
++        memcpy(sc->rlayer.rrl->sequence, rx_seq, 8);
++
++    sc->statem.hand_state = TLS_ST_OK;
++    ossl_statem_set_in_init(sc, 0);
++
++    return ssl;
++
++err:
++    BIO_free(rbio);
++    BIO_free(wbio);
++    SSL_free(ssl);
++    return NULL;
+ }
+--- include/openssl/ssl.h.in	2026-01-27 16:42:37
++++ include/openssl/ssl.h.in	2026-04-13 09:27:50
+@@ -2886,6 +2886,14 @@
+     size_t params_len);
+ 
+ int SSL_set_quic_tls_early_data_enabled(SSL *s, int enabled);
++
++/* TLS connection migration: export/import symmetric cipher state */
++# define SSL_MIGRATION_VERSION 1
++
++__owur int SSL_export_migration_state(SSL *ssl, unsigned char **out,
++                                      size_t *out_len);
++SSL *SSL_import_migration_state(SSL_CTX *ctx, int fd,
++                                const unsigned char *buf, size_t len);
+ 
+ #ifdef __cplusplus
+ }
