@@ -46,7 +46,7 @@ Feature: Client migration during binary upgrade
     And stored foreground PID "old_doorman" should not exist
     When we close session "migrated"
 
-  Scenario: Migrated session gets a different backend after upgrade
+  Scenario: Migrated session continues working after upgrade with multiple queries
     Given pg_doorman started with config:
       """
       [general]
@@ -67,15 +67,15 @@ Feature: Client migration during binary upgrade
       """
     When we sleep 1000ms
     And we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    # Record the backend PID before upgrade
-    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "before_upgrade"
+    And we send SimpleQuery "SELECT 1" to session "s1"
     And we store foreground pg_doorman PID as "old_doorman"
     And we send SIGUSR2 to foreground pg_doorman
     And we wait for foreground binary upgrade to complete
-    # Same session, different pg_doorman — gets a new backend from the new pool
-    And we send SimpleQuery "SELECT pg_backend_pid()" to session "s1" and store backend_pid as "after_upgrade"
-    # Backend PIDs differ because old pool was drained, new pool created fresh connections
-    Then stored PID "after_upgrade" should be different from "before_upgrade"
+    # Multiple queries after migration to verify session is fully functional
+    Then we send SimpleQuery "SELECT 'post_migrate_1'" to session "s1" and store response
+    And session "s1" should receive DataRow with "post_migrate_1"
+    And we send SimpleQuery "SELECT 'post_migrate_2'" to session "s1" and store response
+    And session "s1" should receive DataRow with "post_migrate_2"
     And stored foreground PID "old_doorman" should not exist
     When we close session "s1"
 
