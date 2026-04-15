@@ -224,10 +224,42 @@ SHA-256 is verified automatically.
 
 ### Known limitations
 
-- **KeyUpdate (TLS 1.3) not supported.** If a client or pg_doorman
-  sends a KeyUpdate message, the exported keys become stale. In
-  practice, libpq and PostgreSQL do not send KeyUpdate. Custom
-  clients with aggressive key rotation may be affected.
+- **TLS 1.3 KeyUpdate changes cipher keys.** If either side sends a
+  KeyUpdate message after the cipher state was exported, the imported
+  keys become invalid and the connection will fail with AEAD
+  authentication errors.
+
+  Driver-specific behavior (verified April 2026):
+
+  | Driver | Auto KeyUpdate? | Risk |
+  |--------|----------------|------|
+  | libpq (psql, pgbench) | No — OpenSSL does not auto-send | None |
+  | asyncpg (Python) | No — Python ssl wraps OpenSSL | None |
+  | node-postgres | No — Node.js tls wraps OpenSSL | None |
+  | Npgsql (.NET) | No — SslStream has no KeyUpdate API | None |
+  | **pgjdbc (Java)** | **Yes — JSSE sends after ~128 GB** (`jdk.tls.keyLimits`) | **High** |
+  | **tokio-postgres (rustls)** | **Yes — rustls rotates at AEAD limit** | **Medium** |
+  | PostgreSQL server | No — renegotiation disabled, no KeyUpdate calls | None |
+
+  **Java clients**: JSSE automatically sends KeyUpdate after ~128 GB
+  of encrypted data per connection. JDK bug
+  [JDK-8329548](https://bugs.openjdk.org/browse/JDK-8329548) can
+  cause a storm of KeyUpdate messages. For Java clients with
+  long-lived, high-throughput connections, TLS migration may lose
+  connections after the threshold. Workaround: increase the threshold
+  via `jdk.tls.keyLimits` in `java.security`, or disable TLS between
+  client and pg_doorman for Java workloads.
+
+  **Rust clients with rustls**: rustls tracks AEAD usage and rotates
+  keys at cipher suite limits (very high threshold, ~2^36 records for
+  AES-GCM). Unlikely to hit in practice for PostgreSQL workloads.
+  Using `native-tls` (OpenSSL) backend instead of rustls eliminates
+  the risk.
+
+  **All OpenSSL-based drivers are safe.** OpenSSL explicitly does not
+  perform automatic key updates
+  ([openssl#23566](https://github.com/openssl/openssl/issues/23566)).
+
 - **SSL_pending data not checked.** The migration happens at the
   idle point, where no application data is buffered. The idle-point
   invariant guarantees this, but there is no explicit SSL_pending()

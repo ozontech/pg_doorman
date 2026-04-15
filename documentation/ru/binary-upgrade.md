@@ -226,11 +226,40 @@ SHA-256 tarball'а проверяется автоматически.
 
 ### Известные ограничения
 
-- **KeyUpdate (TLS 1.3) не поддерживается.** Если клиент или
-  pg_doorman отправит KeyUpdate, экспортированные ключи станут
-  неактуальными. На практике libpq и PostgreSQL не отправляют
-  KeyUpdate. Кастомные клиенты с агрессивной ротацией ключей
-  могут быть затронуты.
+- **TLS 1.3 KeyUpdate меняет ключи шифрования.** Если любая сторона
+  отправит KeyUpdate после экспорта cipher state, импортированные
+  ключи станут невалидными — соединение упадёт с ошибкой AEAD.
+
+  Поведение драйверов (проверено апрель 2026):
+
+  | Драйвер | Auto KeyUpdate? | Риск |
+  |---------|----------------|------|
+  | libpq (psql, pgbench) | Нет — OpenSSL не отправляет | Нет |
+  | asyncpg (Python) | Нет — Python ssl = OpenSSL | Нет |
+  | node-postgres | Нет — Node.js tls = OpenSSL | Нет |
+  | Npgsql (.NET) | Нет — SslStream без KeyUpdate API | Нет |
+  | **pgjdbc (Java)** | **Да — JSSE после ~128 GB** (`jdk.tls.keyLimits`) | **Высокий** |
+  | **tokio-postgres (rustls)** | **Да — rustls при AEAD limit** | **Средний** |
+  | PostgreSQL server | Нет — renegotiation отключён, KeyUpdate не вызывается | Нет |
+
+  **Java-клиенты**: JSSE автоматически отправляет KeyUpdate после
+  ~128 GB зашифрованных данных. Баг
+  [JDK-8329548](https://bugs.openjdk.org/browse/JDK-8329548) может
+  вызвать шторм KeyUpdate сообщений. Для Java с долгоживущими
+  high-throughput соединениями TLS migration может потерять
+  соединения. Обходной путь: увеличить порог через
+  `jdk.tls.keyLimits` в `java.security`, или отключить TLS между
+  Java-клиентом и pg_doorman.
+
+  **Rust-клиенты с rustls**: rustls ротирует ключи при лимитах AEAD
+  (очень высокий порог, ~2^36 records для AES-GCM). Для PostgreSQL
+  workloads практически недостижимо. Использование `native-tls`
+  (OpenSSL) вместо rustls устраняет риск.
+
+  **Все OpenSSL-драйверы безопасны.** OpenSSL явно не выполняет
+  автоматический key update
+  ([openssl#23566](https://github.com/openssl/openssl/issues/23566)).
+
 - **SSL_pending данные не проверяются.** Миграция происходит в idle
   point, где нет буферизованных данных приложения. Инвариант idle
   point это гарантирует, но явная проверка `SSL_pending()` не
