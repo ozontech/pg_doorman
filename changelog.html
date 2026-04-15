@@ -161,6 +161,11 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="350-apr-15-2026"><a class="header" href="#350-apr-15-2026">3.5.0 <small>Apr 15, 2026</small></a></h3>
+<h4 id="client-migration-during-binary-upgrade"><a class="header" href="#client-migration-during-binary-upgrade">Client migration during binary upgrade</a></h4>
+<p>Idle clients now transfer to the new process via Unix socket (<code>SCM_RIGHTS</code>) without reconnecting. Active-transaction clients finish their transaction on the old process, then migrate. Prepared statement caches are serialized and transparently re-parsed on the new backend. The old process exits once all clients have migrated or <code>shutdown_timeout</code> expires.</p>
+<h4 id="tls-connection-migration-opt-in"><a class="header" href="#tls-connection-migration-opt-in">TLS connection migration (opt-in)</a></h4>
+<p>Build with <code>--features tls-migration</code> to migrate TLS sessions without re-handshake. A patched vendored OpenSSL 3.5.5 exports/imports symmetric cipher state (keys, IVs, sequence numbers). Linux-only. Offline builds supported via <code>OPENSSL_SOURCE_TARBALL</code> env var with SHA-256 verification.</p>
 <h3 id="340-apr-11-2026"><a class="header" href="#340-apr-11-2026">3.4.0 <small>Apr 11, 2026</small></a></h3>
 <h4 id="pool-coordinator--database-level-connection-limits"><a class="header" href="#pool-coordinator--database-level-connection-limits">Pool Coordinator — database-level connection limits</a></h4>
 <p>When multiple user pools share one PostgreSQL database, the sum of their <code>pool_size</code> values can exceed <code>max_connections</code>. A spike in one pool starves the others, or PostgreSQL rejects connections outright.</p>

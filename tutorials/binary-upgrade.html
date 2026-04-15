@@ -160,22 +160,244 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="binary-upgrade-process"><a class="header" href="#binary-upgrade-process">Binary Upgrade Process</a></h1>
-<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
-<p>PgDoorman supports seamless binary upgrades that allow you to update the software with minimal disruption to your database connections. This document explains how the upgrade process works and what to expect during an upgrade.</p>
-<h2 id="triggering-a-binary-upgrade"><a class="header" href="#triggering-a-binary-upgrade">Triggering a Binary Upgrade</a></h2>
-<p>The recommended way to trigger a binary upgrade is to send <code>SIGUSR2</code> to the PgDoorman process:</p>
-<pre><code class="language-bash">kill -USR2 $(pgrep pg_doorman)
+                        <h1 id="binary-upgrade"><a class="header" href="#binary-upgrade">Binary upgrade</a></h1>
+<p>Update pg_doorman without dropping client connections. The old process
+transfers idle clients to the new one through a Unix socket -- clients
+continue working on the same TCP connection without reconnecting.</p>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>
+<pre><code class="language-bash"># 1. Replace the binary on disk (build, download, etc.)
+cp pg_doorman_new /usr/bin/pg_doorman
+
+# 2. Trigger upgrade
+kill -USR2 $(pgrep pg_doorman)
+
+# 3. Verify: old PID gone, clients still connected
+pgrep pg_doorman   # new PID
 </code></pre>
-<p>Alternatively, you can use the admin console command:</p>
+<p>Or via the admin console:</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
-<h3 id="signal-reference"><a class="header" href="#signal-reference">Signal Reference</a></h3>
+<h2 id="how-the-upgrade-works"><a class="header" href="#how-the-upgrade-works">How the upgrade works</a></h2>
+<pre><code>                        SIGUSR2
+                           |
+                           v
+               +-----------------------+
+               | 1. Validate config    |
+               |    (pg_doorman -t)    |   -- fail --&gt; abort, keep serving
+               +-----------+-----------+
+                           |
+                           v
+               +-----------------------+
+               | 2. Spawn new process  |
+               |    socketpair()       |
+               |    inherit-fd         |
+               |    readiness pipe     |   -- wait up to 10s
+               +-----------+-----------+
+                           |
+             +-------------+-------------+
+             |                           |
+             v                           v
+  +---------------------+    +---------------------+
+  | OLD process         |    | NEW process         |
+  |                     |    |                     |
+  | 3. Idle clients     |    | migration_receiver  |
+  |    serialize state  +---&gt;+    reconstruct      |
+  |    dup() + SCM_RIGHTS    |    spawn client     |
+  |                     |    |    handle()         |
+  | 4. In-tx clients    |    |                     |
+  |    finish tx        |    | Accepts new conns   |
+  |    migrate on idle  +---&gt;+                     |
+  |                     |    |                     |
+  | 5. Shutdown timer   |    +---------------------+
+  |    poll 250ms       |
+  |    exit when empty  |
+  +---------------------+
+</code></pre>
+<h3 id="phase-1-config-validation"><a class="header" href="#phase-1-config-validation">Phase 1: Config validation</a></h3>
+<p>The current binary re-executes itself with <code>-t</code> and the config file.
+If validation fails, the upgrade is aborted. The old process keeps
+serving traffic. An error banner appears in the logs:</p>
+<pre><code>!!!  BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED  !!!
+!!!  FIX THE CONFIGURATION BEFORE ATTEMPTING BINARY UPGRADE AGAIN  !!!
+!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY  !!!
+</code></pre>
+<h3 id="phase-2-spawn-new-process"><a class="header" href="#phase-2-spawn-new-process">Phase 2: Spawn new process</a></h3>
+<p><strong>Foreground mode:</strong></p>
+<ol>
+<li>A Unix <code>socketpair()</code> is created for client migration.</li>
+<li>The listener fd passes to the child via <code>--inherit-fd</code>.</li>
+<li>A pipe signals readiness: the parent waits up to 10 seconds for
+a single byte. If the child starts and begins accepting, it
+writes to the pipe.</li>
+<li>The parent closes its listener -- new connections go to the child.</li>
+</ol>
+<p><strong>Daemon mode:</strong></p>
+<p>A new daemon process starts. The old daemon closes its listener.
+Client migration via socketpair is not used -- existing clients
+drain normally (receive error 58006 when <code>shutdown_timeout</code> expires).</p>
+<h3 id="phase-3-idle-client-migration-foreground"><a class="header" href="#phase-3-idle-client-migration-foreground">Phase 3: Idle client migration (foreground)</a></h3>
+<p>When <code>MIGRATION_IN_PROGRESS</code> is set, each idle client (not in a
+transaction, no pending deferred <code>BEGIN</code>, no buffered reads)
+migrates:</p>
+<ol>
+<li><strong>Serialize</strong>: connection_id, secret_key, pool name, username,
+server parameters, full prepared statement cache.</li>
+<li><strong>dup() + SCM_RIGHTS</strong>: the TCP socket fd is duplicated and
+sent to the new process over the Unix socketpair.</li>
+<li><strong>Reconstruct</strong>: the new process rebuilds the Client struct,
+assigns it to the correct pool, and calls <code>handle()</code>.</li>
+</ol>
+<p>The client sees no interruption. No reconnect, no error, no
+re-authentication. The TCP connection is the same physical socket.</p>
+<h3 id="phase-4-in-transaction-client-drain"><a class="header" href="#phase-4-in-transaction-client-drain">Phase 4: In-transaction client drain</a></h3>
+<p>A client inside <code>BEGIN ... COMMIT</code> continues running on the old
+process. Its server connection stays alive. After the transaction
+ends (COMMIT or ROLLBACK), the client becomes idle and migrates
+on the next loop iteration.</p>
+<p>A deferred <code>BEGIN</code> (no server checked out yet) also blocks migration.
+The client must send a query (flushing the deferred BEGIN) and then
+COMMIT before it can migrate.</p>
+<h3 id="phase-5-shutdown-timer"><a class="header" href="#phase-5-shutdown-timer">Phase 5: Shutdown timer</a></h3>
+<p>The shutdown timer polls <code>CURRENT_CLIENT_COUNT</code> every 250 ms. When
+all clients have migrated or disconnected, the old process calls
+<code>process::exit(0)</code>.</p>
+<p>If <code>shutdown_timeout</code> elapses before all clients finish, the old
+process exits regardless -- force-closing remaining connections.</p>
+<p>During migration, <code>drain_all_pools()</code> is deferred. In-transaction
+clients still need their server connections. Pool draining starts
+only after migration completes or when <code>MIGRATION_IN_PROGRESS</code>
+is cleared.</p>
+<h2 id="prepared-statements"><a class="header" href="#prepared-statements">Prepared statements</a></h2>
+<p>Each client's prepared statement cache is serialized during migration:</p>
+<ul>
+<li>Statement key (named or anonymous hash)</li>
+<li>Query hash</li>
+<li>Full query text</li>
+<li>Parameter type OIDs</li>
+</ul>
+<p>In the new process:</p>
+<ol>
+<li>Each entry is registered in the pool-level shared cache (DashMap).</li>
+<li>Server backends are fresh -- they have no prepared statements.</li>
+<li>On the first <code>Bind</code> to a migrated statement, pg_doorman
+transparently sends <code>Parse</code> to the new backend. The client does
+not see this extra round-trip.</li>
+</ol>
+<p><strong>Limits:</strong></p>
+<ul>
+<li>If the new config has a smaller <code>client_prepared_statements_cache_size</code>,
+excess entries are evicted (LRU). The remaining entries work normally.</li>
+<li>Anonymous prepared statements (empty-name <code>Parse</code>) survive migration
+but require a re-<code>Parse</code> before <code>Bind</code> in the new process.</li>
+<li><code>DEALLOCATE ALL</code> after migration clears the transferred cache. Re-<code>Parse</code>
+with the same name uses the new query text.</li>
+</ul>
+<h2 id="tls-migration"><a class="header" href="#tls-migration">TLS migration</a></h2>
+<p>By default, TLS clients cannot be migrated -- the encrypted session
+requires key material that lives inside the OpenSSL state machine.
+These clients drain during upgrade: their connection is closed when
+<code>shutdown_timeout</code> expires, and the client reconnects to the new
+process.</p>
+<p>The opt-in <code>tls-migration</code> feature solves this. A patched OpenSSL
+exports the symmetric cipher state, passes it alongside the fd over
+the Unix socket, and the new process imports it to resume encryption
+mid-stream. The client does not re-handshake.</p>
+<h3 id="what-gets-exported"><a class="header" href="#what-gets-exported">What gets exported</a></h3>
+<p>The patch adds <code>SSL_export_migration_state()</code> and
+<code>SSL_import_migration_state()</code> to OpenSSL 3.5.5. Exported data:</p>
+<ul>
+<li>TLS protocol version</li>
+<li>Cipher suite ID and tag length</li>
+<li>Read/write symmetric keys (AES key schedule input, not expanded)</li>
+<li>Read/write IVs (nonce)</li>
+<li>Read/write sequence numbers (8 bytes each)</li>
+<li>For TLS 1.3: server and client application traffic secrets</li>
+</ul>
+<p>This is enough to reconstruct the record layer in the new process
+and continue encrypting/decrypting on the same TCP connection.</p>
+<h3 id="building-with-tls-migration"><a class="header" href="#building-with-tls-migration">Building with TLS migration</a></h3>
+<pre><code class="language-bash">cargo build --release --features tls-migration
+</code></pre>
+<p>Requires <code>perl</code> and <code>patch</code> in the build environment. Vendored
+OpenSSL 3.5.5 compiles from source with the migration patch applied.</p>
+<h3 id="offline-builds"><a class="header" href="#offline-builds">Offline builds</a></h3>
+<pre><code class="language-bash"># Download the tarball in advance
+curl -fLO https://github.com/openssl/openssl/releases/download/openssl-3.5.5/openssl-3.5.5.tar.gz
+
+# Build with the local tarball
+OPENSSL_SOURCE_TARBALL=./openssl-3.5.5.tar.gz \
+  cargo build --release --features tls-migration
+</code></pre>
+<p>SHA-256 is verified automatically.</p>
+<h3 id="restrictions"><a class="header" href="#restrictions">Restrictions</a></h3>
+<ul>
+<li><strong>Linux only.</strong> macOS and Windows use platform-native TLS
+(Security.framework / SChannel), not OpenSSL. TLS migration is
+not possible with native-tls backends.</li>
+<li><strong>Same certificates.</strong> Both processes must use the same
+<code>tls_private_key</code> and <code>tls_certificate</code>. The cipher state is bound
+to the SSL_CTX created from the certificate. Changed certificates
+cause import failure and client disconnection.</li>
+<li><strong>FIPS incompatible.</strong> Vendored OpenSSL is not FIPS-validated.
+For FIPS compliance, build without <code>tls-migration</code> (TLS clients
+drain instead of migrating).</li>
+<li><strong>No HSM/PKCS#11.</strong> Vendored OpenSSL is built with <code>no-engine</code>.</li>
+</ul>
+<h3 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h3>
+<ul>
+<li>
+<p><strong>TLS 1.3 KeyUpdate changes cipher keys.</strong> If either side sends a
+KeyUpdate message after the cipher state was exported, the imported
+keys become invalid and the connection will fail with AEAD
+authentication errors.</p>
+<p>Driver-specific behavior (verified April 2026):</p>
+<div class="table-wrapper"><table><thead><tr><th>Driver</th><th>Auto KeyUpdate?</th><th>Risk</th></tr></thead><tbody>
+<tr><td>libpq (psql, pgbench)</td><td>No — OpenSSL does not auto-send</td><td>None</td></tr>
+<tr><td>asyncpg (Python)</td><td>No — Python ssl wraps OpenSSL</td><td>None</td></tr>
+<tr><td>node-postgres</td><td>No — Node.js tls wraps OpenSSL</td><td>None</td></tr>
+<tr><td>Npgsql (.NET)</td><td>No — SslStream has no KeyUpdate API</td><td>None</td></tr>
+<tr><td><strong>pgjdbc (Java)</strong></td><td><strong>Yes — JSSE sends after ~128 GB</strong> (<code>jdk.tls.keyLimits</code>)</td><td><strong>High</strong></td></tr>
+<tr><td><strong>tokio-postgres (rustls)</strong></td><td><strong>Yes — rustls rotates at AEAD limit</strong></td><td><strong>Medium</strong></td></tr>
+<tr><td>PostgreSQL server</td><td>No — renegotiation disabled, no KeyUpdate calls</td><td>None</td></tr>
+</tbody></table>
+</div>
+<p><strong>Java clients</strong>: JSSE automatically sends KeyUpdate after ~128 GB
+of encrypted data per connection. JDK bug
+<a href="https://bugs.openjdk.org/browse/JDK-8329548">JDK-8329548</a> can
+cause a storm of KeyUpdate messages. For Java clients with
+long-lived, high-throughput connections, TLS migration may lose
+connections after the threshold. Workaround: increase the threshold
+via <code>jdk.tls.keyLimits</code> in <code>java.security</code>, or disable TLS between
+client and pg_doorman for Java workloads.</p>
+<p><strong>Rust clients with rustls</strong>: rustls tracks AEAD usage and rotates
+keys at cipher suite limits (very high threshold, ~2^36 records for
+AES-GCM). Unlikely to hit in practice for PostgreSQL workloads.
+Using <code>native-tls</code> (OpenSSL) backend instead of rustls eliminates
+the risk.</p>
+<p><strong>All OpenSSL-based drivers are safe.</strong> OpenSSL explicitly does not
+perform automatic key updates
+(<a href="https://github.com/openssl/openssl/issues/23566">openssl#23566</a>).</p>
+</li>
+<li>
+<p><strong>SSL_pending data not checked.</strong> The migration happens at the
+idle point, where no application data is buffered. The idle-point
+invariant guarantees this, but there is no explicit SSL_pending()
+assertion.</p>
+</li>
+<li>
+<p><strong>Tied to OpenSSL 3.5.5.</strong> The patch modifies internal OpenSSL
+structures (<code>ssl_local.h</code>, <code>rec_layer_s3.c</code>, <code>ssl_lib.c</code>).
+Upgrading OpenSSL requires reviewing and re-applying the patch
+against the new version.</p>
+</li>
+</ul>
+<h2 id="signal-reference"><a class="header" href="#signal-reference">Signal reference</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Behavior</th></tr></thead><tbody>
-<tr><td><code>SIGUSR2</code></td><td>Binary upgrade + graceful shutdown <strong>(recommended)</strong></td></tr>
-<tr><td><code>SIGINT</code></td><td>Binary upgrade + graceful shutdown (legacy, daemon/no-TTY only). In foreground mode with a TTY, SIGINT (Ctrl+C) performs graceful shutdown <strong>without</strong> binary upgrade.</td></tr>
-<tr><td><code>SIGTERM</code></td><td>Immediate shutdown</td></tr>
-<tr><td><code>SIGHUP</code></td><td>Reload configuration</td></tr>
+<tr><td><code>SIGUSR2</code></td><td>Binary upgrade + graceful shutdown. <strong>Recommended for all modes.</strong></td></tr>
+<tr><td><code>SIGINT</code></td><td>Foreground + TTY (Ctrl+C): graceful shutdown only, no upgrade. Daemon / non-TTY: binary upgrade (legacy compatibility).</td></tr>
+<tr><td><code>SIGTERM</code></td><td>Immediate exit. Active transactions are killed. All clients disconnected.</td></tr>
+<tr><td><code>SIGHUP</code></td><td>Reload configuration without restart. No downtime.</td></tr>
+<tr><td><code>UPGRADE</code> (admin)</td><td>Sends SIGUSR2 to the current process internally. Same effect.</td></tr>
 </tbody></table>
 </div><div id="admonition-legacy-sigint-behavior" class="admonition admonish-note" role="note" aria-labelledby="admonition-legacy-sigint-behavior-title">
 <div class="admonition-title">
@@ -185,59 +407,161 @@
 <a class="admonition-anchor-link" href="#admonition-legacy-sigint-behavior"></a>
 </div>
 <div>
-<p>SIGINT still triggers binary upgrade when running in daemon mode or without a TTY (e.g. when spawned by systemd). If you are running pg_doorman interactively in a terminal, Ctrl+C will cleanly stop the process without spawning a new one. Use <code>kill -USR2</code> or the <code>UPGRADE</code> admin command to trigger binary upgrade in foreground mode.</p>
+<p>SIGINT triggers binary upgrade in daemon mode or without a TTY (e.g. when spawned by systemd). In an interactive terminal, Ctrl+C stops the process cleanly without spawning a new one. Use <code>kill -USR2</code> or the <code>UPGRADE</code> admin command for binary upgrade in foreground mode.</p>
 </div>
 </div>
-<h2 id="how-the-upgrade-process-works"><a class="header" href="#how-the-upgrade-process-works">How the Upgrade Process Works</a></h2>
-<p>When PgDoorman receives the upgrade signal:</p>
-<ol>
-<li>The current PgDoorman instance validates the configuration of the new binary using <code>-t</code> flag</li>
-<li>If validation passes, a new process is started:
-<ul>
-<li><strong>Daemon mode</strong>: a new daemonized process is spawned</li>
-<li><strong>Foreground mode</strong>: the listener socket is passed to the new process via <code>--inherit-fd</code></li>
-</ul>
-</li>
-<li>The new process uses the <code>SO_REUSE_PORT</code> socket option, allowing the operating system to distribute incoming traffic to the new instance</li>
-<li>The old instance then closes its socket for incoming connections</li>
-<li>Existing connections are handled gracefully during the transition</li>
-</ol>
-<h2 id="systemd-integration"><a class="header" href="#systemd-integration">systemd Integration</a></h2>
-<p>The recommended systemd service configuration uses <code>SIGUSR2</code> for reload:</p>
-<pre><code class="language-ini">ExecReload=/bin/kill -SIGUSR2 $MAINPID
+<h2 id="daemon-vs-foreground"><a class="header" href="#daemon-vs-foreground">Daemon vs foreground</a></h2>
+<div class="table-wrapper"><table><thead><tr><th></th><th>Foreground</th><th>Daemon</th></tr></thead><tbody>
+<tr><td>Client migration via fd passing</td><td>Yes (socketpair)</td><td>No</td></tr>
+<tr><td>Idle clients preserved</td><td>Yes</td><td>No (drain with 58006)</td></tr>
+<tr><td>In-tx clients</td><td>Finish tx, then migrate</td><td>Finish tx, then 58006</td></tr>
+<tr><td>New process startup</td><td>Inherits listener fd</td><td>Starts independently</td></tr>
+<tr><td>Recommended for</td><td>systemd, containers, k8s</td><td>Legacy deployments</td></tr>
+</tbody></table>
+</div>
+<p>For zero-downtime upgrades with client migration, run in foreground
+mode. systemd manages the process lifecycle:</p>
+<pre><code class="language-ini">[Service]
+Type=simple
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
 </code></pre>
-<p>This triggers a binary upgrade when you run <code>systemctl reload pg_doorman</code>.</p>
-<h2 id="handling-existing-connections"><a class="header" href="#handling-existing-connections">Handling Existing Connections</a></h2>
-<p>During the upgrade process, PgDoorman handles existing connections as follows:</p>
-<ol>
-<li>Current queries and transactions are allowed to complete within the specified <code>shutdown_timeout</code> (default: 10 seconds)</li>
-<li>After each query or transaction completes successfully, PgDoorman returns error code <code>58006</code> to the client</li>
-<li>This error code indicates to the client that they need to reconnect to the server</li>
-<li>After reconnecting, clients can safely retry their queries with the new PgDoorman instance</li>
-</ol>
-<h2 id="important-considerations"><a class="header" href="#important-considerations">Important Considerations</a></h2>
-<div id="admonition-query-repetition" class="admonition admonish-warning" role="note" aria-labelledby="admonition-query-repetition-title">
-<div class="admonition-title">
-<div id="admonition-query-repetition-title">
-<p>Query Repetition</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout"><code>shutdown_timeout</code></a></h3>
+<p>Maximum time to wait for in-transaction clients before force-closing
+connections. The old process exits after this timeout regardless of
+remaining clients.</p>
+<p>Default: 10 seconds.</p>
+<p>For production with long-running analytics queries: 30-60 seconds.</p>
+<pre><code class="language-toml">[general]
+shutdown_timeout = 60000  # milliseconds
+</code></pre>
+<p>Setting it too low risks killing active transactions. Setting it too
+high delays the old process exit when a client is stuck (e.g.,
+idle-in-transaction). Choose a value that covers your longest expected
+transaction, plus margin.</p>
+<h3 id="tls_private_key--tls_certificate"><a class="header" href="#tls_private_key--tls_certificate"><code>tls_private_key</code> / <code>tls_certificate</code></a></h3>
+<p>For TLS migration, both the old and new process load the same files.
+If the certificate changed between binary versions, TLS clients
+receive an error during cipher state import and are disconnected.</p>
+<p>Rotate certificates via <code>SIGHUP</code> (config reload) first, then do
+the binary upgrade.</p>
+<h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size"><code>prepared_statements_cache_size</code></a></h3>
+<p>Pool-level prepared statement cache. Does not directly affect
+migration, but the pool cache in the new process must be large
+enough to hold entries registered by migrated clients.</p>
+<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size"><code>client_prepared_statements_cache_size</code></a></h3>
+<p>Per-client prepared statement cache. The client's cache is
+serialized in full during migration. If the new config has a
+smaller value, LRU eviction drops excess entries.</p>
+<h2 id="monitoring"><a class="header" href="#monitoring">Monitoring</a></h2>
+<h3 id="logs"><a class="header" href="#logs">Logs</a></h3>
+<p>Key log lines during migration:</p>
+<pre><code>INFO  Got SIGUSR2, starting binary upgrade and graceful shutdown
+INFO  Validating configuration with: /usr/bin/pg_doorman -t pg_doorman.yaml
+INFO  Configuration validation successful
+INFO  Starting new process with inherited listener fd=5
+INFO  New process signaled readiness
+INFO  Client migration enabled
+INFO  [user@pool #c42] client 10.0.0.1:51234 migrated to new process
+INFO  waiting for 3 clients in transactions
+INFO  All clients disconnected, shutting down
+INFO  Migration sender finished
+</code></pre>
+<p>In the new process:</p>
+<pre><code>INFO  migration receiver: listening for migrated clients
+INFO  [user@pool #c42] migrated client accepted from 10.0.0.1:51234
+INFO  migration receiver done: migration socket closed
+INFO  migration receiver: stopped
+</code></pre>
+<h3 id="prometheus-metrics"><a class="header" href="#prometheus-metrics">Prometheus metrics</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Relevance during upgrade</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_pools_clients{status="active"}</code></td><td>Should drop to 0 on old process</td></tr>
+<tr><td><code>pg_doorman_pools_clients{status="idle"}</code></td><td>Drops as clients migrate</td></tr>
+<tr><td><code>pg_doorman_connection_count{type="total"}</code></td><td>Old: decreasing, new: increasing</td></tr>
+<tr><td><code>pg_doorman_clients_prepared_cache_entries</code></td><td>Confirms cache transferred</td></tr>
+</tbody></table>
 </div>
-<a class="admonition-anchor-link" href="#admonition-query-repetition"></a>
-</div>
-<div>
-<p>Repeating a query without receiving error code <code>58006</code> may cause problems as described in <a href="https://github.com/lib/pq/issues/939">this issue</a>. Make sure your client application properly handles reconnection scenarios.</p>
-</div>
-</div>
-<div id="admonition-client-library-compatibility" class="admonition admonish-tip" role="note" aria-labelledby="admonition-client-library-compatibility-title">
+<h3 id="admin-console"><a class="header" href="#admin-console">Admin console</a></h3>
+<pre><code class="language-sql">-- On the new process (old rejects non-admin connections)
+SHOW POOLS;
+SHOW CLIENTS;
+</code></pre>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="client-receives-pooler-is-shut-down-now-58006-instead-of-migrating"><a class="header" href="#client-receives-pooler-is-shut-down-now-58006-instead-of-migrating">Client receives "pooler is shut down now" (58006) instead of migrating</a></h3>
+<p><strong>Ctrl+C in foreground mode.</strong> SIGINT in TTY = shutdown without
+upgrade. Use <code>kill -USR2</code> or the <code>UPGRADE</code> admin command.</p>
+<p><strong>Daemon mode.</strong> Daemon mode does not use fd-based migration.
+Clients drain normally. Switch to foreground mode for migration.</p>
+<p><strong><code>PG_DOORMAN_CI_SHUTDOWN_ONLY=1</code> is set.</strong> This env var forces
+shutdown-only mode (used in CI tests). Unset it.</p>
+<h3 id="old-process-does-not-exit"><a class="header" href="#old-process-does-not-exit">Old process does not exit</a></h3>
+<p><strong>Long transaction.</strong> A client is stuck in <code>BEGIN</code> without <code>COMMIT</code>.
+Wait for <code>shutdown_timeout</code> or end the transaction manually.</p>
+<p><strong>Admin connections.</strong> Admin connections do not migrate. Close the
+admin session on the old process.</p>
+<p><strong>Force exit:</strong> <code>kill -TERM &lt;old_pid&gt;</code> sends SIGTERM for immediate
+exit.</p>
+<h3 id="tls-connection-dropped-after-upgrade"><a class="header" href="#tls-connection-dropped-after-upgrade">TLS connection dropped after upgrade</a></h3>
+<p><strong>Binary built without <code>--features tls-migration</code>.</strong> TLS clients
+drain instead of migrating. Rebuild with the feature flag.</p>
+<p><strong>Not running on Linux.</strong> TLS migration is Linux-only.</p>
+<p><strong>Certificate or key changed.</strong> The old process exported cipher state
+bound to the old certificate. Use the same files for both processes.
+Rotate certificates via SIGHUP before the binary upgrade.</p>
+<h3 id="tls-migration-not-available-in-logs"><a class="header" href="#tls-migration-not-available-in-logs">"TLS migration not available" in logs</a></h3>
+<p>The new process received a migration payload with TLS data but was
+built without <code>--features tls-migration</code> or is not running on Linux.
+The client is disconnected. Rebuild the new binary with the feature
+flag.</p>
+<h3 id="migration-channel-not-ready-in-logs"><a class="header" href="#migration-channel-not-ready-in-logs">"migration channel not ready" in logs</a></h3>
+<p>The <code>MIGRATION_TX</code> channel has not been initialized yet. This can
+happen if the new process has not finished starting when a client
+tries to migrate. The client retries on the next idle iteration
+(within milliseconds).</p>
+<h3 id="migration-channel-send-failed-in-logs"><a class="header" href="#migration-channel-send-failed-in-logs">"migration channel send failed" in logs</a></h3>
+<p>The migration channel is full (capacity: 4096). Possible when
+thousands of clients migrate simultaneously. The client retries
+on the next idle iteration.</p>
+<h3 id="prepare_migration-failed-in-logs"><a class="header" href="#prepare_migration-failed-in-logs">"prepare_migration failed" in logs</a></h3>
+<p>The client's raw fd is unavailable or <code>dup()</code> failed. Possible
+causes: fd exhaustion, or the client connected through a code
+path that does not store the raw fd. Check <code>ulimit -n</code>.</p>
+<div id="admonition-client-library-compatibility" class="admonition admonish-warning" role="note" aria-labelledby="admonition-client-library-compatibility-title">
 <div class="admonition-title">
 <div id="admonition-client-library-compatibility-title">
-<p>Client Library Compatibility</p>
+<p>Client library compatibility</p>
 </div>
 <a class="admonition-anchor-link" href="#admonition-client-library-compatibility"></a>
 </div>
 <div>
-<p>Be careful when using client libraries like <code>github.com/lib/pq</code> or Go's standard <code>database/sql</code> package. Ensure they properly handle the reconnection process during binary upgrades.</p>
+<p>Libraries like <code>github.com/lib/pq</code> or Go's <code>database/sql</code> may need configuration to handle the reconnection path for clients that receive error 58006 (those in daemon mode or stuck past <code>shutdown_timeout</code>). See <a href="https://github.com/lib/pq/issues/939">this issue</a>.</p>
 </div>
 </div>
+<h2 id="operational-checklist"><a class="header" href="#operational-checklist">Operational checklist</a></h2>
+<p>Before rolling out binary upgrade to production:</p>
+<ul>
+<li><input disabled="" type="checkbox"/>
+Run in <strong>foreground mode</strong> (not daemon) for fd-based migration</li>
+<li><input disabled="" type="checkbox"/>
+Set <code>shutdown_timeout</code> to cover your longest expected transaction
+(recommendation: 30-60 seconds for OLTP, longer for analytics)</li>
+<li><input disabled="" type="checkbox"/>
+If using TLS: build with <code>--features tls-migration</code>, verify
+both processes use the same certificate and key files</li>
+<li><input disabled="" type="checkbox"/>
+Test the upgrade in staging: open a session, trigger SIGUSR2,
+verify the session continues working</li>
+<li><input disabled="" type="checkbox"/>
+Verify systemd unit has <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code></li>
+<li><input disabled="" type="checkbox"/>
+Monitor logs for migration errors after the first production
+upgrade</li>
+<li><input disabled="" type="checkbox"/>
+Confirm old process exits (check PID file or <code>pgrep</code>)</li>
+<li><input disabled="" type="checkbox"/>
+Verify Prometheus metrics show clients on the new process</li>
+</ul>
 
                     </main>
 
