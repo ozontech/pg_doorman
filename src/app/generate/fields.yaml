@@ -622,9 +622,9 @@ fields:
 
     worker_cpu_affinity_pinning:
       config:
-        en: "Automatically pin workers to different CPUs."
-        ru: "Автоматически привязывать воркеры к разным CPU."
-      doc: "Automatically assign workers to different CPUs (man 3 cpu_set)."
+        en: "Bind each worker thread to a separate CPU core. By default, worker threads are not bound to any specific CPU."
+        ru: "Привязать каждый worker thread к отдельному ядру CPU. По умолчанию потоки не привязаны к конкретным ядрам."
+      doc: "Bind each worker thread to a separate CPU core (sched_setaffinity). Disabled when fewer than 3 cores are available."
       default: "false"
 
     tokio_settings_note:
