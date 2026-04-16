@@ -347,7 +347,7 @@ Also determines the shard count for internal concurrent hash maps (<code>worker_
 In Kubernetes, set this explicitly — automatic CPU detection may report the host's cores instead of the container's limit.</p>
 <p>Default: <code>4</code>.</p>
 <h3 id="worker_cpu_affinity_pinning"><a class="header" href="#worker_cpu_affinity_pinning">worker_cpu_affinity_pinning</a></h3>
-<p>Automatically assign workers to different CPUs (man 3 cpu_set).</p>
+<p>Bind each worker thread to a separate CPU core (sched_setaffinity). Disabled when fewer than 3 cores are available.</p>
 <p>Default: <code>false</code>.</p>
 <h3 id="tokio_global_queue_interval"><a class="header" href="#tokio_global_queue_interval">tokio_global_queue_interval</a></h3>
 <p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.global_queue_interval">Tokio runtime settings</a>.
