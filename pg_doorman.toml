@@ -180,7 +180,7 @@ log_client_disconnections = true
 # Default: 4
 worker_threads = 4
 
-# Automatically pin workers to different CPUs.
+# Bind each worker thread to a separate CPU core. By default, worker threads are not bound to any specific CPU.
 # Default: false
 worker_cpu_affinity_pinning = false
 
