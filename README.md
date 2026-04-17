@@ -307,6 +307,8 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
 | `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |
 
+A ready-to-import [Grafana dashboard](grafana/) is included — pool utilization, latency percentiles, coordinator state, prepared statement cache, and auth query metrics.
+
 ## Signals & Zero-Downtime Upgrade
 
 | Signal | Effect |

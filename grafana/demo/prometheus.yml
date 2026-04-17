@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: pg_doorman
+    static_configs:
+      - targets: ['pg_doorman:9127']

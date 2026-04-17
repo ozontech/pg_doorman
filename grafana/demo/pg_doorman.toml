@@ -1,0 +1,36 @@
+[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin"
+pool_mode = "transaction"
+shutdown_timeout = 10000
+pg_hba = { content = "host all all 0.0.0.0/0 trust" }
+
+[prometheus]
+enabled = true
+host = "0.0.0.0"
+port = 9127
+
+[pools.app_db]
+server_host = "postgres"
+server_port = 5432
+max_db_connections = 15
+
+[[pools.app_db.users]]
+username = "app_user"
+password = "md51eb270aee6c83fc6a7a27519d5fa0c9e"
+pool_size = 10
+
+[[pools.app_db.users]]
+username = "app_user_2"
+password = "md5a05c39aae7f2198b1f06c4291434ee85"
+pool_size = 10
+
+[pools.app_db.auth_query]
+query = "SELECT username, password FROM pg_doorman_auth($1)"
+user = "doorman_auth"
+password = "auth_secret"
+database = "app_db"
+workers = 2
+cache_ttl = 60000
