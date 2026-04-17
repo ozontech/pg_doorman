@@ -51,7 +51,6 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
-      - ../pg_doorman.json:/var/lib/grafana/dashboards/pg_doorman.json
     depends_on:
       - prometheus
     restart: unless-stopped

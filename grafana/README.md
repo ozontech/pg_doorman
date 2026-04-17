@@ -16,21 +16,14 @@ port = 9127
 
 ```bash
 pip install grafana-foundation-sdk
-python3 generate_dashboard.py > pg_doorman.json
-```
-
-For portable dashboards (grafana.com import):
-
-```bash
 GRAFANA_DS_UID='${DS_PROMETHEUS}' python3 generate_dashboard.py > pg_doorman.json
 ```
 
 ## Demo
 
-Local demo with PostgreSQL, pg_doorman, Prometheus, Grafana, and pgbench load:
-
 ```bash
 cd demo/
+python3 ../generate_dashboard.py > grafana/provisioning/dashboards/pg_doorman.json
 docker compose up -d
 ```
 

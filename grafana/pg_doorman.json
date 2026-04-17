@@ -28,7 +28,7 @@
         "label": "Instance",
         "query": "label_values(pg_doorman_total_memory, instance)",
         "datasource": {
-          "uid": "prometheus"
+          "uid": "${DS_PROMETHEUS}"
         },
         "multi": true,
         "refresh": 2,
@@ -46,7 +46,7 @@
         "label": "Database",
         "query": "label_values(pg_doorman_pools_clients{instance=~\"$instance\"}, database)",
         "datasource": {
-          "uid": "prometheus"
+          "uid": "${DS_PROMETHEUS}"
         },
         "multi": true,
         "refresh": 2,
@@ -64,7 +64,7 @@
         "label": "User",
         "query": "label_values(pg_doorman_pools_clients{instance=~\"$instance\", database=~\"$database\"}, user)",
         "datasource": {
-          "uid": "prometheus"
+          "uid": "${DS_PROMETHEUS}"
         },
         "multi": true,
         "refresh": 2,
@@ -149,7 +149,7 @@
       "title": "Waiting Clients",
       "description": "Clients queued for a server connection. Sustained >0 means pool_size is insufficient \u2014 increase pool_size or reduce query duration.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 4,
@@ -205,7 +205,7 @@
       "title": "Avg Wait Time",
       "description": "Max across pools of average queue wait \u2014 adds directly to application latency. Above 50ms: check Pool Utilization and raise pool_size.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 4,
@@ -261,7 +261,7 @@
       "title": "Query p99",
       "description": "99th percentile server-side query time (excludes queue wait). Spike without QPS increase \u2014 check pg_stat_activity for locks or vacuum.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 4,
@@ -317,7 +317,7 @@
       "title": "Pool Utilization",
       "description": "Active server connections / pool_size. Above 70%: anticipate saturation. Above 90%: clients are queuing.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 4,
@@ -373,7 +373,7 @@
       "title": "Memory",
       "description": "Process RSS. Sudden growth without new connections usually means unbounded prepared statement cache \u2014 check Pool Cache Entries.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 4,
@@ -420,7 +420,7 @@
       "title": "Total Connections",
       "description": "Current client connections (all pools). Compare with pool_size for multiplexing ratio \u2014 100:1+ is normal in transaction mode.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 4,
@@ -477,7 +477,7 @@
       "title": "Clients by State",
       "description": "Active (has server), idle (between transactions), waiting (queued). Growing 'waiting' area means pool_size is the bottleneck.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -521,7 +521,7 @@
       "title": "Waiting Clients",
       "description": "Waiting clients by user@database. Pinpoints which pool needs pool_size increase or query optimization.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -567,7 +567,7 @@
       "title": "Avg Wait Time",
       "description": "Average queue time per pool. Pool with low wait count but high wait time has slow query turnover.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -624,7 +624,7 @@
       "title": "Servers by State",
       "description": "Backend connections: active (executing query), idle (available for checkout). Idle approaching zero means no headroom for bursts.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -673,7 +673,7 @@
       "title": "Pool Size vs Active Servers",
       "description": "Active servers overlaid with pool_size ceiling. Gap between lines is spare capacity. When they converge, clients start queuing.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -719,7 +719,7 @@
       "title": "Pool Utilization %",
       "description": "Active/pool_size ratio over time. Sustained above 70% warrants pool_size increase; above 90% clients are already waiting.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -793,7 +793,7 @@
       "title": "Query Latency Percentiles",
       "description": "Server-side query time at p50/p90/p95/p99. p99 diverging from p50 \u2014 check pg_stat_activity for lock waits or long-running queries.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -839,7 +839,7 @@
       "title": "Queries per Second",
       "description": "Query throughput per pool. Flat QPS with rising latency signals PostgreSQL saturation. Rising QPS with stable latency is healthy growth.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -913,7 +913,7 @@
       "title": "Transaction Latency Percentiles",
       "description": "End-to-end transaction time including all queries and inter-query gaps. High values with low query latency indicate application-side delays between queries.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -959,7 +959,7 @@
       "title": "Transactions per Second",
       "description": "Transaction throughput per pool. Drop with rising latency indicates lock contention or long transactions holding server connections.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1018,7 +1018,7 @@
       "title": "Bytes Received",
       "description": "Data rate from clients. Spikes correlate with bulk INSERTs/COPYs.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1064,7 +1064,7 @@
       "title": "Bytes Sent",
       "description": "Data rate to clients. Large spikes indicate fat result sets \u2014 consider LIMIT if unexpected.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1126,7 +1126,7 @@
       "title": "Connections vs Max",
       "description": "Total backend connections across all user pools vs max_db_connections. When current approaches max, coordinator evicts idle connections from lower-priority pools.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1175,7 +1175,7 @@
       "title": "Reserve Pool",
       "description": "Reserve connections activated when all max_db_connections slots are full. Any usage means primary capacity exhausted \u2014 raise max_db_connections.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1229,7 +1229,7 @@
       "title": "Coordinator Events",
       "description": "Evictions: idle connections reclaimed across pools (normal). Exhaustions: client errors, no connection available (critical \u2014 increase capacity).",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1286,7 +1286,7 @@
       "title": "Inflight Creates",
       "description": "Connections mid-handshake (TCP + auth + startup). Sustained high count \u2014 PostgreSQL slow to accept, check auth method or backend CPU.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1340,7 +1340,7 @@
       "title": "Scaling Events",
       "description": "creates/s: new connections. gate_waits/s: throttled by burst limiter. fallback/s: anticipation missed, created on-demand.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1394,7 +1394,7 @@
       "title": "Connections by Type",
       "description": "Connections by protocol. Track TLS adoption. Elevated cancel count indicates application timeouts.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1451,7 +1451,7 @@
       "title": "Pool Cache Entries",
       "description": "Unique prepared statements per pool. Unbounded growth means dynamic statement names \u2014 fix the app or cap with prepared_statements_cache_size.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1502,7 +1502,7 @@
       "title": "Cache Memory (Pool + Client)",
       "description": "Memory in prepared caches (pool + client). When this dominates total memory, reduce cache size or fix dynamic statement names.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1548,7 +1548,7 @@
       "title": "Prepared Statement Hit Ratio",
       "description": "Cache hits / total lookups. Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1607,7 +1607,7 @@
       "title": "Auth Cache Hit Rate",
       "description": "Auth lookups served from cache vs PostgreSQL query. Low rate adds latency to every new connection \u2014 increase cache_ttl.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1656,7 +1656,7 @@
       "title": "Auth Outcomes",
       "description": "Auth success vs failure rate. Failure spike after deploy = credential mismatch. Sustained failures = check source IPs in logs.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1700,7 +1700,7 @@
       "title": "Dynamic Pools",
       "description": "Auto-created pools for auth_query users. Unexpected growth indicates wrong database names or unplanned user sprawl.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1759,7 +1759,7 @@
       "title": "Process Memory",
       "description": "Process RSS over time. Correlate with Total Connections and Cache Memory to isolate growth driver.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1813,7 +1813,7 @@
       "title": "Sockets by Type",
       "description": "Open sockets by protocol. Count growing faster than connections indicates FD leak \u2014 check CLOSE_WAIT via SHOW SOCKETS.",
       "datasource": {
-        "uid": "prometheus"
+        "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
@@ -1822,6 +1822,36 @@
         "y": 87
       },
       "repeatDirection": "h"
+    }
+  ],
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource for pg_doorman metrics",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
     }
   ]
 }
