@@ -510,4 +510,25 @@ d = (
 )
 
 dashboard_obj = d.build()
-print(json.dumps(dashboard_obj, cls=JSONEncoder, indent=2))
+result = json.loads(json.dumps(dashboard_obj, cls=JSONEncoder))
+
+# For portable dashboards (grafana.com import): add __inputs and __requires
+# so Grafana prompts the user to select a datasource on import.
+if DS == "${DS_PROMETHEUS}":
+    result["__inputs"] = [
+        {
+            "name": "DS_PROMETHEUS",
+            "label": "Prometheus",
+            "description": "Prometheus datasource for pg_doorman metrics",
+            "type": "datasource",
+            "pluginId": "prometheus",
+            "pluginName": "Prometheus",
+        }
+    ]
+    result["__requires"] = [
+        {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": ""},
+        {"type": "panel", "id": "stat", "name": "Stat", "version": ""},
+        {"type": "panel", "id": "timeseries", "name": "Time series", "version": ""},
+    ]
+
+print(json.dumps(result, indent=2))
