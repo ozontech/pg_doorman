@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres_secret
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: postgres -c hba_file=/etc/postgresql/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  pg_doorman:
+    image: pg_doorman:ubuntu2204-tls
+    ports:
+      - "6432:6432"
+      - "9127:9127"
+    command: ["pg_doorman", "/etc/pg_doorman/pg_doorman.toml"]
+    volumes:
+      - ./pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_signal: SIGINT
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "19090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - pg_doorman
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ../pg_doorman.json:/var/lib/grafana/dashboards/pg_doorman.json
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  pgbench:
+    image: postgres:16
+    volumes:
+      - ./pgbench.sh:/pgbench.sh
+    entrypoint: ["bash", "/pgbench.sh"]
+    environment:
+      PGPASSWORD: app_pass
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+
+  pgbench2:
+    image: postgres:16
+    volumes:
+      - ./pgbench2.sh:/pgbench.sh
+    entrypoint: ["bash", "/pgbench.sh"]
+    environment:
+      PGPASSWORD: app_pass_2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always

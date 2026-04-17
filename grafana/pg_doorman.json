@@ -1,0 +1,1827 @@
+{
+  "style": "dark",
+  "editable": true,
+  "graphTooltip": 0,
+  "schemaVersion": 36,
+  "templating": {
+    "list": [
+      {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "type": "datasource",
+        "name": "DS_PROMETHEUS",
+        "hide": 2,
+        "skipUrlSync": false,
+        "label": "Prometheus",
+        "query": "prometheus",
+        "multi": false,
+        "includeAll": false,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "type": "query",
+        "name": "instance",
+        "hide": 0,
+        "skipUrlSync": false,
+        "label": "Instance",
+        "query": "label_values(pg_doorman_total_memory, instance)",
+        "datasource": {
+          "uid": "prometheus"
+        },
+        "multi": true,
+        "refresh": 2,
+        "includeAll": true,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "type": "query",
+        "name": "database",
+        "hide": 0,
+        "skipUrlSync": false,
+        "label": "Database",
+        "query": "label_values(pg_doorman_pools_clients{instance=~\"$instance\"}, database)",
+        "datasource": {
+          "uid": "prometheus"
+        },
+        "multi": true,
+        "refresh": 2,
+        "includeAll": true,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "type": "query",
+        "name": "user",
+        "hide": 0,
+        "skipUrlSync": false,
+        "label": "User",
+        "query": "label_values(pg_doorman_pools_clients{instance=~\"$instance\", database=~\"$database\"}, user)",
+        "datasource": {
+          "uid": "prometheus"
+        },
+        "multi": true,
+        "refresh": 2,
+        "includeAll": true,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      }
+    ]
+  },
+  "annotations": {},
+  "uid": "pg-doorman-overview",
+  "title": "pg_doorman",
+  "tags": [
+    "pg_doorman",
+    "postgresql",
+    "connection-pooler"
+  ],
+  "timezone": "browser",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "row",
+      "collapsed": false,
+      "id": 0,
+      "panels": [],
+      "title": "Overview",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "yellow"
+              },
+              {
+                "value": 10,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(pg_doorman_pools_clients{status=\"waiting\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": ""
+        }
+      ],
+      "title": "Waiting Clients",
+      "description": "Clients queued for a server connection. Sustained >0 means pool_size is insufficient \u2014 increase pool_size or reduce query duration.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 5,
+                "color": "yellow"
+              },
+              {
+                "value": 50,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(pg_doorman_pools_avg_wait_time{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": ""
+        }
+      ],
+      "title": "Avg Wait Time",
+      "description": "Max across pools of average queue wait \u2014 adds directly to application latency. Above 50ms: check Pool Utilization and raise pool_size.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 50,
+                "color": "yellow"
+              },
+              {
+                "value": 200,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(pg_doorman_pools_queries_percentile{percentile=\"99\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": ""
+        }
+      ],
+      "title": "Query p99",
+      "description": "99th percentile server-side query time (excludes queue wait). Spike without QPS increase \u2014 check pg_stat_activity for locks or vacuum.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 70,
+                "color": "yellow"
+              },
+              {
+                "value": 90,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(pg_doorman_pools_servers{status=\"active\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}) / sum(pg_doorman_pool_size{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}) * 100",
+          "refId": ""
+        }
+      ],
+      "title": "Pool Utilization",
+      "description": "Active server connections / pool_size. Above 70%: anticipate saturation. Above 90%: clients are queuing.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 536870912,
+                "color": "yellow"
+              },
+              {
+                "value": 1073741824,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_total_memory{instance=~\"$instance\"}",
+          "refId": ""
+        }
+      ],
+      "title": "Memory",
+      "description": "Process RSS. Sudden growth without new connections usually means unbounded prepared statement cache \u2014 check Pool Cache Entries.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "none",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "blue"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_connection_count{type=\"total\", instance=~\"$instance\"}",
+          "refId": ""
+        }
+      ],
+      "title": "Total Connections",
+      "description": "Current client connections (all pools). Compare with pool_size for multiplexing ratio \u2014 100:1+ is normal in transaction mode.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "id": 0,
+      "panels": [],
+      "title": "Client Load",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (pg_doorman_pools_clients{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "title": "Clients by State",
+      "description": "Active (has server), idle (between transactions), waiting (queued). Growing 'waiting' area means pool_size is the bottleneck.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pools_clients{status=\"waiting\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Waiting Clients",
+      "description": "Waiting clients by user@database. Pinpoints which pool needs pool_size increase or query optimization.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pools_avg_wait_time{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Avg Wait Time",
+      "description": "Average queue time per pool. Pool with low wait count but high wait time has slow query turnover.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "id": 0,
+      "panels": [],
+      "title": "Server Pool",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (pg_doorman_pools_servers{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "title": "Servers by State",
+      "description": "Backend connections: active (executing query), idle (available for checkout). Idle approaching zero means no headroom for bursts.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 15
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pool_size{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "pool_size {{user}}@{{database}}"
+        },
+        {
+          "expr": "pg_doorman_pools_servers{status=\"active\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "active {{user}}@{{database}}"
+        }
+      ],
+      "title": "Pool Size vs Active Servers",
+      "description": "Active servers overlaid with pool_size ceiling. Gap between lines is spare capacity. When they converge, clients start queuing.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 15
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pools_servers{status=\"active\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"} / pg_doorman_pool_size{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"} * 100",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Pool Utilization %",
+      "description": "Active/pool_size ratio over time. Sustained above 70% warrants pool_size increase; above 90% clients are already waiting.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 15
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "id": 0,
+      "panels": [],
+      "title": "Query Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"50\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"90\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p90"
+        },
+        {
+          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"95\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "max by (database) (pg_doorman_pools_queries_percentile{percentile=\"99\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p99"
+        }
+      ],
+      "title": "Query Latency Percentiles",
+      "description": "Server-side query time at p50/p90/p95/p99. p99 diverging from p50 \u2014 check pg_stat_activity for lock waits or long-running queries.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_pools_queries_count{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Queries per Second",
+      "description": "Query throughput per pool. Flat QPS with rising latency signals PostgreSQL saturation. Rising QPS with stable latency is healthy growth.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "id": 0,
+      "panels": [],
+      "title": "Transaction Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"50\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"90\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p90"
+        },
+        {
+          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"95\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "max by (database) (pg_doorman_pools_transactions_percentile{percentile=\"99\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"})",
+          "refId": "",
+          "legendFormat": "p99"
+        }
+      ],
+      "title": "Transaction Latency Percentiles",
+      "description": "End-to-end transaction time including all queries and inter-query gaps. High values with low query latency indicate application-side delays between queries.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_pools_transactions_count{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Transactions per Second",
+      "description": "Transaction throughput per pool. Drop with rising latency indicates lock contention or long transactions holding server connections.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Traffic",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_pools_bytes{direction=\"received\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Bytes Received",
+      "description": "Data rate from clients. Spikes correlate with bulk INSERTs/COPYs.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_pools_bytes{direction=\"sent\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Bytes Sent",
+      "description": "Data rate to clients. Large spikes indicate fat result sets \u2014 consider LIMIT if unexpected.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Pool Coordinator",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pool_coordinator{type=\"connections\", instance=~\"$instance\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "current"
+        },
+        {
+          "expr": "pg_doorman_pool_coordinator{type=\"max_connections\", instance=~\"$instance\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "max"
+        }
+      ],
+      "title": "Connections vs Max",
+      "description": "Total backend connections across all user pools vs max_db_connections. When current approaches max, coordinator evicts idle connections from lower-priority pools.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 51
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pool_coordinator{type=\"reserve_in_use\", instance=~\"$instance\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "in_use"
+        },
+        {
+          "expr": "pg_doorman_pool_coordinator{type=\"reserve_pool_size\", instance=~\"$instance\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "size"
+        }
+      ],
+      "title": "Reserve Pool",
+      "description": "Reserve connections activated when all max_db_connections slots are full. Any usage means primary capacity exhausted \u2014 raise max_db_connections.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 51
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_pool_coordinator_total{type=\"evictions\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "evictions/s"
+        },
+        {
+          "expr": "rate(pg_doorman_pool_coordinator_total{type=\"reserve_acquisitions\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "reserve_acq/s"
+        },
+        {
+          "expr": "rate(pg_doorman_pool_coordinator_total{type=\"exhaustions\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "exhaustions/s"
+        }
+      ],
+      "title": "Coordinator Events",
+      "description": "Evictions: idle connections reclaimed across pools (normal). Exhaustions: client errors, no connection available (critical \u2014 increase capacity).",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 51
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Pool Scaling",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 59
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pool_scaling{type=\"inflight_creates\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Inflight Creates",
+      "description": "Connections mid-handshake (TCP + auth + startup). Sustained high count \u2014 PostgreSQL slow to accept, check auth method or backend CPU.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 60
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (database) (rate(pg_doorman_pool_scaling_total{type=\"creates_started\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "creates/s"
+        },
+        {
+          "expr": "sum by (database) (rate(pg_doorman_pool_scaling_total{type=\"burst_gate_waits\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "gate_waits/s"
+        },
+        {
+          "expr": "sum by (database) (rate(pg_doorman_pool_scaling_total{type=\"create_fallback\", instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "fallback/s"
+        }
+      ],
+      "title": "Scaling Events",
+      "description": "creates/s: new connections. gate_waits/s: throttled by burst limiter. fallback/s: anticipation missed, created on-demand.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 60
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_connection_count{type=\"plain\", instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "plain"
+        },
+        {
+          "expr": "pg_doorman_connection_count{type=\"tls\", instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "tls"
+        },
+        {
+          "expr": "pg_doorman_connection_count{type=\"cancel\", instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "cancel"
+        }
+      ],
+      "title": "Connections by Type",
+      "description": "Connections by protocol. Track TLS adoption. Elevated cancel count indicates application timeouts.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 60
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Prepared Statements",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 68
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pool_prepared_cache_entries{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Pool Cache Entries",
+      "description": "Unique prepared statements per pool. Unbounded growth means dynamic statement names \u2014 fix the app or cap with prepared_statements_cache_size.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 69
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_pool_prepared_cache_bytes{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "pool {{user}}@{{database}}"
+        },
+        {
+          "expr": "pg_doorman_clients_prepared_cache_bytes{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "client {{user}}@{{database}}"
+        }
+      ],
+      "title": "Cache Memory (Pool + Client)",
+      "description": "Memory in prepared caches (pool + client). When this dominates total memory, reduce cache size or fix dynamic statement names.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 69
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "clamp_max(sum by (user, database) (pg_doorman_servers_prepared_hits{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}) / clamp_min(sum by (user, database) (pg_doorman_servers_prepared_hits{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}) + sum by (user, database) (pg_doorman_servers_prepared_misses{instance=~\"$instance\", user=~\"$user\", database=~\"$database\"}), 1), 1)",
+          "refId": "",
+          "legendFormat": "{{user}}@{{database}}"
+        }
+      ],
+      "title": "Prepared Statement Hit Ratio",
+      "description": "Cache hits / total lookups. Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 69
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Auth Query",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "clamp_max(rate(pg_doorman_auth_query_cache{type=\"hits\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]) / clamp_min(rate(pg_doorman_auth_query_cache{type=\"hits\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]) + rate(pg_doorman_auth_query_cache{type=\"misses\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval]), 0.001), 1)",
+          "refId": "",
+          "legendFormat": "{{database}}"
+        }
+      ],
+      "title": "Auth Cache Hit Rate",
+      "description": "Auth lookups served from cache vs PostgreSQL query. Low rate adds latency to every new connection \u2014 increase cache_ttl.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 78
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_auth_query_auth{result=\"success\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "success/s"
+        },
+        {
+          "expr": "rate(pg_doorman_auth_query_auth{result=\"failure\", instance=~\"$instance\", database=~\"$database\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "failure/s"
+        }
+      ],
+      "title": "Auth Outcomes",
+      "description": "Auth success vs failure rate. Failure spike after deploy = credential mismatch. Sustained failures = check source IPs in logs.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 78
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_auth_query_dynamic_pools{type=\"current\", instance=~\"$instance\", database=~\"$database\"}",
+          "refId": "",
+          "legendFormat": "current"
+        }
+      ],
+      "title": "Dynamic Pools",
+      "description": "Auto-created pools for auth_query users. Unexpected growth indicates wrong database names or unplanned user sprawl.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 78
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "System",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 86
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_total_memory{instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "title": "Process Memory",
+      "description": "Process RSS over time. Correlate with Total Connections and Cache Memory to isolate growth driver.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 87
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_sockets{type=\"tcp\", instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "tcp"
+        },
+        {
+          "expr": "pg_doorman_sockets{type=\"tcp6\", instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "tcp6"
+        },
+        {
+          "expr": "pg_doorman_sockets{type=\"unix\", instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "unix"
+        }
+      ],
+      "title": "Sockets by Type",
+      "description": "Open sockets by protocol. Count growing faster than connections indicates FD leak \u2014 check CLOSE_WAIT via SHOW SOCKETS.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 87
+      },
+      "repeatDirection": "h"
+    }
+  ]
+}
