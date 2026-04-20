@@ -1,5 +1,15 @@
 # Changelog
 
+### 3.5.1 <small>Apr 20, 2026</small>
+
+#### systemd Type=notify support
+
+pg_doorman now sends `sd_notify(READY=1)` on startup and `sd_notify(MAINPID=<child_pid>)` during binary upgrade. With `Type=notify` in the systemd unit, `systemctl reload` performs a zero-downtime binary upgrade without PID tracking issues — systemd follows the new process correctly and does not restart the service.
+
+The shipped `pg_doorman.service` changes from `Type=forking` + `--daemon` to `Type=notify` (foreground). Existing installations using `--daemon` continue to work but do not benefit from client migration.
+
+Docker `STOPSIGNAL` changed from `SIGINT` to `SIGTERM` to prevent binary upgrade in containers (where PID 1 exit kills the container).
+
 ### 3.5.0 <small>Apr 15, 2026</small>
 
 #### Client migration during binary upgrade

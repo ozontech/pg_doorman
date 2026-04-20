@@ -2,21 +2,29 @@
 Description=PgDoorman connection pooling for PostgreSQL (https://github.com/ozontech/pg_doorman)
 
 [Service]
-Type=forking
-Nice=-15
-User=postgres
-Group=postgres
-LimitNOFILE=10000
-# SIGUSR2 = binary upgrade + graceful shutdown (recommended)
-# SIGINT  = binary upgrade + graceful shutdown (legacy, daemon mode only)
-# SIGHUP  = reload configuration
+Type=notify
+# Allow the child process (new binary after upgrade) to send
+# sd_notify messages to systemd. Required for MAINPID handoff
+# during SIGUSR2 binary upgrade.
+NotifyAccess=exec
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml
+# SIGUSR2 = binary upgrade + client migration + graceful shutdown
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
 # SIGTERM = immediate shutdown
 ExecStop=/bin/kill -SIGTERM $MAINPID
 SyslogIdentifier=pg_doorman
-ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.toml --daemon
-Restart=always
-PIDFile=/tmp/pg_doorman.pid
+# mixed: SIGTERM to main PID, SIGKILL to remaining after timeout.
+# During binary upgrade, the child (new pg_doorman) survives because
+# MAINPID was reassigned via sd_notify before the old process exits.
+KillMode=mixed
+TimeoutStopSec=60
+# on-failure: don't restart after clean exit (binary upgrade exits
+# with code 0 after migrating clients to the child process).
+Restart=on-failure
+Nice=-15
+User=postgres
+Group=postgres
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
