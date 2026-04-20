@@ -55,6 +55,12 @@ pub static MIGRATION_TX: std::sync::OnceLock<mpsc::Sender<MigrationPayload>> =
 const MIGRATION_CHANNEL_CAPACITY: usize = 4096;
 
 pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::Error>> {
+    if args.daemon && std::env::var("NOTIFY_SOCKET").is_ok() {
+        warn!(
+            "--daemon is incompatible with systemd Type=notify. \
+             Remove --daemon from ExecStart or switch to Type=forking."
+        );
+    }
     if args.daemon {
         let pid_file = config.general.daemon_pid_file.clone();
         let daemonize = daemon::lib::Daemonize::new()
@@ -345,6 +351,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         let mut listener = Some(listener);
 
         info!("Accepting connections");
+
+        // Notify systemd that the service is ready to accept connections.
+        // No-op when NOTIFY_SOCKET is not set (non-systemd environments).
+        if let Err(e) = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]) {
+            error!("sd_notify READY failed: {e}. If running under systemd Type=notify, the service will not reach active state.");
+        }
         loop {
             // Create upgrade signal future (SIGUSR2 on unix, never resolves on windows)
             let upgrade_future = async {
@@ -763,7 +775,8 @@ async fn binary_upgrade_and_shutdown(
                 };
 
                 match child_result {
-                    Ok(_child) => {
+                    Ok(child) => {
+                        let child_pid = child.id();
                         unsafe {
                             libc::close(pipe_write_fd);
                             if migration_ok {
@@ -796,6 +809,16 @@ async fn binary_upgrade_and_shutdown(
                                 libc::read(pipe_read_fd, buf.as_mut_ptr() as *mut libc::c_void, 1);
                             }
                             info!("New process signaled readiness");
+
+                            // Tell systemd the new process is now the main PID.
+                            // systemd stops tracking the old process and won't
+                            // restart the service when we exit.
+                            if let Err(e) = sd_notify::notify(
+                                false,
+                                &[sd_notify::NotifyState::MainPid(child_pid.into())],
+                            ) {
+                                warn!("sd_notify MAINPID failed: {e}. systemd may restart the service after old process exits.");
+                            }
                         } else {
                             warn!("Timeout waiting for new process readiness");
                         }

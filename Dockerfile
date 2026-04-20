@@ -18,4 +18,7 @@ COPY --from=builder /app/target/release/patroni_proxy /usr/bin/patroni_proxy
 WORKDIR /etc/pg_doorman
 ENV RUST_LOG=info
 CMD ["pg_doorman"]
-STOPSIGNAL SIGINT
+# SIGTERM for immediate shutdown in containers.
+# SIGINT in non-TTY triggers binary upgrade (spawns child, PID 1 exits,
+# container dies). SIGTERM avoids this.
+STOPSIGNAL SIGTERM
