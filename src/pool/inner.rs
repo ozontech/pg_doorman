@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use log::debug;
+use log::{debug, warn};
 use rand::Rng as _;
 
 use crate::utils::clock;
@@ -232,6 +232,36 @@ const PRE_REPLACE_THRESHOLD_PCT: u64 = 95;
 /// the same 15-second window. Allowing 3 concurrent pre-replacements
 /// ensures each one gets a warm replacement without serialization.
 const MAX_CONCURRENT_PRE_REPLACEMENTS: usize = 3;
+
+/// Anticipation budget: absolute maximum wait before falling through to create.
+const ANTICIPATION_HARD_CAP_MS: u64 = 500;
+
+/// Anticipation budget at cold start when xact_p99 histogram has no data.
+/// Conservative enough to not overwhelm coordinator when all pools start
+/// simultaneously, fast enough to fill the pool within seconds.
+const ANTICIPATION_COLD_START_MS: u64 = 100;
+
+/// Anticipation budget: minimum wait. Even with xact_p99 < 3ms, wait at
+/// least this long to give the direct-handoff a chance before creating.
+const ANTICIPATION_MIN_BUDGET_MS: u64 = 5;
+
+/// Time reserved after anticipation for the actual create() call.
+/// Subtracted from the total budget before entering the handoff wait.
+const ANTICIPATION_CREATE_RESERVE: Duration = Duration::from_millis(500);
+
+/// Fallback total budget when `timeouts.wait` is None (no query_wait_timeout).
+const ANTICIPATION_FALLBACK_BUDGET_MS: u64 = 100;
+
+/// Compute the base anticipation budget (before jitter) from xact_p99.
+/// Pure function, deterministic, safe to call from tests.
+#[inline]
+fn anticipation_base_ms(xact_p99_us: u64) -> u64 {
+    if xact_p99_us == 0 {
+        ANTICIPATION_COLD_START_MS
+    } else {
+        (xact_p99_us / 1000).saturating_mul(2)
+    }
+}
 
 /// Push a connection into the idle queue respecting the configured
 /// queue mode (FIFO/LIFO). Caller must hold the slots lock.
@@ -662,6 +692,12 @@ impl Pool {
         {
             Ok(p) => p,
             Err(pool_coordinator::AcquireError::NoConnection(info)) => {
+                let slots = self.inner.slots.lock();
+                warn!(
+                    "[{}@{}] checkout failed at phase=coordinator size={} waiters={} info={}",
+                    self.inner.pool_name, self.inner.username,
+                    slots.size, slots.waiters.len(), info,
+                );
                 return Err(PoolError::DbLimitExhausted(info));
             }
         };
@@ -802,21 +838,26 @@ impl Pool {
 
         // Direct handoff via oneshot channel.
         if !capacity_deficit && !non_blocking {
-            const CREATE_RESERVE: Duration = Duration::from_millis(500);
-            const FALLBACK_BUDGET_MS: u64 = 100;
 
             let total_budget = match timeouts.wait {
                 Some(wait) => wait
                     .saturating_sub(start.elapsed())
-                    .saturating_sub(CREATE_RESERVE),
-                None => Duration::from_millis(FALLBACK_BUDGET_MS),
+                    .saturating_sub(ANTICIPATION_CREATE_RESERVE),
+                None => Duration::from_millis(ANTICIPATION_FALLBACK_BUDGET_MS),
             };
 
             if !total_budget.is_zero() {
-                const PHASE_4_HARD_CAP_BASE_MS: u64 = 500;
-                const PHASE_4_HARD_CAP_JITTER_MS: u64 = 200;
-                let cap_ms = PHASE_4_HARD_CAP_BASE_MS
-                    - rand::rng().random_range(0..=PHASE_4_HARD_CAP_JITTER_MS);
+                // Adaptive anticipation budget: wait proportionally to actual
+                // transaction latency. If a return doesn't arrive within 2x
+                // the p99 xact time, creating is cheaper than waiting.
+                let (_, _, _, xact_p99_us) =
+                    self.inner.server_pool.address().stats.get_xact_percentiles();
+                let base_ms = anticipation_base_ms(xact_p99_us);
+                // ±20% jitter to prevent synchronized creates across pools
+                let jitter_range = (base_ms / 5).max(1);
+                let jitter = rand::rng().random_range(0..=jitter_range * 2);
+                let cap_ms = (base_ms.saturating_sub(jitter_range) + jitter)
+                    .clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
                 let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
 
                 let (tx, rx) = oneshot::channel();
@@ -895,20 +936,26 @@ impl Pool {
         let start = tokio::time::Instant::now();
 
         self.wait_if_paused(timeouts).await?;
-        let permit = self.acquire_semaphore(timeouts).await?;
+        let permit = self.acquire_semaphore(timeouts).await.map_err(|e| {
+            let slots = self.inner.slots.lock();
+            warn!(
+                "[{}@{}] checkout timeout at phase=semaphore elapsed={}ms size={} max={} waiters={} semaphore_avail={}",
+                self.inner.pool_name, self.inner.username,
+                start.elapsed().as_millis(), slots.size, slots.max_size,
+                slots.waiters.len(), self.inner.semaphore.available_permits(),
+            );
+            e
+        })?;
 
-        // Hot-path recycle: pop an idle connection if available.
         if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
             self.maybe_trigger_pre_replacement(&inner.metrics);
             return Ok(self.wrap_checkout(*inner, permit));
         }
 
-        // Anticipation: warm zone gate → fast spin → direct handoff.
         if let Some(inner) = self.try_anticipate(timeouts, start).await {
             return Ok(self.wrap_checkout(inner, permit));
         }
 
-        // Drain remaining recyclable connections before creating new ones.
         loop {
             match self.inner.try_recycle_one(timeouts).await {
                 RecycleOutcome::Reused(inner) => {
@@ -919,7 +966,6 @@ impl Pool {
             }
         }
 
-        // Burst gate + coordinator + backend connect.
         let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
         let _create_gate = match self.acquire_burst_gate(timeouts, non_blocking).await {
             BurstGateOutcome::Acquired(guard) => guard,
@@ -927,6 +973,14 @@ impl Pool {
                 return Ok(self.wrap_checkout(*inner, permit));
             }
             BurstGateOutcome::Timeout => {
+                let slots = self.inner.slots.lock();
+                warn!(
+                    "[{}@{}] checkout timeout at phase=burst_gate elapsed={}ms size={} inflight={} waiters={}",
+                    self.inner.pool_name, self.inner.username,
+                    start.elapsed().as_millis(), slots.size,
+                    self.inner.inflight_creates.load(Ordering::Relaxed),
+                    slots.waiters.len(),
+                );
                 return Err(PoolError::Timeout(TimeoutType::Wait));
             }
         };
@@ -945,7 +999,16 @@ impl Pool {
         let obj_inner = self
             .inner
             .create_connection(timeouts, coordinator_permit)
-            .await?;
+            .await
+            .map_err(|e| {
+                let slots = self.inner.slots.lock();
+                warn!(
+                    "[{}@{}] checkout failed at phase=create elapsed={}ms size={} err={}",
+                    self.inner.pool_name, self.inner.username,
+                    start.elapsed().as_millis(), slots.size, e,
+                );
+                e
+            })?;
         Ok(self.wrap_checkout(obj_inner, permit))
     }
 
@@ -2193,5 +2256,53 @@ mod tests {
         let waiters: VecDeque<oneshot::Sender<u32>> = VecDeque::new();
         assert!(waiters.is_empty());
         // return_object would push to vec + add_permits here.
+    }
+
+    // ------------------------------------------------------------------
+    // Adaptive anticipation budget
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn anticipation_budget_cold_start() {
+        // No histogram data (fresh process). Default 100ms.
+        assert_eq!(anticipation_base_ms(0), 100);
+    }
+
+    #[test]
+    fn anticipation_budget_fast_workload() {
+        // xact_p99 = 700us (0.7ms). base = 0.7ms * 2 = 1ms.
+        // Clamped to MIN_BUDGET_MS = 5ms during jitter step.
+        assert_eq!(anticipation_base_ms(700), 1);
+    }
+
+    #[test]
+    fn anticipation_budget_medium_workload() {
+        // xact_p99 = 50ms (50000us). base = 50 * 2 = 100ms.
+        assert_eq!(anticipation_base_ms(50_000), 100);
+    }
+
+    #[test]
+    fn anticipation_budget_high_latency() {
+        // xact_p99 = 300ms (300000us). base = 300 * 2 = 600ms.
+        // Clamped to HARD_CAP (500ms) during jitter step.
+        assert_eq!(anticipation_base_ms(300_000), 600);
+    }
+
+    #[test]
+    fn anticipation_budget_clamp_range() {
+        // Verify the full pipeline: base → jitter → clamp
+        for p99_us in [0, 500, 1000, 5000, 50_000, 200_000, 500_000] {
+            let base = anticipation_base_ms(p99_us);
+            let jitter_range = (base / 5).max(1);
+            // Min possible after jitter
+            let min_val = base.saturating_sub(jitter_range);
+            // Max possible after jitter
+            let max_val = base + jitter_range;
+            // After clamp
+            let clamped_min = min_val.clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+            let clamped_max = max_val.clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+            assert!(clamped_min >= ANTICIPATION_MIN_BUDGET_MS);
+            assert!(clamped_max <= ANTICIPATION_HARD_CAP_MS);
+        }
     }
 }

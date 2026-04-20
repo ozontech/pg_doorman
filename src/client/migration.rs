@@ -23,7 +23,7 @@ use crate::stats::ClientStats;
 use super::core::PreparedStatementState;
 
 const MIGRATION_MAGIC: u32 = 0x50474D47; // "PGMG"
-const MIGRATION_VERSION: u16 = 1;
+const MIGRATION_VERSION: u16 = 2;
 /// Fixed-size header: magic(4) + version(2) + connection_id(8) + secret_key(4) + transaction_mode(1)
 const HEADER_SIZE: usize = 4 + 2 + 8 + 4 + 1;
 const MAX_PREPARED_ENTRIES: usize = 100_000;
@@ -193,6 +193,31 @@ where
 
         buf.put_u8(use_tls as u8);
 
+        // Backend auth state (v2): allows new process to skip ScramPending
+        // fallback by receiving the ClientKey from the old process.
+        if let Some(pool) = get_pool(&self.pool_name, &self.username) {
+            if let Some(ref ba_lock) = pool.address.backend_auth {
+                match &*ba_lock.read() {
+                    crate::config::BackendAuthMethod::Md5PassTheHash(hash) => {
+                        buf.put_u8(1);
+                        put_str(&mut buf, hash);
+                    }
+                    crate::config::BackendAuthMethod::ScramPassthrough(client_key) => {
+                        buf.put_u8(2);
+                        buf.put_u16(client_key.len() as u16);
+                        buf.put_slice(client_key);
+                    }
+                    crate::config::BackendAuthMethod::ScramPending => {
+                        buf.put_u8(3);
+                    }
+                }
+            } else {
+                buf.put_u8(0); // no backend auth
+            }
+        } else {
+            buf.put_u8(0);
+        }
+
         buf
     }
 }
@@ -243,6 +268,7 @@ struct DeserializedState {
     prepared_entries: Vec<PreparedEntry>,
     #[allow(dead_code)]
     use_tls: bool,
+    backend_auth: Option<crate::config::BackendAuthMethod>,
 }
 
 struct PreparedEntry {
@@ -262,7 +288,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
         )));
     }
     let version = buf.get_u16();
-    if version != MIGRATION_VERSION {
+    if version != 1 && version != MIGRATION_VERSION {
         return Err(Error::ClientError(format!(
             "migration: unsupported version {version}"
         )));
@@ -349,6 +375,31 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
     require(&buf, 1)?;
     let use_tls = buf.get_u8() != 0;
 
+    // v2: backend auth state (ScramPassthrough ClientKey, Md5 hash)
+    let backend_auth = if version >= 2 && buf.remaining() > 0 {
+        let tag = buf.get_u8();
+        match tag {
+            1 => {
+                // Md5PassTheHash
+                let hash = get_str(&mut buf)?;
+                Some(crate::config::BackendAuthMethod::Md5PassTheHash(hash))
+            }
+            2 => {
+                // ScramPassthrough(ClientKey)
+                require(&buf, 2)?;
+                let key_len = buf.get_u16() as usize;
+                require(&buf, key_len)?;
+                let mut key = vec![0u8; key_len];
+                buf.copy_to_slice(&mut key);
+                Some(crate::config::BackendAuthMethod::ScramPassthrough(key))
+            }
+            3 => Some(crate::config::BackendAuthMethod::ScramPending),
+            _ => None,
+        }
+    } else {
+        None // v1 format: no auth state
+    };
+
     Ok(DeserializedState {
         connection_id,
         secret_key,
@@ -361,6 +412,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
         async_client,
         prepared_entries,
         use_tls,
+        backend_auth,
     })
 }
 
@@ -389,6 +441,23 @@ pub async fn reconstruct_client(
 
     // Reconstruct prepared statement cache
     let pool = get_pool(&state.pool_name, &state.username);
+
+    // Restore backend auth state (e.g. SCRAM ClientKey) so the new
+    // process can authenticate to PostgreSQL via passthrough without
+    // waiting for a fresh client SCRAM handshake.
+    if let (Some(ref p), Some(ref migrated_auth)) = (&pool, &state.backend_auth) {
+        if let Some(ref ba_lock) = p.address.backend_auth {
+            let needs_update = matches!(*ba_lock.read(), crate::config::BackendAuthMethod::ScramPending);
+            if needs_update {
+                *ba_lock.write() = migrated_auth.clone();
+                info!(
+                    "[{}@{}] restored backend auth from migrated client",
+                    state.username, state.pool_name
+                );
+            }
+        }
+    }
+
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
         state.async_client,
@@ -430,6 +499,7 @@ pub async fn reconstruct_client(
         admin: false,
         last_server_stats: None,
         connected_to_server: false,
+        session_xact_start: None,
         pool_name: state.pool_name,
         username: state.username,
         server_parameters: state.server_parameters,
@@ -485,6 +555,20 @@ pub async fn reconstruct_tls_client(
 
     let config = get_config();
     let pool = get_pool(&state.pool_name, &state.username);
+
+    if let (Some(ref p), Some(ref migrated_auth)) = (&pool, &state.backend_auth) {
+        if let Some(ref ba_lock) = p.address.backend_auth {
+            let needs_update = matches!(*ba_lock.read(), crate::config::BackendAuthMethod::ScramPending);
+            if needs_update {
+                *ba_lock.write() = migrated_auth.clone();
+                info!(
+                    "[{}@{}] restored backend auth from migrated TLS client",
+                    state.username, state.pool_name
+                );
+            }
+        }
+    }
+
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
         state.async_client,
@@ -526,6 +610,7 @@ pub async fn reconstruct_tls_client(
         admin: false,
         last_server_stats: None,
         connected_to_server: false,
+        session_xact_start: None,
         pool_name: state.pool_name,
         username: state.username,
         server_parameters: state.server_parameters,
@@ -861,6 +946,7 @@ pub async fn migration_receiver_task(
     #[cfg(all(target_os = "linux", feature = "tls-migration"))]
     let tls_acceptor = _tls_acceptor;
     use crate::app::server::CURRENT_CLIENT_COUNT;
+    use crate::stats::TOTAL_CONNECTION_COUNTER;
     use std::sync::atomic::Ordering;
 
     info!("migration receiver: listening for migrated clients");
@@ -882,6 +968,10 @@ pub async fn migration_receiver_task(
                             {
                                 Ok(mut client) => {
                                     CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
+                                    TOTAL_CONNECTION_COUNTER.fetch_max(
+                                        client.connection_id as usize,
+                                        Ordering::Relaxed,
+                                    );
                                     info!(
                                         "[{}@{} #c{}] migrated TLS client from {}",
                                         client.username,
@@ -915,6 +1005,12 @@ pub async fn migration_receiver_task(
                     match reconstruct_client(fd, state_buf, csm).await {
                         Ok(mut client) => {
                             CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
+                            // Advance the global counter past the migrated id so new
+                            // connections don't collide with migrated client ids.
+                            TOTAL_CONNECTION_COUNTER.fetch_max(
+                                client.connection_id as usize,
+                                Ordering::Relaxed,
+                            );
                             info!(
                                 "[{}@{} #c{}] migrated client accepted from {}",
                                 client.username,

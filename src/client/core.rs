@@ -358,6 +358,11 @@ pub struct Client<S, T> {
     /// Connected to server
     pub(crate) connected_to_server: bool,
 
+    /// Session mode: transaction start timestamp for per-transaction xact_time.
+    /// Set when server transitions into a transaction (ReadyForQuery 'T'/'E').
+    /// Consumed when transaction ends (ReadyForQuery 'I').
+    pub(crate) session_xact_start: Option<quanta::Instant>,
+
     /// Name of the server pool for this client (This comes from the database name in the connection string)
     pub(crate) pool_name: String,
 

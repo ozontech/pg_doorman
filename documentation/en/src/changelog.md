@@ -1,5 +1,23 @@
 # Changelog
 
+### 3.5.2 <small>Apr 20, 2026</small>
+
+#### Migration fixes
+
+- **Client ID collision after migration.** The new process started its connection counter at 0, colliding with migrated client IDs. Stats were lost for colliding clients. Now the counter advances past the highest migrated ID.
+
+- **SCRAM passthrough state preserved.** The ClientKey extracted from the first client's SCRAM handshake is now serialized in the migration payload (v2 format, backward compatible). The new process skips the `ScramPending` fallback to `server_password`.
+
+#### Session mode statistics fix
+
+Transaction time percentiles (`xact_time p50/p90/p95/p99`) in session mode previously showed the entire session duration (clamped to 10 minutes) instead of individual transaction time. Now `xact_time` is recorded per-transaction at each `ReadyForQuery(Idle)`, matching transaction mode semantics. Also fixes `query_time` accumulation in session mode — timer resets per query instead of growing monotonically.
+
+#### Adaptive anticipation budget
+
+The anticipation wait (formerly a fixed 300-500ms) now scales with real transaction latency. At cold start (no histogram data): 100ms ± 20% jitter. At steady state: `xact_p99 × 2 ± 20%`, clamped between 5ms and 500ms.
+
+Pools with coordinator previously stabilized at a fraction of `pool_size` (e.g. 12 out of 40) because anticipation waited 300-500ms for returns that came back in <1ms. With adaptive budget at xact_p99=0.7ms: wait ≈ 5ms. Pool fills to adequate size in seconds instead of minutes.
+
 ### 3.5.1 <small>Apr 20, 2026</small>
 
 #### systemd Type=notify support

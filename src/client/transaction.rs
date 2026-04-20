@@ -169,25 +169,34 @@ where
     S: tokio::io::AsyncRead + std::marker::Unpin,
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    /// Complete transaction statistics and check if server should be released
-    /// Returns true if the transaction loop should break (server should be released)
     #[inline(always)]
     fn complete_transaction_if_needed(&mut self, server: &Server, check_async: bool) -> bool {
-        if !server.in_transaction() {
-            self.stats.transaction();
-            server
-                .stats
-                .transaction(self.server_parameters.get_application_name());
+        if server.in_transaction() {
+            if self.session_xact_start.is_none() {
+                self.session_xact_start = Some(crate::utils::clock::now());
+            }
+            return false;
+        }
 
-            // Release server back to the pool if we are in transaction mode.
-            // If we are in session mode, we keep the server until the client disconnects.
-            if self.transaction_mode && !server.in_copy_mode() {
-                // Don't release if in async mode (when check_async is true)
-                if !check_async || !server.is_async() {
-                    return true;
-                }
+        self.stats.transaction();
+        server
+            .stats
+            .transaction(self.server_parameters.get_application_name());
+
+        if !self.transaction_mode {
+            if let Some(start) = self.session_xact_start.take() {
+                server
+                    .stats
+                    .add_xact_time_and_idle(start.elapsed().as_micros() as u64);
             }
         }
+
+        if self.transaction_mode && !server.in_copy_mode() {
+            if !check_async || !server.is_async() {
+                return true;
+            }
+        }
+
         false
     }
 
@@ -765,13 +774,24 @@ where
                     .max_wait_time
                     .fetch_max(checkout_us, Ordering::Relaxed);
                 if checkout_us >= 500_000 {
+                    let status = current_pool.database.status();
+                    let scaling = current_pool.database.scaling_stats();
                     warn!(
-                        "[{}@{} #c{}] slow checkout: {}ms (server pid={})",
+                        "[{}@{} #c{}] slow checkout: {}ms pid={} size={}/{} avail={} waiting={} inflight={} creates={} gate_waits={} antic_ok={} antic_to={} fallback={}",
                         self.username,
                         self.pool_name,
                         self.connection_id,
                         checkout_us / 1_000,
                         server.get_process_id(),
+                        status.size, status.max_size,
+                        status.available,
+                        status.waiting,
+                        scaling.inflight_creates,
+                        scaling.creates_started,
+                        scaling.burst_gate_waits,
+                        scaling.anticipation_wakes_notify,
+                        scaling.anticipation_wakes_timeout,
+                        scaling.create_fallback,
                     );
                 }
                 let server_active_at = now();
@@ -1006,9 +1026,11 @@ where
                 } else if !server.is_async() {
                     server.checkin_cleanup().await?;
                 }
-                server
-                    .stats
-                    .add_xact_time_and_idle(server_active_at.elapsed().as_micros() as u64);
+                if self.transaction_mode {
+                    server
+                        .stats
+                        .add_xact_time_and_idle(server_active_at.elapsed().as_micros() as u64);
+                }
                 // The server is no longer bound to us, we can't cancel it's queries anymore.
                 self.release();
                 server.stats.wait_idle();
@@ -1046,6 +1068,9 @@ where
         message: Option<&BytesMut>,
         server: &mut Server,
     ) -> Result<(), Error> {
+        if !self.transaction_mode && self.session_xact_start.is_none() {
+            self.session_xact_start = Some(crate::utils::clock::now());
+        }
         let message = message.unwrap_or(&self.buffer);
 
         // Send message with timeout
