@@ -850,3 +850,25 @@ async fn cascade_iter_spread_bounded(world: &mut DoormanWorld, name: String, mul
         multiple,
     );
 }
+
+/// Assert that server-side query_time p99 (from the address stats histogram)
+/// is below a threshold. Catches session-mode bugs where query_time accumulates
+/// the entire session duration instead of individual query time.
+#[then(regex = r#"^cascade "([^"]+)" server query_p99 is below (\d+) ms$"#)]
+async fn cascade_server_query_p99_below(world: &mut DoormanWorld, _name: String, limit_ms: u64) {
+    let pool = world
+        .internal_pool
+        .as_ref()
+        .expect("Internal pool must be set up")
+        .pool
+        .clone();
+    let (_, _, _, query_p99_us) = pool.server_pool().address().stats.get_query_percentiles();
+    let query_p99_ms = query_p99_us as f64 / 1_000.0;
+    assert!(
+        query_p99_ms < limit_ms as f64,
+        "server-side query_p99 {:.2}ms exceeded limit {}ms \
+         (likely session-mode accumulation bug — query_time not reset per-query)",
+        query_p99_ms,
+        limit_ms,
+    );
+}
