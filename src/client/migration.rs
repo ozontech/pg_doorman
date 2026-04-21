@@ -22,6 +22,35 @@ use crate::stats::ClientStats;
 
 use super::core::PreparedStatementState;
 
+/// Restore backend auth state (e.g. SCRAM ClientKey) from a migrated client
+/// so the new process can authenticate to PostgreSQL via passthrough without
+/// waiting for a fresh client SCRAM handshake.
+///
+/// Only overwrites if the current state is `ScramPending` — avoids clobbering
+/// a valid auth state already established by an earlier migrated client.
+fn restore_backend_auth_if_pending(
+    pool: &Option<ConnectionPool>,
+    migrated_auth: &Option<crate::config::BackendAuthMethod>,
+    username: &str,
+    pool_name: &str,
+) {
+    if let (Some(p), Some(auth)) = (pool, migrated_auth) {
+        if let Some(ref ba_lock) = p.address.backend_auth {
+            let needs_update = matches!(
+                *ba_lock.read(),
+                crate::config::BackendAuthMethod::ScramPending
+            );
+            if needs_update {
+                *ba_lock.write() = auth.clone();
+                info!(
+                    "[{}@{}] restored backend auth from migrated client",
+                    username, pool_name
+                );
+            }
+        }
+    }
+}
+
 const MIGRATION_MAGIC: u32 = 0x50474D47; // "PGMG"
 const MIGRATION_VERSION: u16 = 2;
 /// Fixed-size header: magic(4) + version(2) + connection_id(8) + secret_key(4) + transaction_mode(1)
@@ -442,21 +471,12 @@ pub async fn reconstruct_client(
     // Reconstruct prepared statement cache
     let pool = get_pool(&state.pool_name, &state.username);
 
-    // Restore backend auth state (e.g. SCRAM ClientKey) so the new
-    // process can authenticate to PostgreSQL via passthrough without
-    // waiting for a fresh client SCRAM handshake.
-    if let (Some(ref p), Some(ref migrated_auth)) = (&pool, &state.backend_auth) {
-        if let Some(ref ba_lock) = p.address.backend_auth {
-            let needs_update = matches!(*ba_lock.read(), crate::config::BackendAuthMethod::ScramPending);
-            if needs_update {
-                *ba_lock.write() = migrated_auth.clone();
-                info!(
-                    "[{}@{}] restored backend auth from migrated client",
-                    state.username, state.pool_name
-                );
-            }
-        }
-    }
+    restore_backend_auth_if_pending(
+        &pool,
+        &state.backend_auth,
+        &state.username,
+        &state.pool_name,
+    );
 
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
@@ -556,18 +576,12 @@ pub async fn reconstruct_tls_client(
     let config = get_config();
     let pool = get_pool(&state.pool_name, &state.username);
 
-    if let (Some(ref p), Some(ref migrated_auth)) = (&pool, &state.backend_auth) {
-        if let Some(ref ba_lock) = p.address.backend_auth {
-            let needs_update = matches!(*ba_lock.read(), crate::config::BackendAuthMethod::ScramPending);
-            if needs_update {
-                *ba_lock.write() = migrated_auth.clone();
-                info!(
-                    "[{}@{}] restored backend auth from migrated TLS client",
-                    state.username, state.pool_name
-                );
-            }
-        }
-    }
+    restore_backend_auth_if_pending(
+        &pool,
+        &state.backend_auth,
+        &state.username,
+        &state.pool_name,
+    );
 
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
@@ -1007,10 +1021,8 @@ pub async fn migration_receiver_task(
                             CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
                             // Advance the global counter past the migrated id so new
                             // connections don't collide with migrated client ids.
-                            TOTAL_CONNECTION_COUNTER.fetch_max(
-                                client.connection_id as usize,
-                                Ordering::Relaxed,
-                            );
+                            TOTAL_CONNECTION_COUNTER
+                                .fetch_max(client.connection_id as usize, Ordering::Relaxed);
                             info!(
                                 "[{}@{} #c{}] migrated client accepted from {}",
                                 client.username,

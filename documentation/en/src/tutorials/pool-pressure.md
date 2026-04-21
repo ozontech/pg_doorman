@@ -190,9 +190,11 @@ to the idle queue for recycling.
 connects. If a slot is free, take it and call `connect()` against
 PostgreSQL. If all slots are full, register a direct-handoff oneshot
 waiter and also listen for `create_done` (another in-flight create
-finishing). If a connection arrives via the oneshot channel, recycle it
-and return. Otherwise, re-try the recycle and the gate after the wake.
-A 5 ms backoff acts as a safety net if both wake sources are missed.
+finishing). The `select!` uses `biased;` to always check the oneshot
+first, preventing a race where `create_done` or the 5 ms backoff timer
+wins and silently drops the delivered connection. If a connection
+arrives via the oneshot channel, recycle it and return. Otherwise,
+re-try the recycle and the gate after the wake.
 
 **Phase 6 — Backend connect.** Run `connect()`, authenticate, hand the
 connection to the client. The burst slot is released automatically when

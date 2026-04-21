@@ -10,8 +10,7 @@ use crate::utils::clock::now;
 
 use crate::admin::handle_admin;
 use crate::app::server::{
-    CLIENTS_IN_TRANSACTIONS, MIGRATION_IN_PROGRESS, MIGRATION_TX,
-    SHUTDOWN_IN_PROGRESS,
+    CLIENTS_IN_TRANSACTIONS, MIGRATION_IN_PROGRESS, MIGRATION_TX, SHUTDOWN_IN_PROGRESS,
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
@@ -191,10 +190,8 @@ where
             }
         }
 
-        if self.transaction_mode && !server.in_copy_mode() {
-            if !check_async || !server.is_async() {
-                return true;
-            }
+        if self.transaction_mode && !server.in_copy_mode() && (!check_async || !server.is_async()) {
+            return true;
         }
 
         false
@@ -618,7 +615,10 @@ where
                                 Ok(()) => {
                                     info!(
                                         "[{}@{} #c{}] client {} migrated to new process",
-                                        self.username, self.pool_name, self.connection_id, self.addr
+                                        self.username,
+                                        self.pool_name,
+                                        self.connection_id,
+                                        self.addr
                                     );
                                     // Note: do NOT decrement CURRENT_CLIENT_COUNT here.
                                     // The caller (server.rs accept loop) decrements it
@@ -777,7 +777,7 @@ where
                     let status = current_pool.database.status();
                     let scaling = current_pool.database.scaling_stats();
                     warn!(
-                        "[{}@{} #c{}] slow checkout: {}ms pid={} size={}/{} avail={} waiting={} inflight={} creates={} gate_waits={} antic_ok={} antic_to={} fallback={}",
+                        "[{}@{} #c{}] slow checkout: {}ms pid={} size={}/{} avail={} waiting={} inflight={} creates={} gate_waits={} bg_timeout={} antic_ok={} antic_to={} fallback={}",
                         self.username,
                         self.pool_name,
                         self.connection_id,
@@ -789,6 +789,7 @@ where
                         scaling.inflight_creates,
                         scaling.creates_started,
                         scaling.burst_gate_waits,
+                        scaling.burst_gate_budget_exhausted,
                         scaling.anticipation_wakes_notify,
                         scaling.anticipation_wakes_timeout,
                         scaling.create_fallback,

@@ -815,7 +815,7 @@ async fn binary_upgrade_and_shutdown(
                             // restart the service when we exit.
                             if let Err(e) = sd_notify::notify(
                                 false,
-                                &[sd_notify::NotifyState::MainPid(child_pid.into())],
+                                &[sd_notify::NotifyState::MainPid(child_pid)],
                             ) {
                                 warn!("sd_notify MAINPID failed: {e}. systemd may restart the service after old process exits.");
                             }
@@ -834,8 +834,15 @@ async fn binary_upgrade_and_shutdown(
                             let _ = MIGRATION_TX.set(tx);
                             // MIGRATION_IN_PROGRESS already set above (before SHUTDOWN)
                             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-                            let sender_handle = tokio::spawn(migration_sender_task(migration_parent_fd, rx, shutdown_rx));
-                            migration_handles = Some(MigrationHandles { shutdown_tx, sender_handle });
+                            let sender_handle = tokio::spawn(migration_sender_task(
+                                migration_parent_fd,
+                                rx,
+                                shutdown_rx,
+                            ));
+                            migration_handles = Some(MigrationHandles {
+                                shutdown_tx,
+                                sender_handle,
+                            });
                             info!("Client migration enabled");
                         }
 
