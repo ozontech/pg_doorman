@@ -299,13 +299,19 @@ dropped. <code>return_object</code> detects the dropped receiver (<code>send</co
 <code>Err</code>), skips the stale waiter, and tries the next one in the queue.
 This way timed-out waiters are cleaned up lazily without a separate
 garbage-collection pass.</p>
-<p>The deadline is <code>min(query_wait_timeout - 500 ms, PHASE_4_HARD_CAP)</code>
-where <code>PHASE_4_HARD_CAP</code> is randomly chosen between <strong>300 ms and
-500 ms</strong> (uniform jitter) for each checkout attempt, measured against
-a timestamp captured at the top of <code>timeout_get</code>. Phase 1/2 semaphore
-wait consumes from the same budget, so the cumulative wait across
-phases cannot exceed the caller's <code>query_wait_timeout</code>.</p>
-<p>The jitter prevents a <strong>timeout cliff</strong>: without it, N clients that
+<p>The deadline is adaptive: <code>min(query_wait_timeout - 500 ms, adaptive_cap)</code>
+where <code>adaptive_cap</code> is derived from real transaction latency:</p>
+<div class="table-wrapper"><table><thead><tr><th>Pool state</th><th>Budget</th><th>Example</th></tr></thead><tbody>
+<tr><td>Cold start (no stats)</td><td>100ms ± 20% jitter</td><td>80-120ms</td></tr>
+<tr><td>Steady state</td><td>xact_p99 × 2 ± 20% jitter</td><td>p99=0.7ms → 5ms (min); p99=50ms → 100ms</td></tr>
+<tr><td>High latency</td><td>Capped at 500ms</td><td>p99=300ms → 500ms</td></tr>
+</tbody></table>
+</div>
+<p>The budget is measured against a timestamp captured at the top of
+<code>timeout_get</code>. Phase 1/2 semaphore wait consumes from the same budget,
+so the cumulative wait across phases cannot exceed the caller's
+<code>query_wait_timeout</code>.</p>
+<p>The ±20% jitter prevents a <strong>timeout cliff</strong>: without it, N clients that
 entered Phase 4 at the same instant all exit simultaneously and
 stampede into the burst gate, creating N new backend connections for a
 pool that needs far fewer. With jitter, clients exit in staggered
@@ -317,9 +323,11 @@ to the idle queue for recycling.</p>
 connects. If a slot is free, take it and call <code>connect()</code> against
 PostgreSQL. If all slots are full, register a direct-handoff oneshot
 waiter and also listen for <code>create_done</code> (another in-flight create
-finishing). If a connection arrives via the oneshot channel, recycle it
-and return. Otherwise, re-try the recycle and the gate after the wake.
-A 5 ms backoff acts as a safety net if both wake sources are missed.</p>
+finishing). The <code>select!</code> uses <code>biased;</code> to always check the oneshot
+first, preventing a race where <code>create_done</code> or the 5 ms backoff timer
+wins and silently drops the delivered connection. If a connection
+arrives via the oneshot channel, recycle it and return. Otherwise,
+re-try the recycle and the gate after the wake.</p>
 <p><strong>Phase 6 — Backend connect.</strong> Run <code>connect()</code>, authenticate, hand the
 connection to the client. The burst slot is released automatically when
 this phase finishes, regardless of success or failure.</p>

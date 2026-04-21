@@ -161,6 +161,28 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="352-apr-21-2026"><a class="header" href="#352-apr-21-2026">3.5.2 <small>Apr 21, 2026</small></a></h3>
+<h4 id="semaphore-permit-leak-on-direct-handoff"><a class="header" href="#semaphore-permit-leak-on-direct-handoff">Semaphore permit leak on direct handoff</a></h4>
+<p>Each <code>return_object</code> handoff (delivering a connection to a waiting client via oneshot channel) permanently consumed one semaphore permit. After <code>max_size</code> handoffs the pool semaphore was fully drained, blocking all new <code>timeout_get</code> callers. The pool could not create connections and stabilized at whatever size it reached during cold start (typically 4-8 out of 40).</p>
+<p>Root cause: <code>wrap_checkout</code> calls <code>permit.forget()</code>, and the handoff path in <code>return_object</code> skipped <code>add_permits(1)</code>. Now <code>return_object</code> restores the permit on both the handoff and idle-queue paths. Compensating <code>add_permits(1)</code> in <code>pre_replace_one</code> removed (no longer needed).</p>
+<h4 id="burst-gate-select-race"><a class="header" href="#burst-gate-select-race">Burst gate select race</a></h4>
+<p>The <code>tokio::select!</code> in the burst gate loop randomly picked among ready branches. When <code>sleep(5ms)</code> or <code>create_done</code> won over an already-delivered oneshot, the connection was silently dropped, inflating <code>slots.size</code> without a live server. Fixed with <code>biased;</code> (oneshot checked first) and a <code>try_recv</code> drain that pushes orphaned connections to idle without double-counting the permit.</p>
+<h4 id="migration-fixes"><a class="header" href="#migration-fixes">Migration fixes</a></h4>
+<ul>
+<li>
+<p><strong>Client ID collision after migration.</strong> The new process started its connection counter at 0, colliding with migrated client IDs. Now the counter advances past the highest migrated ID.</p>
+</li>
+<li>
+<p><strong>SCRAM passthrough state preserved.</strong> The ClientKey from the first client's SCRAM handshake is serialized in the migration payload (v2 format, backward compatible). The new process skips the <code>ScramPending</code> fallback to <code>server_password</code>.</p>
+</li>
+</ul>
+<h4 id="session-mode-statistics-fix"><a class="header" href="#session-mode-statistics-fix">Session mode statistics fix</a></h4>
+<p><code>xact_time</code> percentiles in session mode showed the entire session duration instead of individual transaction time. Now recorded per-transaction at each <code>ReadyForQuery(Idle)</code>, matching transaction mode semantics.</p>
+<p><code>query_time</code> had the same accumulation bug: the timer was set once before the inner loop and never reset, so each subsequent query reported the cumulative session duration. Now reset per-query in session mode.</p>
+<h4 id="adaptive-anticipation-budget"><a class="header" href="#adaptive-anticipation-budget">Adaptive anticipation budget</a></h4>
+<p>Anticipation wait (formerly fixed 300-500ms) scales with real transaction latency: <code>xact_p99 * 2 +/- 20%</code> jitter, clamped to [5ms, 500ms]. Cold start default: 100ms.</p>
+<h4 id="diagnostic-logging"><a class="header" href="#diagnostic-logging">Diagnostic logging</a></h4>
+<p>Slow checkout warnings (&gt;500ms) now include pool state: <code>size</code>, <code>avail</code>, <code>waiting</code>, <code>inflight</code>, <code>creates</code>, <code>gate_waits</code>, <code>antic_ok</code>, <code>antic_to</code>, <code>fallback</code>. Phase-specific warnings added for semaphore timeout, burst gate timeout, coordinator exhaustion, and create failure.</p>
 <h3 id="351-apr-20-2026"><a class="header" href="#351-apr-20-2026">3.5.1 <small>Apr 20, 2026</small></a></h3>
 <h4 id="systemd-typenotify-support"><a class="header" href="#systemd-typenotify-support">systemd Type=notify support</a></h4>
 <p>pg_doorman now sends <code>sd_notify(READY=1)</code> on startup and <code>sd_notify(MAINPID=&lt;child_pid&gt;)</code> during binary upgrade. With <code>Type=notify</code> in the systemd unit, <code>systemctl reload</code> performs a zero-downtime binary upgrade without PID tracking issues — systemd follows the new process correctly and does not restart the service.</p>
