@@ -163,14 +163,21 @@ dropped. `return_object` detects the dropped receiver (`send` returns
 This way timed-out waiters are cleaned up lazily without a separate
 garbage-collection pass.
 
-The deadline is `min(query_wait_timeout - 500 ms, PHASE_4_HARD_CAP)`
-where `PHASE_4_HARD_CAP` is randomly chosen between **300 ms and
-500 ms** (uniform jitter) for each checkout attempt, measured against
-a timestamp captured at the top of `timeout_get`. Phase 1/2 semaphore
-wait consumes from the same budget, so the cumulative wait across
-phases cannot exceed the caller's `query_wait_timeout`.
+The deadline is adaptive: `min(query_wait_timeout - 500 ms, adaptive_cap)`
+where `adaptive_cap` is derived from real transaction latency:
 
-The jitter prevents a **timeout cliff**: without it, N clients that
+| Pool state | Budget | Example |
+|------------|--------|---------|
+| Cold start (no stats) | 100ms ± 20% jitter | 80-120ms |
+| Steady state | xact_p99 × 2 ± 20% jitter | p99=0.7ms → 5ms (min); p99=50ms → 100ms |
+| High latency | Capped at 500ms | p99=300ms → 500ms |
+
+The budget is measured against a timestamp captured at the top of
+`timeout_get`. Phase 1/2 semaphore wait consumes from the same budget,
+so the cumulative wait across phases cannot exceed the caller's
+`query_wait_timeout`.
+
+The ±20% jitter prevents a **timeout cliff**: without it, N clients that
 entered Phase 4 at the same instant all exit simultaneously and
 stampede into the burst gate, creating N new backend connections for a
 pool that needs far fewer. With jitter, clients exit in staggered
@@ -183,9 +190,11 @@ to the idle queue for recycling.
 connects. If a slot is free, take it and call `connect()` against
 PostgreSQL. If all slots are full, register a direct-handoff oneshot
 waiter and also listen for `create_done` (another in-flight create
-finishing). If a connection arrives via the oneshot channel, recycle it
-and return. Otherwise, re-try the recycle and the gate after the wake.
-A 5 ms backoff acts as a safety net if both wake sources are missed.
+finishing). The `select!` uses `biased;` to always check the oneshot
+first, preventing a race where `create_done` or the 5 ms backoff timer
+wins and silently drops the delivered connection. If a connection
+arrives via the oneshot channel, recycle it and return. Otherwise,
+re-try the recycle and the gate after the wake.
 
 **Phase 6 — Backend connect.** Run `connect()`, authenticate, hand the
 connection to the client. The burst slot is released automatically when

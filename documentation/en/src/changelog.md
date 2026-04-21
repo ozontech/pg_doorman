@@ -1,5 +1,37 @@
 # Changelog
 
+### 3.5.2 <small>Apr 21, 2026</small>
+
+#### Semaphore permit leak on direct handoff
+
+Each `return_object` handoff (delivering a connection to a waiting client via oneshot channel) permanently consumed one semaphore permit. After `max_size` handoffs the pool semaphore was fully drained, blocking all new `timeout_get` callers. The pool could not create connections and stabilized at whatever size it reached during cold start (typically 4-8 out of 40).
+
+Root cause: `wrap_checkout` calls `permit.forget()`, and the handoff path in `return_object` skipped `add_permits(1)`. Now `return_object` restores the permit on both the handoff and idle-queue paths. Compensating `add_permits(1)` in `pre_replace_one` removed (no longer needed).
+
+#### Burst gate select race
+
+The `tokio::select!` in the burst gate loop randomly picked among ready branches. When `sleep(5ms)` or `create_done` won over an already-delivered oneshot, the connection was silently dropped, inflating `slots.size` without a live server. Fixed with `biased;` (oneshot checked first) and a `try_recv` drain that pushes orphaned connections to idle without double-counting the permit.
+
+#### Migration fixes
+
+- **Client ID collision after migration.** The new process started its connection counter at 0, colliding with migrated client IDs. Now the counter advances past the highest migrated ID.
+
+- **SCRAM passthrough state preserved.** The ClientKey from the first client's SCRAM handshake is serialized in the migration payload (v2 format, backward compatible). The new process skips the `ScramPending` fallback to `server_password`.
+
+#### Session mode statistics fix
+
+`xact_time` percentiles in session mode showed the entire session duration instead of individual transaction time. Now recorded per-transaction at each `ReadyForQuery(Idle)`, matching transaction mode semantics.
+
+`query_time` had the same accumulation bug: the timer was set once before the inner loop and never reset, so each subsequent query reported the cumulative session duration. Now reset per-query in session mode.
+
+#### Adaptive anticipation budget
+
+Anticipation wait (formerly fixed 300-500ms) scales with real transaction latency: `xact_p99 * 2 +/- 20%` jitter, clamped to [5ms, 500ms]. Cold start default: 100ms.
+
+#### Diagnostic logging
+
+Slow checkout warnings (>500ms) now include pool state: `size`, `avail`, `waiting`, `inflight`, `creates`, `gate_waits`, `antic_ok`, `antic_to`, `fallback`. Phase-specific warnings added for semaphore timeout, burst gate timeout, coordinator exhaustion, and create failure.
+
 ### 3.5.1 <small>Apr 20, 2026</small>
 
 #### systemd Type=notify support

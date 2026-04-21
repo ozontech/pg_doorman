@@ -428,6 +428,7 @@ static POOL_SCALING_PREV: Lazy<std::sync::Mutex<PoolScalingPrev>> =
 const POOL_SCALING_TOTAL_TYPES: &[&str] = &[
     "creates_started",
     "burst_gate_waits",
+    "burst_gate_budget_exhausted",
     "anticipation_wakes_notify",
     "anticipation_wakes_timeout",
     "create_fallback",
@@ -467,9 +468,13 @@ fn update_pool_scaling_metrics() {
         // Translate snapshot fields to (type_label, value) pairs and emit
         // them as monotonic counter deltas. Pools have unique (user, db) keys
         // so prev tracking is per (type, user, db).
-        let totals: [(&str, u64); 6] = [
+        let totals: [(&str, u64); 7] = [
             ("creates_started", snapshot.creates_started),
             ("burst_gate_waits", snapshot.burst_gate_waits),
+            (
+                "burst_gate_budget_exhausted",
+                snapshot.burst_gate_budget_exhausted,
+            ),
             (
                 "anticipation_wakes_notify",
                 snapshot.anticipation_wakes_notify,

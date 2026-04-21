@@ -10,8 +10,7 @@ use crate::utils::clock::now;
 
 use crate::admin::handle_admin;
 use crate::app::server::{
-    CLIENTS_IN_TRANSACTIONS, MIGRATION_IN_PROGRESS, MIGRATION_TX,
-    SHUTDOWN_IN_PROGRESS,
+    CLIENTS_IN_TRANSACTIONS, MIGRATION_IN_PROGRESS, MIGRATION_TX, SHUTDOWN_IN_PROGRESS,
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
@@ -169,25 +168,32 @@ where
     S: tokio::io::AsyncRead + std::marker::Unpin,
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    /// Complete transaction statistics and check if server should be released
-    /// Returns true if the transaction loop should break (server should be released)
     #[inline(always)]
     fn complete_transaction_if_needed(&mut self, server: &Server, check_async: bool) -> bool {
-        if !server.in_transaction() {
-            self.stats.transaction();
-            server
-                .stats
-                .transaction(self.server_parameters.get_application_name());
+        if server.in_transaction() {
+            if self.session_xact_start.is_none() {
+                self.session_xact_start = Some(crate::utils::clock::now());
+            }
+            return false;
+        }
 
-            // Release server back to the pool if we are in transaction mode.
-            // If we are in session mode, we keep the server until the client disconnects.
-            if self.transaction_mode && !server.in_copy_mode() {
-                // Don't release if in async mode (when check_async is true)
-                if !check_async || !server.is_async() {
-                    return true;
-                }
+        self.stats.transaction();
+        server
+            .stats
+            .transaction(self.server_parameters.get_application_name());
+
+        if !self.transaction_mode {
+            if let Some(start) = self.session_xact_start.take() {
+                server
+                    .stats
+                    .add_xact_time_and_idle(start.elapsed().as_micros() as u64);
             }
         }
+
+        if self.transaction_mode && !server.in_copy_mode() && (!check_async || !server.is_async()) {
+            return true;
+        }
+
         false
     }
 
@@ -609,7 +615,10 @@ where
                                 Ok(()) => {
                                     info!(
                                         "[{}@{} #c{}] client {} migrated to new process",
-                                        self.username, self.pool_name, self.connection_id, self.addr
+                                        self.username,
+                                        self.pool_name,
+                                        self.connection_id,
+                                        self.addr
                                     );
                                     // Note: do NOT decrement CURRENT_CLIENT_COUNT here.
                                     // The caller (server.rs accept loop) decrements it
@@ -765,13 +774,25 @@ where
                     .max_wait_time
                     .fetch_max(checkout_us, Ordering::Relaxed);
                 if checkout_us >= 500_000 {
+                    let status = current_pool.database.status();
+                    let scaling = current_pool.database.scaling_stats();
                     warn!(
-                        "[{}@{} #c{}] slow checkout: {}ms (server pid={})",
+                        "[{}@{} #c{}] slow checkout: {}ms pid={} size={}/{} avail={} waiting={} inflight={} creates={} gate_waits={} bg_timeout={} antic_ok={} antic_to={} fallback={}",
                         self.username,
                         self.pool_name,
                         self.connection_id,
                         checkout_us / 1_000,
                         server.get_process_id(),
+                        status.size, status.max_size,
+                        status.available,
+                        status.waiting,
+                        scaling.inflight_creates,
+                        scaling.creates_started,
+                        scaling.burst_gate_waits,
+                        scaling.burst_gate_budget_exhausted,
+                        scaling.anticipation_wakes_notify,
+                        scaling.anticipation_wakes_timeout,
+                        scaling.create_fallback,
                     );
                 }
                 let server_active_at = now();
@@ -905,6 +926,12 @@ where
                     };
                     self.stats.active_idle();
 
+                    // Session mode: reset query timer per message so query_time
+                    // reflects individual queries, not cumulative session duration.
+                    if !self.transaction_mode {
+                        query_start_at = now();
+                    }
+
                     // The message will be forwarded to the server intact. We still would like to
                     // parse it below to figure out what to do with it.
 
@@ -1006,9 +1033,11 @@ where
                 } else if !server.is_async() {
                     server.checkin_cleanup().await?;
                 }
-                server
-                    .stats
-                    .add_xact_time_and_idle(server_active_at.elapsed().as_micros() as u64);
+                if self.transaction_mode {
+                    server
+                        .stats
+                        .add_xact_time_and_idle(server_active_at.elapsed().as_micros() as u64);
+                }
                 // The server is no longer bound to us, we can't cancel it's queries anymore.
                 self.release();
                 server.stats.wait_idle();
@@ -1046,6 +1075,9 @@ where
         message: Option<&BytesMut>,
         server: &mut Server,
     ) -> Result<(), Error> {
+        if !self.transaction_mode && self.session_xact_start.is_none() {
+            self.session_xact_start = Some(crate::utils::clock::now());
+        }
         let message = message.unwrap_or(&self.buffer);
 
         // Send message with timeout

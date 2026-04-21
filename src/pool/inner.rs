@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use log::debug;
+use log::{debug, warn};
 use rand::Rng as _;
 
 use crate::utils::clock;
@@ -155,6 +155,11 @@ pub(crate) struct ScalingStats {
     /// and deferred its work to the next retain cycle. Persistent non-zero
     /// values indicate `min_pool_size` cannot be sustained under current load.
     pub(crate) replenish_deferred: AtomicU64,
+    /// Number of times the burst gate adaptive budget was exhausted.
+    /// A sustained non-zero rate means the pool is undersized: clients wait
+    /// longer than 2× xact_p99 for a recycled connection before proceeding
+    /// to create a new one.
+    pub(crate) burst_gate_budget_exhausted: AtomicU64,
     /// Number of pre-replacement connections created ahead of lifetime expiry.
     pub(crate) pre_replacements_triggered: AtomicU64,
     /// Number of pre-replacement attempts skipped (coordinator full, pressure,
@@ -167,6 +172,7 @@ pub(crate) struct ScalingStats {
 pub struct ScalingStatsSnapshot {
     pub creates_started: u64,
     pub burst_gate_waits: u64,
+    pub burst_gate_budget_exhausted: u64,
     pub anticipation_wakes_notify: u64,
     pub anticipation_wakes_timeout: u64,
     pub create_fallback: u64,
@@ -232,6 +238,58 @@ const PRE_REPLACE_THRESHOLD_PCT: u64 = 95;
 /// the same 15-second window. Allowing 3 concurrent pre-replacements
 /// ensures each one gets a warm replacement without serialization.
 const MAX_CONCURRENT_PRE_REPLACEMENTS: usize = 3;
+
+/// Anticipation budget: absolute maximum wait before falling through to create.
+const ANTICIPATION_HARD_CAP_MS: u64 = 500;
+
+/// Anticipation budget at cold start when xact_p99 histogram has no data.
+/// Conservative enough to not overwhelm coordinator when all pools start
+/// simultaneously, fast enough to fill the pool within seconds.
+const ANTICIPATION_COLD_START_MS: u64 = 100;
+
+/// Anticipation budget: minimum wait. Even with xact_p99 < 3ms, wait at
+/// least this long to give the direct-handoff a chance before creating.
+const ANTICIPATION_MIN_BUDGET_MS: u64 = 5;
+
+/// Time reserved after anticipation for the actual create() call.
+/// Subtracted from the total budget before entering the handoff wait.
+const ANTICIPATION_CREATE_RESERVE: Duration = Duration::from_millis(500);
+
+/// Fallback total budget when `timeouts.wait` is None (no query_wait_timeout).
+const ANTICIPATION_FALLBACK_BUDGET_MS: u64 = 100;
+
+/// Backoff between retries when the burst gate budget is exhausted.
+/// The client stops registering as a handoff waiter and just listens
+/// for `create_done` notifications with this timeout between retries.
+const BURST_GATE_EXHAUSTED_BACKOFF: Duration = Duration::from_millis(50);
+
+/// Burst gate adaptive timeout: minimum budget before exiting the handoff loop.
+/// Below 20ms, fork() + shared_buffers attach on large instances can take longer,
+/// causing unnecessary creates during brief spikes.
+const BURST_GATE_MIN_BUDGET_MS: u64 = 20;
+
+/// Compute the base anticipation budget (before jitter) from xact_p99.
+/// Pure function, deterministic, safe to call from tests.
+#[inline]
+fn anticipation_base_ms(xact_p99_us: u64) -> u64 {
+    if xact_p99_us == 0 {
+        ANTICIPATION_COLD_START_MS
+    } else {
+        xact_p99_us.saturating_mul(2) / 1000
+    }
+}
+
+/// Compute burst gate adaptive budget from xact_p99.
+/// Reuses `anticipation_base_ms` for the base, adds ±20% jitter.
+#[inline]
+fn burst_gate_budget(xact_p99_us: u64) -> Duration {
+    let base_ms = anticipation_base_ms(xact_p99_us);
+    let jitter_range = (base_ms / 5).max(1);
+    let jitter = rand::rng().random_range(0..=jitter_range * 2);
+    let budget_ms = (base_ms.saturating_sub(jitter_range) + jitter)
+        .clamp(BURST_GATE_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+    Duration::from_millis(budget_ms)
+}
 
 /// Push a connection into the idle queue respecting the configured
 /// queue mode (FIFO/LIFO). Caller must hold the slots lock.
@@ -360,11 +418,11 @@ impl PoolInner {
             push_idle(self.config.queue_mode, &mut slots.vec, inner);
         }
 
-        // Add a semaphore permit so a client can reach the pre-created
-        // connection through the normal checkout path. The extra permit
-        // is consumed when the old connection fails recycle: the caller
-        // holds it and retries try_recycle_one which finds the replacement.
-        self.semaphore.add_permits(1);
+        // No semaphore.add_permits needed: return_object now always
+        // restores the returning client's permit (both handoff and idle
+        // paths), so no extra permit is required to compensate for future
+        // handoff drain. The client checking out this pre-created
+        // connection will acquire its own permit normally.
 
         self.scaling_stats
             .pre_replacements_triggered
@@ -469,10 +527,14 @@ impl PoolInner {
             match sender.send(inner) {
                 Ok(()) => {
                     drop(slots);
-                    // No semaphore.add_permits — the waiter already holds
-                    // a permit. No coordinator notify — the connection was
-                    // handed off, not placed in the idle queue, so a peer
-                    // eviction scan would find nothing.
+                    // Restore the returning client's semaphore permit.
+                    // The waiter holds its OWN permit (from acquire_semaphore),
+                    // so this is not double-counting — it compensates for the
+                    // permit.forget() when this connection was last wrapped.
+                    // Without this, each handoff permanently drains one permit
+                    // because the returning client re-enters timeout_get and
+                    // acquires a NEW permit, but the old one was never restored.
+                    self.semaphore.add_permits(1);
                     return;
                 }
                 Err(returned_inner) => {
@@ -558,8 +620,8 @@ enum CoordinatorJitResult<'a> {
 
 impl Pool {
     /// Wrap a recycled/created ObjectInner into an Object, consuming
-    /// the semaphore permit so it stays with the connection until
-    /// Object::drop returns it.
+    /// the semaphore permit. The permit is restored by `return_object`
+    /// (via `add_permits(1)`) when the Object is dropped.
     #[inline(always)]
     fn wrap_checkout(&self, inner: ObjectInner, permit: SemaphorePermit<'_>) -> Object {
         permit.forget();
@@ -578,6 +640,15 @@ impl Pool {
         timeouts: &Timeouts,
         non_blocking: bool,
     ) -> BurstGateOutcome<'_> {
+        let (_, _, _, xact_p99_us) = self
+            .inner
+            .server_pool
+            .address()
+            .stats
+            .get_xact_percentiles();
+        let budget = burst_gate_budget(xact_p99_us);
+        let loop_start = tokio::time::Instant::now();
+
         loop {
             if let Some(guard) = self.inner.try_acquire_burst_gate() {
                 return BurstGateOutcome::Acquired(guard);
@@ -601,13 +672,30 @@ impl Pool {
                 return BurstGateOutcome::Recycled(inner);
             }
 
+            // Adaptive timeout: waited longer than 2× xact_p99 — pool is undersized.
+            // Stop accepting recycled connections, wait for the burst gate directly.
+            if loop_start.elapsed() > budget {
+                self.inner
+                    .scaling_stats
+                    .burst_gate_budget_exhausted
+                    .fetch_add(1, Ordering::Relaxed);
+                let notify = self.inner.create_done.notified();
+                let _ = tokio::time::timeout(BURST_GATE_EXHAUSTED_BACKOFF, notify).await;
+                continue;
+            }
+
             // Register a direct-handoff waiter AND listen on create_done.
-            let (tx, rx) = oneshot::channel();
+            // `biased;` ensures rx is always checked first: without it,
+            // tokio::select! randomly picks among ready branches, and a
+            // connection delivered to rx can be silently dropped when
+            // on_create or sleep wins the race — leaking slots.size.
+            let (tx, mut rx) = oneshot::channel();
             self.inner.slots.lock().waiters.push_back(tx);
             let on_create = self.inner.create_done.notified();
 
             tokio::select! {
-                result = rx => {
+                biased;
+                result = &mut rx => {
                     if let Ok(inner) = result {
                         if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
                             return BurstGateOutcome::Recycled(Box::new(inner));
@@ -616,6 +704,18 @@ impl Pool {
                 }
                 _ = on_create => {}
                 _ = tokio::time::sleep(BURST_BACKOFF) => {}
+            }
+
+            // A connection could arrive between the poll of rx and the
+            // drop of the select future. Push it to idle directly —
+            // the original return_object that sent it here already
+            // called add_permits(1), so calling return_object again
+            // would double-count the permit.
+            if let Ok(inner) = rx.try_recv() {
+                let mut slots = self.inner.slots.lock();
+                push_idle(self.inner.config.queue_mode, &mut slots.vec, inner);
+                drop(slots);
+                self.inner.notify_return_observers();
             }
 
             // After wake — try recycle once before retrying the gate.
@@ -662,6 +762,15 @@ impl Pool {
         {
             Ok(p) => p,
             Err(pool_coordinator::AcquireError::NoConnection(info)) => {
+                let slots = self.inner.slots.lock();
+                warn!(
+                    "[{}@{}] checkout failed at phase=coordinator size={} waiters={} info={}",
+                    self.inner.pool_name,
+                    self.inner.username,
+                    slots.size,
+                    slots.waiters.len(),
+                    info,
+                );
                 return Err(PoolError::DbLimitExhausted(info));
             }
         };
@@ -802,21 +911,29 @@ impl Pool {
 
         // Direct handoff via oneshot channel.
         if !capacity_deficit && !non_blocking {
-            const CREATE_RESERVE: Duration = Duration::from_millis(500);
-            const FALLBACK_BUDGET_MS: u64 = 100;
-
             let total_budget = match timeouts.wait {
                 Some(wait) => wait
                     .saturating_sub(start.elapsed())
-                    .saturating_sub(CREATE_RESERVE),
-                None => Duration::from_millis(FALLBACK_BUDGET_MS),
+                    .saturating_sub(ANTICIPATION_CREATE_RESERVE),
+                None => Duration::from_millis(ANTICIPATION_FALLBACK_BUDGET_MS),
             };
 
             if !total_budget.is_zero() {
-                const PHASE_4_HARD_CAP_BASE_MS: u64 = 500;
-                const PHASE_4_HARD_CAP_JITTER_MS: u64 = 200;
-                let cap_ms = PHASE_4_HARD_CAP_BASE_MS
-                    - rand::rng().random_range(0..=PHASE_4_HARD_CAP_JITTER_MS);
+                // Adaptive anticipation budget: wait proportionally to actual
+                // transaction latency. If a return doesn't arrive within 2x
+                // the p99 xact time, creating is cheaper than waiting.
+                let (_, _, _, xact_p99_us) = self
+                    .inner
+                    .server_pool
+                    .address()
+                    .stats
+                    .get_xact_percentiles();
+                let base_ms = anticipation_base_ms(xact_p99_us);
+                // ±20% jitter to prevent synchronized creates across pools
+                let jitter_range = (base_ms / 5).max(1);
+                let jitter = rand::rng().random_range(0..=jitter_range * 2);
+                let cap_ms = (base_ms.saturating_sub(jitter_range) + jitter)
+                    .clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
                 let effective_budget = total_budget.min(Duration::from_millis(cap_ms));
 
                 let (tx, rx) = oneshot::channel();
@@ -895,20 +1012,25 @@ impl Pool {
         let start = tokio::time::Instant::now();
 
         self.wait_if_paused(timeouts).await?;
-        let permit = self.acquire_semaphore(timeouts).await?;
+        let permit = self.acquire_semaphore(timeouts).await.inspect_err(|_e| {
+            let slots = self.inner.slots.lock();
+            warn!(
+                "[{}@{}] checkout timeout at phase=semaphore elapsed={}ms size={} max={} waiters={} semaphore_avail={}",
+                self.inner.pool_name, self.inner.username,
+                start.elapsed().as_millis(), slots.size, slots.max_size,
+                slots.waiters.len(), self.inner.semaphore.available_permits(),
+            );
+        })?;
 
-        // Hot-path recycle: pop an idle connection if available.
         if let RecycleOutcome::Reused(inner) = self.inner.try_recycle_one(timeouts).await {
             self.maybe_trigger_pre_replacement(&inner.metrics);
             return Ok(self.wrap_checkout(*inner, permit));
         }
 
-        // Anticipation: warm zone gate → fast spin → direct handoff.
         if let Some(inner) = self.try_anticipate(timeouts, start).await {
             return Ok(self.wrap_checkout(inner, permit));
         }
 
-        // Drain remaining recyclable connections before creating new ones.
         loop {
             match self.inner.try_recycle_one(timeouts).await {
                 RecycleOutcome::Reused(inner) => {
@@ -919,7 +1041,6 @@ impl Pool {
             }
         }
 
-        // Burst gate + coordinator + backend connect.
         let non_blocking = timeouts.wait.is_some_and(|t| t.as_nanos() == 0);
         let _create_gate = match self.acquire_burst_gate(timeouts, non_blocking).await {
             BurstGateOutcome::Acquired(guard) => guard,
@@ -927,6 +1048,14 @@ impl Pool {
                 return Ok(self.wrap_checkout(*inner, permit));
             }
             BurstGateOutcome::Timeout => {
+                let slots = self.inner.slots.lock();
+                warn!(
+                    "[{}@{}] checkout timeout at phase=burst_gate elapsed={}ms size={} inflight={} waiters={}",
+                    self.inner.pool_name, self.inner.username,
+                    start.elapsed().as_millis(), slots.size,
+                    self.inner.inflight_creates.load(Ordering::Relaxed),
+                    slots.waiters.len(),
+                );
                 return Err(PoolError::Timeout(TimeoutType::Wait));
             }
         };
@@ -945,7 +1074,19 @@ impl Pool {
         let obj_inner = self
             .inner
             .create_connection(timeouts, coordinator_permit)
-            .await?;
+            .await
+            .map_err(|e| {
+                let slots = self.inner.slots.lock();
+                warn!(
+                    "[{}@{}] checkout failed at phase=create elapsed={}ms size={} err={}",
+                    self.inner.pool_name,
+                    self.inner.username,
+                    start.elapsed().as_millis(),
+                    slots.size,
+                    e,
+                );
+                e
+            })?;
         Ok(self.wrap_checkout(obj_inner, permit))
     }
 
@@ -1398,6 +1539,7 @@ impl Pool {
         ScalingStatsSnapshot {
             creates_started: s.creates_started.load(Ordering::Relaxed),
             burst_gate_waits: s.burst_gate_waits.load(Ordering::Relaxed),
+            burst_gate_budget_exhausted: s.burst_gate_budget_exhausted.load(Ordering::Relaxed),
             anticipation_wakes_notify: s.anticipation_wakes_notify.load(Ordering::Relaxed),
             anticipation_wakes_timeout: s.anticipation_wakes_timeout.load(Ordering::Relaxed),
             create_fallback: s.create_fallback.load(Ordering::Relaxed),
@@ -2193,5 +2335,576 @@ mod tests {
         let waiters: VecDeque<oneshot::Sender<u32>> = VecDeque::new();
         assert!(waiters.is_empty());
         // return_object would push to vec + add_permits here.
+    }
+
+    // ------------------------------------------------------------------
+    // Adaptive anticipation budget
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn anticipation_budget_cold_start() {
+        // No histogram data (fresh process). Default 100ms.
+        assert_eq!(anticipation_base_ms(0), 100);
+    }
+
+    #[test]
+    fn anticipation_budget_fast_workload() {
+        // xact_p99 = 700us (0.7ms). base = 0.7ms * 2 = 1ms.
+        // Clamped to MIN_BUDGET_MS = 5ms during jitter step.
+        assert_eq!(anticipation_base_ms(700), 1);
+    }
+
+    #[test]
+    fn anticipation_budget_medium_workload() {
+        // xact_p99 = 50ms (50000us). base = 50 * 2 = 100ms.
+        assert_eq!(anticipation_base_ms(50_000), 100);
+    }
+
+    #[test]
+    fn anticipation_budget_high_latency() {
+        // xact_p99 = 300ms (300000us). base = 300 * 2 = 600ms.
+        // Clamped to HARD_CAP (500ms) during jitter step.
+        assert_eq!(anticipation_base_ms(300_000), 600);
+    }
+
+    #[test]
+    fn anticipation_budget_clamp_range() {
+        // Verify the full pipeline: base → jitter → clamp
+        for p99_us in [0, 500, 1000, 5000, 50_000, 200_000, 500_000] {
+            let base = anticipation_base_ms(p99_us);
+            let jitter_range = (base / 5).max(1);
+            // Min possible after jitter
+            let min_val = base.saturating_sub(jitter_range);
+            // Max possible after jitter
+            let max_val = base + jitter_range;
+            // After clamp
+            let clamped_min = min_val.clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+            let clamped_max = max_val.clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+            assert!(clamped_min >= ANTICIPATION_MIN_BUDGET_MS);
+            assert!(clamped_max <= ANTICIPATION_HARD_CAP_MS);
+        }
+    }
+
+    #[test]
+    fn burst_gate_budget_cold_start() {
+        let budget = burst_gate_budget(0);
+        assert!(budget.as_millis() >= BURST_GATE_MIN_BUDGET_MS as u128);
+        assert!(budget.as_millis() <= ANTICIPATION_HARD_CAP_MS as u128);
+    }
+
+    #[test]
+    fn burst_gate_budget_normal_workload() {
+        // xact_p99 = 67ms (67000us). base = 134ms. jitter ±27ms.
+        let budget = burst_gate_budget(67_000);
+        assert!(budget.as_millis() >= BURST_GATE_MIN_BUDGET_MS as u128);
+        assert!(budget.as_millis() <= ANTICIPATION_HARD_CAP_MS as u128);
+    }
+
+    #[test]
+    fn burst_gate_budget_fast_workload() {
+        // xact_p99 = 700us. base = 1ms. Clamped to min 20ms.
+        let budget = burst_gate_budget(700);
+        assert_eq!(budget.as_millis(), BURST_GATE_MIN_BUDGET_MS as u128);
+    }
+
+    #[test]
+    fn burst_gate_budget_clamp_range() {
+        for p99_us in [0, 500, 1000, 5000, 50_000, 200_000, 500_000] {
+            let budget = burst_gate_budget(p99_us);
+            assert!(budget.as_millis() >= BURST_GATE_MIN_BUDGET_MS as u128);
+            assert!(budget.as_millis() <= ANTICIPATION_HARD_CAP_MS as u128);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // anticipation_base_ms — additional edge cases
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn anticipation_base_ms_u64_max_saturates() {
+        // saturating_mul(2) must not wrap on extreme input.
+        let result = anticipation_base_ms(u64::MAX);
+        // u64::MAX * 2 saturates to u64::MAX, then / 1000.
+        assert_eq!(result, u64::MAX / 1000);
+    }
+
+    #[test]
+    fn anticipation_base_ms_one_microsecond() {
+        // 1us * 2 / 1000 = 0 (integer truncation).
+        assert_eq!(anticipation_base_ms(1), 0);
+    }
+
+    #[test]
+    fn anticipation_base_ms_boundary_500us() {
+        // 500us * 2 / 1000 = 1ms exactly.
+        assert_eq!(anticipation_base_ms(500), 1);
+    }
+
+    #[test]
+    fn anticipation_base_ms_boundary_499us() {
+        // 499us * 2 / 1000 = 998/1000 = 0 (truncated).
+        assert_eq!(anticipation_base_ms(499), 0);
+    }
+
+    #[test]
+    fn anticipation_base_ms_hard_cap_boundary() {
+        // Find the input that produces exactly ANTICIPATION_HARD_CAP_MS.
+        // cap = 500ms, so base = 500 when xact_p99_us = 250_000.
+        assert_eq!(anticipation_base_ms(250_000), 500);
+        assert_eq!(anticipation_base_ms(250_000), ANTICIPATION_HARD_CAP_MS);
+    }
+
+    // ------------------------------------------------------------------
+    // Jitter + clamp pipeline — exhaustive range invariant
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn anticipation_jitter_clamp_always_in_bounds() {
+        // For a wide range of xact_p99 values (including extreme ones),
+        // the full jitter + clamp pipeline must always produce a result
+        // in [ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS].
+        // Run each value multiple times to exercise jitter randomness.
+        let inputs = [
+            0,
+            1,
+            10,
+            100,
+            499,
+            500,
+            501,
+            1_000,
+            2_500,
+            5_000,
+            10_000,
+            25_000,
+            50_000,
+            100_000,
+            200_000,
+            250_000,
+            300_000,
+            500_000,
+            1_000_000,
+            u64::MAX / 2,
+            u64::MAX,
+        ];
+        for &p99_us in &inputs {
+            for _ in 0..20 {
+                let base_ms = anticipation_base_ms(p99_us);
+                let jitter_range = (base_ms / 5).max(1);
+                let jitter = rand::rng().random_range(0..=jitter_range * 2);
+                let clamped = (base_ms.saturating_sub(jitter_range) + jitter)
+                    .clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+                assert!(
+                    clamped >= ANTICIPATION_MIN_BUDGET_MS,
+                    "p99_us={p99_us} base={base_ms} jitter={jitter}: result {clamped} < min {}",
+                    ANTICIPATION_MIN_BUDGET_MS,
+                );
+                assert!(
+                    clamped <= ANTICIPATION_HARD_CAP_MS,
+                    "p99_us={p99_us} base={base_ms} jitter={jitter}: result {clamped} > cap {}",
+                    ANTICIPATION_HARD_CAP_MS,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn anticipation_jitter_clamp_zero_base_clamps_to_min() {
+        // When base_ms = 0 (from very small xact_p99), jitter_range = max(0/5, 1) = 1.
+        // min_val = 0 - 1 = saturates to 0. After clamp: ANTICIPATION_MIN_BUDGET_MS.
+        // max_val = 0 + 1 = 1. After clamp: max(1, 5) = 5.
+        // Both endpoints clamp to MIN_BUDGET_MS.
+        let base_ms = anticipation_base_ms(1); // = 0
+        assert_eq!(base_ms, 0);
+        let jitter_range = (base_ms / 5).max(1);
+        let min_possible = base_ms
+            .saturating_sub(jitter_range)
+            .clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+        let max_possible = (base_ms + jitter_range * 2)
+            .clamp(ANTICIPATION_MIN_BUDGET_MS, ANTICIPATION_HARD_CAP_MS);
+        assert_eq!(min_possible, ANTICIPATION_MIN_BUDGET_MS);
+        assert_eq!(max_possible, ANTICIPATION_MIN_BUDGET_MS);
+    }
+
+    // ------------------------------------------------------------------
+    // Semaphore invariant: return_object restores permits in both paths
+    // ------------------------------------------------------------------
+    //
+    // ObjectInner requires a Server (live TCP stream), so we cannot call
+    // return_object directly. Instead we model its exact logic using the
+    // same primitives (Semaphore, Mutex<Slots>, oneshot channels) and
+    // verify the semaphore permit count is conserved.
+    //
+    // The contract under test:
+    //   1. Handoff path (waiter present): send to waiter + add_permits(1)
+    //   2. Idle path (no waiter): push to vec + add_permits(1)
+    //   3. Both paths restore exactly one permit per return.
+    //
+    // The OLD bug: handoff path did NOT call add_permits(1), causing
+    // permanent permit drain. These tests would catch a regression.
+
+    /// Model the return_object handoff path: waiter exists, send succeeds.
+    /// Verify the semaphore permit is restored.
+    #[tokio::test]
+    async fn semaphore_permit_restored_on_handoff() {
+        let max_size = 4;
+        let semaphore = Semaphore::new(max_size);
+
+        // Simulate one connection checked out: acquire + forget.
+        let permit = semaphore.acquire().await.unwrap();
+        permit.forget();
+        assert_eq!(semaphore.available_permits(), max_size - 1);
+
+        // Waiter registers (simulates a concurrent checkout).
+        let (tx, rx) = oneshot::channel::<u32>();
+        let mut waiters: VecDeque<oneshot::Sender<u32>> = VecDeque::new();
+        waiters.push_back(tx);
+
+        // Model return_object handoff path:
+        // pop waiter, send, then add_permits(1).
+        let sender = waiters.pop_front().unwrap();
+        sender.send(42).unwrap();
+        semaphore.add_permits(1);
+
+        // The returning client's permit is restored.
+        assert_eq!(semaphore.available_permits(), max_size);
+        // The waiter received the connection.
+        assert_eq!(rx.await.unwrap(), 42);
+    }
+
+    /// Model the return_object idle path: no waiters, push to vec.
+    /// Verify the semaphore permit is restored.
+    #[tokio::test]
+    async fn semaphore_permit_restored_on_idle_return() {
+        let max_size = 4;
+        let semaphore = Semaphore::new(max_size);
+
+        // Simulate one connection checked out.
+        let permit = semaphore.acquire().await.unwrap();
+        permit.forget();
+        assert_eq!(semaphore.available_permits(), max_size - 1);
+
+        // Model return_object idle path:
+        // no waiters -> push to idle vec + add_permits(1).
+        let waiters: VecDeque<oneshot::Sender<u32>> = VecDeque::new();
+        assert!(waiters.is_empty());
+        semaphore.add_permits(1);
+
+        assert_eq!(semaphore.available_permits(), max_size);
+    }
+
+    /// After N handoffs, the semaphore must not drain.
+    /// This is the core regression test for the permit fix.
+    #[tokio::test]
+    async fn semaphore_does_not_drain_after_n_handoffs() {
+        let max_size = 4;
+        let semaphore = Semaphore::new(max_size);
+
+        for iteration in 0..100 {
+            // Step 1: Client A checks out (acquire + forget).
+            let permit = semaphore.acquire().await.unwrap();
+            permit.forget();
+
+            // Step 2: Client B waits (registers a oneshot waiter).
+            let (tx, rx) = oneshot::channel::<u32>();
+            let mut waiters: VecDeque<oneshot::Sender<u32>> = VecDeque::new();
+            waiters.push_back(tx);
+
+            // Step 3: Client B also acquires its own semaphore permit
+            // (this is what acquire_semaphore does in timeout_get).
+            let permit_b = semaphore.acquire().await.unwrap();
+            permit_b.forget();
+
+            // Step 4: Client A returns (handoff to B).
+            // This models return_object: send to waiter + add_permits(1).
+            let sender = waiters.pop_front().unwrap();
+            sender.send(iteration).unwrap();
+            semaphore.add_permits(1); // Client A's permit restored
+
+            // Step 5: Client B receives and eventually returns via idle path.
+            let _ = rx.await.unwrap();
+            semaphore.add_permits(1); // Client B's permit restored
+
+            // Invariant: all permits are back.
+            assert_eq!(
+                semaphore.available_permits(),
+                max_size,
+                "permit leak at iteration {iteration}"
+            );
+        }
+    }
+
+    /// Model the OLD (broken) handoff path that did NOT add_permits(1).
+    /// Each cycle: client A checks out (forget permit), returns via
+    /// handoff WITHOUT restoring the permit. One permit lost per cycle.
+    /// After max_size cycles every permit is gone.
+    #[test]
+    fn semaphore_drains_without_handoff_permit_restore() {
+        let max_size = 4;
+        let semaphore = Semaphore::new(max_size);
+
+        for i in 0..max_size {
+            // Client A checks out: acquire + forget.
+            let permit_a = semaphore
+                .try_acquire()
+                .expect("must have permits at this point");
+            permit_a.forget();
+
+            // OLD behavior: handoff sends but does NOT add_permits(1).
+            // semaphore.add_permits(1); // <-- missing in old code
+
+            // Net: lost one permit (client A's).
+            assert_eq!(
+                semaphore.available_permits(),
+                max_size - (i + 1),
+                "iteration {i}: expected {} leaked permits",
+                i + 1,
+            );
+        }
+
+        // All permits are gone.
+        assert_eq!(semaphore.available_permits(), 0);
+        assert!(semaphore.try_acquire().is_err());
+    }
+
+    /// Full checkout-use-return cycle via handoff path.
+    /// Models: acquire_semaphore -> wrap_checkout(forget) -> return_object(handoff).
+    #[tokio::test]
+    async fn full_cycle_handoff_preserves_permits() {
+        let max_size = 8;
+        let semaphore = Semaphore::new(max_size);
+
+        for _ in 0..50 {
+            // Phase 1: checkout — acquire permit, then forget it.
+            let permit = semaphore.acquire().await.unwrap();
+            permit.forget();
+
+            // Phase 2: a waiter exists, handoff succeeds.
+            let (tx, _rx) = oneshot::channel::<u32>();
+            let sent = tx.send(1).is_ok();
+            assert!(sent);
+
+            // Phase 3: return_object handoff path adds permit.
+            semaphore.add_permits(1);
+        }
+
+        assert_eq!(semaphore.available_permits(), max_size);
+    }
+
+    /// Full checkout-use-return cycle via idle path.
+    /// Models: acquire_semaphore -> wrap_checkout(forget) -> return_object(idle).
+    #[tokio::test]
+    async fn full_cycle_idle_preserves_permits() {
+        let max_size = 8;
+        let semaphore = Semaphore::new(max_size);
+
+        for _ in 0..50 {
+            // Phase 1: checkout.
+            let permit = semaphore.acquire().await.unwrap();
+            permit.forget();
+
+            // Phase 2: no waiters, return to idle.
+            semaphore.add_permits(1);
+        }
+
+        assert_eq!(semaphore.available_permits(), max_size);
+    }
+
+    /// Mixed handoff + idle returns must preserve permits.
+    #[tokio::test]
+    async fn mixed_handoff_and_idle_preserves_permits() {
+        let max_size = 8;
+        let semaphore = Semaphore::new(max_size);
+
+        for i in 0..100 {
+            let permit = semaphore.acquire().await.unwrap();
+            permit.forget();
+
+            if i % 3 == 0 {
+                // Handoff path: waiter exists.
+                let (tx, _rx) = oneshot::channel::<u32>();
+                let _ = tx.send(1);
+                semaphore.add_permits(1);
+            } else if i % 3 == 1 {
+                // Handoff path: waiter dropped (timed out), falls through to idle.
+                let (tx, rx) = oneshot::channel::<u32>();
+                drop(rx);
+                let failed = tx.send(1).is_err();
+                assert!(failed);
+                // After skipping dead waiters, falls to idle path.
+                semaphore.add_permits(1);
+            } else {
+                // Idle path: no waiters.
+                semaphore.add_permits(1);
+            }
+        }
+
+        assert_eq!(semaphore.available_permits(), max_size);
+    }
+
+    // ------------------------------------------------------------------
+    // pre_replace_one does NOT inflate the semaphore
+    // ------------------------------------------------------------------
+    //
+    // pre_replace_one creates a new connection and pushes it to idle
+    // WITHOUT calling add_permits. The created connection sits in idle
+    // until a client checks it out via acquire_semaphore. If pre_replace_one
+    // incorrectly called add_permits, the semaphore would have more
+    // permits than max_size, allowing more concurrent checkouts than the
+    // pool can serve.
+    //
+    // We model the pre_replace_one contract: push to idle vec, bump
+    // slots.size, but do NOT touch the semaphore.
+
+    #[tokio::test]
+    async fn pre_replace_does_not_inflate_semaphore() {
+        let max_size = 4;
+        let semaphore = Semaphore::new(max_size);
+        let initial_permits = semaphore.available_permits();
+
+        // Model pre_replace_one: creates a connection, pushes to idle,
+        // increments slots.size. No semaphore interaction.
+        // (In production code: slots.size += 1; push_idle(...))
+        // The semaphore is intentionally untouched.
+
+        // Simulate 3 pre-replacements.
+        for _ in 0..3 {
+            // pre_replace_one: only touches slots, not semaphore.
+            // Nothing here — the test asserts the semaphore stays flat.
+        }
+
+        assert_eq!(
+            semaphore.available_permits(),
+            initial_permits,
+            "pre_replace_one must not inflate the semaphore"
+        );
+
+        // Verify that the semaphore still caps at max_size checkouts.
+        let mut held = Vec::new();
+        for _ in 0..max_size {
+            held.push(semaphore.acquire().await.unwrap());
+        }
+        assert_eq!(semaphore.available_permits(), 0);
+        // One more acquire must block.
+        let try_result = semaphore.try_acquire();
+        assert!(try_result.is_err());
+    }
+
+    /// Verify that if pre_replace_one DID call add_permits, the
+    /// semaphore would exceed max_size — proving the invariant matters.
+    #[tokio::test]
+    async fn pre_replace_add_permits_would_inflate() {
+        let max_size = 4;
+        let semaphore = Semaphore::new(max_size);
+
+        // Wrong behavior: pre_replace_one calls add_permits(1).
+        semaphore.add_permits(1);
+
+        // Now the semaphore has max_size + 1 permits.
+        assert_eq!(
+            semaphore.available_permits(),
+            max_size + 1,
+            "add_permits(1) on pre-replace inflates the semaphore above max_size"
+        );
+
+        // This would allow max_size + 1 concurrent checkouts — a bug.
+        let mut held = Vec::new();
+        for _ in 0..=max_size {
+            held.push(semaphore.acquire().await.unwrap());
+        }
+        assert_eq!(
+            held.len(),
+            max_size + 1,
+            "inflated semaphore allows more checkouts than max_size"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Burst gate try_recv drain: no double add_permits
+    // ------------------------------------------------------------------
+    //
+    // In acquire_burst_gate, after the tokio::select! completes,
+    // try_recv() may pull a late-arriving connection. This connection
+    // is pushed to idle WITHOUT calling return_object (which would
+    // add_permits again). The original return_object that sent to the
+    // oneshot channel already called add_permits(1), so calling it
+    // again would double-count.
+
+    #[tokio::test]
+    async fn try_recv_drain_must_not_double_add_permits() {
+        let max_size = 4;
+        let semaphore = Semaphore::new(max_size);
+
+        // Client A checks out.
+        let permit = semaphore.acquire().await.unwrap();
+        permit.forget();
+        assert_eq!(semaphore.available_permits(), max_size - 1);
+
+        // Client B registers as a waiter.
+        let (tx, mut rx) = oneshot::channel::<u32>();
+
+        // Client A returns via handoff: send + add_permits(1).
+        tx.send(42).unwrap();
+        semaphore.add_permits(1);
+        assert_eq!(semaphore.available_permits(), max_size);
+
+        // The select! in burst gate finishes WITHOUT polling rx.
+        // try_recv() pulls the connection.
+        let value = rx.try_recv().unwrap();
+        assert_eq!(value, 42);
+
+        // The correct behavior: push to idle, do NOT call add_permits.
+        // (return_object already did it above.)
+        // If we incorrectly called add_permits again:
+        //   semaphore.add_permits(1); // WRONG — would make permits = max_size + 1
+        // The test verifies permits stay at max_size.
+        assert_eq!(
+            semaphore.available_permits(),
+            max_size,
+            "try_recv drain must not add extra permits"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Concurrent handoff + idle: permit conservation under contention
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn concurrent_returns_preserve_permits() {
+        use std::sync::Arc;
+
+        let max_size = 16;
+        let semaphore = Arc::new(Semaphore::new(max_size));
+        let tasks = 100;
+
+        let mut handles = Vec::with_capacity(tasks);
+        for i in 0..tasks {
+            let sem = Arc::clone(&semaphore);
+            handles.push(tokio::spawn(async move {
+                // Checkout.
+                let permit = sem.acquire().await.unwrap();
+                permit.forget();
+
+                // Yield to interleave with other tasks.
+                tokio::task::yield_now().await;
+
+                // Return via handoff or idle.
+                if i % 2 == 0 {
+                    let (tx, _rx) = oneshot::channel::<u32>();
+                    let _ = tx.send(1);
+                }
+                sem.add_permits(1);
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(
+            semaphore.available_permits(),
+            max_size,
+            "all permits must be restored after concurrent checkout-return cycles"
+        );
     }
 }

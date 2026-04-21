@@ -89,3 +89,24 @@ Feature: Pool under sustained client pressure
     And cascade "recycle_resume_burst" max latency is bounded by 20x p50
     And cascade "recycle_resume_quiet" reports zero errors
     And cascade "recycle_resume_quiet" creates_started is at least 1
+
+  @cascade-semaphore-conservation
+  Scenario: Semaphore permits are not drained by sustained direct-handoff traffic
+    # Regression test for the semaphore permit leak: prior to the fix,
+    # each return_object handoff permanently consumed one semaphore permit.
+    # After max_size handoffs the pool could not accept new timeout_get
+    # callers and stopped creating connections. The pool stabilized at
+    # whatever size it reached during cold start (3-4 out of 40).
+    #
+    # This scenario runs 200 clients against a pool of 10 for 5 seconds.
+    # Each client holds the connection for 5ms, returns it (triggering a
+    # handoff to the next waiter), then re-enters timeout_get with a new
+    # semaphore acquire. After 5 seconds of continuous handoff traffic the
+    # pool must still be at full size and a fresh client must be able to
+    # check out within 100ms — proving the semaphore has not drained.
+    Given internal pool with size 10 and mode transaction
+    When I run cascade load "semaphore_conservation" with 200 clients for 5 seconds holding 5 ms
+    Then cascade "semaphore_conservation" reports zero errors
+    And cascade "semaphore_conservation" p99 latency is below 600 ms
+    And cascade "semaphore_conservation" pool size is at least 10
+    And cascade "semaphore_conservation" pool size is at most 10

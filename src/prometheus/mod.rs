@@ -392,6 +392,7 @@ pub(crate) static POOL_SCALING_TOTALS: Lazy<IntCounterVec> = Lazy::new(|| {
             "Per-pool cumulative counters for the anticipation + bounded burst path. Types: \
              creates_started (took a burst slot), \
              burst_gate_waits (had to wait on a Notify), \
+             burst_gate_budget_exhausted (adaptive timeout fired, stopped waiting for handoff), \
              anticipation_wakes_notify (anticipation woke on idle return), \
              anticipation_wakes_timeout (anticipation budget elapsed without return), \
              create_fallback (anticipation did not avoid an allocation), \
