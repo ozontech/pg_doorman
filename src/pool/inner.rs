@@ -258,6 +258,11 @@ const ANTICIPATION_CREATE_RESERVE: Duration = Duration::from_millis(500);
 /// Fallback total budget when `timeouts.wait` is None (no query_wait_timeout).
 const ANTICIPATION_FALLBACK_BUDGET_MS: u64 = 100;
 
+/// Backoff between retries when the burst gate budget is exhausted.
+/// The client stops registering as a handoff waiter and just listens
+/// for `create_done` notifications with this timeout between retries.
+const BURST_GATE_EXHAUSTED_BACKOFF: Duration = Duration::from_millis(50);
+
 /// Burst gate adaptive timeout: minimum budget before exiting the handoff loop.
 /// Below 20ms, fork() + shared_buffers attach on large instances can take longer,
 /// causing unnecessary creates during brief spikes.
@@ -675,7 +680,7 @@ impl Pool {
                     .burst_gate_budget_exhausted
                     .fetch_add(1, Ordering::Relaxed);
                 let notify = self.inner.create_done.notified();
-                let _ = tokio::time::timeout(Duration::from_millis(50), notify).await;
+                let _ = tokio::time::timeout(BURST_GATE_EXHAUSTED_BACKOFF, notify).await;
                 continue;
             }
 

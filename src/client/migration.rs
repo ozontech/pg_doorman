@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use crate::client::buffer_pool::PooledBuffer;
 use crate::client::core::{CachedStatement, Client, PreparedStatementKey};
 use crate::client::util::PREPARED_STATEMENT_COUNTER;
-use crate::config::get_config;
+use crate::config::{get_config, BackendAuthMethod};
 use crate::errors::Error;
 use crate::messages::config_socket::configure_tcp_socket;
 use crate::messages::Parse;
@@ -29,17 +29,14 @@ use super::core::PreparedStatementState;
 /// Only overwrites if the current state is `ScramPending` — avoids clobbering
 /// a valid auth state already established by an earlier migrated client.
 fn restore_backend_auth_if_pending(
-    pool: &Option<ConnectionPool>,
-    migrated_auth: &Option<crate::config::BackendAuthMethod>,
+    pool: Option<&ConnectionPool>,
+    migrated_auth: Option<&BackendAuthMethod>,
     username: &str,
     pool_name: &str,
 ) {
     if let (Some(p), Some(auth)) = (pool, migrated_auth) {
         if let Some(ref ba_lock) = p.address.backend_auth {
-            let needs_update = matches!(
-                *ba_lock.read(),
-                crate::config::BackendAuthMethod::ScramPending
-            );
+            let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
             if needs_update {
                 *ba_lock.write() = auth.clone();
                 info!(
@@ -227,16 +224,16 @@ where
         if let Some(pool) = get_pool(&self.pool_name, &self.username) {
             if let Some(ref ba_lock) = pool.address.backend_auth {
                 match &*ba_lock.read() {
-                    crate::config::BackendAuthMethod::Md5PassTheHash(hash) => {
+                    BackendAuthMethod::Md5PassTheHash(hash) => {
                         buf.put_u8(1);
                         put_str(&mut buf, hash);
                     }
-                    crate::config::BackendAuthMethod::ScramPassthrough(client_key) => {
+                    BackendAuthMethod::ScramPassthrough(client_key) => {
                         buf.put_u8(2);
                         buf.put_u16(client_key.len() as u16);
                         buf.put_slice(client_key);
                     }
-                    crate::config::BackendAuthMethod::ScramPending => {
+                    BackendAuthMethod::ScramPending => {
                         buf.put_u8(3);
                     }
                 }
@@ -297,7 +294,7 @@ struct DeserializedState {
     prepared_entries: Vec<PreparedEntry>,
     #[allow(dead_code)]
     use_tls: bool,
-    backend_auth: Option<crate::config::BackendAuthMethod>,
+    backend_auth: Option<BackendAuthMethod>,
 }
 
 struct PreparedEntry {
@@ -411,7 +408,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
             1 => {
                 // Md5PassTheHash
                 let hash = get_str(&mut buf)?;
-                Some(crate::config::BackendAuthMethod::Md5PassTheHash(hash))
+                Some(BackendAuthMethod::Md5PassTheHash(hash))
             }
             2 => {
                 // ScramPassthrough(ClientKey)
@@ -420,9 +417,9 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
                 require(&buf, key_len)?;
                 let mut key = vec![0u8; key_len];
                 buf.copy_to_slice(&mut key);
-                Some(crate::config::BackendAuthMethod::ScramPassthrough(key))
+                Some(BackendAuthMethod::ScramPassthrough(key))
             }
-            3 => Some(crate::config::BackendAuthMethod::ScramPending),
+            3 => Some(BackendAuthMethod::ScramPending),
             _ => None,
         }
     } else {
@@ -472,8 +469,8 @@ pub async fn reconstruct_client(
     let pool = get_pool(&state.pool_name, &state.username);
 
     restore_backend_auth_if_pending(
-        &pool,
-        &state.backend_auth,
+        pool.as_ref(),
+        state.backend_auth.as_ref(),
         &state.username,
         &state.pool_name,
     );
@@ -577,8 +574,8 @@ pub async fn reconstruct_tls_client(
     let pool = get_pool(&state.pool_name, &state.username);
 
     restore_backend_auth_if_pending(
-        &pool,
-        &state.backend_auth,
+        pool.as_ref(),
+        state.backend_auth.as_ref(),
         &state.username,
         &state.pool_name,
     );
