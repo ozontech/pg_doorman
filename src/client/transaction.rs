@@ -926,6 +926,12 @@ where
                     };
                     self.stats.active_idle();
 
+                    // Session mode: reset query timer per message so query_time
+                    // reflects individual queries, not cumulative session duration.
+                    if !self.transaction_mode {
+                        query_start_at = now();
+                    }
+
                     // The message will be forwarded to the server intact. We still would like to
                     // parse it below to figure out what to do with it.
 

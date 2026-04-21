@@ -22,6 +22,8 @@ The `tokio::select!` in the burst gate loop randomly picked among ready branches
 
 `xact_time` percentiles in session mode showed the entire session duration instead of individual transaction time. Now recorded per-transaction at each `ReadyForQuery(Idle)`, matching transaction mode semantics.
 
+`query_time` had the same accumulation bug: the timer was set once before the inner loop and never reset, so each subsequent query reported the cumulative session duration. Now reset per-query in session mode.
+
 #### Adaptive anticipation budget
 
 Anticipation wait (formerly fixed 300-500ms) scales with real transaction latency: `xact_p99 * 2 +/- 20%` jitter, clamped to [5ms, 500ms]. Cold start default: 100ms.
