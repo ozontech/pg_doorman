@@ -293,6 +293,14 @@ impl Config {
             }
         };
 
+        info!("Server TLS mode: {}", self.general.server_tls_mode);
+        if let Some(ref ca) = self.general.server_tls_ca_cert {
+            info!("Server TLS CA cert: {ca}");
+        }
+        if let Some(ref cert) = self.general.server_tls_certificate {
+            info!("Server TLS certificate: {cert}");
+        }
+
         for (pool_name, pool) in &self.pools {
             info!("[pool: {}] Pool mode: {}", pool_name, pool.pool_mode);
             info!(
@@ -433,6 +441,98 @@ impl Config {
                     }
                 }
             };
+        }
+
+        // Validate server-facing TLS
+        {
+            let global_mode = tls::ServerTlsMode::from_string(&self.general.server_tls_mode)?;
+
+            if global_mode.requires_ca() && self.general.server_tls_ca_cert.is_none() {
+                return Err(Error::BadConfig(format!(
+                    "server_tls_mode is '{global_mode}' but server_tls_ca_cert is not set"
+                )));
+            }
+
+            match (
+                &self.general.server_tls_certificate,
+                &self.general.server_tls_private_key,
+            ) {
+                (Some(_), None) => {
+                    return Err(Error::BadConfig(
+                        "server_tls_certificate is set but server_tls_private_key is not"
+                            .to_string(),
+                    ));
+                }
+                (None, Some(_)) => {
+                    return Err(Error::BadConfig(
+                        "server_tls_private_key is set but server_tls_certificate is not"
+                            .to_string(),
+                    ));
+                }
+                _ => {}
+            }
+
+            // Validate that certificate files are readable at startup
+            if global_mode != tls::ServerTlsMode::Disable {
+                tls::ServerTlsConfig::new(
+                    global_mode,
+                    self.general.server_tls_ca_cert.as_deref().map(Path::new),
+                    self.general
+                        .server_tls_certificate
+                        .as_deref()
+                        .map(Path::new),
+                    self.general
+                        .server_tls_private_key
+                        .as_deref()
+                        .map(Path::new),
+                )?;
+            }
+
+            // Validate per-pool overrides
+            for (pool_name, pool_config) in &self.pools {
+                let effective_mode = pool_config
+                    .server_tls_mode
+                    .as_deref()
+                    .unwrap_or(&self.general.server_tls_mode);
+                let mode = tls::ServerTlsMode::from_string(effective_mode).map_err(|_| {
+                    Error::BadConfig(format!(
+                        "pool '{pool_name}': invalid server_tls_mode '{effective_mode}'"
+                    ))
+                })?;
+
+                let effective_ca = pool_config
+                    .server_tls_ca_cert
+                    .as_ref()
+                    .or(self.general.server_tls_ca_cert.as_ref());
+                let effective_cert = pool_config
+                    .server_tls_certificate
+                    .as_ref()
+                    .or(self.general.server_tls_certificate.as_ref());
+                let effective_key = pool_config
+                    .server_tls_private_key
+                    .as_ref()
+                    .or(self.general.server_tls_private_key.as_ref());
+
+                if mode.requires_ca() && effective_ca.is_none() {
+                    return Err(Error::BadConfig(format!(
+                        "pool '{pool_name}': server_tls_mode is '{mode}' but no server_tls_ca_cert"
+                    )));
+                }
+
+                match (&effective_cert, &effective_key) {
+                    (Some(_), None) => {
+                        return Err(Error::BadConfig(format!(
+                            "pool '{pool_name}': server_tls_certificate without server_tls_private_key"
+                        )));
+                    }
+                    (None, Some(_)) => {
+                        return Err(Error::BadConfig(format!(
+                            "pool '{pool_name}': server_tls_private_key without server_tls_certificate"
+                        )));
+                    }
+                    _ => {}
+                }
+            }
         }
 
         for pool in self.pools.values_mut() {
