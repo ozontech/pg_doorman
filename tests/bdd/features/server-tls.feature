@@ -112,9 +112,7 @@ Feature: Server-side TLS connections
       password = ""
       pool_size = 1
       """
-    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
-    And we send SimpleQuery "SELECT 1" to session "s1" and store response
-    Then session "s1" should receive error containing "server connections"
+    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "" fails
 
   @server-tls-disable
   Scenario: disable mode uses plain TCP

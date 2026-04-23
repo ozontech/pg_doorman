@@ -14,7 +14,9 @@ pub fn generate_config_with_client<
     let mut result = Config::default();
     result.general.host = config.host.as_deref().unwrap_or("localhost").to_string();
     result.general.port = 6432; // Default port for pg_doorman
-    result.general.server_tls = config.ssl;
+    if config.ssl {
+        result.general.server_tls_mode = "require".to_string();
+    }
 
     // Store users with their authentication details
     let mut users_vec = Vec::new();
@@ -78,6 +80,10 @@ pub fn generate_config_with_client<
                         reserve_pool_size: None,
                         reserve_pool_timeout: None,
                         min_guaranteed_pool_size: None,
+                        server_tls_mode: None,
+                        server_tls_ca_cert: None,
+                        server_tls_certificate: None,
+                        server_tls_private_key: None,
                         auth_query: None,
                         users: users_vec.clone(),
                     },
@@ -134,7 +140,7 @@ fn test_generate_config_with_default_parameters() {
     // Verify the configuration has the expected values
     assert_eq!(config_result.general.host, "localhost");
     assert_eq!(config_result.general.port, 6432);
-    assert!(!config_result.general.server_tls);
+    assert_eq!(config_result.general.server_tls_mode, "prefer");
 
     // Verify the pools
     assert_eq!(config_result.pools.len(), 2);
@@ -202,7 +208,7 @@ fn test_generate_config_with_custom_parameters() {
     // Verify the configuration has the expected values
     assert_eq!(config_result.general.host, "testhost");
     assert_eq!(config_result.general.port, 6432);
-    assert!(!config_result.general.server_tls);
+    assert_eq!(config_result.general.server_tls_mode, "prefer");
 
     // Verify the pools
     assert_eq!(config_result.pools.len(), 2);
@@ -264,7 +270,7 @@ fn test_generate_config_with_ssl_enabled() {
     let config_result = result.unwrap();
 
     // Verify SSL is enabled
-    assert!(config_result.general.server_tls);
+    assert_eq!(config_result.general.server_tls_mode, "require");
 }
 
 #[test]
