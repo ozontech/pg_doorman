@@ -133,6 +133,18 @@ pub struct Pool {
     pub min_guaranteed_pool_size: Option<u32>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls_mode: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls_ca_cert: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls_certificate: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls_private_key: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_query: Option<AuthQueryConfig>,
 
     #[serde(
@@ -334,6 +346,10 @@ impl Default for Pool {
             reserve_pool_size: None,
             reserve_pool_timeout: None,
             min_guaranteed_pool_size: None,
+            server_tls_mode: None,
+            server_tls_ca_cert: None,
+            server_tls_certificate: None,
+            server_tls_private_key: None,
             auth_query: None,
         }
     }

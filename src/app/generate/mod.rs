@@ -24,7 +24,9 @@ pub fn generate_config(config: &GenerateConfig) -> Result<Config, Box<dyn Error>
     let mut result = Config::default();
     result.general.host = config.host.as_deref().unwrap_or("localhost").to_string();
     result.general.port = 6432; // Default port for pg_doorman
-    result.general.server_tls = config.ssl;
+    if config.ssl {
+        result.general.server_tls_mode = "require".to_string();
+    }
 
     // Create connection string from the provided configuration
     let mut connection_string = format!(
@@ -82,7 +84,9 @@ pub fn generate_config_with_client(
     let mut result = Config::default();
     result.general.host = "0.0.0.0".to_string();
     result.general.port = 6432; // Default port for pg_doorman
-    result.general.server_tls = config.ssl;
+    if config.ssl {
+        result.general.server_tls_mode = "require".to_string();
+    }
     // Default HBA: trust all local connections (matches typical dev/localhost setup)
     result.general.pg_hba = Some(PgHba::from_content(
         "host all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\nlocal all all trust",
@@ -153,6 +157,10 @@ pub fn generate_config_with_client(
                     reserve_pool_size: None,
                     reserve_pool_timeout: None,
                     min_guaranteed_pool_size: None,
+                    server_tls_mode: None,
+                    server_tls_ca_cert: None,
+                    server_tls_certificate: None,
+                    server_tls_private_key: None,
                     auth_query: None,
                     users: users.clone(),
                 },

@@ -156,11 +156,17 @@ pub struct General {
     #[serde(default = "General::default_tls_rate_limit_per_second")]
     pub tls_rate_limit_per_second: usize,
 
-    #[serde(default)] // false
-    pub server_tls: bool,
+    #[serde(default = "General::default_server_tls_mode")]
+    pub server_tls_mode: String,
 
-    #[serde(default)] // false
-    pub verify_server_certificate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls_ca_cert: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls_certificate: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_tls_private_key: Option<String>,
 
     pub admin_username: String,
     pub admin_password: String,
@@ -207,6 +213,10 @@ impl General {
 
     pub fn default_tls_rate_limit_per_second() -> usize {
         0
+    }
+
+    pub fn default_server_tls_mode() -> String {
+        "prefer".to_string()
     }
     pub fn default_server_lifetime() -> Duration {
         Duration::from_mins(20) // 20 min
@@ -427,8 +437,10 @@ impl Default for General {
             tls_ca_cert: None,
             tls_mode: None,
             tls_rate_limit_per_second: Self::default_tls_rate_limit_per_second(),
-            server_tls: false,
-            verify_server_certificate: false,
+            server_tls_mode: Self::default_server_tls_mode(),
+            server_tls_ca_cert: None,
+            server_tls_certificate: None,
+            server_tls_private_key: None,
             admin_username: String::from("admin"),
             admin_password: String::from("admin"),
             server_lifetime: Self::default_server_lifetime(),

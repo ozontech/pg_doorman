@@ -726,13 +726,7 @@ impl Server {
         let mut stream = if address.host.starts_with('/') {
             create_unix_stream_inner(&address.host, address.port).await?
         } else {
-            create_tcp_stream_inner(
-                &address.host,
-                address.port,
-                config.general.server_tls,
-                config.general.verify_server_certificate,
-            )
-            .await?
+            create_tcp_stream_inner(&address.host, address.port, false, false).await?
         };
 
         let username = user
