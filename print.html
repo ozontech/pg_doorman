@@ -162,7 +162,7 @@
 <p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
 It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
 Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.5.2</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.5.3</a></p>
 <h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
 <p>Run PgDoorman instantly using Docker:</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
@@ -3863,6 +3863,9 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <li>Latency values are absolute, measured per-transaction</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="353-apr-22-2026"><a class="header" href="#353-apr-22-2026">3.5.3 <small>Apr 22, 2026</small></a></h3>
+<h4 id="prepared-statement-cache-overflow-under-concurrent-load"><a class="header" href="#prepared-statement-cache-overflow-under-concurrent-load">Prepared statement cache overflow under concurrent load</a></h4>
+<p>The pool-level prepared statement cache could grow well above its configured <code>prepared_statements_cache_size</code> under concurrent client traffic. Production showed 480 entries with a limit of 300. The check-then-insert sequence in the cache had a race: multiple clients passed the size check simultaneously, each inserted without evicting. Now insertion happens first, followed by eviction in a loop until the cache is within bounds.</p>
 <h3 id="352-apr-21-2026"><a class="header" href="#352-apr-21-2026">3.5.2 <small>Apr 21, 2026</small></a></h3>
 <h4 id="semaphore-permit-leak-on-direct-handoff"><a class="header" href="#semaphore-permit-leak-on-direct-handoff">Semaphore permit leak on direct handoff</a></h4>
 <p>Each <code>return_object</code> handoff (delivering a connection to a waiting client via oneshot channel) permanently consumed one semaphore permit. After <code>max_size</code> handoffs the pool semaphore was fully drained, blocking all new <code>timeout_get</code> callers. The pool could not create connections and stabilized at whatever size it reached during cold start (typically 4-8 out of 40).</p>
