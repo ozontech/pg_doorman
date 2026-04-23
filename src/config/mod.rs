@@ -44,6 +44,7 @@ pub use include::{GeneralWithInclude, Include, ServerConfig};
 pub use pool::{AuthQueryConfig, Pool};
 pub use prometheus::Prometheus;
 pub use talos::Talos;
+pub use tls::{ServerTlsConfig, ServerTlsMode};
 pub use user::User;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

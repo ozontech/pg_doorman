@@ -150,6 +150,80 @@ fn load_certificate(path: &Path) -> Result<Certificate, Error> {
     })
 }
 
+/// Resolved TLS configuration for server-facing connections.
+/// Built once per pool during config load, shared via Arc.
+#[derive(Debug)]
+pub struct ServerTlsConfig {
+    pub mode: ServerTlsMode,
+    pub connector: Option<tokio_native_tls::TlsConnector>,
+}
+
+impl ServerTlsConfig {
+    /// Build a ServerTlsConfig from mode and optional certificate paths.
+    pub fn new(
+        mode: ServerTlsMode,
+        ca_cert: Option<&Path>,
+        client_cert: Option<&Path>,
+        client_key: Option<&Path>,
+    ) -> Result<Self, Error> {
+        if mode == ServerTlsMode::Disable {
+            return Ok(ServerTlsConfig {
+                mode,
+                connector: None,
+            });
+        }
+
+        let mut builder = native_tls::TlsConnector::builder();
+        builder.min_protocol_version(Some(Protocol::Tlsv12));
+
+        match mode {
+            ServerTlsMode::Prefer | ServerTlsMode::Require => {
+                builder.danger_accept_invalid_certs(true);
+                builder.danger_accept_invalid_hostnames(true);
+            }
+            ServerTlsMode::VerifyCa => {
+                if let Some(ca_path) = ca_cert {
+                    let ca = load_certificate(ca_path)?;
+                    builder.add_root_certificate(ca);
+                }
+                builder.danger_accept_invalid_hostnames(true);
+            }
+            ServerTlsMode::VerifyFull => {
+                if let Some(ca_path) = ca_cert {
+                    let ca = load_certificate(ca_path)?;
+                    builder.add_root_certificate(ca);
+                }
+            }
+            ServerTlsMode::Disable => unreachable!(),
+        }
+
+        // mTLS: present client certificate to server
+        if let (Some(cert_path), Some(key_path)) = (client_cert, client_key) {
+            let identity = load_identity(cert_path, key_path).map_err(|err| {
+                Error::BadConfig(format!(
+                    "Failed to load server TLS client identity from {} and {}: {}",
+                    cert_path.display(),
+                    key_path.display(),
+                    err
+                ))
+            })?;
+            builder.identity(identity);
+        }
+
+        let connector = builder
+            .build()
+            .map(tokio_native_tls::TlsConnector::from)
+            .map_err(|err| {
+                Error::BadConfig(format!("Failed to create server TLS connector: {err}"))
+            })?;
+
+        Ok(ServerTlsConfig {
+            mode,
+            connector: Some(connector),
+        })
+    }
+}
+
 /// Build a TLS acceptor from certificate, key, and optional CA certificate
 #[allow(unused_variables)]
 pub fn build_acceptor(
@@ -293,6 +367,39 @@ mod tests {
         // Invalid mode
         assert!(tls_mode_to_verification("disable").is_err());
         assert!(tls_mode_to_verification("invalid").is_err());
+    }
+
+    #[test]
+    fn test_server_tls_config_disable() {
+        let config = ServerTlsConfig::new(ServerTlsMode::Disable, None, None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::Disable);
+        assert!(config.connector.is_none());
+    }
+
+    #[test]
+    fn test_server_tls_config_prefer_no_certs() {
+        let config = ServerTlsConfig::new(ServerTlsMode::Prefer, None, None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::Prefer);
+        assert!(config.connector.is_some());
+    }
+
+    #[test]
+    fn test_server_tls_config_require_no_certs() {
+        let config = ServerTlsConfig::new(ServerTlsMode::Require, None, None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::Require);
+        assert!(config.connector.is_some());
+    }
+
+    #[test]
+    fn test_server_tls_config_verify_ca_with_cert() {
+        let ca_path = PathBuf::from("tests/data/ssl/root.crt");
+        if !ca_path.exists() {
+            return; // skip if test certs not available
+        }
+        let config =
+            ServerTlsConfig::new(ServerTlsMode::VerifyCa, Some(&ca_path), None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::VerifyCa);
+        assert!(config.connector.is_some());
     }
 
     #[test]
