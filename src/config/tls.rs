@@ -22,6 +22,65 @@ pub fn load_identity(cert: &Path, key: &Path) -> io::Result<Identity> {
     Identity::from_pkcs8(&cert_body, &key_body).map_err(|err| io::Error::other(err.to_string()))
 }
 
+/// TLS mode for server-facing (backend) connections.
+#[derive(Default, PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
+pub enum ServerTlsMode {
+    /// Do not use TLS
+    Disable,
+    /// Try TLS, fall back to plain if server doesn't support it
+    #[default]
+    Prefer,
+    /// Require TLS, fail if server doesn't support it
+    Require,
+    /// Require TLS and verify server certificate against CA
+    VerifyCa,
+    /// Require TLS, verify CA, and verify hostname matches certificate
+    VerifyFull,
+}
+
+impl std::fmt::Display for ServerTlsMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServerTlsMode::Disable => write!(f, "disable"),
+            ServerTlsMode::Prefer => write!(f, "prefer"),
+            ServerTlsMode::Require => write!(f, "require"),
+            ServerTlsMode::VerifyCa => write!(f, "verify-ca"),
+            ServerTlsMode::VerifyFull => write!(f, "verify-full"),
+        }
+    }
+}
+
+impl ServerTlsMode {
+    pub fn from_string(s: &str) -> Result<Self, Error> {
+        match s {
+            "disable" => Ok(ServerTlsMode::Disable),
+            "prefer" => Ok(ServerTlsMode::Prefer),
+            "require" => Ok(ServerTlsMode::Require),
+            "verify-ca" => Ok(ServerTlsMode::VerifyCa),
+            "verify-full" => Ok(ServerTlsMode::VerifyFull),
+            _ => Err(Error::BadConfig(format!("Invalid server_tls_mode: {s}"))),
+        }
+    }
+
+    /// Whether this mode requires a CA certificate to be configured.
+    pub fn requires_ca(&self) -> bool {
+        matches!(self, ServerTlsMode::VerifyCa | ServerTlsMode::VerifyFull)
+    }
+
+    /// Whether this mode sends an SSLRequest to the server.
+    pub fn sends_ssl_request(&self) -> bool {
+        !matches!(self, ServerTlsMode::Disable)
+    }
+
+    /// Whether this mode requires the server to support TLS.
+    pub fn requires_tls(&self) -> bool {
+        matches!(
+            self,
+            ServerTlsMode::Require | ServerTlsMode::VerifyCa | ServerTlsMode::VerifyFull
+        )
+    }
+}
+
 /// TLS mode options for connections
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 pub enum TLSMode {
@@ -148,6 +207,50 @@ pub fn build_acceptor(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_server_tls_mode_from_string() {
+        assert_eq!(
+            ServerTlsMode::from_string("disable").unwrap(),
+            ServerTlsMode::Disable
+        );
+        assert_eq!(
+            ServerTlsMode::from_string("prefer").unwrap(),
+            ServerTlsMode::Prefer
+        );
+        assert_eq!(
+            ServerTlsMode::from_string("require").unwrap(),
+            ServerTlsMode::Require
+        );
+        assert_eq!(
+            ServerTlsMode::from_string("verify-ca").unwrap(),
+            ServerTlsMode::VerifyCa
+        );
+        assert_eq!(
+            ServerTlsMode::from_string("verify-full").unwrap(),
+            ServerTlsMode::VerifyFull
+        );
+        assert!(ServerTlsMode::from_string("invalid").is_err());
+        assert!(ServerTlsMode::from_string("").is_err());
+    }
+
+    #[test]
+    fn test_server_tls_mode_display() {
+        assert_eq!(ServerTlsMode::Disable.to_string(), "disable");
+        assert_eq!(ServerTlsMode::Prefer.to_string(), "prefer");
+        assert_eq!(ServerTlsMode::Require.to_string(), "require");
+        assert_eq!(ServerTlsMode::VerifyCa.to_string(), "verify-ca");
+        assert_eq!(ServerTlsMode::VerifyFull.to_string(), "verify-full");
+    }
+
+    #[test]
+    fn test_server_tls_mode_requires_ca() {
+        assert!(!ServerTlsMode::Disable.requires_ca());
+        assert!(!ServerTlsMode::Prefer.requires_ca());
+        assert!(!ServerTlsMode::Require.requires_ca());
+        assert!(ServerTlsMode::VerifyCa.requires_ca());
+        assert!(ServerTlsMode::VerifyFull.requires_ca());
+    }
 
     #[test]
     fn test_tls_mode_from_string() {
