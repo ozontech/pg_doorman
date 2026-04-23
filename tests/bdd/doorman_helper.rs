@@ -1,5 +1,8 @@
 use crate::service_helper::stop_process;
-use crate::utils::{create_config_file, create_temp_file, get_stdio_config, is_debug_mode};
+use crate::utils::{
+    create_config_file, create_temp_file, get_stdio_config, is_debug_mode, is_root,
+    set_file_permissions,
+};
 use crate::world::DoormanWorld;
 use cucumber::{gherkin::Step, given, then, when};
 use portpicker::pick_unused_port;
@@ -59,6 +62,176 @@ pub async fn generate_ssl_certificates(world: &mut DoormanWorld) {
 
     world.ssl_key_file = Some(key_file);
     world.ssl_cert_file = Some(cert_file);
+}
+
+/// Helper: run openssl command and panic on failure
+fn run_openssl(args: &[&str]) {
+    let output = Command::new("openssl")
+        .args(args)
+        .output()
+        .expect("Failed to execute openssl");
+    if !output.status.success() {
+        panic!(
+            "openssl {} failed:\nstdout: {}\nstderr: {}",
+            args[0],
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// Generate a full PKI for PostgreSQL server-side TLS testing:
+/// CA, server cert (with SAN for localhost/127.0.0.1), client cert, and a "wrong" CA.
+#[given("PostgreSQL SSL certificates are generated")]
+pub async fn generate_pg_ssl_certificates(world: &mut DoormanWorld) {
+    // --- CA ---
+    let ca_key_file = NamedTempFile::new().expect("Failed to create temp CA key file");
+    let ca_cert_file = NamedTempFile::new().expect("Failed to create temp CA cert file");
+    let ca_key_path = ca_key_file.path().to_str().unwrap().to_string();
+    let ca_cert_path = ca_cert_file.path().to_str().unwrap().to_string();
+
+    run_openssl(&["genrsa", "-out", &ca_key_path, "2048"]);
+    run_openssl(&[
+        "req",
+        "-new",
+        "-x509",
+        "-key",
+        &ca_key_path,
+        "-out",
+        &ca_cert_path,
+        "-days",
+        "1",
+        "-subj",
+        "/CN=TestCA",
+    ]);
+
+    // --- Server cert (with SAN for localhost + 127.0.0.1) ---
+    let server_key_file = NamedTempFile::new().expect("Failed to create temp server key file");
+    let server_cert_file = NamedTempFile::new().expect("Failed to create temp server cert file");
+    let server_csr_file = NamedTempFile::new().expect("Failed to create temp server CSR file");
+    let server_key_path = server_key_file.path().to_str().unwrap().to_string();
+    let server_cert_path = server_cert_file.path().to_str().unwrap().to_string();
+    let server_csr_path = server_csr_file.path().to_str().unwrap().to_string();
+
+    // SAN extension file
+    let san_ext_file = tempfile::Builder::new()
+        .suffix(".cnf")
+        .tempfile()
+        .expect("Failed to create SAN extfile");
+    std::fs::write(
+        san_ext_file.path(),
+        "subjectAltName=DNS:localhost,IP:127.0.0.1\n",
+    )
+    .expect("Failed to write SAN extfile");
+    let san_ext_path = san_ext_file.path().to_str().unwrap().to_string();
+
+    run_openssl(&["genrsa", "-out", &server_key_path, "2048"]);
+    run_openssl(&[
+        "req",
+        "-new",
+        "-key",
+        &server_key_path,
+        "-out",
+        &server_csr_path,
+        "-subj",
+        "/CN=localhost",
+    ]);
+    run_openssl(&[
+        "x509",
+        "-req",
+        "-in",
+        &server_csr_path,
+        "-CA",
+        &ca_cert_path,
+        "-CAkey",
+        &ca_key_path,
+        "-CAcreateserial",
+        "-out",
+        &server_cert_path,
+        "-days",
+        "1",
+        "-extfile",
+        &san_ext_path,
+    ]);
+
+    // PostgreSQL requires server key to be mode 0600
+    set_file_permissions(server_key_file.path(), 0o600);
+    // If running as root, PostgreSQL runs as postgres user -- chown the cert files
+    if is_root() {
+        for path in [&server_key_path, &server_cert_path, &ca_cert_path] {
+            Command::new("chown")
+                .arg("postgres:postgres")
+                .arg(path)
+                .status()
+                .expect("Failed to chown SSL file");
+        }
+    }
+
+    // --- Client cert (for mTLS, CN=pg_doorman) ---
+    let client_key_file = NamedTempFile::new().expect("Failed to create temp client key file");
+    let client_cert_file = NamedTempFile::new().expect("Failed to create temp client cert file");
+    let client_csr_file = NamedTempFile::new().expect("Failed to create temp client CSR file");
+    let client_key_path = client_key_file.path().to_str().unwrap().to_string();
+    let client_cert_path = client_cert_file.path().to_str().unwrap().to_string();
+    let client_csr_path = client_csr_file.path().to_str().unwrap().to_string();
+
+    run_openssl(&["genrsa", "-out", &client_key_path, "2048"]);
+    run_openssl(&[
+        "req",
+        "-new",
+        "-key",
+        &client_key_path,
+        "-out",
+        &client_csr_path,
+        "-subj",
+        "/CN=pg_doorman",
+    ]);
+    run_openssl(&[
+        "x509",
+        "-req",
+        "-in",
+        &client_csr_path,
+        "-CA",
+        &ca_cert_path,
+        "-CAkey",
+        &ca_key_path,
+        "-CAcreateserial",
+        "-out",
+        &client_cert_path,
+        "-days",
+        "1",
+    ]);
+
+    // --- Wrong CA (independent CA that did NOT sign the server cert) ---
+    let wrong_ca_key_file = NamedTempFile::new().expect("Failed to create temp wrong CA key file");
+    let wrong_ca_cert_file =
+        NamedTempFile::new().expect("Failed to create temp wrong CA cert file");
+    let wrong_ca_key_path = wrong_ca_key_file.path().to_str().unwrap().to_string();
+    let wrong_ca_cert_path = wrong_ca_cert_file.path().to_str().unwrap().to_string();
+
+    run_openssl(&["genrsa", "-out", &wrong_ca_key_path, "2048"]);
+    run_openssl(&[
+        "req",
+        "-new",
+        "-x509",
+        "-key",
+        &wrong_ca_key_path,
+        "-out",
+        &wrong_ca_cert_path,
+        "-days",
+        "1",
+        "-subj",
+        "/CN=WrongCA",
+    ]);
+
+    // Store everything in world (NamedTempFile keeps files alive until dropped)
+    world.pg_ssl_ca_key_file = Some(ca_key_file);
+    world.pg_ssl_ca_cert_file = Some(ca_cert_file);
+    world.pg_ssl_cert_file = Some(server_cert_file);
+    world.pg_ssl_key_file = Some(server_key_file);
+    world.pg_ssl_client_cert_file = Some(client_cert_file);
+    world.pg_ssl_client_key_file = Some(client_key_file);
+    world.pg_ssl_wrong_ca_cert_file = Some(wrong_ca_cert_file);
 }
 
 /// Set pg_doorman hba file with inline content
