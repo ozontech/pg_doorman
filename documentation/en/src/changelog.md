@@ -1,5 +1,11 @@
 # Changelog
 
+### 3.5.3 <small>Apr 22, 2026</small>
+
+#### Prepared statement cache overflow under concurrent load
+
+The pool-level prepared statement cache could grow well above its configured `prepared_statements_cache_size` under concurrent client traffic. Production showed 480 entries with a limit of 300. The check-then-insert sequence in the cache had a race: multiple clients passed the size check simultaneously, each inserted without evicting. Now insertion happens first, followed by eviction in a loop until the cache is within bounds.
+
 ### 3.5.2 <small>Apr 21, 2026</small>
 
 #### Semaphore permit leak on direct handoff

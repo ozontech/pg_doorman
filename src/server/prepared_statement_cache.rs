@@ -91,12 +91,9 @@ impl PreparedStatementCache {
         // then rewrite the statement name
         let new_parse = Arc::new(parse.clone().intern_query(hash).rewrite());
 
-        // Check if we need to evict before inserting
-        if self.cache.len() >= self.max_size {
-            self.evict_oldest();
-        }
-
-        // Insert the new entry
+        // Insert first, then evict excess. Reversing the order closes
+        // the race where N concurrent callers all pass len() >= max_size
+        // before any eviction runs, pushing the cache far above the limit.
         self.cache.insert(
             hash,
             CacheEntry {
@@ -104,6 +101,10 @@ impl PreparedStatementCache {
                 count_used: timestamp,
             },
         );
+
+        while self.cache.len() > self.max_size {
+            self.evict_oldest();
+        }
 
         new_parse
     }
@@ -176,5 +177,82 @@ impl PreparedStatementCache {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::{BufMut, BytesMut};
+    use std::sync::Arc;
+
+    /// Build a minimal Parse message for testing.
+    fn make_parse(name: &str, query: &str) -> Parse {
+        let mut buf = BytesMut::new();
+        buf.put_u8(b'P');
+        let name_bytes = name.as_bytes();
+        let query_bytes = query.as_bytes();
+        // len = 4 (self) + name + null + query + null + 2 (num_params)
+        let len = 4 + name_bytes.len() + 1 + query_bytes.len() + 1 + 2;
+        buf.put_i32(len as i32);
+        buf.put_slice(name_bytes);
+        buf.put_u8(0); // null terminator
+        buf.put_slice(query_bytes);
+        buf.put_u8(0); // null terminator
+        buf.put_i16(0); // no params
+        Parse::try_from(&buf).unwrap()
+    }
+
+    /// Compute hash the same way callers do.
+    fn hash_query(query: &str) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        query.hash(&mut h);
+        h.finish()
+    }
+
+    /// Concurrent inserts may temporarily overshoot max_size by the number
+    /// of concurrent inserters, but must not grow without bound.
+    #[test]
+    fn concurrent_inserts_bounded_overshoot() {
+        let max = 50;
+        let cache = Arc::new(PreparedStatementCache::new(max, 4));
+        let threads = 20;
+        let inserts_per_thread = 10; // total 200 unique inserts into cache of 50
+
+        let barrier = Arc::new(std::sync::Barrier::new(threads));
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let cache = cache.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for i in 0..inserts_per_thread {
+                        let query = format!("SELECT {} FROM t{}", i, t);
+                        let hash = hash_query(&query);
+                        let parse = make_parse("stmt", &query);
+                        cache.get_or_insert(&parse, hash);
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let final_size = cache.len();
+        // Overshoot is bounded by the number of concurrent threads.
+        // Without the fix, this was 160 (3.2x max_size).
+        let allowed = max + threads;
+        assert!(
+            final_size <= allowed,
+            "cache size {} exceeded allowed {} (max_size {} + {} threads)",
+            final_size,
+            allowed,
+            max,
+            threads,
+        );
     }
 }
