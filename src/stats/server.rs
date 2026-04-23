@@ -611,6 +611,7 @@ mod tests {
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
             backend_auth: None,
+            ..crate::config::Address::default()
         };
 
         // Create a ServerStats with a fixed server_id for testing
@@ -647,6 +648,7 @@ mod tests {
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
             backend_auth: None,
+            ..Address::default()
         };
 
         // Create a ServerStats with a fixed server_id for testing

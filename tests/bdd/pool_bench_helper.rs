@@ -46,6 +46,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         backend_auth: None,
         pool_name: "bench_pool".to_string(),
         stats: Arc::new(AddressStats::default()),
+        ..Address::default()
     };
 
     // Create User
@@ -397,6 +398,7 @@ async fn setup_internal_pool_with_lifetimes(
         backend_auth: None,
         pool_name: "bench_pool".to_string(),
         stats: Arc::new(AddressStats::default()),
+        ..Address::default()
     };
 
     let user = User {

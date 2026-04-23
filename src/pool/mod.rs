@@ -8,7 +8,9 @@ use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use crate::config::{get_config, Address, BackendAuthMethod, General, PoolMode, User};
+use crate::config::{
+    get_config, tls, Address, BackendAuthMethod, General, Pool as ConfigPool, PoolMode, User,
+};
 use crate::errors::Error;
 use crate::messages::Parse;
 
@@ -75,6 +77,40 @@ fn set_client_server_map(csm: ClientServerMap) {
 
 fn get_client_server_map() -> Option<ClientServerMap> {
     CLIENT_SERVER_MAP.get().cloned()
+}
+
+/// Build a `ServerTlsConfig` for a pool, merging pool-level overrides with general defaults.
+pub(crate) fn build_server_tls_for_pool(
+    pool_config: &ConfigPool,
+    general: &General,
+) -> Result<Arc<tls::ServerTlsConfig>, Error> {
+    let mode_str = pool_config
+        .server_tls_mode
+        .as_deref()
+        .unwrap_or(&general.server_tls_mode);
+    let mode = tls::ServerTlsMode::from_string(mode_str)?;
+
+    let ca = pool_config
+        .server_tls_ca_cert
+        .as_ref()
+        .or(general.server_tls_ca_cert.as_ref());
+    let cert = pool_config
+        .server_tls_certificate
+        .as_ref()
+        .or(general.server_tls_certificate.as_ref());
+    let key = pool_config
+        .server_tls_private_key
+        .as_ref()
+        .or(general.server_tls_private_key.as_ref());
+
+    let config = tls::ServerTlsConfig::new(
+        mode,
+        ca.map(|s| std::path::Path::new(s.as_str())),
+        cert.map(|s| std::path::Path::new(s.as_str())),
+        key.map(|s| std::path::Path::new(s.as_str())),
+    )?;
+
+    Ok(Arc::new(config))
 }
 
 pub type PreparedStatementCacheType = Arc<PreparedStatementCache>;
@@ -267,6 +303,7 @@ impl ConnectionPool {
 
         for (pool_name, pool_config) in &config.pools {
             let new_pool_hash_value = pool_config.hash_value();
+            let server_tls_config = build_server_tls_for_pool(pool_config, &config.general)?;
 
             // There is one pool per database/user pair.
             for user in &pool_config.users {
@@ -333,6 +370,7 @@ impl ConnectionPool {
                     pool_name: pool_name.clone(),
                     stats: Arc::new(AddressStats::default()),
                     backend_auth,
+                    server_tls: server_tls_config.clone(),
                 };
 
                 let prepared_statements_cache_size = match config.general.prepared_statements {
@@ -481,6 +519,8 @@ impl ConnectionPool {
                             .server_database
                             .clone()
                             .unwrap_or_else(|| pool_name.to_string());
+                        let server_tls_config =
+                            build_server_tls_for_pool(pool_config, &config.general)?;
 
                         let address = Address {
                             database: pool_name.clone(),
@@ -491,6 +531,7 @@ impl ConnectionPool {
                             pool_name: pool_name.clone(),
                             stats: Arc::new(AddressStats::default()),
                             backend_auth: None,
+                            server_tls: server_tls_config,
                         };
 
                         let prepared_statements_cache_size =
