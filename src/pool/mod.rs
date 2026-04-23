@@ -46,8 +46,19 @@ pub type SecretKey = i32;
 pub type ServerHost = String;
 pub type ServerPort = u16;
 
-pub type ClientServerMap =
-    Arc<DashMap<(ProcessId, SecretKey), (ProcessId, SecretKey, ServerHost, ServerPort)>>;
+pub type ClientServerMap = Arc<
+    DashMap<
+        (ProcessId, SecretKey),
+        (
+            ProcessId,
+            SecretKey,
+            ServerHost,
+            ServerPort,
+            Arc<tls::ServerTlsConfig>,
+            bool,
+        ),
+    >,
+>;
 pub type PoolMap = HashMap<PoolIdentifier, ConnectionPool>;
 
 /// The connection pool, globally available.

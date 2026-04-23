@@ -88,7 +88,7 @@ impl StreamInner {
             StreamInner::TCPPlain { stream } => stream.try_write(buf),
             StreamInner::TCPTls { stream } => {
                 let waker = std::task::Waker::noop();
-                let mut cx = std::task::Context::from_waker(&waker);
+                let mut cx = std::task::Context::from_waker(waker);
                 match std::pin::Pin::new(stream).poll_write(&mut cx, buf) {
                     std::task::Poll::Ready(result) => result,
                     std::task::Poll::Pending => {

@@ -15,7 +15,7 @@ use tokio::io::{AsyncReadExt, BufStream};
 
 // Internal crate imports
 use crate::auth::scram_client::ScramSha256;
-use crate::config::{get_config, Address, BackendAuthMethod, User};
+use crate::config::{get_config, tls, Address, BackendAuthMethod, User};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::PgErrorMsg;
 use crate::messages::{
@@ -139,6 +139,9 @@ pub struct Server {
     /// exist on PostgreSQL — Close is deferred until Sync/Flush completes so
     /// that any Bind referencing them in the client buffer succeeds first.
     pub(crate) deferred_eviction_closes: Vec<String>,
+
+    /// Whether this connection uses TLS. Determines if cancel requests use TLS.
+    connected_with_tls: bool,
 
     /// Session mode flag: true when the pool operates in session mode.
     /// In session mode, PostgreSQL ErrorResponse in async mode does not mark connection as bad,
@@ -615,6 +618,8 @@ impl Server {
                 self.secret_key,
                 self.address.host.clone(),
                 self.address.port,
+                self.address.server_tls.clone(),
+                self.connected_with_tls,
             ),
         );
     }
@@ -697,8 +702,18 @@ impl Server {
         port: u16,
         process_id: i32,
         secret_key: i32,
+        server_tls: &tls::ServerTlsConfig,
+        connected_with_tls: bool,
     ) -> Result<(), Error> {
-        startup_cancel::cancel(host, port, process_id, secret_key).await
+        startup_cancel::cancel(
+            host,
+            port,
+            process_id,
+            secret_key,
+            server_tls,
+            connected_with_tls,
+        )
+        .await
     }
 
     // Marks a connection as needing cleanup at checkin
@@ -726,8 +741,10 @@ impl Server {
         let mut stream = if address.host.starts_with('/') {
             create_unix_stream_inner(&address.host, address.port).await?
         } else {
-            create_tcp_stream_inner(&address.host, address.port, false, false).await?
+            create_tcp_stream_inner(&address.host, address.port, &address.server_tls).await?
         };
+
+        let connected_with_tls = matches!(&stream, StreamInner::TCPTls { .. });
 
         let username = user
             .server_username
@@ -916,6 +933,7 @@ impl Server {
                         registering_prepared_statement: VecDeque::new(),
                         has_pending_cache_entries: false,
                         deferred_eviction_closes: Vec::new(),
+                        connected_with_tls,
                         session_mode,
                         max_message_size: config.general.message_size_to_be_stream.as_bytes()
                             as i32,
