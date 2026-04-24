@@ -68,7 +68,8 @@ impl PatroniClient {
         let futs: Vec<_> = urls
             .iter()
             .map(|url| {
-                let request_url = format!("{}/cluster", url.trim_end_matches('/'));
+                let base = url.trim_end_matches('/').trim_end_matches("/cluster");
+                let request_url = format!("{base}/cluster");
                 let http = self.http.clone();
                 let url_owned = url.clone();
                 Box::pin(async move {
