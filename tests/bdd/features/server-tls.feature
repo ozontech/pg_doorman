@@ -440,3 +440,65 @@ Feature: Server-side TLS connections
     Then session "s2" should receive DataRow with "1"
     When we close session "s1"
     And we close session "s2"
+
+  @server-tls-allow-retry
+  Scenario: allow mode retries with TLS when server requires encryption
+    Given PostgreSQL started with options "-c ssl=on -c ssl_cert_file=${PG_SSL_CERT} -c ssl_key_file=${PG_SSL_KEY}" and pg_hba.conf:
+      """
+      hostssl all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      server_tls_mode = "allow"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s1" and store response
+    Then session "s1" should receive DataRow with "1"
+    When we close session "s1"
+
+  @server-tls-allow-plain
+  Scenario: allow mode uses plain TCP when server accepts unencrypted
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      host all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      server_tls_mode = "allow"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we create session "s1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 1" to session "s1" and store response
+    Then session "s1" should receive DataRow with "1"
+    When we close session "s1"
