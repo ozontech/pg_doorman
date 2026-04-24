@@ -879,27 +879,30 @@ fields:
       config:
         en: |
           TLS mode for outgoing connections to PostgreSQL servers:
+          - "allow"       : Try plain first; if server rejects, retry with TLS (default)
           - "disable"     : TLS not used
-          - "prefer"      : TLS used if server supports it (default)
+          - "prefer"      : TLS used if server supports it
           - "require"     : TLS required, certificate not verified
           - "verify-ca"   : TLS required, server certificate verified against CA
           - "verify-full" : TLS required, server certificate and hostname verified
         ru: |
           Режим TLS для исходящих подключений к серверам PostgreSQL:
+          - "allow"       : сначала plain, при отказе — повтор с TLS (по умолчанию)
           - "disable"     : TLS не используется
-          - "prefer"      : TLS используется, если сервер поддерживает (по умолчанию)
+          - "prefer"      : TLS используется, если сервер поддерживает
           - "require"     : TLS обязателен, сертификат не проверяется
           - "verify-ca"   : TLS обязателен, сертификат сервера проверяется по CA
           - "verify-full" : TLS обязателен, проверяется сертификат и имя хоста
       doc: |
         TLS mode for outgoing connections to PostgreSQL servers. Controls whether and how TLS is used when connecting to backend servers.
 
+        * `allow` — Try plain first; if server rejects, retry with TLS. Matches libpq sslmode=allow (default).
         * `disable` — TLS is not used.
-        * `prefer` — TLS is used if the server supports it; plain connection otherwise (default).
+        * `prefer` — TLS is used if the server supports it; plain connection otherwise.
         * `require` — TLS is required, but the server certificate is not verified.
         * `verify-ca` — TLS is required and the server certificate is verified against `server_tls_ca_cert`.
         * `verify-full` — TLS is required, the certificate is verified, and the server hostname must match the certificate.
-      default: '"prefer"'
+      default: '"allow"'
 
     server_tls_ca_cert:
       config:

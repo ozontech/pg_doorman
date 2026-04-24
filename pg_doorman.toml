@@ -297,12 +297,13 @@ tls_rate_limit_per_second = 0
 # --------------------------------------------------------------------------
 
 # TLS mode for outgoing connections to PostgreSQL servers:
+# - "allow"       : Try plain first; if server rejects, retry with TLS (default)
 # - "disable"     : TLS not used
-# - "prefer"      : TLS used if server supports it (default)
+# - "prefer"      : TLS used if server supports it
 # - "require"     : TLS required, certificate not verified
 # - "verify-ca"   : TLS required, server certificate verified against CA
 # - "verify-full" : TLS required, server certificate and hostname verified
-# Default: "prefer"
+# Default: "allow"
 server_tls_mode = "allow"
 
 # Path to the CA certificate file for verifying PostgreSQL server certificates.
