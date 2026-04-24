@@ -85,6 +85,11 @@ pub fn generate_config_with_client<
                         server_tls_certificate: None,
                         server_tls_private_key: None,
                         auth_query: None,
+                        patroni_discovery_urls: None,
+                        failover_blacklist_duration: None,
+                        failover_discovery_timeout: None,
+                        failover_connect_timeout: None,
+                        failover_server_lifetime: None,
                         users: users_vec.clone(),
                     },
                 );

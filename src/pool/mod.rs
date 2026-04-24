@@ -36,6 +36,8 @@ pub mod pool_coordinator;
 pub mod retain;
 mod server_pool;
 
+pub mod failover;
+
 pub use auth_query_state::AuthQueryState;
 pub use dynamic::create_dynamic_pool;
 pub use eviction::PoolEvictionSource;
