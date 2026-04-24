@@ -499,6 +499,32 @@ pub(crate) static FAILOVER_HOST_BLACKLISTED: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+pub(crate) static FAILOVER_FALLBACK_HOST: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_failover_fallback_host",
+            "Currently active fallback host for a pool (1 = active), by pool/host/port.",
+        ),
+        &["pool", "host", "port"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static FAILOVER_WHITELIST_HITS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_failover_whitelist_hits_total",
+            "Total number of times a cached whitelist host was reused, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 pub(crate) static FAILOVER_DISCOVERY_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     let histogram = HistogramVec::new(
         prometheus::HistogramOpts::new(

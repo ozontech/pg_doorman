@@ -24,6 +24,7 @@ impl std::fmt::Display for PatroniError {
     }
 }
 
+#[derive(Clone)]
 pub struct PatroniClient {
     http: reqwest::Client,
 }

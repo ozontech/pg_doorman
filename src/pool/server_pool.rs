@@ -153,31 +153,50 @@ impl ServerPool {
             .await
             .map_err(|_| Error::ServerStartupReadParameters("Semaphore closed".to_string()))?;
 
-        // If primary is blacklisted, skip directly to fallback
+        // If primary is blacklisted, skip directly to fallback.
+        // JustExpired bumps epoch to drain stale fallback connections.
         if let Some(ref failover) = self.failover_state {
-            if failover.is_blacklisted() {
-                match failover.get_fallback_target().await {
-                    Ok(target) => {
+            use super::failover::BlacklistCheck;
+            match failover.check_blacklist() {
+                BlacklistCheck::Active => {
+                    if failover.should_log_blacklist() {
                         info!(
-                            "[{}@{}] failover: primary blacklisted, connecting to {}:{}",
-                            self.address.username, self.address.pool_name, target.host, target.port,
-                        );
-                        crate::prometheus::FAILOVER_CONNECTIONS_TOTAL
-                            .with_label_values(&[&self.address.pool_name])
-                            .inc();
-                        return self.create_fallback_connection(target).await;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "[{}@{}] failover: discovery failed while blacklisted: {e}",
+                            "[{}@{}] failover: primary blacklisted, routing to fallback",
                             self.address.username, self.address.pool_name,
                         );
-                        crate::prometheus::FAILOVER_DISCOVERY_ERRORS_TOTAL
-                            .with_label_values(&[&self.address.pool_name])
-                            .inc();
-                        // Fall through to try primary anyway
+                    } else {
+                        debug!(
+                            "[{}@{}] failover: primary blacklisted, routing to fallback",
+                            self.address.username, self.address.pool_name,
+                        );
+                    }
+                    match failover.get_fallback_target().await {
+                        Ok(target) => {
+                            crate::prometheus::FAILOVER_CONNECTIONS_TOTAL
+                                .with_label_values(&[&self.address.pool_name])
+                                .inc();
+                            return self.create_fallback_connection(target).await;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "[{}@{}] failover: discovery failed while blacklisted: {e}",
+                                self.address.username, self.address.pool_name,
+                            );
+                            crate::prometheus::FAILOVER_DISCOVERY_ERRORS_TOTAL
+                                .with_label_values(&[&self.address.pool_name])
+                                .inc();
+                            // Fall through to try primary anyway
+                        }
                     }
                 }
+                BlacklistCheck::JustExpired => {
+                    info!(
+                        "[{}@{}] failover: blacklist expired, resuming primary",
+                        self.address.username, self.address.pool_name,
+                    );
+                    self.bump_epoch();
+                }
+                BlacklistCheck::NotBlacklisted => {}
             }
         }
 
@@ -319,13 +338,6 @@ impl ServerPool {
         &self.address
     }
 
-    /// Clears failover state (blacklist + whitelist). Called on SIGHUP reload.
-    pub fn clear_failover(&self) {
-        if let Some(ref failover) = self.failover_state {
-            failover.clear();
-        }
-    }
-
     async fn create_fallback_connection(
         &self,
         target: super::failover::FallbackTarget,
@@ -361,6 +373,11 @@ impl ServerPool {
             }
             Err(err) => {
                 stats.disconnect();
+                // Clear whitelist so next attempt re-runs discovery
+                // instead of reusing a now-unreachable cached host.
+                if let Some(ref failover) = self.failover_state {
+                    failover.clear_whitelist();
+                }
                 Err(err)
             }
         }
