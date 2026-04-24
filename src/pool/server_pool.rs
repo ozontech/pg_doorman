@@ -195,17 +195,15 @@ impl ServerPool {
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
         let result = if result.is_err() && self.address.server_tls.mode.retries_with_tls() {
             info!(
-                "[{}@{}] plain connection to {}:{} failed, retrying with TLS (server_tls_mode=allow)",
+                "plain connection failed, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
                 self.address.username, self.address.pool_name,
                 self.address.host, self.address.port,
             );
             let mut retry_address = self.address.clone();
-            retry_address.server_tls = std::sync::Arc::new(
-                crate::config::tls::ServerTlsConfig {
-                    mode: crate::config::tls::ServerTlsMode::Require,
-                    connector: self.address.server_tls.connector.clone(),
-                },
-            );
+            retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
+                mode: crate::config::tls::ServerTlsMode::Require,
+                connector: self.address.server_tls.connector.clone(),
+            });
             let retry_stats = Arc::new(ServerStats::new(
                 self.address.clone(),
                 crate::utils::clock::now(),

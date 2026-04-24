@@ -1,4 +1,5 @@
 use log::error;
+use std::time::Instant;
 
 use crate::config::tls::ServerTlsConfig;
 use crate::errors::Error;
@@ -156,17 +157,26 @@ pub(crate) async fn create_tcp_stream_inner(
     configure_tcp_socket(&stream);
 
     if !server_tls.mode.sends_ssl_request() {
-        log::debug!("server_tls_mode=disable for {host}:{port}, skipping SSLRequest");
+        log::debug!(
+            "tls negotiation skipped, server_tls_mode={} host={host} port={port}",
+            server_tls.mode
+        );
         return Ok(StreamInner::TCPPlain { stream });
     }
 
-    log::debug!("Sending SSLRequest to {host}:{port} (mode: {})", server_tls.mode);
+    log::debug!(
+        "tls negotiation started, server_tls_mode={} host={host} port={port}",
+        server_tls.mode
+    );
     ssl_request(&mut stream).await?;
 
-    log::debug!("SSLRequest sent to {host}:{port}, waiting for response");
     let response = match stream.read_u8().await {
         Ok(response) => {
-            log::debug!("SSLRequest response from {host}:{port}: '{}' (0x{:02x})", response as char, response);
+            log::debug!(
+                "tls negotiation response={} (0x{:02x}) host={host} port={port}",
+                response as char,
+                response
+            );
             response as char
         }
         Err(err) => {
@@ -181,25 +191,28 @@ pub(crate) async fn create_tcp_stream_inner(
         'S' => {
             let connector = server_tls.connector.as_ref().ok_or_else(|| {
                 Error::SocketError(format!(
-                    "Server {host}:{port} supports TLS but no TLS connector configured"
+                    "tls connector not configured but server accepted tls, host={host} port={port}"
                 ))
             })?;
 
+            let start = Instant::now();
             match connector.connect(host, stream).await {
                 Ok(tls_stream) => {
                     log::info!(
-                        "TLS connection established to {host}:{port} (mode: {})",
-                        server_tls.mode
+                        "tls connection established, host={host} port={port} server_tls_mode={} handshake_ms={:.1}",
+                        server_tls.mode,
+                        start.elapsed().as_secs_f64() * 1000.0
                     );
                     Ok(StreamInner::TCPTls { stream: tls_stream })
                 }
                 Err(err) => {
                     error!(
-                        "TLS handshake failed with {host}:{port} (mode: {}): {err}",
-                        server_tls.mode
+                        "tls handshake failed, host={host} port={port} server_tls_mode={} handshake_ms={:.1}: {err}",
+                        server_tls.mode,
+                        start.elapsed().as_secs_f64() * 1000.0
                     );
                     Err(Error::SocketError(format!(
-                        "TLS handshake failed with {host}:{port}: {err}"
+                        "tls handshake failed, host={host} port={port}: {err}"
                     )))
                 }
             }
@@ -207,23 +220,23 @@ pub(crate) async fn create_tcp_stream_inner(
         'N' => {
             if server_tls.mode.requires_tls() {
                 error!(
-                    "Server {host}:{port} does not support TLS but server_tls_mode is {}",
+                    "tls required but server does not support tls, host={host} port={port} server_tls_mode={}",
                     server_tls.mode
                 );
                 Err(Error::SocketError(format!(
-                    "Server {host}:{port} does not support TLS but server_tls_mode is {}",
+                    "tls required but server does not support tls, host={host} port={port} server_tls_mode={}",
                     server_tls.mode
                 )))
             } else {
                 log::info!(
-                    "Server {host}:{port} does not support TLS, using plain TCP (mode: {})",
+                    "tls not supported by server, falling back to plain tcp, host={host} port={port} server_tls_mode={}",
                     server_tls.mode
                 );
                 Ok(StreamInner::TCPPlain { stream })
             }
         }
         other => Err(Error::SocketError(format!(
-            "Unexpected TLS response '{}' (ASCII: {}) from {host}:{port}",
+            "unexpected tls negotiation response={} (0x{:02x}) host={host} port={port}",
             other, other as u8
         ))),
     }

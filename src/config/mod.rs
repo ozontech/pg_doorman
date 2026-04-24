@@ -293,7 +293,7 @@ impl Config {
             }
         };
 
-        info!("Server TLS mode: {}", self.general.server_tls_mode);
+        info!("server_tls_mode: {}", self.general.server_tls_mode);
         if let Some(ref ca) = self.general.server_tls_ca_cert {
             info!("Server TLS CA cert: {ca}");
         }
