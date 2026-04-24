@@ -132,6 +132,28 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_guaranteed_pool_size: Option<u32>,
 
+    /// Patroni REST API URLs for failover discovery.
+    /// When the local backend is unreachable, doorman queries /cluster
+    /// to find an alternative. Feature is disabled when not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patroni_discovery_urls: Option<Vec<String>>,
+
+    /// How long a failed host stays blacklisted. Default: "30s".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover_blacklist_duration: Option<Duration>,
+
+    /// HTTP timeout for Patroni API requests. Default: "5s".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover_discovery_timeout: Option<Duration>,
+
+    /// TCP connect timeout for fallback servers. Default: "5s".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover_connect_timeout: Option<Duration>,
+
+    /// Lifetime for fallback connections. Default: same as blacklist duration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover_server_lifetime: Option<Duration>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_tls_mode: Option<String>,
 
@@ -346,6 +368,11 @@ impl Default for Pool {
             reserve_pool_size: None,
             reserve_pool_timeout: None,
             min_guaranteed_pool_size: None,
+            patroni_discovery_urls: None,
+            failover_blacklist_duration: None,
+            failover_discovery_timeout: None,
+            failover_connect_timeout: None,
+            failover_server_lifetime: None,
             server_tls_mode: None,
             server_tls_ca_cert: None,
             server_tls_certificate: None,

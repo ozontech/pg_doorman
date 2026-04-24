@@ -1888,6 +1888,7 @@ dependencies = [
  "dashmap",
  "exitcode",
  "flate2",
+ "futures",
  "hdrhistogram",
  "hmac",
  "iota",
