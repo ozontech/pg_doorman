@@ -46,19 +46,18 @@ pub type SecretKey = i32;
 pub type ServerHost = String;
 pub type ServerPort = u16;
 
-pub type ClientServerMap = Arc<
-    DashMap<
-        (ProcessId, SecretKey),
-        (
-            ProcessId,
-            SecretKey,
-            ServerHost,
-            ServerPort,
-            Arc<tls::ServerTlsConfig>,
-            bool,
-        ),
-    >,
->;
+/// Target information for forwarding a CancelRequest to the correct backend.
+#[derive(Debug)]
+pub struct CancelTarget {
+    pub process_id: ProcessId,
+    pub secret_key: SecretKey,
+    pub host: ServerHost,
+    pub port: ServerPort,
+    pub server_tls: Arc<tls::ServerTlsConfig>,
+    pub connected_with_tls: bool,
+}
+
+pub type ClientServerMap = Arc<DashMap<(ProcessId, SecretKey), CancelTarget>>;
 pub type PoolMap = HashMap<PoolIdentifier, ConnectionPool>;
 
 /// The connection pool, globally available.

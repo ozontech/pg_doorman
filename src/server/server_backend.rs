@@ -21,7 +21,7 @@ use crate::messages::PgErrorMsg;
 use crate::messages::{
     read_message_data, simple_query, startup, sync, BytesMutReader, Close, Parse,
 };
-use crate::pool::{ClientServerMap, CANCELED_PIDS};
+use crate::pool::{CancelTarget, ClientServerMap, CANCELED_PIDS};
 use crate::stats::ServerStats;
 
 use super::authentication::handle_authentication;
@@ -624,14 +624,14 @@ impl Server {
     pub fn claim(&mut self, process_id: i32, secret_key: i32) {
         self.client_server_map.insert(
             (process_id, secret_key),
-            (
-                self.process_id,
-                self.secret_key,
-                self.address.host.clone(),
-                self.address.port,
-                self.address.server_tls.clone(),
-                self.connected_with_tls,
-            ),
+            CancelTarget {
+                process_id: self.process_id,
+                secret_key: self.secret_key,
+                host: self.address.host.clone(),
+                port: self.address.port,
+                server_tls: self.address.server_tls.clone(),
+                connected_with_tls: self.connected_with_tls,
+            },
         );
     }
 

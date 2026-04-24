@@ -20,7 +20,7 @@ use crate::messages::{
     check_query_response, deallocate_response, error_response, error_response_terminal,
     insert_close_complete_after_last_close_complete, read_message_reuse, write_all_flush,
 };
-use crate::pool::CANCELED_PIDS;
+use crate::pool::{CancelTarget, CANCELED_PIDS};
 use crate::server::Server;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 
@@ -276,43 +276,40 @@ where
     /// Opens a new separate connection to the server, sends the backend_id
     /// and secret_key and then closes it for security reasons.
     async fn handle_cancel_mode(&self) -> Result<(), Error> {
-        let (process_id, secret_key, address, port, server_tls, connected_with_tls) = {
-            match self
-                .client_server_map
-                .get(&(self.connection_id as i32, self.secret_key))
-            {
-                // We found the server the client is using for its query
-                // that it wants to cancel.
-                Some(entry) => {
-                    let (process_id, secret_key, address, port, server_tls, connected_with_tls) =
-                        entry.value();
-                    {
-                        let mut cancel_guard = CANCELED_PIDS.lock();
-                        cancel_guard.insert(*process_id);
-                    }
-                    (
-                        *process_id,
-                        *secret_key,
-                        address.clone(),
-                        *port,
-                        server_tls.clone(),
-                        *connected_with_tls,
-                    )
+        let target = match self
+            .client_server_map
+            .get(&(self.connection_id as i32, self.secret_key))
+        {
+            // We found the server the client is using for its query
+            // that it wants to cancel.
+            Some(entry) => {
+                let t = entry.value();
+                {
+                    let mut cancel_guard = CANCELED_PIDS.lock();
+                    cancel_guard.insert(t.process_id);
                 }
-
-                // The client doesn't know / got the wrong server,
-                // we're closing the connection for security reasons.
-                None => return Ok(()),
+                CancelTarget {
+                    process_id: t.process_id,
+                    secret_key: t.secret_key,
+                    host: t.host.clone(),
+                    port: t.port,
+                    server_tls: t.server_tls.clone(),
+                    connected_with_tls: t.connected_with_tls,
+                }
             }
+
+            // The client doesn't know / got the wrong server,
+            // we're closing the connection for security reasons.
+            None => return Ok(()),
         };
 
         Server::cancel(
-            &address,
-            port,
-            process_id,
-            secret_key,
-            &server_tls,
-            connected_with_tls,
+            &target.host,
+            target.port,
+            target.process_id,
+            target.secret_key,
+            &target.server_tls,
+            target.connected_with_tls,
         )
         .await
     }
