@@ -15,6 +15,40 @@ pub struct Member {
     pub port: u16,
     pub api_url: Option<String>,
     pub lag: Option<u64>,
+    #[serde(default)]
+    pub tags: MemberTags,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MemberTags {
+    #[serde(default, deserialize_with = "deserialize_tag")]
+    pub noloadbalance: bool,
+    #[serde(default, deserialize_with = "deserialize_tag")]
+    pub nofailover: bool,
+    #[serde(default, deserialize_with = "deserialize_tag")]
+    pub nosync: bool,
+    #[serde(default, deserialize_with = "deserialize_tag")]
+    pub nostream: bool,
+    #[serde(default, deserialize_with = "deserialize_tag")]
+    pub archive: bool,
+}
+
+/// Patroni tags can be JSON booleans or strings ("true"/"false").
+fn deserialize_tag<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrString {
+        Bool(bool),
+        String(String),
+    }
+
+    match BoolOrString::deserialize(deserializer)? {
+        BoolOrString::Bool(b) => Ok(b),
+        BoolOrString::String(s) => Ok(s.eq_ignore_ascii_case("true")),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +149,47 @@ mod tests {
             cluster.members[0].role,
             Role::Other("standby_leader".to_string())
         );
+    }
+
+    #[test]
+    fn parse_tags_as_bool() {
+        let json = r#"{
+            "members": [{
+                "name": "n1", "role": "replica",
+                "state": "streaming", "host": "h", "port": 5432,
+                "tags": {"noloadbalance": true, "archive": false}
+            }]
+        }"#;
+        let resp: ClusterResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.members[0].tags.noloadbalance);
+        assert!(!resp.members[0].tags.archive);
+    }
+
+    #[test]
+    fn parse_tags_as_string() {
+        let json = r#"{
+            "members": [{
+                "name": "n1", "role": "replica",
+                "state": "streaming", "host": "h", "port": 5432,
+                "tags": {"noloadbalance": "true", "archive": "True"}
+            }]
+        }"#;
+        let resp: ClusterResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.members[0].tags.noloadbalance);
+        assert!(resp.members[0].tags.archive);
+    }
+
+    #[test]
+    fn parse_tags_absent() {
+        let json = r#"{
+            "members": [{
+                "name": "n1", "role": "replica",
+                "state": "streaming", "host": "h", "port": 5432
+            }]
+        }"#;
+        let resp: ClusterResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.members[0].tags.noloadbalance);
+        assert!(!resp.members[0].tags.archive);
     }
 
     #[test]

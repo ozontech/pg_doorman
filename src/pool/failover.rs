@@ -228,12 +228,15 @@ impl FailoverState {
 
 /// Filter and sort members from a /cluster response.
 ///
-/// Only members with state "streaming" or "running" are eligible.
+/// Excluded: non-running members, noloadbalance, archive replicas.
 /// Sorted: sync_standby first, then replica, then others (including leader).
 fn select_candidates(members: &[Member]) -> Vec<(String, u16, Role)> {
     let mut candidates: Vec<(String, u16, Role)> = members
         .iter()
-        .filter(|m| m.state == "streaming" || m.state == "running")
+        .filter(|m| {
+            let alive = m.state == "streaming" || m.state == "running";
+            alive && !m.tags.noloadbalance && !m.tags.archive
+        })
         .map(|m| (m.host.clone(), m.port, m.role.clone()))
         .collect();
 
@@ -265,6 +268,7 @@ mod tests {
             port,
             api_url: None,
             lag: None,
+            tags: Default::default(),
         }
     }
 
@@ -331,5 +335,29 @@ mod tests {
         ];
         let candidates = select_candidates(&members);
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn select_candidates_filters_noloadbalance() {
+        let mut nobalance = make_member("pg-nobal", Role::Replica, "streaming", "10.0.0.1", 5432);
+        nobalance.tags.noloadbalance = true;
+
+        let normal = make_member("pg-normal", Role::Replica, "streaming", "10.0.0.2", 5432);
+
+        let candidates = select_candidates(&[nobalance, normal]);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "10.0.0.2");
+    }
+
+    #[test]
+    fn select_candidates_filters_archive() {
+        let mut archive = make_member("pg-archive", Role::Replica, "streaming", "10.0.0.1", 5432);
+        archive.tags.archive = true;
+
+        let normal = make_member("pg-normal", Role::SyncStandby, "streaming", "10.0.0.2", 5432);
+
+        let candidates = select_candidates(&[archive, normal]);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "10.0.0.2");
     }
 }
