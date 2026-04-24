@@ -16,6 +16,7 @@ pub struct Member {
     pub host: String,
     pub port: u16,
     pub api_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
     pub lag: Option<u64>,
     #[serde(default)]
     pub tags: MemberTags,
@@ -34,6 +35,28 @@ pub struct MemberTags {
     pub nostream: bool,
     #[serde(default, deserialize_with = "deserialize_tag")]
     pub archive: bool,
+}
+
+/// Patroni returns numeric fields as either u64 or "unknown" for stopped members.
+fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrString {
+        Num(u64),
+        Str(String),
+    }
+
+    match Option::<NumOrString>::deserialize(deserializer)? {
+        Some(NumOrString::Num(n)) => Ok(Some(n)),
+        Some(NumOrString::Str(s)) => match s.parse::<u64>() {
+            Ok(n) => Ok(Some(n)),
+            Err(_) => Ok(None),
+        },
+        None => Ok(None),
+    }
 }
 
 /// Patroni tags can be JSON booleans or strings ("true"/"false").
@@ -216,5 +239,31 @@ mod tests {
         assert_eq!(member.role, Role::SyncStandby);
         assert!(member.api_url.is_none());
         assert!(member.lag.is_none());
+    }
+
+    #[test]
+    fn parse_lag_as_unknown_string() {
+        let json = r#"{
+            "members": [{
+                "name": "pg-stopped", "role": "replica",
+                "state": "stopped", "host": "10.0.0.1", "port": 5432,
+                "lag": "unknown"
+            }]
+        }"#;
+        let cluster: ClusterResponse = serde_json::from_str(json).unwrap();
+        assert!(cluster.members[0].lag.is_none());
+    }
+
+    #[test]
+    fn parse_lag_as_numeric_string() {
+        let json = r#"{
+            "members": [{
+                "name": "pg-replica", "role": "replica",
+                "state": "streaming", "host": "10.0.0.1", "port": 5432,
+                "lag": "42"
+            }]
+        }"#;
+        let cluster: ClusterResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(cluster.members[0].lag, Some(42));
     }
 }
