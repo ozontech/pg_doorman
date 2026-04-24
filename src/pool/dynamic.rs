@@ -17,8 +17,9 @@ use crate::stats::AddressStats;
 
 use super::types::{PoolConfig, QueueMode, Timeouts};
 use super::{
-    get_auth_query_state, get_coordinator, get_pool, register_dynamic_pool, Address,
-    ConnectionPool, Pool, PoolIdentifier, PoolSettings, PreparedStatementCache, ServerPool, POOLS,
+    build_server_tls_for_pool, get_auth_query_state, get_coordinator, get_pool,
+    register_dynamic_pool, Address, ConnectionPool, Pool, PoolIdentifier, PoolSettings,
+    PreparedStatementCache, ServerPool, POOLS,
 };
 
 /// Create a dynamic data pool for auth_query passthrough mode.
@@ -64,6 +65,14 @@ pub fn create_dynamic_pool(
         .unwrap_or_else(|| pool_name.to_string());
 
     let ba_arc = backend_auth.map(|ba| Arc::new(parking_lot::RwLock::new(ba)));
+    debug!(
+        "[{username}@{pool_name}] building server TLS config (mode={})",
+        pool_config
+            .server_tls_mode
+            .as_deref()
+            .unwrap_or(&config.general.server_tls_mode)
+    );
+    let server_tls = build_server_tls_for_pool(pool_config, &config.general)?;
 
     let address = Address {
         database: pool_name.to_string(),
@@ -74,6 +83,7 @@ pub fn create_dynamic_pool(
         pool_name: pool_name.to_string(),
         stats: Arc::new(AddressStats::default()),
         backend_auth: ba_arc,
+        server_tls,
     };
 
     let user = User {
@@ -173,6 +183,7 @@ pub fn create_dynamic_pool(
         },
         coordinator: get_coordinator(pool_name),
         replenish_failures: Arc::new(AtomicU32::new(0)),
+        created_at: std::time::Instant::now(),
     };
 
     // Atomic insert into POOLS

@@ -145,7 +145,7 @@ pub(crate) async fn handle_authentication(
             password_response.put_i32(token.len() as i32 + 4 + 1);
             password_response.put_slice(token.as_bytes());
             password_response.put_u8(b'\0');
-            stream.try_write(&password_response).map_err(|err| {
+            stream.write_all(&password_response).await.map_err(|err| {
                 Error::ServerAuthError(
                     format!("jwt authentication on the server failed: {err:?}"),
                     server_identifier.clone(),
@@ -198,7 +198,7 @@ pub(crate) async fn handle_authentication(
             password_response.put_u8(b'p');
             password_response.put_i32(password_hash.len() as i32 + 4);
             password_response.put_slice(&password_hash);
-            stream.try_write(&password_response).map_err(|err| {
+            stream.write_all(&password_response).await.map_err(|err| {
                 Error::ServerAuthError(
                     format!("md5 authentication on the server failed: {err:?}"),
                     server_identifier.clone(),

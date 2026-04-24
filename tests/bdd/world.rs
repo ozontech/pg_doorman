@@ -106,6 +106,14 @@ pub struct DoormanWorld {
     pub vars: HashMap<String, String>,
     /// Extra environment variables to pass to pg_doorman process
     pub doorman_env: Vec<(String, String)>,
+    pub pg_ssl_ca_cert_file: Option<NamedTempFile>,
+    pub pg_ssl_ca_key_file: Option<NamedTempFile>,
+    pub pg_ssl_cert_file: Option<NamedTempFile>,
+    pub pg_ssl_key_file: Option<NamedTempFile>,
+    pub pg_ssl_client_cert_file: Option<NamedTempFile>,
+    pub pg_ssl_client_key_file: Option<NamedTempFile>,
+    /// CA that did NOT sign the server cert, for negative verification tests.
+    pub pg_ssl_wrong_ca_cert_file: Option<NamedTempFile>,
 }
 
 impl DoormanWorld {
@@ -219,6 +227,25 @@ impl DoormanWorld {
             })
             .unwrap_or_else(|| "4".to_string());
         result = result.replace("${PGBENCH_JOBS_C10000}", &pgbench_jobs_c10000);
+
+        if let Some(ref f) = self.pg_ssl_ca_cert_file {
+            result = result.replace("${PG_SSL_CA_CERT}", f.path().to_str().unwrap());
+        }
+        if let Some(ref f) = self.pg_ssl_cert_file {
+            result = result.replace("${PG_SSL_CERT}", f.path().to_str().unwrap());
+        }
+        if let Some(ref f) = self.pg_ssl_key_file {
+            result = result.replace("${PG_SSL_KEY}", f.path().to_str().unwrap());
+        }
+        if let Some(ref f) = self.pg_ssl_client_cert_file {
+            result = result.replace("${PG_SSL_CLIENT_CERT}", f.path().to_str().unwrap());
+        }
+        if let Some(ref f) = self.pg_ssl_client_key_file {
+            result = result.replace("${PG_SSL_CLIENT_KEY}", f.path().to_str().unwrap());
+        }
+        if let Some(ref f) = self.pg_ssl_wrong_ca_cert_file {
+            result = result.replace("${PG_SSL_WRONG_CA_CERT}", f.path().to_str().unwrap());
+        }
 
         // Replace dynamic variables from self.vars (e.g., extracted password hashes)
         for (key, value) in &self.vars {

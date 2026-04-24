@@ -1,12 +1,12 @@
-// TLS functionality for secure connections
 use std::io::{self, Read};
 use std::path::Path;
+
+use sha2::{Digest, Sha256};
 
 use crate::errors::Error;
 use native_tls::TlsClientCertificateVerification::{DoNotRequestCertificate, RequireCertificate};
 use native_tls::{Certificate, Identity, Protocol, TlsClientCertificateVerification};
 
-/// Helper function to read a file into a byte vector
 fn read_file(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     let mut content = Vec::new();
     let mut file = std::fs::File::open(path)?;
@@ -14,12 +14,87 @@ fn read_file(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     Ok(content)
 }
 
-/// Load identity from certificate and key files
 pub fn load_identity(cert: &Path, key: &Path) -> io::Result<Identity> {
     let cert_body = read_file(cert)?;
     let key_body = read_file(key)?;
 
     Identity::from_pkcs8(&cert_body, &key_body).map_err(|err| io::Error::other(err.to_string()))
+}
+
+/// TLS mode for server-facing (backend) connections.
+/// Ordered from least to most secure, matching libpq sslmode semantics.
+#[derive(Default, PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
+pub enum ServerTlsMode {
+    /// Do not use TLS
+    Disable,
+    /// Try plain first; if server rejects, retry with TLS on a new TCP socket.
+    /// Matches libpq sslmode=allow: "first try a non-SSL connection;
+    /// if that fails, try an SSL connection."
+    #[default]
+    Allow,
+    /// Send SSLRequest first; if server says 'N', fall back to plain
+    Prefer,
+    /// Require TLS, fail if server doesn't support it
+    Require,
+    /// Require TLS and verify server certificate against CA
+    VerifyCa,
+    /// Require TLS, verify CA, and verify hostname matches certificate
+    VerifyFull,
+}
+
+impl std::fmt::Display for ServerTlsMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServerTlsMode::Disable => write!(f, "disable"),
+            ServerTlsMode::Allow => write!(f, "allow"),
+            ServerTlsMode::Prefer => write!(f, "prefer"),
+            ServerTlsMode::Require => write!(f, "require"),
+            ServerTlsMode::VerifyCa => write!(f, "verify-ca"),
+            ServerTlsMode::VerifyFull => write!(f, "verify-full"),
+        }
+    }
+}
+
+impl std::str::FromStr for ServerTlsMode {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "disable" => Ok(Self::Disable),
+            "allow" => Ok(Self::Allow),
+            "prefer" => Ok(Self::Prefer),
+            "require" => Ok(Self::Require),
+            "verify-ca" => Ok(Self::VerifyCa),
+            "verify-full" => Ok(Self::VerifyFull),
+            _ => Err(Error::BadConfig(format!("invalid server_tls_mode: {s}"))),
+        }
+    }
+}
+
+impl ServerTlsMode {
+    /// Whether this mode requires a CA certificate to be configured.
+    pub fn requires_ca(&self) -> bool {
+        matches!(self, ServerTlsMode::VerifyCa | ServerTlsMode::VerifyFull)
+    }
+
+    /// Whether this mode sends an SSLRequest on the first connection attempt.
+    /// `Allow` skips SSLRequest initially (tries plain first, retries with TLS on failure).
+    pub fn sends_ssl_request(&self) -> bool {
+        !matches!(self, ServerTlsMode::Disable | ServerTlsMode::Allow)
+    }
+
+    /// Whether this mode requires the server to support TLS.
+    pub fn requires_tls(&self) -> bool {
+        matches!(
+            self,
+            ServerTlsMode::Require | ServerTlsMode::VerifyCa | ServerTlsMode::VerifyFull
+        )
+    }
+
+    /// Whether this mode retries with TLS after a plain connection failure.
+    pub fn retries_with_tls(&self) -> bool {
+        matches!(self, ServerTlsMode::Allow)
+    }
 }
 
 /// TLS mode options for connections
@@ -72,8 +147,9 @@ fn tls_mode_to_verification(mode: &str) -> Result<TlsClientCertificateVerificati
     }
 }
 
-/// Load a certificate from a PEM file
-fn load_certificate(path: &Path) -> Result<Certificate, Error> {
+/// Load all certificates from a PEM file (supports bundles with
+/// intermediate CA chains — multiple PEM blocks in one file).
+fn load_certificates(path: &Path) -> Result<Vec<Certificate>, Error> {
     let cert_data = read_file(path).map_err(|err| {
         Error::BadConfig(format!(
             "Failed to read certificate file {}: {}",
@@ -82,13 +158,172 @@ fn load_certificate(path: &Path) -> Result<Certificate, Error> {
         ))
     })?;
 
-    Certificate::from_pem(&cert_data).map_err(|err| {
+    let pem_str = std::str::from_utf8(&cert_data).map_err(|err| {
         Error::BadConfig(format!(
-            "Failed to parse certificate {}: {}",
+            "Certificate file {} is not valid UTF-8: {}",
             path.display(),
             err
         ))
-    })
+    })?;
+
+    let mut certs = Vec::new();
+    let mut start = 0;
+    let begin_marker = "-----BEGIN CERTIFICATE-----";
+    let end_marker = "-----END CERTIFICATE-----";
+
+    while let Some(begin) = pem_str[start..].find(begin_marker) {
+        let abs_begin = start + begin;
+        let after_begin = abs_begin + begin_marker.len();
+        match pem_str[after_begin..].find(end_marker) {
+            Some(end_offset) => {
+                let abs_end = after_begin + end_offset + end_marker.len();
+                let pem_block = &pem_str[abs_begin..abs_end];
+                let cert = Certificate::from_pem(pem_block.as_bytes()).map_err(|err| {
+                    Error::BadConfig(format!(
+                        "Failed to parse certificate #{} in {}: {}",
+                        certs.len() + 1,
+                        path.display(),
+                        err
+                    ))
+                })?;
+                certs.push(cert);
+                start = abs_end;
+            }
+            None => {
+                return Err(Error::BadConfig(format!(
+                    "Unterminated PEM block in {}: found BEGIN without END",
+                    path.display(),
+                )));
+            }
+        }
+    }
+
+    if certs.is_empty() {
+        return Err(Error::BadConfig(format!(
+            "No certificates found in {}",
+            path.display(),
+        )));
+    }
+
+    Ok(certs)
+}
+
+/// Resolved TLS configuration for server-facing connections.
+#[derive(Debug)]
+pub struct ServerTlsConfig {
+    pub mode: ServerTlsMode,
+    pub connector: Option<tokio_native_tls::TlsConnector>,
+    /// SHA-256 hash of certificate file contents (ca + client cert + client key).
+    /// Used to detect cert changes on SIGHUP reload without comparing opaque
+    /// TlsConnector objects.
+    pub cert_hash: Option<[u8; 32]>,
+}
+
+/// Manual impl: `connector` is opaque (no PartialEq), so equality is
+/// determined by `mode` + `cert_hash`. Update this if new config fields
+/// are added to `ServerTlsConfig`.
+impl PartialEq for ServerTlsConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.mode == other.mode && self.cert_hash == other.cert_hash
+    }
+}
+
+impl Eq for ServerTlsConfig {}
+
+impl ServerTlsConfig {
+    pub fn new(
+        mode: ServerTlsMode,
+        ca_cert: Option<&Path>,
+        client_cert: Option<&Path>,
+        client_key: Option<&Path>,
+    ) -> Result<Self, Error> {
+        if mode == ServerTlsMode::Disable {
+            return Ok(ServerTlsConfig {
+                mode,
+                connector: None,
+                cert_hash: None,
+            });
+        }
+
+        if mode.requires_ca() && ca_cert.is_none() {
+            return Err(Error::BadConfig(format!(
+                "server_tls_mode '{}' requires server_tls_ca_cert to be set",
+                mode
+            )));
+        }
+
+        let mut builder = native_tls::TlsConnector::builder();
+        builder.min_protocol_version(Some(Protocol::Tlsv12));
+
+        match mode {
+            ServerTlsMode::Allow | ServerTlsMode::Prefer | ServerTlsMode::Require => {
+                builder.danger_accept_invalid_certs(true);
+                builder.danger_accept_invalid_hostnames(true);
+            }
+            ServerTlsMode::VerifyCa => {
+                if let Some(ca_path) = ca_cert {
+                    for ca in load_certificates(ca_path)? {
+                        builder.add_root_certificate(ca);
+                    }
+                }
+                builder.danger_accept_invalid_hostnames(true);
+            }
+            ServerTlsMode::VerifyFull => {
+                if let Some(ca_path) = ca_cert {
+                    for ca in load_certificates(ca_path)? {
+                        builder.add_root_certificate(ca);
+                    }
+                }
+            }
+            ServerTlsMode::Disable => unreachable!(),
+        }
+
+        // mTLS: present client certificate to server
+        if let (Some(cert_path), Some(key_path)) = (client_cert, client_key) {
+            let identity = load_identity(cert_path, key_path).map_err(|err| {
+                Error::BadConfig(format!(
+                    "Failed to load server TLS client identity from {} and {}: {}",
+                    cert_path.display(),
+                    key_path.display(),
+                    err
+                ))
+            })?;
+            builder.identity(identity);
+        }
+
+        let connector = builder
+            .build()
+            .map(tokio_native_tls::TlsConnector::from)
+            .map_err(|err| {
+                Error::BadConfig(format!("Failed to create server TLS connector: {err}"))
+            })?;
+
+        let cert_hash = {
+            let mut hasher = Sha256::new();
+            if let Some(ca_path) = ca_cert {
+                if let Ok(data) = read_file(ca_path) {
+                    hasher.update(&data);
+                }
+            }
+            if let Some(cert_path) = client_cert {
+                if let Ok(data) = read_file(cert_path) {
+                    hasher.update(&data);
+                }
+            }
+            if let Some(key_path) = client_key {
+                if let Ok(data) = read_file(key_path) {
+                    hasher.update(&data);
+                }
+            }
+            Some(hasher.finalize().into())
+        };
+
+        Ok(ServerTlsConfig {
+            mode,
+            connector: Some(connector),
+            cert_hash,
+        })
+    }
 }
 
 /// Build a TLS acceptor from certificate, key, and optional CA certificate
@@ -109,11 +344,12 @@ pub fn build_acceptor(
         ))
     })?;
 
-    // Load CA certificate if provided
+    // Load CA certificate if provided (only the first certificate is used for client verification)
     let ca = match ca_path {
         Some(path) => {
             let path = path.as_ref();
-            Some(load_certificate(path)?)
+            let mut certs = load_certificates(path)?;
+            Some(certs.remove(0))
         }
         None => None,
     };
@@ -148,6 +384,56 @@ pub fn build_acceptor(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_server_tls_mode_from_str() {
+        assert_eq!(
+            "disable".parse::<ServerTlsMode>().unwrap(),
+            ServerTlsMode::Disable
+        );
+        assert_eq!(
+            "allow".parse::<ServerTlsMode>().unwrap(),
+            ServerTlsMode::Allow
+        );
+        assert_eq!(
+            "prefer".parse::<ServerTlsMode>().unwrap(),
+            ServerTlsMode::Prefer
+        );
+        assert_eq!(
+            "require".parse::<ServerTlsMode>().unwrap(),
+            ServerTlsMode::Require
+        );
+        assert_eq!(
+            "verify-ca".parse::<ServerTlsMode>().unwrap(),
+            ServerTlsMode::VerifyCa
+        );
+        assert_eq!(
+            "verify-full".parse::<ServerTlsMode>().unwrap(),
+            ServerTlsMode::VerifyFull
+        );
+        assert!("invalid".parse::<ServerTlsMode>().is_err());
+        assert!("".parse::<ServerTlsMode>().is_err());
+    }
+
+    #[test]
+    fn test_server_tls_mode_display() {
+        assert_eq!(ServerTlsMode::Disable.to_string(), "disable");
+        assert_eq!(ServerTlsMode::Allow.to_string(), "allow");
+        assert_eq!(ServerTlsMode::Prefer.to_string(), "prefer");
+        assert_eq!(ServerTlsMode::Require.to_string(), "require");
+        assert_eq!(ServerTlsMode::VerifyCa.to_string(), "verify-ca");
+        assert_eq!(ServerTlsMode::VerifyFull.to_string(), "verify-full");
+    }
+
+    #[test]
+    fn test_server_tls_mode_requires_ca() {
+        assert!(!ServerTlsMode::Disable.requires_ca());
+        assert!(!ServerTlsMode::Allow.requires_ca());
+        assert!(!ServerTlsMode::Prefer.requires_ca());
+        assert!(!ServerTlsMode::Require.requires_ca());
+        assert!(ServerTlsMode::VerifyCa.requires_ca());
+        assert!(ServerTlsMode::VerifyFull.requires_ca());
+    }
 
     #[test]
     fn test_tls_mode_from_string() {
@@ -193,6 +479,57 @@ mod tests {
     }
 
     #[test]
+    fn test_server_tls_config_disable() {
+        let config = ServerTlsConfig::new(ServerTlsMode::Disable, None, None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::Disable);
+        assert!(config.connector.is_none());
+    }
+
+    #[test]
+    fn test_server_tls_config_prefer_no_certs() {
+        let config = ServerTlsConfig::new(ServerTlsMode::Prefer, None, None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::Prefer);
+        assert!(config.connector.is_some());
+    }
+
+    #[test]
+    fn test_server_tls_config_require_no_certs() {
+        let config = ServerTlsConfig::new(ServerTlsMode::Require, None, None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::Require);
+        assert!(config.connector.is_some());
+    }
+
+    #[test]
+    fn test_server_tls_config_verify_ca_without_ca_cert_is_error() {
+        let err = ServerTlsConfig::new(ServerTlsMode::VerifyCa, None, None, None).unwrap_err();
+        assert!(
+            err.to_string().contains("server_tls_ca_cert"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_server_tls_config_verify_full_without_ca_cert_is_error() {
+        let err = ServerTlsConfig::new(ServerTlsMode::VerifyFull, None, None, None).unwrap_err();
+        assert!(
+            err.to_string().contains("server_tls_ca_cert"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_server_tls_config_verify_ca_with_cert() {
+        let ca_path = PathBuf::from("tests/data/ssl/root.crt");
+        if !ca_path.exists() {
+            return; // skip if test certs not available
+        }
+        let config =
+            ServerTlsConfig::new(ServerTlsMode::VerifyCa, Some(&ca_path), None, None).unwrap();
+        assert_eq!(config.mode, ServerTlsMode::VerifyCa);
+        assert!(config.connector.is_some());
+    }
+
+    #[test]
     fn test_read_file_nonexistent() {
         let result = read_file(PathBuf::from("/nonexistent/file"));
         assert!(result.is_err());
@@ -200,16 +537,20 @@ mod tests {
 
     // Integration tests using actual certificate files
     #[test]
-    fn test_load_certificate() {
+    fn test_load_certificates() {
         // These paths are relative to the project root
         let cert_path = PathBuf::from("tests/data/ssl/server.crt");
 
         if cert_path.exists() {
-            let result = load_certificate(&cert_path);
+            let result = load_certificates(&cert_path);
             assert!(
                 result.is_ok(),
-                "Failed to load certificate: {:?}",
+                "Failed to load certificates: {:?}",
                 result.err()
+            );
+            assert!(
+                !result.unwrap().is_empty(),
+                "Expected at least one certificate"
             );
         }
     }

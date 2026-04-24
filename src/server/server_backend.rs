@@ -15,13 +15,13 @@ use tokio::io::{AsyncReadExt, BufStream};
 
 // Internal crate imports
 use crate::auth::scram_client::ScramSha256;
-use crate::config::{get_config, Address, BackendAuthMethod, User};
+use crate::config::{get_config, tls, Address, BackendAuthMethod, User};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::PgErrorMsg;
 use crate::messages::{
     read_message_data, simple_query, startup, sync, BytesMutReader, Close, Parse,
 };
-use crate::pool::{ClientServerMap, CANCELED_PIDS};
+use crate::pool::{CancelTarget, ClientServerMap, CANCELED_PIDS};
 use crate::stats::ServerStats;
 
 use super::authentication::handle_authentication;
@@ -139,6 +139,9 @@ pub struct Server {
     /// exist on PostgreSQL — Close is deferred until Sync/Flush completes so
     /// that any Bind referencing them in the client buffer succeeds first.
     pub(crate) deferred_eviction_closes: Vec<String>,
+
+    /// Cancel requests must use the same transport as the main connection.
+    connected_with_tls: bool,
 
     /// Session mode flag: true when the pool operates in session mode.
     /// In session mode, PostgreSQL ErrorResponse in async mode does not mark connection as bad,
@@ -270,6 +273,17 @@ impl Server {
     /// Returns true if the connection is alive (WouldBlock = no real data).
     /// Returns false if the server sent data or closed the connection (dead).
     pub fn check_server_alive(&self) -> bool {
+        if self.stream.get_ref().is_tls() {
+            // For TLS connections, readable() fires on raw TCP socket readiness.
+            // Calling try_read() on the raw socket would consume bytes that the
+            // TLS layer hasn't processed, corrupting the session.
+            //
+            // On an idle PostgreSQL connection, the raw socket should never become
+            // readable (PostgreSQL does not send unsolicited data, and TLS
+            // renegotiation is disabled since PG14). If readable() fired, the
+            // server disconnected or sent an error — treat as dead.
+            return false;
+        }
         let mut buf = [0u8; 1];
         matches!(
             self.stream.get_ref().try_read(&mut buf),
@@ -610,12 +624,15 @@ impl Server {
     pub fn claim(&mut self, process_id: i32, secret_key: i32) {
         self.client_server_map.insert(
             (process_id, secret_key),
-            (
-                self.process_id,
-                self.secret_key,
-                self.address.host.clone(),
-                self.address.port,
-            ),
+            CancelTarget {
+                process_id: self.process_id,
+                secret_key: self.secret_key,
+                host: self.address.host.clone(),
+                port: self.address.port,
+                server_tls: self.address.server_tls.clone(),
+                connected_with_tls: self.connected_with_tls,
+                pool_name: self.address.pool_name.clone(),
+            },
         );
     }
 
@@ -697,8 +714,20 @@ impl Server {
         port: u16,
         process_id: i32,
         secret_key: i32,
+        server_tls: &tls::ServerTlsConfig,
+        connected_with_tls: bool,
+        pool_name: &str,
     ) -> Result<(), Error> {
-        startup_cancel::cancel(host, port, process_id, secret_key).await
+        startup_cancel::cancel(
+            host,
+            port,
+            process_id,
+            secret_key,
+            server_tls,
+            connected_with_tls,
+            pool_name,
+        )
+        .await
     }
 
     // Marks a connection as needing cleanup at checkin
@@ -723,17 +752,36 @@ impl Server {
     ) -> Result<Server, Error> {
         let config = get_config();
 
+        log::debug!(
+            "[{}@{}] server startup connecting to {}:{} server_tls_mode={}",
+            user.username,
+            database,
+            address.host,
+            address.port,
+            address.server_tls.mode
+        );
+
         let mut stream = if address.host.starts_with('/') {
             create_unix_stream_inner(&address.host, address.port).await?
         } else {
             create_tcp_stream_inner(
                 &address.host,
                 address.port,
-                config.general.server_tls,
-                config.general.verify_server_certificate,
+                &address.server_tls,
+                &address.pool_name,
             )
             .await?
         };
+
+        let connected_with_tls = matches!(&stream, StreamInner::TCPTls { .. });
+        log::debug!(
+            "[{}@{}] server connection to {}:{} established tls={}",
+            user.username,
+            database,
+            address.host,
+            address.port,
+            connected_with_tls
+        );
 
         let username = user
             .server_username
@@ -922,6 +970,7 @@ impl Server {
                         registering_prepared_statement: VecDeque::new(),
                         has_pending_cache_entries: false,
                         deferred_eviction_closes: Vec::new(),
+                        connected_with_tls,
                         session_mode,
                         max_message_size: config.general.message_size_to_be_stream.as_bytes()
                             as i32,
@@ -929,6 +978,7 @@ impl Server {
                         close_reason: None,
                     };
                     server.stats.update_process_id(process_id);
+                    server.stats.set_tls(connected_with_tls);
 
                     return Ok(server);
                 }

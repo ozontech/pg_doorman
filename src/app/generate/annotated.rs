@@ -148,6 +148,10 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         reserve_pool_size: None,
         reserve_pool_timeout: None,
         min_guaranteed_pool_size: None,
+        server_tls_mode: None,
+        server_tls_ca_cert: None,
+        server_tls_certificate: None,
+        server_tls_private_key: None,
         auth_query: None,
         users: vec![User {
             username: "app_user".to_string(),
@@ -902,16 +906,32 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     w.separator(fi, f.section_title("tls_server").get(w.russian));
     w.blank();
 
-    write_field_comment(w, fi, "general", "server_tls");
-    w.kv(fi, "server_tls", &w.bool_val(g.server_tls));
+    write_field_comment(w, fi, "general", "server_tls_mode");
+    w.kv(fi, "server_tls_mode", &w.str_val(&g.server_tls_mode));
     w.blank();
 
-    write_field_comment(w, fi, "general", "verify_server_certificate");
-    w.kv(
-        fi,
-        "verify_server_certificate",
-        &w.bool_val(g.verify_server_certificate),
-    );
+    write_field_comment(w, fi, "general", "server_tls_ca_cert");
+    if let Some(v) = &g.server_tls_ca_cert {
+        w.kv(fi, "server_tls_ca_cert", &w.str_val(v));
+    } else {
+        w.commented_kv(fi, "server_tls_ca_cert", &w.str_val(""));
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "general", "server_tls_certificate");
+    if let Some(v) = &g.server_tls_certificate {
+        w.kv(fi, "server_tls_certificate", &w.str_val(v));
+    } else {
+        w.commented_kv(fi, "server_tls_certificate", &w.str_val(""));
+    }
+    w.blank();
+
+    write_field_comment(w, fi, "general", "server_tls_private_key");
+    if let Some(v) = &g.server_tls_private_key {
+        w.kv(fi, "server_tls_private_key", &w.str_val(v));
+    } else {
+        w.commented_kv(fi, "server_tls_private_key", &w.str_val(""));
+    }
     w.blank();
 
     // --- Daemon Mode ---

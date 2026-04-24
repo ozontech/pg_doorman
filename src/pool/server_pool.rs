@@ -164,8 +164,7 @@ impl ServerPool {
 
         stats.register(stats.clone());
 
-        // Connect to the PostgreSQL server.
-        match Server::startup(
+        let result = Server::startup(
             &self.address,
             &self.user,
             &self.database,
@@ -177,8 +176,64 @@ impl ServerPool {
             self.application_name.clone(),
             self.session_mode,
         )
-        .await
+        .await;
+
+        // libpq sslmode=allow retry: try plain first, retry with TLS on any failure.
+        //
+        // PostgreSQL has no protocol-level "TLS required" signal. The server
+        // rejects non-TLS connections via pg_hba.conf AFTER StartupMessage
+        // with FATAL 28000 ("no pg_hba.conf entry ... no encryption").
+        // The connection is dead after FATAL, so retry requires a new TCP socket.
+        //
+        // We retry on ANY startup failure (not just SSL-related) because:
+        // 1. libpq does the same: "first try a non-SSL connection; if that fails,
+        //    try an SSL connection" — no message parsing.
+        // 2. If the real error is unrelated to TLS (wrong password, DB not found),
+        //    the TLS retry will fail with the same error, which we then return.
+        //
+        // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
+        let (result, active_stats) = if result.is_err()
+            && self.address.server_tls.mode.retries_with_tls()
         {
+            info!(
+                "plain connection failed, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
+                self.address.username, self.address.pool_name,
+                self.address.host, self.address.port,
+            );
+            // Disconnect the plain-attempt stats before registering the TLS-retry stats.
+            // Without this, both entries would remain in SERVER_STATS: the plain one
+            // as a ghost if the retry succeeds, or the retry one leaking if it fails.
+            stats.disconnect();
+            let mut retry_address = self.address.clone();
+            retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
+                mode: crate::config::tls::ServerTlsMode::Require,
+                connector: self.address.server_tls.connector.clone(),
+                cert_hash: self.address.server_tls.cert_hash,
+            });
+            let retry_stats = Arc::new(ServerStats::new(
+                self.address.clone(),
+                crate::utils::clock::now(),
+            ));
+            retry_stats.register(retry_stats.clone());
+            let retry_result = Server::startup(
+                &retry_address,
+                &self.user,
+                &self.database,
+                self.client_server_map.clone(),
+                retry_stats.clone(),
+                self.cleanup_connections,
+                self.log_client_parameter_status_changes,
+                self.prepared_statement_cache_size,
+                self.application_name.clone(),
+                self.session_mode,
+            )
+            .await;
+            (retry_result, retry_stats)
+        } else {
+            (result, stats)
+        };
+
+        match result {
             Ok(conn) => {
                 // Permit is released automatically when _permit goes out of scope
                 conn.stats.idle(0);
@@ -187,7 +242,7 @@ impl ServerPool {
             Err(err) => {
                 // Brief backoff on error to avoid hammering a failing server
                 tokio::time::sleep(Duration::from_millis(10)).await;
-                stats.disconnect();
+                active_stats.disconnect();
                 Err(err)
             }
         }

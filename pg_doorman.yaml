@@ -336,13 +336,30 @@ general:
   # TLS Settings (Server-facing)
   # --------------------------------------------------------------------------
 
-  # Enable TLS for connections to PostgreSQL servers.
-  # Default: false
-  server_tls: false
+  # TLS mode for outgoing connections to PostgreSQL servers:
+  # - "allow"       : Try plain first; if server rejects, retry with TLS (default)
+  # - "disable"     : TLS not used
+  # - "prefer"      : TLS used if server supports it
+  # - "require"     : TLS required, certificate not verified
+  # - "verify-ca"   : TLS required, server certificate verified against CA
+  # - "verify-full" : TLS required, server certificate and hostname verified
+  # Default: "allow"
+  server_tls_mode: "allow"
 
-  # Verify server certificate when connecting to PostgreSQL.
-  # Default: false
-  verify_server_certificate: false
+  # Path to the CA certificate file for verifying PostgreSQL server certificates.
+  # Required when server_tls_mode is "verify-ca" or "verify-full".
+  # Default: None
+  # server_tls_ca_cert: ""
+
+  # Path to the client TLS certificate for mutual TLS with PostgreSQL servers.
+  # Used together with server_tls_private_key.
+  # Default: None
+  # server_tls_certificate: ""
+
+  # Path to the private key for the client TLS certificate.
+  # Used together with server_tls_certificate.
+  # Default: None
+  # server_tls_private_key: ""
 
   # --------------------------------------------------------------------------
   # Daemon Mode

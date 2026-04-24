@@ -441,6 +441,7 @@ pub async fn start_postgres_with_options_and_hba(
         .as_ref()
         .expect("hba_content not found")
         .to_string();
+    let options = world.replace_placeholders(&options);
     start_postgres_internal(world, &hba_content, &options).await;
 }
 

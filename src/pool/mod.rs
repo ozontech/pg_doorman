@@ -8,7 +8,9 @@ use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use crate::config::{get_config, Address, BackendAuthMethod, General, PoolMode, User};
+use crate::config::{
+    get_config, tls, Address, BackendAuthMethod, General, Pool as ConfigPool, PoolMode, User,
+};
 use crate::errors::Error;
 use crate::messages::Parse;
 
@@ -44,8 +46,19 @@ pub type SecretKey = i32;
 pub type ServerHost = String;
 pub type ServerPort = u16;
 
-pub type ClientServerMap =
-    Arc<DashMap<(ProcessId, SecretKey), (ProcessId, SecretKey, ServerHost, ServerPort)>>;
+/// Target information for forwarding a CancelRequest to the correct backend.
+#[derive(Debug, Clone)]
+pub struct CancelTarget {
+    pub process_id: ProcessId,
+    pub secret_key: SecretKey,
+    pub host: ServerHost,
+    pub port: ServerPort,
+    pub server_tls: Arc<tls::ServerTlsConfig>,
+    pub connected_with_tls: bool,
+    pub pool_name: String,
+}
+
+pub type ClientServerMap = Arc<DashMap<(ProcessId, SecretKey), CancelTarget>>;
 pub type PoolMap = HashMap<PoolIdentifier, ConnectionPool>;
 
 /// The connection pool, globally available.
@@ -75,6 +88,40 @@ fn set_client_server_map(csm: ClientServerMap) {
 
 fn get_client_server_map() -> Option<ClientServerMap> {
     CLIENT_SERVER_MAP.get().cloned()
+}
+
+/// Build a `ServerTlsConfig` for a pool, merging pool-level overrides with general defaults.
+pub(crate) fn build_server_tls_for_pool(
+    pool_config: &ConfigPool,
+    general: &General,
+) -> Result<Arc<tls::ServerTlsConfig>, Error> {
+    let mode_str = pool_config
+        .server_tls_mode
+        .as_deref()
+        .unwrap_or(&general.server_tls_mode);
+    let mode = mode_str.parse::<tls::ServerTlsMode>()?;
+
+    let ca = pool_config
+        .server_tls_ca_cert
+        .as_ref()
+        .or(general.server_tls_ca_cert.as_ref());
+    let cert = pool_config
+        .server_tls_certificate
+        .as_ref()
+        .or(general.server_tls_certificate.as_ref());
+    let key = pool_config
+        .server_tls_private_key
+        .as_ref()
+        .or(general.server_tls_private_key.as_ref());
+
+    let config = tls::ServerTlsConfig::new(
+        mode,
+        ca.map(|s| std::path::Path::new(s.as_str())),
+        cert.map(|s| std::path::Path::new(s.as_str())),
+        key.map(|s| std::path::Path::new(s.as_str())),
+    )?;
+
+    Ok(Arc::new(config))
 }
 
 pub type PreparedStatementCacheType = Arc<PreparedStatementCache>;
@@ -212,6 +259,10 @@ pub struct ConnectionPool {
     /// Consecutive replenish failure counter for log noise suppression.
     /// Reset to 0 on successful replenish.
     pub(crate) replenish_failures: Arc<AtomicU32>,
+
+    /// When this pool was created. Used by GC to avoid removing
+    /// dynamic pools that are still establishing their first connection.
+    pub(crate) created_at: std::time::Instant,
 }
 
 impl ConnectionPool {
@@ -267,6 +318,7 @@ impl ConnectionPool {
 
         for (pool_name, pool_config) in &config.pools {
             let new_pool_hash_value = pool_config.hash_value();
+            let server_tls_config = build_server_tls_for_pool(pool_config, &config.general)?;
 
             // There is one pool per database/user pair.
             for user in &pool_config.users {
@@ -276,10 +328,20 @@ impl ConnectionPool {
                 if let Some(pool) = old_pool_ref {
                     // If the pool hasn't changed, get existing reference and insert it into the new_pools.
                     // We replace all pools at the end, but if the reference is kept, the pool won't get re-created (bb8).
-                    if pool.config_hash == new_pool_hash_value {
+                    if pool.config_hash == new_pool_hash_value
+                        && pool.address.server_tls.as_ref() == server_tls_config.as_ref()
+                    {
                         info!("[{}@{}] config unchanged", user.username, pool_name);
                         new_pools.insert(identifier.clone(), pool.clone());
                         continue;
+                    }
+                    if pool.config_hash == new_pool_hash_value
+                        && pool.address.server_tls.as_ref() != server_tls_config.as_ref()
+                    {
+                        info!(
+                            "[{}@{}] tls certificates changed on disk, recreating pool",
+                            user.username, pool_name
+                        );
                     }
                 }
 
@@ -333,6 +395,7 @@ impl ConnectionPool {
                     pool_name: pool_name.clone(),
                     stats: Arc::new(AddressStats::default()),
                     backend_auth,
+                    server_tls: server_tls_config.clone(),
                 };
 
                 let prepared_statements_cache_size = match config.general.prepared_statements {
@@ -421,6 +484,7 @@ impl ConnectionPool {
                     },
                     coordinator: coordinators.get(pool_name).cloned(),
                     replenish_failures: Arc::new(AtomicU32::new(0)),
+                    created_at: std::time::Instant::now(),
                 };
 
                 // There is one pool per database/user pair.
@@ -481,6 +545,8 @@ impl ConnectionPool {
                             .server_database
                             .clone()
                             .unwrap_or_else(|| pool_name.to_string());
+                        let server_tls_config =
+                            build_server_tls_for_pool(pool_config, &config.general)?;
 
                         let address = Address {
                             database: pool_name.clone(),
@@ -491,6 +557,7 @@ impl ConnectionPool {
                             pool_name: pool_name.clone(),
                             stats: Arc::new(AddressStats::default()),
                             backend_auth: None,
+                            server_tls: server_tls_config,
                         };
 
                         let prepared_statements_cache_size =
@@ -587,6 +654,7 @@ impl ConnectionPool {
                             },
                             coordinator: coordinators.get(pool_name).cloned(),
                             replenish_failures: Arc::new(AtomicU32::new(0)),
+                            created_at: std::time::Instant::now(),
                         };
 
                         new_pools.insert(identifier.clone(), conn_pool);

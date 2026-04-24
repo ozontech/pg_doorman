@@ -875,19 +875,67 @@ fields:
         In some cases, this is necessary in order to launch an application that opens many connections at startup (the so-called "hot start").
       default: "0"
 
-    server_tls:
+    server_tls_mode:
       config:
-        en: "Enable TLS for connections to PostgreSQL servers."
-        ru: "Включить TLS для подключений к серверам PostgreSQL."
-      doc: "Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers."
-      default: "false"
+        en: |
+          TLS mode for outgoing connections to PostgreSQL servers:
+          - "allow"       : Try plain first; if server rejects, retry with TLS (default)
+          - "disable"     : TLS not used
+          - "prefer"      : TLS used if server supports it
+          - "require"     : TLS required, certificate not verified
+          - "verify-ca"   : TLS required, server certificate verified against CA
+          - "verify-full" : TLS required, server certificate and hostname verified
+        ru: |
+          Режим TLS для исходящих подключений к серверам PostgreSQL:
+          - "allow"       : сначала plain, при отказе — повтор с TLS (по умолчанию)
+          - "disable"     : TLS не используется
+          - "prefer"      : TLS используется, если сервер поддерживает
+          - "require"     : TLS обязателен, сертификат не проверяется
+          - "verify-ca"   : TLS обязателен, сертификат сервера проверяется по CA
+          - "verify-full" : TLS обязателен, проверяется сертификат и имя хоста
+      doc: |
+        TLS mode for outgoing connections to PostgreSQL servers.
 
-    verify_server_certificate:
+        * `allow` — Try plain first; if server rejects, retry with TLS. Matches libpq sslmode=allow (default).
+        * `disable` — TLS is not used.
+        * `prefer` — TLS is used if the server supports it; plain connection otherwise.
+        * `require` — TLS is required, but the server certificate is not verified.
+        * `verify-ca` — TLS is required and the server certificate is verified against `server_tls_ca_cert`.
+        * `verify-full` — TLS is required, the certificate is verified, and the server hostname must match the certificate.
+      default: '"allow"'
+
+    server_tls_ca_cert:
       config:
-        en: "Verify server certificate when connecting to PostgreSQL."
-        ru: "Проверять сертификат сервера при подключении к PostgreSQL."
-      doc: "Verify the PostgreSQL server's TLS certificate when connecting with TLS. This setting is only relevant when `server_tls` is enabled."
-      default: "false"
+        en: |
+          Path to the CA certificate file for verifying PostgreSQL server certificates.
+          Required when server_tls_mode is "verify-ca" or "verify-full".
+        ru: |
+          Путь к файлу CA-сертификата для проверки сертификатов серверов PostgreSQL.
+          Обязателен при server_tls_mode = "verify-ca" или "verify-full".
+      doc: "CA certificate for verifying PostgreSQL server certificates. Required when `server_tls_mode` is `verify-ca` or `verify-full`."
+      default: "None"
+
+    server_tls_certificate:
+      config:
+        en: |
+          Path to the client TLS certificate for mutual TLS with PostgreSQL servers.
+          Used together with server_tls_private_key.
+        ru: |
+          Путь к клиентскому TLS-сертификату для взаимной TLS-аутентификации с серверами PostgreSQL.
+          Используется вместе с server_tls_private_key.
+      doc: "Client certificate for mTLS with PostgreSQL servers. Pair with `server_tls_private_key`."
+      default: "None"
+
+    server_tls_private_key:
+      config:
+        en: |
+          Path to the private key for the client TLS certificate.
+          Used together with server_tls_certificate.
+        ru: |
+          Путь к приватному ключу клиентского TLS-сертификата.
+          Используется вместе с server_tls_certificate.
+      doc: "Private key for the mTLS client certificate. Pair with `server_tls_certificate`."
+      default: "None"
 
     daemon_pid_file:
       config:
@@ -1189,6 +1237,34 @@ fields:
         ru: "Логировать SET-команды от клиентов."
       doc: "Log information about any SET command in the log."
       default: "false"
+
+    server_tls_mode:
+      config:
+        en: "Override global server_tls_mode for this pool."
+        ru: "Переопределить глобальный server_tls_mode для этого пула."
+      doc: "Per-pool override of `server_tls_mode`."
+      default: "None (uses global setting)"
+
+    server_tls_ca_cert:
+      config:
+        en: "Override CA certificate path for TLS server verification in this pool."
+        ru: "Переопределить путь к CA-сертификату для проверки TLS-сервера в этом пуле."
+      doc: "Per-pool override of `server_tls_ca_cert`."
+      default: "None (uses global setting)"
+
+    server_tls_certificate:
+      config:
+        en: "Override client TLS certificate path for this pool."
+        ru: "Переопределить путь к клиентскому TLS-сертификату для этого пула."
+      doc: "Per-pool override of `server_tls_certificate`."
+      default: "None (uses global setting)"
+
+    server_tls_private_key:
+      config:
+        en: "Override client TLS private key path for this pool."
+        ru: "Переопределить путь к приватному ключу TLS-клиента для этого пула."
+      doc: "Per-pool override of `server_tls_private_key`."
+      default: "None (uses global setting)"
 
   user:
     username:

@@ -84,6 +84,9 @@ pub struct ServerStats {
     pub prepared_miss_count: AtomicU64,
     /// Current size of the prepared statement cache
     pub prepared_cache_size: AtomicU64,
+
+    /// Whether this server connection uses TLS.
+    use_tls: AtomicBool,
 }
 
 /// Default implementation for ServerStats.
@@ -115,6 +118,7 @@ impl Default for ServerStats {
             prepared_hit_count: AtomicU64::new(0),
             prepared_miss_count: AtomicU64::new(0),
             prepared_cache_size: AtomicU64::new(0),
+            use_tls: AtomicBool::new(false),
         }
     }
 }
@@ -525,6 +529,15 @@ impl ServerStats {
     pub fn connect_time(&self) -> quanta::Instant {
         self.connect_time
     }
+
+    /// Called once during startup after transport negotiation.
+    pub fn set_tls(&self, tls: bool) {
+        self.use_tls.store(tls, Ordering::Relaxed);
+    }
+
+    pub fn tls(&self) -> bool {
+        self.use_tls.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
@@ -611,6 +624,7 @@ mod tests {
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
             backend_auth: None,
+            ..crate::config::Address::default()
         };
 
         // Create a ServerStats with a fixed server_id for testing
@@ -647,6 +661,7 @@ mod tests {
             pool_name: "test_pool".to_string(),
             stats: Arc::new(AddressStats::default()),
             backend_auth: None,
+            ..Address::default()
         };
 
         // Create a ServerStats with a fixed server_id for testing
