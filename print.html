@@ -3296,12 +3296,26 @@ and free their buffers. Protects the pooler process from OOM under heavy load or
 <h3 id="proxy_copy_data_timeout"><a class="header" href="#proxy_copy_data_timeout">proxy_copy_data_timeout</a></h3>
 <p>Maximum time to wait for data copy operations during proxying, in milliseconds.</p>
 <p>Default: <code>15000 (15 sec)</code>.</p>
-<h3 id="server_tls"><a class="header" href="#server_tls">server_tls</a></h3>
-<p>Enable TLS for connections to the PostgreSQL server. When enabled, pg_doorman will attempt to establish TLS connections to the backend PostgreSQL servers.</p>
-<p>Default: <code>false</code>.</p>
-<h3 id="verify_server_certificate"><a class="header" href="#verify_server_certificate">verify_server_certificate</a></h3>
-<p>Verify the PostgreSQL server's TLS certificate when connecting with TLS. This setting is only relevant when <code>server_tls</code> is enabled.</p>
-<p>Default: <code>false</code>.</p>
+<h3 id="server_tls_mode"><a class="header" href="#server_tls_mode">server_tls_mode</a></h3>
+<p>TLS mode for outgoing connections to PostgreSQL servers.</p>
+<ul>
+<li><code>allow</code> — Try plain first; if server rejects, retry with TLS. Matches libpq sslmode=allow (default).</li>
+<li><code>disable</code> — TLS is not used.</li>
+<li><code>prefer</code> — TLS is used if the server supports it; plain connection otherwise.</li>
+<li><code>require</code> — TLS is required, but the server certificate is not verified.</li>
+<li><code>verify-ca</code> — TLS is required and the server certificate is verified against <code>server_tls_ca_cert</code>.</li>
+<li><code>verify-full</code> — TLS is required, the certificate is verified, and the server hostname must match the certificate.</li>
+</ul>
+<p>Default: <code>"allow"</code>.</p>
+<h3 id="server_tls_ca_cert"><a class="header" href="#server_tls_ca_cert">server_tls_ca_cert</a></h3>
+<p>CA certificate for verifying PostgreSQL server certificates. Required when <code>server_tls_mode</code> is <code>verify-ca</code> or <code>verify-full</code>.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="server_tls_certificate"><a class="header" href="#server_tls_certificate">server_tls_certificate</a></h3>
+<p>Client certificate for mTLS with PostgreSQL servers. Pair with <code>server_tls_private_key</code>.</p>
+<p>Default: <code>None</code>.</p>
+<h3 id="server_tls_private_key"><a class="header" href="#server_tls_private_key">server_tls_private_key</a></h3>
+<p>Private key for the mTLS client certificate. Pair with <code>server_tls_certificate</code>.</p>
+<p>Default: <code>None</code>.</p>
 <h3 id="hba"><a class="header" href="#hba">hba</a></h3>
 <p>The list of IP addresses from which it is permitted to connect to the pg-doorman.</p>
 <p>Default: <code>[]</code>.</p>
@@ -3863,6 +3877,20 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <li>Latency values are absolute, measured per-transaction</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="360-apr-24-2026"><a class="header" href="#360-apr-24-2026">3.6.0 <small>Apr 24, 2026</small></a></h3>
+<h4 id="server-side-tls-pg_doorman--postgresql"><a class="header" href="#server-side-tls-pg_doorman--postgresql">Server-side TLS (pg_doorman → PostgreSQL)</a></h4>
+<p>Six SSL modes matching libpq semantics: <code>disable</code>, <code>allow</code> (default), <code>prefer</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>. Mutual TLS supported via <code>server_tls_certificate</code> / <code>server_tls_private_key</code>.</p>
+<p>Configuration is per-pool with global defaults in <code>[general]</code>. Cancel requests use TLS when the main connection used TLS.</p>
+<p><strong>Breaking change:</strong> <code>server_tls</code> (bool) and <code>verify_server_certificate</code> (bool) are removed. They were parsed but non-functional. Replace with:</p>
+<div class="table-wrapper"><table><thead><tr><th>Old config</th><th>New config</th></tr></thead><tbody>
+<tr><td><code>server_tls: false</code></td><td><code>server_tls_mode: "disable"</code></td></tr>
+<tr><td><code>server_tls: true</code></td><td><code>server_tls_mode: "require"</code></td></tr>
+<tr><td><code>server_tls: true</code> + <code>verify_server_certificate: true</code></td><td><code>server_tls_mode: "verify-full"</code></td></tr>
+<tr><td>(not set)</td><td><code>server_tls_mode: "allow"</code> (new default)</td></tr>
+</tbody></table>
+</div>
+<p>The new default <code>allow</code> tries plain TCP first. If the server rejects the connection (e.g. <code>pg_hba.conf</code> requires TLS), pg_doorman retries with TLS on a new TCP socket. This matches libpq <code>sslmode=allow</code>.</p>
+<p><code>SHOW SERVERS</code> now includes a <code>tls</code> column showing whether each backend connection uses TLS.</p>
 <h3 id="353-apr-22-2026"><a class="header" href="#353-apr-22-2026">3.5.3 <small>Apr 22, 2026</small></a></h3>
 <h4 id="prepared-statement-cache-overflow-under-concurrent-load"><a class="header" href="#prepared-statement-cache-overflow-under-concurrent-load">Prepared statement cache overflow under concurrent load</a></h4>
 <p>The pool-level prepared statement cache could grow well above its configured <code>prepared_statements_cache_size</code> under concurrent client traffic. Production showed 480 entries with a limit of 300. The check-then-insert sequence in the cache had a race: multiple clients passed the size check simultaneously, each inserted without evicting. Now insertion happens first, followed by eviction in a loop until the cache is within bounds.</p>
