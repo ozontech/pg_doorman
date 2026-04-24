@@ -81,7 +81,7 @@ impl Default for Address {
             stats: Arc::new(AddressStats::default()),
             backend_auth: None,
             server_tls: Arc::new(crate::config::tls::ServerTlsConfig {
-                mode: crate::config::tls::ServerTlsMode::Prefer,
+                mode: crate::config::tls::ServerTlsMode::Disable,
                 connector: None,
             }),
         }

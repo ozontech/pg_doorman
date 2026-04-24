@@ -141,8 +141,9 @@ fn tls_mode_to_verification(mode: &str) -> Result<TlsClientCertificateVerificati
     }
 }
 
-/// Load a certificate from a PEM file
-fn load_certificate(path: &Path) -> Result<Certificate, Error> {
+/// Load all certificates from a PEM file (supports bundles with
+/// intermediate CA chains — multiple PEM blocks in one file).
+fn load_certificates(path: &Path) -> Result<Vec<Certificate>, Error> {
     let cert_data = read_file(path).map_err(|err| {
         Error::BadConfig(format!(
             "Failed to read certificate file {}: {}",
@@ -151,13 +152,54 @@ fn load_certificate(path: &Path) -> Result<Certificate, Error> {
         ))
     })?;
 
-    Certificate::from_pem(&cert_data).map_err(|err| {
+    let pem_str = std::str::from_utf8(&cert_data).map_err(|err| {
         Error::BadConfig(format!(
-            "Failed to parse certificate {}: {}",
+            "Certificate file {} is not valid UTF-8: {}",
             path.display(),
             err
         ))
-    })
+    })?;
+
+    let mut certs = Vec::new();
+    let mut start = 0;
+    let begin_marker = "-----BEGIN CERTIFICATE-----";
+    let end_marker = "-----END CERTIFICATE-----";
+
+    while let Some(begin) = pem_str[start..].find(begin_marker) {
+        let abs_begin = start + begin;
+        let after_begin = abs_begin + begin_marker.len();
+        match pem_str[after_begin..].find(end_marker) {
+            Some(end_offset) => {
+                let abs_end = after_begin + end_offset + end_marker.len();
+                let pem_block = &pem_str[abs_begin..abs_end];
+                let cert = Certificate::from_pem(pem_block.as_bytes()).map_err(|err| {
+                    Error::BadConfig(format!(
+                        "Failed to parse certificate #{} in {}: {}",
+                        certs.len() + 1,
+                        path.display(),
+                        err
+                    ))
+                })?;
+                certs.push(cert);
+                start = abs_end;
+            }
+            None => {
+                return Err(Error::BadConfig(format!(
+                    "Unterminated PEM block in {}: found BEGIN without END",
+                    path.display(),
+                )));
+            }
+        }
+    }
+
+    if certs.is_empty() {
+        return Err(Error::BadConfig(format!(
+            "No certificates found in {}",
+            path.display(),
+        )));
+    }
+
+    Ok(certs)
 }
 
 /// Resolved TLS configuration for server-facing connections.
@@ -181,6 +223,13 @@ impl ServerTlsConfig {
             });
         }
 
+        if mode.requires_ca() && ca_cert.is_none() {
+            return Err(Error::BadConfig(format!(
+                "server_tls_mode '{}' requires server_tls_ca_cert to be set",
+                mode
+            )));
+        }
+
         let mut builder = native_tls::TlsConnector::builder();
         builder.min_protocol_version(Some(Protocol::Tlsv12));
 
@@ -191,15 +240,17 @@ impl ServerTlsConfig {
             }
             ServerTlsMode::VerifyCa => {
                 if let Some(ca_path) = ca_cert {
-                    let ca = load_certificate(ca_path)?;
-                    builder.add_root_certificate(ca);
+                    for ca in load_certificates(ca_path)? {
+                        builder.add_root_certificate(ca);
+                    }
                 }
                 builder.danger_accept_invalid_hostnames(true);
             }
             ServerTlsMode::VerifyFull => {
                 if let Some(ca_path) = ca_cert {
-                    let ca = load_certificate(ca_path)?;
-                    builder.add_root_certificate(ca);
+                    for ca in load_certificates(ca_path)? {
+                        builder.add_root_certificate(ca);
+                    }
                 }
             }
             ServerTlsMode::Disable => unreachable!(),
@@ -250,11 +301,12 @@ pub fn build_acceptor(
         ))
     })?;
 
-    // Load CA certificate if provided
+    // Load CA certificate if provided (only the first certificate is used for client verification)
     let ca = match ca_path {
         Some(path) => {
             let path = path.as_ref();
-            Some(load_certificate(path)?)
+            let mut certs = load_certificates(path)?;
+            Some(certs.remove(0))
         }
         None => None,
     };
@@ -405,6 +457,24 @@ mod tests {
     }
 
     #[test]
+    fn test_server_tls_config_verify_ca_without_ca_cert_is_error() {
+        let err = ServerTlsConfig::new(ServerTlsMode::VerifyCa, None, None, None).unwrap_err();
+        assert!(
+            err.to_string().contains("server_tls_ca_cert"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_server_tls_config_verify_full_without_ca_cert_is_error() {
+        let err = ServerTlsConfig::new(ServerTlsMode::VerifyFull, None, None, None).unwrap_err();
+        assert!(
+            err.to_string().contains("server_tls_ca_cert"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_server_tls_config_verify_ca_with_cert() {
         let ca_path = PathBuf::from("tests/data/ssl/root.crt");
         if !ca_path.exists() {
@@ -424,16 +494,20 @@ mod tests {
 
     // Integration tests using actual certificate files
     #[test]
-    fn test_load_certificate() {
+    fn test_load_certificates() {
         // These paths are relative to the project root
         let cert_path = PathBuf::from("tests/data/ssl/server.crt");
 
         if cert_path.exists() {
-            let result = load_certificate(&cert_path);
+            let result = load_certificates(&cert_path);
             assert!(
                 result.is_ok(),
-                "Failed to load certificate: {:?}",
+                "Failed to load certificates: {:?}",
                 result.err()
+            );
+            assert!(
+                !result.unwrap().is_empty(),
+                "Expected at least one certificate"
             );
         }
     }
