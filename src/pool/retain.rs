@@ -320,6 +320,7 @@ mod tests {
             60_000,
             Duration::from_secs(5),
             false,
+            None,
         );
         let database = Pool::builder(server_pool)
             .pool_name("test_db".to_string())

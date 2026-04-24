@@ -114,6 +114,8 @@ pub fn create_dynamic_pool(
 
     let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
 
+    let failover_state = super::build_failover_state(pool_config);
+
     let manager = ServerPool::new(
         address.clone(),
         user.clone(),
@@ -133,6 +135,7 @@ pub fn create_dynamic_pool(
         config.general.server_idle_check_timeout.as_millis(),
         config.general.connect_timeout.as_std(),
         pool_mode == PoolMode::Session,
+        failover_state,
     );
 
     let queue_strategy = match config.general.server_round_robin {

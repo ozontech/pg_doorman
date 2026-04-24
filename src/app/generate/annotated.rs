@@ -1265,6 +1265,43 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
     }
     w.blank();
 
+    // --- Failover Discovery ---
+    write_field_desc(w, fi, "pool", "patroni_discovery_urls");
+    w.commented_kv(fi, "patroni_discovery_urls", "[]");
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "failover_blacklist_duration");
+    if let Some(val) = pool.failover_blacklist_duration {
+        w.kv(fi, "failover_blacklist_duration", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "failover_blacklist_duration", "\"30s\"");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "failover_discovery_timeout");
+    if let Some(val) = pool.failover_discovery_timeout {
+        w.kv(fi, "failover_discovery_timeout", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "failover_discovery_timeout", "\"5s\"");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "failover_connect_timeout");
+    if let Some(val) = pool.failover_connect_timeout {
+        w.kv(fi, "failover_connect_timeout", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "failover_connect_timeout", "\"5s\"");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "failover_server_lifetime");
+    if let Some(val) = pool.failover_server_lifetime {
+        w.kv(fi, "failover_server_lifetime", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "failover_server_lifetime", "\"30s\"");
+    }
+    w.blank();
+
     // --- Application Settings ---
     w.separator(fi, f.section_title("pool_app").get(w.russian));
     w.blank();

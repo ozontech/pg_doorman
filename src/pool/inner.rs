@@ -2051,6 +2051,7 @@ mod tests {
             60_000,
             Duration::from_secs(5),
             false,
+            None,
         );
         Pool::builder(server_pool)
             .coordinator(Some(coord))
@@ -2198,6 +2199,7 @@ mod tests {
             60_000,
             Duration::from_secs(5),
             false,
+            None,
         );
         let pool = Pool::builder(server_pool)
             .pool_name("test_db".to_string())

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::config::{Address, User};
@@ -68,6 +68,9 @@ pub struct ServerPool {
     /// Session mode flag passed to created Server connections.
     session_mode: bool,
 
+    /// Failover state for Patroni discovery. None if not configured.
+    failover_state: Option<Arc<super::failover::FailoverState>>,
+
     /// Combined pool state: bit 32 = paused, bits 0-31 = reconnect epoch (u32).
     pool_state: AtomicU64,
 
@@ -116,6 +119,7 @@ impl ServerPool {
         idle_check_timeout_ms: u64,
         connect_timeout: Duration,
         session_mode: bool,
+        failover_state: Option<Arc<super::failover::FailoverState>>,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -135,6 +139,7 @@ impl ServerPool {
             pool_state: AtomicU64::new(0),
             resume_notify: Notify::new(),
             session_mode,
+            failover_state,
         }
     }
 
@@ -147,6 +152,28 @@ impl ServerPool {
             .acquire()
             .await
             .map_err(|_| Error::ServerStartupReadParameters("Semaphore closed".to_string()))?;
+
+        // If primary is blacklisted, skip directly to fallback
+        if let Some(ref failover) = self.failover_state {
+            if failover.is_blacklisted() {
+                match failover.get_fallback_target().await {
+                    Ok(target) => {
+                        info!(
+                            "[{}@{}] failover: primary blacklisted, connecting to {}:{}",
+                            self.address.username, self.address.pool_name, target.host, target.port,
+                        );
+                        return self.create_fallback_connection(target).await;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "[{}@{}] failover: discovery failed while blacklisted: {e}",
+                            self.address.username, self.address.pool_name,
+                        );
+                        // Fall through to try primary anyway
+                    }
+                }
+            }
+        }
 
         let conn_num = self.connection_counter.fetch_add(1, Ordering::Relaxed) + 1;
         info!(
@@ -240,9 +267,33 @@ impl ServerPool {
                 Ok(conn)
             }
             Err(err) => {
+                active_stats.disconnect();
+                // Failover: if backend unreachable and failover configured
+                if is_backend_unreachable(&err) {
+                    if let Some(ref failover) = self.failover_state {
+                        failover.blacklist();
+                        match failover.get_fallback_target().await {
+                            Ok(target) => {
+                                info!(
+                                    "[{}@{}] failover: connecting to {}:{} (original error: {err})",
+                                    self.address.username,
+                                    self.address.pool_name,
+                                    target.host,
+                                    target.port,
+                                );
+                                return self.create_fallback_connection(target).await;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "[{}@{}] failover: discovery failed: {e}",
+                                    self.address.username, self.address.pool_name,
+                                );
+                            }
+                        }
+                    }
+                }
                 // Brief backoff on error to avoid hammering a failing server
                 tokio::time::sleep(Duration::from_millis(10)).await;
-                active_stats.disconnect();
                 Err(err)
             }
         }
@@ -251,6 +302,53 @@ impl ServerPool {
     /// Returns the address of this pool.
     pub fn address(&self) -> &Address {
         &self.address
+    }
+
+    /// Clears failover state (blacklist + whitelist). Called on SIGHUP reload.
+    pub fn clear_failover(&self) {
+        if let Some(ref failover) = self.failover_state {
+            failover.clear();
+        }
+    }
+
+    async fn create_fallback_connection(
+        &self,
+        target: super::failover::FallbackTarget,
+    ) -> Result<Server, Error> {
+        let mut fallback_address = self.address.clone();
+        fallback_address.host = target.host;
+        fallback_address.port = target.port;
+
+        let stats = Arc::new(ServerStats::new(
+            fallback_address.clone(),
+            crate::utils::clock::now(),
+        ));
+        stats.register(stats.clone());
+
+        let result = Server::startup(
+            &fallback_address,
+            &self.user,
+            &self.database,
+            self.client_server_map.clone(),
+            stats.clone(),
+            self.cleanup_connections,
+            self.log_client_parameter_status_changes,
+            self.prepared_statement_cache_size,
+            self.application_name.clone(),
+            self.session_mode,
+        )
+        .await;
+
+        match result {
+            Ok(conn) => {
+                conn.stats.idle(0);
+                Ok(conn)
+            }
+            Err(err) => {
+                stats.disconnect();
+                Err(err)
+            }
+        }
     }
 
     /// Returns the base lifetime in milliseconds for connections in this pool.
@@ -379,6 +477,13 @@ impl ServerPool {
 
         Ok(())
     }
+}
+
+fn is_backend_unreachable(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+    )
 }
 
 /// Returns `Some(age_ms)` when a connection should be closed because it

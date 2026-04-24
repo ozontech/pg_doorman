@@ -1221,6 +1221,50 @@ fields:
         Set to `0` (or omit) for no eviction protection. Only relevant when `max_db_connections > 0`.
       default: "0 (no protection)"
 
+    patroni_discovery_urls:
+      config:
+        en: |
+          Patroni REST API URLs for failover discovery.
+          When the local backend is unreachable, doorman queries /cluster
+          to find a live cluster member. Disabled when not set.
+        ru: |
+          URL-адреса Patroni REST API для обнаружения при failover.
+          Когда локальный бэкенд недоступен, doorman запрашивает /cluster
+          для поиска живого узла кластера. Отключено, если не задано.
+      default: "disabled"
+
+    failover_blacklist_duration:
+      config:
+        en: |
+          How long a failed host stays blacklisted before retrying.
+        ru: |
+          Как долго упавший хост остаётся в чёрном списке перед повторной попыткой.
+      default: "\"30s\""
+
+    failover_discovery_timeout:
+      config:
+        en: |
+          HTTP timeout for Patroni API requests.
+        ru: |
+          Таймаут HTTP-запросов к Patroni API.
+      default: "\"5s\""
+
+    failover_connect_timeout:
+      config:
+        en: |
+          TCP connect timeout for fallback servers.
+        ru: |
+          Таймаут TCP-соединения с fallback-серверами.
+      default: "\"5s\""
+
+    failover_server_lifetime:
+      config:
+        en: |
+          Lifetime for fallback connections. Defaults to blacklist duration.
+        ru: |
+          Время жизни fallback-соединений. По умолчанию равно blacklist duration.
+      default: "blacklist duration"
+
     application_name:
       config:
         en: |

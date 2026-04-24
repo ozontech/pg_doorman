@@ -545,6 +545,23 @@ pools:
     # but you still want eviction fairness under max_db_connections pressure.
     # min_guaranteed_pool_size: 0
 
+    # Patroni REST API URLs for failover discovery.
+    # When the local backend is unreachable, doorman queries /cluster
+    # to find a live cluster member. Disabled when not set.
+    # patroni_discovery_urls: []
+
+    # How long a failed host stays blacklisted before retrying.
+    # failover_blacklist_duration: "30s"
+
+    # HTTP timeout for Patroni API requests.
+    # failover_discovery_timeout: "5s"
+
+    # TCP connect timeout for fallback servers.
+    # failover_connect_timeout: "5s"
+
+    # Lifetime for fallback connections. Defaults to blacklist duration.
+    # failover_server_lifetime: "30s"
+
     # --------------------------------------------------------------------------
     # Application Settings
     # --------------------------------------------------------------------------

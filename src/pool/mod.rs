@@ -414,6 +414,8 @@ impl ConnectionPool {
 
                 let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
 
+                let failover_state = build_failover_state(pool_config);
+
                 let manager = ServerPool::new(
                     address.clone(),
                     user.clone(),
@@ -433,6 +435,7 @@ impl ConnectionPool {
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
                     pool_mode == PoolMode::Session,
+                    failover_state,
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -577,6 +580,8 @@ impl ConnectionPool {
 
                         let pool_mode = shared_user.pool_mode.unwrap_or(pool_config.pool_mode);
 
+                        let failover_state = build_failover_state(pool_config);
+
                         let manager = ServerPool::new(
                             address.clone(),
                             shared_user.clone(),
@@ -596,6 +601,7 @@ impl ConnectionPool {
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
                             pool_mode == PoolMode::Session,
+                            failover_state,
                         );
 
                         let queue_strategy = match config.general.server_round_robin {
@@ -835,6 +841,36 @@ fn compute_spare(
     let pool_min = pool_min_guaranteed as usize;
     let effective_min = user_min.max(pool_min);
     current_pool_size.saturating_sub(effective_min)
+}
+
+/// Build failover state from pool config. Returns None if patroni_discovery_urls is not set.
+fn build_failover_state(pool_config: &ConfigPool) -> Option<Arc<failover::FailoverState>> {
+    pool_config.patroni_discovery_urls.as_ref().map(|urls| {
+        let blacklist_dur = pool_config
+            .failover_blacklist_duration
+            .map(|d| d.as_std())
+            .unwrap_or(std::time::Duration::from_secs(30));
+        let discovery_timeout = pool_config
+            .failover_discovery_timeout
+            .map(|d| d.as_std())
+            .unwrap_or(std::time::Duration::from_secs(5));
+        let connect_timeout = pool_config
+            .failover_connect_timeout
+            .map(|d| d.as_std())
+            .unwrap_or(std::time::Duration::from_secs(5));
+        let lifetime = pool_config
+            .failover_server_lifetime
+            .map(|d| d.as_millis())
+            .unwrap_or(blacklist_dur.as_millis() as u64);
+
+        Arc::new(failover::FailoverState::new(
+            urls.clone(),
+            blacklist_dur,
+            connect_timeout,
+            discovery_timeout,
+            lifetime,
+        ))
+    })
 }
 
 /// Get the connection pool
