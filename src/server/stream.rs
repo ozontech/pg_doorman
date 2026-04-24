@@ -101,6 +101,20 @@ impl StreamInner {
         }
     }
 
+    /// Async write that properly handles TLS back-pressure.
+    /// Use this instead of try_write() when in an async context
+    /// (e.g., server authentication). try_write() uses a noop waker
+    /// for TLS which silently fails on Pending — this method awaits
+    /// until the full buffer is written.
+    pub async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        use tokio::io::AsyncWriteExt;
+        match self {
+            StreamInner::TCPPlain { stream } => stream.write_all(buf).await,
+            StreamInner::TCPTls { stream } => stream.write_all(buf).await,
+            StreamInner::UnixSocket { stream } => stream.write_all(buf).await,
+        }
+    }
+
     /// Waits until the server socket becomes readable (data or EOF/error).
     /// Cancel-safe: no data is consumed, only readiness notification.
     pub async fn readable(&self) -> std::io::Result<()> {
