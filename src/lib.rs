@@ -4,6 +4,7 @@ pub mod auth;
 pub mod client;
 pub mod config;
 pub mod daemon;
+pub mod patroni;
 pub mod errors {
     pub use crate::app::errors::*;
 }
