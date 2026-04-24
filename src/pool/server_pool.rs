@@ -366,6 +366,47 @@ impl ServerPool {
         )
         .await;
 
+        // sslmode=allow retry for fallback connections (same logic as primary path)
+        let (result, active_stats) = if result.is_err()
+            && fallback_address.server_tls.mode.retries_with_tls()
+        {
+            info!(
+                "[{}@{}] failover: plain connection to {}:{} failed, retrying with tls",
+                self.address.username,
+                self.address.pool_name,
+                fallback_address.host,
+                fallback_address.port,
+            );
+            stats.disconnect();
+            let mut retry_address = fallback_address.clone();
+            retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
+                mode: crate::config::tls::ServerTlsMode::Require,
+                connector: fallback_address.server_tls.connector.clone(),
+                cert_hash: fallback_address.server_tls.cert_hash,
+            });
+            let retry_stats = Arc::new(ServerStats::new(
+                fallback_address.clone(),
+                crate::utils::clock::now(),
+            ));
+            retry_stats.register(retry_stats.clone());
+            let retry_result = Server::startup(
+                &retry_address,
+                &self.user,
+                &self.database,
+                self.client_server_map.clone(),
+                retry_stats.clone(),
+                self.cleanup_connections,
+                self.log_client_parameter_status_changes,
+                self.prepared_statement_cache_size,
+                self.application_name.clone(),
+                self.session_mode,
+            )
+            .await;
+            (retry_result, retry_stats)
+        } else {
+            (result, stats)
+        };
+
         match result {
             Ok(mut conn) => {
                 conn.stats.idle(0);
@@ -373,7 +414,7 @@ impl ServerPool {
                 Ok(conn)
             }
             Err(err) => {
-                stats.disconnect();
+                active_stats.disconnect();
                 warn!(
                     "[{}@{}] failover: connection to {}:{} failed: {}",
                     self.address.username,
