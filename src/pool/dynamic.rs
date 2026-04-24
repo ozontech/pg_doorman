@@ -180,6 +180,7 @@ pub fn create_dynamic_pool(
         },
         coordinator: get_coordinator(pool_name),
         replenish_failures: Arc::new(AtomicU32::new(0)),
+        created_at: std::time::Instant::now(),
     };
 
     // Atomic insert into POOLS
