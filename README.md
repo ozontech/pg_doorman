@@ -280,6 +280,12 @@ pools:
     server_tls_ca_cert: "/path/to/other-ca.crt"
 ```
 
+**Known limitations:**
+
+- **`prefer` mode fallback:** If the server accepts the SSL request but the TLS handshake fails (e.g., cipher mismatch), the connection is not retried on plain TCP (unlike libpq). This edge case is rare in practice.
+- **`channel_binding = require`:** PostgreSQL's `channel_binding = require` setting is incompatible with pg_doorman. The pooler uses separate TLS sessions for client-to-pooler and pooler-to-server connections, so SCRAM channel binding cannot be forwarded.
+- **Cipher suites:** Cipher suite selection is not currently configurable; system OpenSSL defaults are used. TLS 1.2 is the minimum protocol version.
+
 ### Security defaults
 
 PgDoorman enforces strict TLS defaults out of the box:

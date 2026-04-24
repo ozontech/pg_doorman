@@ -224,6 +224,11 @@ pub(crate) async fn create_tcp_stream_inner(
                     );
                     Ok(StreamInner::TCPTls { stream: tls_stream })
                 }
+                // Note: unlike libpq, we do NOT retry on a new plain TCP socket
+                // when TLS handshake fails after server responded 'S'. The TCP
+                // connection is already consumed by the partial handshake, and
+                // this edge case (server accepts SSL but handshake fails due to
+                // cipher/version mismatch) is rare in practice.
                 Err(err) => {
                     error!(
                         "tls handshake failed, host={host} port={port} server_tls_mode={} handshake_ms={:.1}: {err}",
