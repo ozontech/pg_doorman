@@ -150,6 +150,38 @@ patroni_discovery_urls = [
 | `pg_doorman_failover_host_blacklisted` | gauge | 1, если основной хост в blacklist |
 | `pg_doorman_failover_discovery_duration_seconds` | histogram | Время запроса `/cluster` |
 
+## Активные транзакции
+
+Если PostgreSQL падает во время транзакции клиента, клиент получает
+ошибку соединения. doorman не переносит незавершённые транзакции
+на fallback-хост — клиент должен выполнить retry.
+
+Новые запросы от этого и других клиентов автоматически идут через
+fallback.
+
+## Эксплуатационные заметки
+
+**Credentials.** Все узлы кластера должны принимать те же username
+и password, которые использует doorman. Patroni-кластеры обычно
+разделяют `pg_hba.conf` через bootstrap-конфигурацию, но это не
+гарантировано. Убедитесь, что fallback-узлы принимают настроенные
+credentials.
+
+**TLS.** Fallback-соединения используют тот же `server_tls_mode`,
+что и primary. Если primary использует unix socket (без TLS),
+fallback TCP-соединения тоже пойдут без TLS. Настройте
+`server_tls_mode` явно, если fallback-соединения должны быть
+зашифрованы.
+
+**DNS.** Используйте IP-адреса в `patroni_discovery_urls`, а не
+hostname. Неудача DNS-резолва во время failover добавляет задержку
+и может привести к полному отказу discovery.
+
+**standby_leader.** В standby-кластерах Patroni используется роль
+`standby_leader`. doorman обрабатывает её как "other" (наименьший
+приоритет, после sync_standby и replica). Для большинства
+развёртываний это корректно.
+
 ## Связь с patroni_proxy
 
 patroni_proxy и failover discovery решают разные задачи.

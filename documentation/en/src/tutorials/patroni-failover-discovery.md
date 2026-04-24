@@ -147,6 +147,35 @@ queries all URLs in parallel and takes the first response.
 | `pg_doorman_failover_host_blacklisted` | gauge | 1 if the primary host is currently blacklisted |
 | `pg_doorman_failover_discovery_duration_seconds` | histogram | Time spent fetching `/cluster` |
 
+## Active transactions
+
+If PostgreSQL crashes while a client is in the middle of a transaction,
+the client receives a connection error. doorman does not migrate
+in-flight transactions to a fallback host — the client must retry.
+
+New queries from the same or other clients go through the fallback path
+automatically.
+
+## Operational notes
+
+**Credentials.** All cluster nodes must accept the same username and
+password that doorman uses. Patroni clusters typically share
+`pg_hba.conf` via bootstrap configuration, but this is not guaranteed.
+Verify that fallback nodes accept the configured credentials.
+
+**TLS.** Fallback connections use the same `server_tls_mode` as the
+primary. If the primary uses a unix socket (no TLS), fallback TCP
+connections will also run without TLS. Configure `server_tls_mode`
+explicitly if fallback connections must be encrypted.
+
+**DNS.** Use IP addresses in `patroni_discovery_urls`, not hostnames.
+DNS resolution failure during a failover adds latency and may cause
+discovery to fail entirely.
+
+**standby_leader.** Patroni standby clusters use the `standby_leader`
+role. doorman treats it as "other" (lowest priority, after sync_standby
+and replica). This is correct for most deployments.
+
 ## Relationship to patroni_proxy
 
 patroni_proxy and failover discovery solve different problems.
