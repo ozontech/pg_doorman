@@ -343,6 +343,54 @@ impl Pool {
                     "failover_blacklist_duration must be > 0".into(),
                 ));
             }
+            if dur.as_millis() < 1000 {
+                log::warn!(
+                    "failover_blacklist_duration is {}ms (< 1s), \
+                     this will cause frequent Patroni API requests; \
+                     did you mean \"{}s\"?",
+                    dur.as_millis(),
+                    dur.as_millis()
+                );
+            }
+        }
+
+        if let Some(ref dur) = self.failover_discovery_timeout {
+            if dur.as_millis() == 0 {
+                return Err(Error::BadConfig(
+                    "failover_discovery_timeout must be > 0".into(),
+                ));
+            }
+        }
+
+        if let Some(ref dur) = self.failover_connect_timeout {
+            if dur.as_millis() == 0 {
+                return Err(Error::BadConfig(
+                    "failover_connect_timeout must be > 0".into(),
+                ));
+            }
+        }
+
+        if let Some(ref dur) = self.failover_server_lifetime {
+            if dur.as_millis() == 0 {
+                return Err(Error::BadConfig(
+                    "failover_server_lifetime must be > 0".into(),
+                ));
+            }
+        }
+
+        // Warn if fallback connections outlive the blacklist window
+        if let (Some(ref lifetime), Some(ref blacklist)) = (
+            &self.failover_server_lifetime,
+            &self.failover_blacklist_duration,
+        ) {
+            if lifetime.as_millis() > blacklist.as_millis() {
+                log::warn!(
+                    "failover_server_lifetime ({}ms) > failover_blacklist_duration ({}ms): \
+                     fallback connections will coexist with primary connections after blacklist expires",
+                    lifetime.as_millis(),
+                    blacklist.as_millis()
+                );
+            }
         }
 
         // Validate auth_query config
