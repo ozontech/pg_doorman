@@ -50,15 +50,14 @@ Fallback:
 
 1. `ServerPool::create()` пробует локальный unix socket.
 2. Connection refused или socket error: doorman помещает локальный хост
-   в blacklist на `failover_blacklist_duration_ms` (по умолчанию
+   в blacklist на `failover_blacklist_duration` (по умолчанию
    30 секунд).
 3. doorman отправляет `GET /cluster` ко всем Patroni URL из конфига
    **параллельно** и берёт первый успешный ответ.
 4. Из списка members doorman выбирает первый доступный хост:
    сначала `sync_standby`, потом `replica`, потом любой другой.
-   TCP connect ко всем кандидатам запускается параллельно;
-   `sync_standby` имеет приоритет (doorman ждёт до 2 секунд прежде
-   чем взять replica).
+   TCP connect ко всем кандидатам запускается параллельно; если
+   `sync_standby` отвечает, он выбирается немедленно, обходя replica.
 5. Новое соединение попадает в пул со **сниженным lifetime**
    (по умолчанию 30 секунд, совпадает с длительностью blacklist).
    На него действуют все обычные правила пула: лимиты coordinator,
@@ -126,10 +125,10 @@ patroni_discovery_urls = [
 
 | Параметр | По умолчанию | Описание |
 |----------|--------------|----------|
-| `failover_blacklist_duration_ms` | 30000 | Сколько локальный хост остаётся в blacklist после ошибки соединения. В течение этого окна все новые соединения идут на fallback-хост. |
-| `failover_discovery_timeout_ms` | 5000 | HTTP-таймаут запросов к Patroni API. Действует на каждый URL; так как все URL опрашиваются параллельно, реальный таймаут равен этому значению, а не умноженному на количество URL. |
-| `failover_connect_timeout_ms` | 5000 | Таймаут TCP connect к fallback-серверам. Действует на всю пачку параллельных connect, не на каждый member отдельно. |
-| `failover_server_lifetime_ms` | = `failover_blacklist_duration_ms` | Lifetime fallback-соединений. Короче штатного `server_lifetime`, чтобы doorman быстро вернулся к локальному хосту после завершения switchover. |
+| `failover_blacklist_duration` | `"30s"` | Сколько локальный хост остаётся в blacklist после ошибки соединения. В течение этого окна все новые соединения идут на fallback-хост. |
+| `failover_discovery_timeout` | `"5s"` | HTTP-таймаут запросов к Patroni API. Действует на каждый URL; так как все URL опрашиваются параллельно, реальный таймаут равен этому значению, а не умноженному на количество URL. |
+| `failover_connect_timeout` | `"5s"` | Таймаут TCP connect к fallback-серверам. Действует на всю пачку параллельных connect, не на каждый member отдельно. |
+| `failover_server_lifetime` | = `failover_blacklist_duration` | Lifetime fallback-соединений. Короче штатного `server_lifetime`, чтобы doorman быстро вернулся к локальному хосту после завершения switchover. |
 
 ### Что указывать в `patroni_discovery_urls`
 
@@ -140,10 +139,6 @@ patroni_discovery_urls = [
 Два и более URL рекомендуется: если первый URL указывает на ту же
 машину что и мёртвый PostgreSQL, он тоже не ответит. doorman
 опрашивает все URL параллельно и берёт первый ответ.
-
-После успешного ответа `/cluster` doorman извлекает `api_url` из
-каждого member и может использовать их для последующих запросов, даже
-если URL из конфига стали неактуальными.
 
 ## Prometheus-метрики
 
