@@ -19,6 +19,7 @@ type SharedClusterFuture =
 pub struct FallbackTarget {
     pub host: String,
     pub port: u16,
+    pub role: Role,
     pub lifetime_ms: u64,
 }
 
@@ -38,8 +39,8 @@ pub enum BlacklistCheck {
 pub struct FailoverState {
     /// When Some and in the future, local host is considered down
     blacklisted_until: Mutex<Option<Instant>>,
-    /// Cached fallback host from last successful discovery
-    whitelisted_host: Mutex<Option<(String, u16)>>,
+    /// Cached fallback host and its role from last successful discovery
+    whitelisted_host: Mutex<Option<(String, u16, Role)>>,
     /// Shared inflight /cluster request for coalescing.
     /// Stores creation timestamp alongside the future to detect staleness.
     inflight: tokio::sync::Mutex<Option<(Instant, SharedClusterFuture)>>,
@@ -109,7 +110,7 @@ impl FailoverState {
                     let mut wl = self.whitelisted_host.lock();
                     wl.take()
                 };
-                if let Some((host, port)) = old_host {
+                if let Some((host, port, _)) = old_host {
                     let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
                         &self.pool_name,
                         &host,
@@ -145,7 +146,7 @@ impl FailoverState {
             let mut guard = self.whitelisted_host.lock();
             guard.take()
         };
-        if let Some((host, port)) = old_host {
+        if let Some((host, port, _)) = old_host {
             let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
                 &self.pool_name,
                 &host,
@@ -164,7 +165,7 @@ impl FailoverState {
             let mut guard = self.whitelisted_host.lock();
             guard.take()
         };
-        if let Some((host, port)) = old {
+        if let Some((host, port, _)) = old {
             let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
                 &self.pool_name,
                 &host,
@@ -177,14 +178,18 @@ impl FailoverState {
         // 1. Check whitelist — return cached host immediately
         {
             let guard = self.whitelisted_host.lock();
-            if let Some((ref host, port)) = *guard {
-                debug!("failover: returning whitelisted host {}:{}", host, port);
+            if let Some((ref host, port, ref role)) = *guard {
+                debug!(
+                    "[pool: {}] failover: returning whitelisted host {}:{}",
+                    self.pool_name, host, port
+                );
                 crate::prometheus::FAILOVER_WHITELIST_HITS_TOTAL
                     .with_label_values(&[&self.pool_name])
                     .inc();
                 return Ok(FallbackTarget {
                     host: host.clone(),
                     port,
+                    role: role.clone(),
                     lifetime_ms: self.server_lifetime_ms,
                 });
             }
@@ -195,20 +200,34 @@ impl FailoverState {
 
         // 3-4. Filter and sort candidates
         let candidates = select_candidates(&cluster.members);
+        info!(
+            "[pool: {}] failover: discovered {} members, {} candidates: {}",
+            self.pool_name,
+            cluster.members.len(),
+            candidates.len(),
+            candidates
+                .iter()
+                .map(|(h, p, r)| format!("{}:{}({:?})", h, p, r))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         if candidates.is_empty() {
             return Err("no eligible members in /cluster response".to_string());
         }
 
         // 5-7. Parallel TCP connect to all candidates
         let timeout = self.connect_timeout;
-        let (host, port) = self.try_connect_candidates(&candidates, timeout).await?;
+        let (host, port, role) = self.try_connect_candidates(&candidates, timeout).await?;
 
         // 8. Whitelist the successful host
         {
             let mut guard = self.whitelisted_host.lock();
-            *guard = Some((host.clone(), port));
+            *guard = Some((host.clone(), port, role.clone()));
         }
-        info!("failover: whitelisted {}:{}", host, port);
+        info!(
+            "[pool: {}] failover: whitelisted {}:{} (role: {:?})",
+            self.pool_name, host, port, role
+        );
         crate::prometheus::FAILOVER_FALLBACK_HOST
             .with_label_values(&[&self.pool_name, &host, &port.to_string()])
             .set(1.0);
@@ -217,6 +236,7 @@ impl FailoverState {
         Ok(FallbackTarget {
             host,
             port,
+            role,
             lifetime_ms: self.server_lifetime_ms,
         })
     }
@@ -281,27 +301,35 @@ impl FailoverState {
         &self,
         candidates: &[(String, u16, Role)],
         timeout: Duration,
-    ) -> Result<(String, u16), String> {
+    ) -> Result<(String, u16, Role), String> {
         type ConnectFuture = Pin<Box<dyn Future<Output = Option<(String, u16, Role)>> + Send>>;
         let mut futs: Vec<ConnectFuture> = Vec::with_capacity(candidates.len());
 
+        let pool_name = self.pool_name.clone();
         for (host, port, role) in candidates {
             let addr = format!("{}:{}", host, port);
             let host = host.clone();
             let port = *port;
             let role = role.clone();
+            let pn = pool_name.clone();
             let fut = Box::pin(async move {
                 match tokio::time::timeout(timeout, TcpStream::connect(&addr)).await {
                     Ok(Ok(_stream)) => {
-                        debug!("failover: TCP connect ok to {} (role: {:?})", addr, role);
+                        debug!(
+                            "[pool: {}] failover: TCP connect ok to {} (role: {:?})",
+                            pn, addr, role
+                        );
                         Some((host, port, role))
                     }
                     Ok(Err(e)) => {
-                        warn!("failover: TCP connect failed to {}: {}", addr, e);
+                        warn!(
+                            "[pool: {}] failover: TCP connect failed to {}: {}",
+                            pn, addr, e
+                        );
                         None
                     }
                     Err(_) => {
-                        warn!("failover: TCP connect timeout to {}", addr);
+                        warn!("[pool: {}] failover: TCP connect timeout to {}", pn, addr);
                         None
                     }
                 }
@@ -321,7 +349,7 @@ impl FailoverState {
                 if priority == 0 {
                     // Top priority (sync_standby) — return immediately,
                     // dropping `rest` cancels remaining futures.
-                    return Ok((host, port));
+                    return Ok((host, port, role));
                 }
                 let dominated = best
                     .as_ref()
@@ -334,8 +362,17 @@ impl FailoverState {
             remaining = rest;
         }
 
-        best.map(|(h, p, _)| (h, p))
-            .ok_or_else(|| "all candidates unreachable".to_string())
+        match best {
+            Some((h, p, r)) => Ok((h, p, r)),
+            None => {
+                warn!(
+                    "[pool: {}] failover: all {} candidates unreachable",
+                    self.pool_name,
+                    candidates.len()
+                );
+                Err("all candidates unreachable".to_string())
+            }
+        }
     }
 }
 
@@ -449,7 +486,7 @@ mod tests {
         // Set a whitelist entry
         {
             let mut guard = state.whitelisted_host.lock();
-            *guard = Some(("10.0.0.5".to_string(), 5432));
+            *guard = Some(("10.0.0.5".to_string(), 5432, Role::Replica));
         }
 
         state.blacklist();
@@ -502,7 +539,7 @@ mod tests {
 
         {
             let mut guard = state.whitelisted_host.lock();
-            *guard = Some(("10.0.0.1".to_string(), 5432));
+            *guard = Some(("10.0.0.1".to_string(), 5432, Role::SyncStandby));
         }
 
         state.clear_whitelist();

@@ -374,6 +374,14 @@ impl ServerPool {
             }
             Err(err) => {
                 stats.disconnect();
+                warn!(
+                    "[{}@{}] failover: connection to {}:{} failed: {}",
+                    self.address.username,
+                    self.address.pool_name,
+                    fallback_address.host,
+                    fallback_address.port,
+                    err
+                );
                 // Clear whitelist so next attempt re-runs discovery
                 // instead of reusing a now-unreachable cached host.
                 if let Some(ref failover) = self.failover_state {

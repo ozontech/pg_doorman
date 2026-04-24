@@ -5,6 +5,18 @@ use log::{debug, error, warn};
 
 use super::types::ClusterResponse;
 
+/// Truncate a string to at most `max_bytes`, ensuring the cut falls on a char boundary.
+fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Errors returned by Patroni API discovery.
 #[derive(Debug)]
 pub enum PatroniError {
@@ -69,12 +81,18 @@ impl PatroniClient {
                             .map_err(|e| format!("{e}"))?;
 
                         if !resp.status().is_success() {
-                            return Err(format!("HTTP {}", resp.status()));
+                            let status = resp.status();
+                            let body = resp.text().await.unwrap_or_default();
+                            return Err(format!("HTTP {status}: {}", truncate_str(&body, 512)));
                         }
 
-                        resp.json::<ClusterResponse>()
+                        let body = resp
+                            .text()
                             .await
-                            .map_err(|e| format!("json parse: {e}"))
+                            .map_err(|e| format!("reading body: {e}"))?;
+                        serde_json::from_str::<ClusterResponse>(&body).map_err(|e| {
+                            format!("json parse: {e}, body: {}", truncate_str(&body, 512))
+                        })
                     }
                     .await;
 
