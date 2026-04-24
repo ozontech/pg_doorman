@@ -108,8 +108,11 @@ impl FailoverState {
                     wl.take()
                 };
                 if let Some((host, port)) = old_host {
-                    let _ = crate::prometheus::FAILOVER_FALLBACK_HOST
-                        .remove_label_values(&[&self.pool_name, &host, &port.to_string()]);
+                    let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
+                        &self.pool_name,
+                        &host,
+                        &port.to_string(),
+                    ]);
                 }
 
                 BlacklistCheck::JustExpired
@@ -141,8 +144,11 @@ impl FailoverState {
             guard.take()
         };
         if let Some((host, port)) = old_host {
-            let _ = crate::prometheus::FAILOVER_FALLBACK_HOST
-                .remove_label_values(&[&self.pool_name, &host, &port.to_string()]);
+            let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
+                &self.pool_name,
+                &host,
+                &port.to_string(),
+            ]);
         }
         self.blacklist_logged.store(false, Ordering::Relaxed);
         crate::prometheus::FAILOVER_HOST_BLACKLISTED
@@ -157,8 +163,11 @@ impl FailoverState {
             guard.take()
         };
         if let Some((host, port)) = old {
-            let _ = crate::prometheus::FAILOVER_FALLBACK_HOST
-                .remove_label_values(&[&self.pool_name, &host, &port.to_string()]);
+            let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
+                &self.pool_name,
+                &host,
+                &port.to_string(),
+            ]);
         }
     }
 
