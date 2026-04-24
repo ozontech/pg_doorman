@@ -28,6 +28,8 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 **Dead backend detection.** When a client holds a transaction open, pg_doorman probes the backend and returns an error immediately if the server is gone (failover, OOM kill). Other poolers rely on TCP keepalive, leaving clients hanging for minutes.
 
+**Patroni failover discovery.** When pg_doorman sits next to PostgreSQL on the same machine (unix socket), a Patroni switchover kills the local backend. pg_doorman queries the Patroni REST API `/cluster` endpoint, finds a live cluster member (`sync_standby` preferred), and routes new connections there within 1-2 TCP round trips. The local host is blacklisted for a configurable window (default 30s); fallback connections get a short lifetime so the pool returns to the primary once it recovers. No external routing changes needed — the pooler handles the gap.
+
 ## Benchmarks
 
 Automated benchmarks on AWS Fargate (16 vCPU, pool size 40, pgbench 30s per test):
@@ -65,6 +67,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Runtime log level control (`SET log_level`) | Yes | No | No |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
 | TLS: minimum TLS 1.2, Mozilla ciphers | Yes | Yes | No (allows TLS 1.0, weak ciphers) |
+| Patroni failover discovery (automatic backend failover) | Yes | No | No |
 | Prometheus metrics | Built-in | External | Built-in |
 
 ## Quick Start

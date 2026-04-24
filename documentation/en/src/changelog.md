@@ -2,6 +2,29 @@
 
 ### 3.6.0 <small>Apr 24, 2026</small>
 
+#### Patroni failover discovery
+
+When pg_doorman runs next to PostgreSQL on the same machine and connects via unix socket, a Patroni switchover or PostgreSQL crash leaves the pooler without a backend. With `patroni_discovery_urls` configured, pg_doorman queries the Patroni REST API `/cluster` endpoint, finds a live cluster member, and routes new connections there.
+
+Candidate selection: `sync_standby` first (most likely next leader), then `replica`, then any other member. Members with `noloadbalance`, `nofailover`, or `archive` tags are excluded. All candidates are TCP-probed in parallel; first responding `sync_standby` wins immediately.
+
+The failed host is blacklisted for `failover_blacklist_duration` (default 30s). During the blacklist window, subsequent connection requests reuse the cached fallback host without repeating discovery. Fallback connections get a short lifetime (`failover_server_lifetime`, default = blacklist duration) so the pool returns to the primary once it recovers. When the blacklist expires, a reconnect epoch bump drains all stale fallback connections.
+
+Configuration:
+
+```yaml
+pools:
+  mydb:
+    patroni_discovery_urls:
+      - "http://10.0.0.1:8008"
+      - "http://10.0.0.2:8008"
+    failover_blacklist_duration: "30s"
+    failover_discovery_timeout: "5s"
+    failover_connect_timeout: "5s"
+```
+
+Prometheus metrics: `pg_doorman_failover_discovery_total`, `pg_doorman_failover_connections_total`, `pg_doorman_failover_discovery_errors_total`, `pg_doorman_failover_host_blacklisted`, `pg_doorman_failover_discovery_duration_seconds`, `pg_doorman_failover_fallback_host`, `pg_doorman_failover_whitelist_hits_total`.
+
 #### Server-side TLS (pg_doorman → PostgreSQL)
 
 Six SSL modes matching libpq semantics: `disable`, `allow` (default), `prefer`, `require`, `verify-ca`, `verify-full`. Mutual TLS supported via `server_tls_certificate` / `server_tls_private_key`.
