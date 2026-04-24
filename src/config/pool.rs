@@ -317,6 +317,34 @@ impl Pool {
             user.validate().await?;
         }
 
+        // Validate failover discovery settings
+        if let Some(ref urls) = self.patroni_discovery_urls {
+            if urls.is_empty() {
+                return Err(Error::BadConfig(
+                    "patroni_discovery_urls cannot be an empty list; \
+                     remove the setting to disable failover discovery"
+                        .into(),
+                ));
+            }
+            for url in urls {
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(Error::BadConfig(format!(
+                        "patroni_discovery_urls: invalid URL '{}'; \
+                         must start with http:// or https://",
+                        url
+                    )));
+                }
+            }
+        }
+
+        if let Some(ref dur) = self.failover_blacklist_duration {
+            if dur.as_millis() == 0 {
+                return Err(Error::BadConfig(
+                    "failover_blacklist_duration must be > 0".into(),
+                ));
+            }
+        }
+
         // Validate auth_query config
         if let Some(ref aq) = self.auth_query {
             if aq.query.is_empty() {
