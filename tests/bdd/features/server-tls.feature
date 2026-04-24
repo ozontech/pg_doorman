@@ -360,6 +360,39 @@ Feature: Server-side TLS connections
     Then admin session "adm" response should contain "false"
     When we close session "s1"
 
+  @server-tls-cancel
+  Scenario: cancel request uses TLS when main connection uses TLS
+    Given PostgreSQL started with options "-c ssl=on -c ssl_cert_file=${PG_SSL_CERT} -c ssl_key_file=${PG_SSL_KEY}" and pg_hba.conf:
+      """
+      hostssl all all 127.0.0.1/32 trust
+      hostnossl all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      server_tls_mode = "require"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    When we create session "main" to pg_doorman as "example_user_1" with password "" and database "example_db" and store backend key
+    And we send SimpleQuery "SELECT pg_sleep(10)" to session "main" without waiting
+    And we sleep 500ms
+    And we send cancel request for session "main"
+    Then session "main" should receive cancel error containing "canceling"
+
   @server-tls-per-pool
   Scenario: per-pool TLS override
     Given PostgreSQL started with options "-c ssl=on -c ssl_cert_file=${PG_SSL_CERT} -c ssl_key_file=${PG_SSL_KEY}" and pg_hba.conf:
