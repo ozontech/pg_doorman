@@ -446,3 +446,69 @@ pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_ERRORS: Lazy<IntCounterVec> = Lazy::
     REGISTRY.register(Box::new(counter.clone())).unwrap();
     counter
 });
+
+pub(crate) static FAILOVER_DISCOVERY_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_failover_discovery_total",
+            "Total number of Patroni /cluster discovery attempts, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static FAILOVER_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_failover_connections_total",
+            "Total number of successful fallback connections established, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static FAILOVER_DISCOVERY_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_failover_discovery_errors_total",
+            "Total number of failed Patroni discovery attempts, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static FAILOVER_HOST_BLACKLISTED: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_failover_host_blacklisted",
+            "Whether the primary host is currently blacklisted (1) or not (0), by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static FAILOVER_DISCOVERY_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+    let histogram = HistogramVec::new(
+        prometheus::HistogramOpts::new(
+            "pg_doorman_failover_discovery_duration_seconds",
+            "Duration of Patroni /cluster discovery requests, by pool.",
+        )
+        .buckets(vec![0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
+});

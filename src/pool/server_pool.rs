@@ -162,6 +162,9 @@ impl ServerPool {
                             "[{}@{}] failover: primary blacklisted, connecting to {}:{}",
                             self.address.username, self.address.pool_name, target.host, target.port,
                         );
+                        crate::prometheus::FAILOVER_CONNECTIONS_TOTAL
+                            .with_label_values(&[&self.address.pool_name])
+                            .inc();
                         return self.create_fallback_connection(target).await;
                     }
                     Err(e) => {
@@ -169,6 +172,9 @@ impl ServerPool {
                             "[{}@{}] failover: discovery failed while blacklisted: {e}",
                             self.address.username, self.address.pool_name,
                         );
+                        crate::prometheus::FAILOVER_DISCOVERY_ERRORS_TOTAL
+                            .with_label_values(&[&self.address.pool_name])
+                            .inc();
                         // Fall through to try primary anyway
                     }
                 }
@@ -272,6 +278,9 @@ impl ServerPool {
                 if is_backend_unreachable(&err) {
                     if let Some(ref failover) = self.failover_state {
                         failover.blacklist();
+                        crate::prometheus::FAILOVER_HOST_BLACKLISTED
+                            .with_label_values(&[&self.address.pool_name])
+                            .set(1.0);
                         match failover.get_fallback_target().await {
                             Ok(target) => {
                                 info!(
@@ -281,6 +290,9 @@ impl ServerPool {
                                     target.host,
                                     target.port,
                                 );
+                                crate::prometheus::FAILOVER_CONNECTIONS_TOTAL
+                                    .with_label_values(&[&self.address.pool_name])
+                                    .inc();
                                 return self.create_fallback_connection(target).await;
                             }
                             Err(e) => {
@@ -288,6 +300,9 @@ impl ServerPool {
                                     "[{}@{}] failover: discovery failed: {e}",
                                     self.address.username, self.address.pool_name,
                                 );
+                                crate::prometheus::FAILOVER_DISCOVERY_ERRORS_TOTAL
+                                    .with_label_values(&[&self.address.pool_name])
+                                    .inc();
                             }
                         }
                     }

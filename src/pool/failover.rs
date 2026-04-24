@@ -28,6 +28,7 @@ pub struct FailoverState {
     /// Shared inflight /cluster request for coalescing
     inflight: tokio::sync::Mutex<Option<SharedClusterFuture>>,
 
+    pool_name: String,
     discovery_urls: Vec<String>,
     blacklist_duration: Duration,
     connect_timeout: Duration,
@@ -37,6 +38,7 @@ pub struct FailoverState {
 
 impl FailoverState {
     pub fn new(
+        pool_name: String,
         discovery_urls: Vec<String>,
         blacklist_duration: Duration,
         connect_timeout: Duration,
@@ -47,6 +49,7 @@ impl FailoverState {
             blacklisted_until: Mutex::new(None),
             whitelisted_host: Mutex::new(None),
             inflight: tokio::sync::Mutex::new(None),
+            pool_name,
             discovery_urls,
             blacklist_duration,
             connect_timeout,
@@ -78,6 +81,9 @@ impl FailoverState {
             let mut guard = self.whitelisted_host.lock().unwrap();
             *guard = None;
         }
+        crate::prometheus::FAILOVER_HOST_BLACKLISTED
+            .with_label_values(&[&self.pool_name])
+            .set(0.0);
     }
 
     pub async fn get_fallback_target(&self) -> Result<FallbackTarget, String> {
@@ -138,7 +144,16 @@ impl FailoverState {
             }
         };
 
+        let start = std::time::Instant::now();
+        crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+            .with_label_values(&[&self.pool_name])
+            .inc();
+
         let result = shared.await;
+
+        crate::prometheus::FAILOVER_DISCOVERY_DURATION
+            .with_label_values(&[&self.pool_name])
+            .observe(start.elapsed().as_secs_f64());
 
         // Clear inflight after completion
         {
@@ -256,6 +271,7 @@ mod tests {
     #[test]
     fn blacklist_lifecycle() {
         let state = FailoverState::new(
+            "test_pool".to_string(),
             vec![],
             Duration::from_secs(10),
             Duration::from_secs(1),

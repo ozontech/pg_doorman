@@ -414,7 +414,7 @@ impl ConnectionPool {
 
                 let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
 
-                let failover_state = build_failover_state(pool_config);
+                let failover_state = build_failover_state(pool_name, pool_config);
 
                 let manager = ServerPool::new(
                     address.clone(),
@@ -580,7 +580,7 @@ impl ConnectionPool {
 
                         let pool_mode = shared_user.pool_mode.unwrap_or(pool_config.pool_mode);
 
-                        let failover_state = build_failover_state(pool_config);
+                        let failover_state = build_failover_state(pool_name, pool_config);
 
                         let manager = ServerPool::new(
                             address.clone(),
@@ -844,7 +844,10 @@ fn compute_spare(
 }
 
 /// Build failover state from pool config. Returns None if patroni_discovery_urls is not set.
-fn build_failover_state(pool_config: &ConfigPool) -> Option<Arc<failover::FailoverState>> {
+fn build_failover_state(
+    pool_name: &str,
+    pool_config: &ConfigPool,
+) -> Option<Arc<failover::FailoverState>> {
     pool_config.patroni_discovery_urls.as_ref().map(|urls| {
         let blacklist_dur = pool_config
             .failover_blacklist_duration
@@ -864,6 +867,7 @@ fn build_failover_state(pool_config: &ConfigPool) -> Option<Arc<failover::Failov
             .unwrap_or(blacklist_dur.as_millis() as u64);
 
         Arc::new(failover::FailoverState::new(
+            pool_name.to_string(),
             urls.clone(),
             blacklist_dur,
             connect_timeout,
