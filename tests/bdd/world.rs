@@ -2,6 +2,8 @@ use cucumber::World;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Child;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, RwLock};
 use tempfile::{NamedTempFile, TempDir};
 
 /// Result of a test command execution
@@ -114,6 +116,14 @@ pub struct DoormanWorld {
     pub pg_ssl_client_key_file: Option<NamedTempFile>,
     /// CA that did NOT sign the server cert, for negative verification tests.
     pub pg_ssl_wrong_ca_cert_file: Option<NamedTempFile>,
+    /// Mock Patroni server shutdown signals: host URL -> shutdown flag
+    pub mock_patroni_shutdowns: HashMap<String, Arc<AtomicBool>>,
+    /// Mock Patroni server ports (for tracking active servers)
+    pub mock_patroni_ports: Vec<u16>,
+    /// Mock Patroni server names to ports mapping
+    pub mock_patroni_names: HashMap<String, u16>,
+    /// Mock Patroni server response holders: server name -> shared JSON string
+    pub mock_patroni_responses: HashMap<String, Arc<RwLock<String>>>,
 }
 
 impl DoormanWorld {
@@ -245,6 +255,12 @@ impl DoormanWorld {
         }
         if let Some(ref f) = self.pg_ssl_wrong_ca_cert_file {
             result = result.replace("${PG_SSL_WRONG_CA_CERT}", f.path().to_str().unwrap());
+        }
+
+        // Replace mock Patroni server port placeholders (e.g., ${PATRONI_NODE1_PORT})
+        for (server_name, port) in &self.mock_patroni_names {
+            let placeholder = format!("${{PATRONI_{}_PORT}}", server_name.to_uppercase());
+            result = result.replace(&placeholder, &port.to_string());
         }
 
         // Replace dynamic variables from self.vars (e.g., extracted password hashes)
