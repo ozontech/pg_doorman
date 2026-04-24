@@ -295,10 +295,10 @@ impl Config {
 
         info!("server_tls_mode: {}", self.general.server_tls_mode);
         if let Some(ref ca) = self.general.server_tls_ca_cert {
-            info!("Server TLS CA cert: {ca}");
+            info!("server_tls_ca_cert: {ca}");
         }
         if let Some(ref cert) = self.general.server_tls_certificate {
-            info!("Server TLS certificate: {cert}");
+            info!("server_tls_certificate: {cert}");
         }
 
         for (pool_name, pool) in &self.pools {
