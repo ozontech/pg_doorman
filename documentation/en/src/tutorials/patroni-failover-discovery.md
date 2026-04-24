@@ -47,7 +47,7 @@ Failover:
                       +-- GET /cluster --> Patroni API
 ```
 
-1. `ServerPool::create()` tries the local unix socket.
+1. Doorman tries the local unix socket.
 2. Connection refused or socket error: doorman blacklists the local
    host for `failover_blacklist_duration` (default 30 seconds).
 3. Doorman sends `GET /cluster` to all configured Patroni URLs
@@ -59,9 +59,8 @@ Failover:
 5. The new connection enters the pool with a **reduced lifetime**
    (default 30 seconds, matching the blacklist duration). It follows
    all normal pool rules: coordinator limits, idle timeout, recycle.
-6. Subsequent `create()` calls during the blacklist window connect
-   to the same fallback host directly, without querying the Patroni
-   API again.
+6. Subsequent connections during the blacklist window go to the same
+   fallback host directly, without querying the Patroni API again.
 7. When the blacklist expires, doorman tries the local socket again.
    If it works, normal mode resumes. If not, the cycle repeats.
 
@@ -145,6 +144,8 @@ queries all URLs in parallel and takes the first response.
 | `pg_doorman_failover_connections_total` | counter | Fallback connections created |
 | `pg_doorman_failover_discovery_errors_total` | counter | Failed `/cluster` requests (all URLs unreachable) |
 | `pg_doorman_failover_host_blacklisted` | gauge | 1 if the primary host is currently blacklisted |
+| `pg_doorman_failover_fallback_host` | gauge | Currently active fallback host (1 = active). Labels: pool, host, port |
+| `pg_doorman_failover_whitelist_hits_total` | counter | Cached fallback host reused without querying Patroni API |
 | `pg_doorman_failover_discovery_duration_seconds` | histogram | Time spent fetching `/cluster` |
 
 ## Active transactions
@@ -189,5 +190,5 @@ PostgreSQL. It handles the case where the local backend dies and doorman
 needs a temporary alternative. It does pool connections.
 
 In the recommended deployment (patroni_proxy -> pg_doorman -> PostgreSQL),
-failover discovery adds resilience at the doorman layer without
-affecting the patroni_proxy layer.
+failover discovery keeps read traffic flowing at the doorman layer
+when the local backend dies, without affecting patroni_proxy routing.

@@ -439,6 +439,55 @@ p_sockets = ts_panel(
 )
 
 # ---------------------------------------------------------------------------
+# Row 12: Patroni Failover Discovery (collapsed)
+# ---------------------------------------------------------------------------
+SI = 'instance=~"$instance"'
+
+row12 = collapsed_row("Patroni Failover Discovery")
+
+p_failover_blacklisted = stat_panel(
+    "Primary Blacklisted",
+    f'max(pg_doorman_failover_host_blacklisted{{{SI}}})',
+    thresholds=[(None, "green"), (1, "red")],
+    desc="1 if any pool has its primary host blacklisted. Sustained = primary not recovering.",
+)
+p_failover_connections = stat_panel(
+    "Fallback Connections",
+    f'sum(increase(pg_doorman_failover_connections_total{{{SI}}}[$__rate_interval]))',
+    thresholds=[(None, "blue")],
+    color_mode="none",
+    desc="Connections routed to fallback hosts in the current window.",
+)
+p_failover_errors = stat_panel(
+    "Discovery Errors",
+    f'sum(increase(pg_doorman_failover_discovery_errors_total{{{SI}}}[$__rate_interval]))',
+    thresholds=[(None, "green"), (1, "red")],
+    desc="Failed /cluster requests (all Patroni URLs unreachable).",
+)
+
+p_failover_discovery_rate = ts_panel(
+    "Discovery Rate", [
+        prom(f'rate(pg_doorman_failover_discovery_total{{{SI}}}[$__rate_interval])', "{{pool}} discovery/s"),
+        prom(f'rate(pg_doorman_failover_connections_total{{{SI}}}[$__rate_interval])', "{{pool}} connections/s"),
+        prom(f'rate(pg_doorman_failover_discovery_errors_total{{{SI}}}[$__rate_interval])', "{{pool}} errors/s"),
+    ], w=8,
+    desc="Patroni API calls, fallback connections, and errors per second. Errors without connections = all Patroni URLs or all candidates unreachable.",
+)
+p_failover_duration = ts_panel(
+    "Discovery Duration", [
+        prom(f'histogram_quantile(0.50, rate(pg_doorman_failover_discovery_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p50"),
+        prom(f'histogram_quantile(0.99, rate(pg_doorman_failover_discovery_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p99"),
+    ], unit="s", w=8,
+    desc="Time to fetch /cluster from Patroni API. p99 above 1s = network issues or overloaded Patroni nodes.",
+)
+p_failover_whitelist = ts_panel(
+    "Whitelist Cache Hits", [
+        prom(f'rate(pg_doorman_failover_whitelist_hits_total{{{SI}}}[$__rate_interval])', "{{pool}}"),
+    ], w=8,
+    desc="Fallback host served from cache without querying Patroni API. High rate during blacklist = cache working correctly.",
+)
+
+# ---------------------------------------------------------------------------
 # Build dashboard
 # ---------------------------------------------------------------------------
 d = (
@@ -507,6 +556,14 @@ d = (
     .with_row(row11)
     .with_panel(p_memory_ts)
     .with_panel(p_sockets)
+    # Row 12: Patroni Failover Discovery (collapsed)
+    .with_row(row12)
+    .with_panel(p_failover_blacklisted)
+    .with_panel(p_failover_connections)
+    .with_panel(p_failover_errors)
+    .with_panel(p_failover_discovery_rate)
+    .with_panel(p_failover_duration)
+    .with_panel(p_failover_whitelist)
 )
 
 dashboard_obj = d.build()

@@ -1,10 +1,12 @@
 use serde::Deserialize;
 
+/// Deserialized response from Patroni `GET /cluster` endpoint.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClusterResponse {
     pub members: Vec<Member>,
 }
 
+/// A single member (node) of a Patroni cluster.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Member {
     pub name: String,
@@ -19,6 +21,7 @@ pub struct Member {
     pub tags: MemberTags,
 }
 
+/// Patroni member tags that control load balancing and failover eligibility.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MemberTags {
     #[serde(default, deserialize_with = "deserialize_tag")]

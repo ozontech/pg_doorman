@@ -5,6 +5,7 @@ use log::{debug, error, warn};
 
 use super::types::ClusterResponse;
 
+/// Errors returned by Patroni API discovery.
 #[derive(Debug)]
 pub enum PatroniError {
     AllUrlsFailed(Vec<(String, String)>),
@@ -24,20 +25,23 @@ impl std::fmt::Display for PatroniError {
     }
 }
 
+/// HTTP client for fetching cluster topology from Patroni REST API.
 #[derive(Clone)]
 pub struct PatroniClient {
     http: reqwest::Client,
 }
 
 impl PatroniClient {
-    pub fn new(request_timeout: Duration, connect_timeout: Duration) -> Self {
+    pub fn new(
+        request_timeout: Duration,
+        connect_timeout: Duration,
+    ) -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .timeout(request_timeout)
             .connect_timeout(connect_timeout)
             .no_proxy()
-            .build()
-            .expect("failed to build reqwest client");
-        Self { http }
+            .build()?;
+        Ok(Self { http })
     }
 
     /// Fetch /cluster from all URLs in parallel.

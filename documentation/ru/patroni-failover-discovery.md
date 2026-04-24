@@ -48,7 +48,7 @@ Fallback:
                       +-- GET /cluster --> Patroni API
 ```
 
-1. `ServerPool::create()` пробует локальный unix socket.
+1. Doorman пробует локальный unix socket.
 2. Connection refused или socket error: doorman помещает локальный хост
    в blacklist на `failover_blacklist_duration` (по умолчанию
    30 секунд).
@@ -62,11 +62,10 @@ Fallback:
    (по умолчанию 30 секунд, совпадает с длительностью blacklist).
    На него действуют все обычные правила пула: лимиты coordinator,
    idle timeout, recycle.
-6. Последующие вызовы `create()` в рамках blacklist-окна подключаются
-   к тому же fallback-хосту напрямую, без повторного запроса к
-   Patroni API.
+6. Последующие соединения в рамках blacklist-окна идут к тому же
+   fallback-хосту напрямую, без повторного запроса к Patroni API.
 7. Когда blacklist истекает, doorman снова пробует локальный socket.
-   Если работает -- штатный режим. Если нет -- цикл повторяется.
+   Если работает — штатный режим. Если нет — цикл повторяется.
 
 ## Write-запросы на реплике
 
@@ -148,6 +147,8 @@ patroni_discovery_urls = [
 | `pg_doorman_failover_connections_total` | counter | Создано fallback-соединений |
 | `pg_doorman_failover_discovery_errors_total` | counter | Неудачные запросы `/cluster` (все URL недоступны) |
 | `pg_doorman_failover_host_blacklisted` | gauge | 1, если основной хост в blacklist |
+| `pg_doorman_failover_fallback_host` | gauge | Текущий активный fallback-хост (1 = активен). Labels: pool, host, port |
+| `pg_doorman_failover_whitelist_hits_total` | counter | Повторное использование кешированного fallback-хоста без запроса к Patroni API |
 | `pg_doorman_failover_discovery_duration_seconds` | histogram | Время запроса `/cluster` |
 
 ## Активные транзакции
@@ -196,5 +197,5 @@ PostgreSQL по роли (leader, sync, async). Не пулит соединен
 Пулит соединения.
 
 В рекомендуемой архитектуре (patroni_proxy -> pg_doorman -> PostgreSQL)
-failover discovery добавляет устойчивость на уровне doorman, не
-затрагивая уровень patroni_proxy.
+failover discovery сохраняет read-трафик на уровне doorman при
+падении локального бэкенда, не затрагивая маршрутизацию patroni_proxy.

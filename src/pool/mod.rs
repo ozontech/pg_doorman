@@ -848,33 +848,39 @@ fn build_failover_state(
     pool_name: &str,
     pool_config: &ConfigPool,
 ) -> Option<Arc<failover::FailoverState>> {
-    pool_config.patroni_discovery_urls.as_ref().map(|urls| {
-        let blacklist_dur = pool_config
-            .failover_blacklist_duration
-            .map(|d| d.as_std())
-            .unwrap_or(std::time::Duration::from_secs(30));
-        let discovery_timeout = pool_config
-            .failover_discovery_timeout
-            .map(|d| d.as_std())
-            .unwrap_or(std::time::Duration::from_secs(5));
-        let connect_timeout = pool_config
-            .failover_connect_timeout
-            .map(|d| d.as_std())
-            .unwrap_or(std::time::Duration::from_secs(5));
-        let lifetime = pool_config
-            .failover_server_lifetime
-            .map(|d| d.as_millis())
-            .unwrap_or(blacklist_dur.as_millis() as u64);
+    let urls = pool_config.patroni_discovery_urls.as_ref()?;
 
-        Arc::new(failover::FailoverState::new(
-            pool_name.to_string(),
-            urls.clone(),
-            blacklist_dur,
-            connect_timeout,
-            discovery_timeout,
-            lifetime,
-        ))
-    })
+    let blacklist_dur = pool_config
+        .failover_blacklist_duration
+        .map(|d| d.as_std())
+        .unwrap_or(std::time::Duration::from_secs(30));
+    let discovery_timeout = pool_config
+        .failover_discovery_timeout
+        .map(|d| d.as_std())
+        .unwrap_or(std::time::Duration::from_secs(5));
+    let connect_timeout = pool_config
+        .failover_connect_timeout
+        .map(|d| d.as_std())
+        .unwrap_or(std::time::Duration::from_secs(5));
+    let lifetime = pool_config
+        .failover_server_lifetime
+        .map(|d| d.as_millis())
+        .unwrap_or(blacklist_dur.as_millis() as u64);
+
+    match failover::FailoverState::new(
+        pool_name.to_string(),
+        urls.clone(),
+        blacklist_dur,
+        connect_timeout,
+        discovery_timeout,
+        lifetime,
+    ) {
+        Ok(state) => Some(Arc::new(state)),
+        Err(e) => {
+            log::error!("pool {pool_name}: failover discovery disabled: {e}");
+            None
+        }
+    }
 }
 
 /// Get the connection pool

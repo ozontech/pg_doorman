@@ -15,6 +15,7 @@ use crate::patroni::types::{ClusterResponse, Member, Role};
 type SharedClusterFuture =
     Shared<Pin<Box<dyn Future<Output = Result<ClusterResponse, String>> + Send>>>;
 
+/// A discovered fallback host to connect to when the primary is unavailable.
 pub struct FallbackTarget {
     pub host: String,
     pub port: u16,
@@ -67,9 +68,10 @@ impl FailoverState {
         connect_timeout: Duration,
         request_timeout: Duration,
         server_lifetime_ms: u64,
-    ) -> Self {
-        let patroni_client = PatroniClient::new(request_timeout, connect_timeout);
-        Self {
+    ) -> Result<Self, String> {
+        let patroni_client = PatroniClient::new(request_timeout, connect_timeout)
+            .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+        Ok(Self {
             blacklisted_until: Mutex::new(None),
             whitelisted_host: Mutex::new(None),
             inflight: tokio::sync::Mutex::new(None),
@@ -80,7 +82,7 @@ impl FailoverState {
             connect_timeout,
             server_lifetime_ms,
             patroni_client,
-        }
+        })
     }
 
     /// Check the blacklist state, handling natural expiry.
@@ -392,7 +394,8 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(2),
             30_000,
-        );
+        )
+        .unwrap();
 
         // Initially not blacklisted
         assert_eq!(state.check_blacklist(), BlacklistCheck::NotBlacklisted);
@@ -416,7 +419,8 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(2),
             30_000,
-        );
+        )
+        .unwrap();
 
         state.blacklist();
 
@@ -439,7 +443,8 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(2),
             30_000,
-        );
+        )
+        .unwrap();
 
         // Set a whitelist entry
         {
@@ -466,7 +471,8 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(2),
             30_000,
-        );
+        )
+        .unwrap();
 
         state.blacklist();
 
@@ -491,7 +497,8 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(2),
             30_000,
-        );
+        )
+        .unwrap();
 
         {
             let mut guard = state.whitelisted_host.lock();

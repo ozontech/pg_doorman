@@ -335,6 +335,13 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `pg_doorman_pool_coordinator` | type, database | Coordinator stats (connections, reserve, evictions, exhaustions) |
 | `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
 | `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |
+| `pg_doorman_failover_discovery_total` | pool | Patroni `/cluster` discovery attempts |
+| `pg_doorman_failover_connections_total` | pool | Fallback connections established |
+| `pg_doorman_failover_discovery_errors_total` | pool | Failed `/cluster` requests (all URLs unreachable) |
+| `pg_doorman_failover_host_blacklisted` | pool | 1 if the primary host is currently blacklisted |
+| `pg_doorman_failover_fallback_host` | pool, host, port | Currently active fallback host (1 = active) |
+| `pg_doorman_failover_whitelist_hits_total` | pool | Cached fallback host reused without re-discovery |
+| `pg_doorman_failover_discovery_duration_seconds` | pool | Time spent fetching `/cluster` (histogram) |
 
 A ready-to-import [Grafana dashboard](grafana/) is included — pool utilization, latency percentiles, coordinator state, prepared statement cache, and auth query metrics.
 
