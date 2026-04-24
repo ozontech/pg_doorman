@@ -26,7 +26,8 @@ use super::{
     SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER,
     SHOW_POOLS_TRANSACTIONS_PERCENTILE, SHOW_POOLS_TRANSACTIONS_TOTAL_TIME,
     SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES, SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE,
-    SHOW_SERVERS_PREPARED_HITS, SHOW_SERVERS_PREPARED_MISSES, TOTAL_MEMORY,
+    SHOW_SERVERS_PREPARED_HITS, SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS,
+    TOTAL_MEMORY,
 };
 
 /// Updates all metrics before they are exposed via the Prometheus endpoint.
@@ -129,11 +130,12 @@ fn update_pool_cache_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
 fn update_server_metrics() {
     SHOW_SERVERS_PREPARED_HITS.reset();
     SHOW_SERVERS_PREPARED_MISSES.reset();
+    SHOW_SERVER_TLS_CONNECTIONS.reset();
     let stats = get_server_stats();
-    for (_, server) in stats {
+    for server in stats.values() {
         // Create owned strings to avoid borrowing issues
-        let username = server.username().to_string();
-        let pool_name = server.pool_name().to_string();
+        let username = server.username();
+        let pool_name = server.pool_name();
         let process_id = server.process_id().to_string();
 
         let server_metrics = [
@@ -151,6 +153,13 @@ fn update_server_metrics() {
             metric
                 .with_label_values(&[&username, &pool_name, &process_id])
                 .set(*value);
+        }
+
+        // Count TLS-encrypted backend connections per pool.
+        if server.tls() {
+            SHOW_SERVER_TLS_CONNECTIONS
+                .with_label_values(&[&pool_name])
+                .inc();
         }
     }
 }

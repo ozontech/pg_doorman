@@ -4,7 +4,7 @@
 //! various statistics about the connection pooler's operation.
 
 use once_cell::sync::Lazy;
-use prometheus::{Gauge, GaugeVec, IntCounterVec, Opts, Registry};
+use prometheus::{Gauge, GaugeVec, HistogramVec, IntCounterVec, Opts, Registry};
 
 // Sub-modules
 mod metrics;
@@ -399,6 +399,50 @@ pub(crate) static POOL_SCALING_TOTALS: Lazy<IntCounterVec> = Lazy::new(|| {
              replenish_deferred (background replenish skipped due to gate full).",
         ),
         &["type", "user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static SHOW_SERVER_TLS_CONNECTIONS: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_server_tls_connections",
+            "Current number of backend connections using TLS encryption, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+#[allow(dead_code)]
+pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+    let histogram = HistogramVec::new(
+        prometheus::HistogramOpts::new(
+            "pg_doorman_server_tls_handshake_duration_seconds",
+            "Duration of TLS handshakes to backend PostgreSQL servers, by pool.",
+        )
+        .buckets(vec![
+            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+        ]),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
+});
+
+#[allow(dead_code)]
+pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_ERRORS: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_server_tls_handshake_errors_total",
+            "Total number of failed TLS handshakes to backend servers, by pool.",
+        ),
+        &["pool"],
     )
     .unwrap();
     REGISTRY.register(Box::new(counter.clone())).unwrap();

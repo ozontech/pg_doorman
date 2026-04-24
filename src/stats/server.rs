@@ -531,12 +531,10 @@ impl ServerStats {
     }
 
     /// Called once during startup after transport negotiation.
-    #[inline(always)]
     pub fn set_tls(&self, tls: bool) {
         self.use_tls.store(tls, Ordering::Relaxed);
     }
 
-    #[inline(always)]
     pub fn tls(&self) -> bool {
         self.use_tls.load(Ordering::Relaxed)
     }

@@ -445,7 +445,7 @@ impl Config {
 
         // Validate server-facing TLS
         {
-            let global_mode = tls::ServerTlsMode::from_string(&self.general.server_tls_mode)?;
+            let global_mode = self.general.server_tls_mode.parse::<tls::ServerTlsMode>()?;
 
             if global_mode.requires_ca() && self.general.server_tls_ca_cert.is_none() {
                 return Err(Error::BadConfig(format!(
@@ -494,7 +494,7 @@ impl Config {
                     .server_tls_mode
                     .as_deref()
                     .unwrap_or(&self.general.server_tls_mode);
-                let mode = tls::ServerTlsMode::from_string(effective_mode).map_err(|_| {
+                let mode = effective_mode.parse::<tls::ServerTlsMode>().map_err(|_| {
                     Error::BadConfig(format!(
                         "pool '{pool_name}': invalid server_tls_mode '{effective_mode}'"
                     ))

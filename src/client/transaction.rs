@@ -295,6 +295,7 @@ where
                     port: t.port,
                     server_tls: t.server_tls.clone(),
                     connected_with_tls: t.connected_with_tls,
+                    pool_name: t.pool_name.clone(),
                 }
             }
 
@@ -310,6 +311,7 @@ where
             target.secret_key,
             &target.server_tls,
             target.connected_with_tls,
+            &target.pool_name,
         )
         .await
     }

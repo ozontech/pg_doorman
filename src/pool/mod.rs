@@ -55,6 +55,7 @@ pub struct CancelTarget {
     pub port: ServerPort,
     pub server_tls: Arc<tls::ServerTlsConfig>,
     pub connected_with_tls: bool,
+    pub pool_name: String,
 }
 
 pub type ClientServerMap = Arc<DashMap<(ProcessId, SecretKey), CancelTarget>>;
@@ -98,7 +99,7 @@ pub(crate) fn build_server_tls_for_pool(
         .server_tls_mode
         .as_deref()
         .unwrap_or(&general.server_tls_mode);
-    let mode = tls::ServerTlsMode::from_string(mode_str)?;
+    let mode = mode_str.parse::<tls::ServerTlsMode>()?;
 
     let ca = pool_config
         .server_tls_ca_cert

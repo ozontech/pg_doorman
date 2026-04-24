@@ -631,6 +631,7 @@ impl Server {
                 port: self.address.port,
                 server_tls: self.address.server_tls.clone(),
                 connected_with_tls: self.connected_with_tls,
+                pool_name: self.address.pool_name.clone(),
             },
         );
     }
@@ -715,6 +716,7 @@ impl Server {
         secret_key: i32,
         server_tls: &tls::ServerTlsConfig,
         connected_with_tls: bool,
+        pool_name: &str,
     ) -> Result<(), Error> {
         startup_cancel::cancel(
             host,
@@ -723,6 +725,7 @@ impl Server {
             secret_key,
             server_tls,
             connected_with_tls,
+            pool_name,
         )
         .await
     }
@@ -761,7 +764,13 @@ impl Server {
         let mut stream = if address.host.starts_with('/') {
             create_unix_stream_inner(&address.host, address.port).await?
         } else {
-            create_tcp_stream_inner(&address.host, address.port, &address.server_tls).await?
+            create_tcp_stream_inner(
+                &address.host,
+                address.port,
+                &address.server_tls,
+                &address.pool_name,
+            )
+            .await?
         };
 
         let connected_with_tls = matches!(&stream, StreamInner::TCPTls { .. });

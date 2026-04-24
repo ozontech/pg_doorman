@@ -55,19 +55,23 @@ impl std::fmt::Display for ServerTlsMode {
     }
 }
 
-impl ServerTlsMode {
-    pub fn from_string(s: &str) -> Result<Self, Error> {
-        match s {
-            "disable" => Ok(ServerTlsMode::Disable),
-            "allow" => Ok(ServerTlsMode::Allow),
-            "prefer" => Ok(ServerTlsMode::Prefer),
-            "require" => Ok(ServerTlsMode::Require),
-            "verify-ca" => Ok(ServerTlsMode::VerifyCa),
-            "verify-full" => Ok(ServerTlsMode::VerifyFull),
-            _ => Err(Error::BadConfig(format!("Invalid server_tls_mode: {s}"))),
+impl std::str::FromStr for ServerTlsMode {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "disable" => Ok(Self::Disable),
+            "allow" => Ok(Self::Allow),
+            "prefer" => Ok(Self::Prefer),
+            "require" => Ok(Self::Require),
+            "verify-ca" => Ok(Self::VerifyCa),
+            "verify-full" => Ok(Self::VerifyFull),
+            _ => Err(Error::BadConfig(format!("invalid server_tls_mode: {s}"))),
         }
     }
+}
 
+impl ServerTlsMode {
     /// Whether this mode requires a CA certificate to be configured.
     pub fn requires_ca(&self) -> bool {
         matches!(self, ServerTlsMode::VerifyCa | ServerTlsMode::VerifyFull)
@@ -379,33 +383,33 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_server_tls_mode_from_string() {
+    fn test_server_tls_mode_from_str() {
         assert_eq!(
-            ServerTlsMode::from_string("disable").unwrap(),
+            "disable".parse::<ServerTlsMode>().unwrap(),
             ServerTlsMode::Disable
         );
         assert_eq!(
-            ServerTlsMode::from_string("allow").unwrap(),
+            "allow".parse::<ServerTlsMode>().unwrap(),
             ServerTlsMode::Allow
         );
         assert_eq!(
-            ServerTlsMode::from_string("prefer").unwrap(),
+            "prefer".parse::<ServerTlsMode>().unwrap(),
             ServerTlsMode::Prefer
         );
         assert_eq!(
-            ServerTlsMode::from_string("require").unwrap(),
+            "require".parse::<ServerTlsMode>().unwrap(),
             ServerTlsMode::Require
         );
         assert_eq!(
-            ServerTlsMode::from_string("verify-ca").unwrap(),
+            "verify-ca".parse::<ServerTlsMode>().unwrap(),
             ServerTlsMode::VerifyCa
         );
         assert_eq!(
-            ServerTlsMode::from_string("verify-full").unwrap(),
+            "verify-full".parse::<ServerTlsMode>().unwrap(),
             ServerTlsMode::VerifyFull
         );
-        assert!(ServerTlsMode::from_string("invalid").is_err());
-        assert!(ServerTlsMode::from_string("").is_err());
+        assert!("invalid".parse::<ServerTlsMode>().is_err());
+        assert!("".parse::<ServerTlsMode>().is_err());
     }
 
     #[test]

@@ -44,10 +44,10 @@ fn gc_idle_dynamic_pools() {
                     debug!("[{id}] GC: min_pool_size > 0, skipping despite size=0");
                     continue;
                 }
-                // Don't GC pools younger than 2s — they may still be
-                // establishing their first server connection (TLS handshake
-                // adds an extra roundtrip that widens the window between pool
-                // creation and first connection appearing in the pool)
+                // Grace period: TLS handshake adds 1-2 RTT to connection setup.
+                // With allow-mode retry (two sequential connects), total setup
+                // can take >1s over WAN. 2s covers this with margin while keeping
+                // GC responsive for abandoned pools.
                 let age = pool.created_at.elapsed();
                 if age < std::time::Duration::from_secs(2) {
                     debug!("[{id}] GC: pool age {age:?} < 2s, skipping");

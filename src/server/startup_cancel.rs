@@ -18,6 +18,7 @@ pub(crate) async fn cancel(
     secret_key: i32,
     server_tls: &ServerTlsConfig,
     connected_with_tls: bool,
+    pool_name: &str,
 ) -> Result<(), Error> {
     let disable_config = ServerTlsConfig {
         mode: ServerTlsMode::Disable,
@@ -33,7 +34,7 @@ pub(crate) async fn cancel(
     let mut stream = if host.starts_with('/') {
         create_unix_stream_inner(host, port).await?
     } else {
-        create_tcp_stream_inner(host, port, cancel_tls).await?
+        create_tcp_stream_inner(host, port, cancel_tls, pool_name).await?
     };
 
     warn!("cancel request forwarded to {host}:{port} pid={process_id}");

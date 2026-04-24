@@ -1,4 +1,3 @@
-use log::error;
 use std::time::Instant;
 
 use crate::config::tls::ServerTlsConfig;
@@ -146,7 +145,7 @@ pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<St
     let stream = match UnixStream::connect(&format!("{host}/.s.PGSQL.{port}")).await {
         Ok(s) => s,
         Err(err) => {
-            error!("Failed to connect to Unix socket {host}:{port}: {err}");
+            log::error!("Failed to connect to Unix socket {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
                 "Failed to connect to Unix socket {host}:{port}: {err}"
             )));
@@ -162,11 +161,12 @@ pub(crate) async fn create_tcp_stream_inner(
     host: &str,
     port: u16,
     server_tls: &ServerTlsConfig,
+    pool_name: &str,
 ) -> Result<StreamInner, Error> {
     let mut stream = match TcpStream::connect(&format!("{host}:{port}")).await {
         Ok(stream) => stream,
         Err(err) => {
-            error!("Failed to connect to TCP {host}:{port}: {err}");
+            log::error!("Failed to connect to TCP {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
                 "Could not connect to {host}:{port}: {err}"
             )));
@@ -199,7 +199,7 @@ pub(crate) async fn create_tcp_stream_inner(
             response as char
         }
         Err(err) => {
-            error!("Failed to read TLS response from {host}:{port}: {err}");
+            log::error!("Failed to read TLS response from {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
                 "Failed to read TLS response from {host}:{port}: {err}"
             )));
@@ -217,11 +217,15 @@ pub(crate) async fn create_tcp_stream_inner(
             let start = Instant::now();
             match connector.connect(host, stream).await {
                 Ok(tls_stream) => {
+                    let elapsed = start.elapsed();
                     log::info!(
                         "tls connection established, host={host} port={port} server_tls_mode={} handshake_ms={:.1}",
                         server_tls.mode,
-                        start.elapsed().as_secs_f64() * 1000.0
+                        elapsed.as_secs_f64() * 1000.0
                     );
+                    crate::prometheus::SHOW_SERVER_TLS_HANDSHAKE_DURATION
+                        .with_label_values(&[pool_name])
+                        .observe(elapsed.as_secs_f64());
                     Ok(StreamInner::TCPTls { stream: tls_stream })
                 }
                 // Note: unlike libpq, we do NOT retry on a new plain TCP socket
@@ -230,11 +234,15 @@ pub(crate) async fn create_tcp_stream_inner(
                 // this edge case (server accepts SSL but handshake fails due to
                 // cipher/version mismatch) is rare in practice.
                 Err(err) => {
-                    error!(
+                    let elapsed = start.elapsed();
+                    log::error!(
                         "tls handshake failed, host={host} port={port} server_tls_mode={} handshake_ms={:.1}: {err}",
                         server_tls.mode,
-                        start.elapsed().as_secs_f64() * 1000.0
+                        elapsed.as_secs_f64() * 1000.0
                     );
+                    crate::prometheus::SHOW_SERVER_TLS_HANDSHAKE_ERRORS
+                        .with_label_values(&[pool_name])
+                        .inc();
                     Err(Error::SocketError(format!(
                         "tls handshake failed, host={host} port={port}: {err}"
                     )))
@@ -243,10 +251,13 @@ pub(crate) async fn create_tcp_stream_inner(
         }
         'N' => {
             if server_tls.mode.requires_tls() {
-                error!(
+                log::error!(
                     "tls required but server does not support tls, host={host} port={port} server_tls_mode={}",
                     server_tls.mode
                 );
+                crate::prometheus::SHOW_SERVER_TLS_HANDSHAKE_ERRORS
+                    .with_label_values(&[pool_name])
+                    .inc();
                 Err(Error::SocketError(format!(
                     "tls required but server does not support tls, host={host} port={port} server_tls_mode={}",
                     server_tls.mode
@@ -259,6 +270,11 @@ pub(crate) async fn create_tcp_stream_inner(
                 Ok(StreamInner::TCPPlain { stream })
             }
         }
+        'E' => Err(Error::SocketError(format!(
+            "server sent error response to ssl request, \
+             likely does not support ssl or is not a postgresql server, \
+             host={host} port={port}"
+        ))),
         other => Err(Error::SocketError(format!(
             "unexpected tls negotiation response={} (0x{:02x}) host={host} port={port}",
             other, other as u8
