@@ -783,6 +783,36 @@ fields:
         Set to `0` to disable the limit (unlimited cache size, relies on client calling `DEALLOCATE`).
       default: "0 (unlimited)"
 
+    patroni_discovery_urls:
+      config:
+        en: "Global Patroni REST API URLs for failover discovery. Pools inherit this unless they set their own."
+        ru: "Глобальные URL Patroni REST API для failover discovery. Пулы наследуют, если не переопределяют."
+      default: "not set (disabled)"
+
+    failover_blacklist_duration:
+      config:
+        en: "Global failover blacklist duration. Pools inherit this unless they set their own."
+        ru: "Глобальная длительность blacklist при failover. Пулы наследуют, если не переопределяют."
+      default: '"30s"'
+
+    failover_discovery_timeout:
+      config:
+        en: "Global HTTP timeout for Patroni API requests. Pools inherit this unless they set their own."
+        ru: "Глобальный HTTP-таймаут запросов к Patroni API. Пулы наследуют, если не переопределяют."
+      default: '"5s"'
+
+    failover_connect_timeout:
+      config:
+        en: "Global TCP connect timeout for fallback servers. Pools inherit this unless they set their own."
+        ru: "Глобальный таймаут TCP-соединения к fallback-серверам. Пулы наследуют, если не переопределяют."
+      default: '"5s"'
+
+    failover_server_lifetime:
+      config:
+        en: "Global lifetime for fallback connections. Pools inherit this unless they set their own."
+        ru: "Глобальный lifetime fallback-соединений. Пулы наследуют, если не переопределяют."
+      default: "same as failover_blacklist_duration"
+
     admin_username:
       config:
         en: "Admin username for the virtual admin database (pgdoorman)."

@@ -114,7 +114,7 @@ pub fn create_dynamic_pool(
 
     let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
 
-    let failover_state = super::build_failover_state(pool_name, pool_config);
+    let failover_state = super::build_failover_state(pool_name, pool_config, &config.general);
 
     let manager = ServerPool::new(
         address.clone(),

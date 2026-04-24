@@ -535,6 +535,23 @@ impl Config {
             }
         }
 
+        // Validate general-level failover discovery settings
+        if let Some(ref urls) = self.general.patroni_discovery_urls {
+            if urls.is_empty() {
+                return Err(Error::BadConfig(
+                    "general.patroni_discovery_urls cannot be an empty list".into(),
+                ));
+            }
+            for url in urls {
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(Error::BadConfig(format!(
+                        "general.patroni_discovery_urls: invalid URL '{url}'; \
+                         must start with http:// or https://"
+                    )));
+                }
+            }
+        }
+
         for pool in self.pools.values_mut() {
             pool.validate().await?;
         }

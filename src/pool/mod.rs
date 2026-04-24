@@ -414,7 +414,7 @@ impl ConnectionPool {
 
                 let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
 
-                let failover_state = build_failover_state(pool_name, pool_config);
+                let failover_state = build_failover_state(pool_name, pool_config, &config.general);
 
                 let manager = ServerPool::new(
                     address.clone(),
@@ -580,7 +580,8 @@ impl ConnectionPool {
 
                         let pool_mode = shared_user.pool_mode.unwrap_or(pool_config.pool_mode);
 
-                        let failover_state = build_failover_state(pool_name, pool_config);
+                        let failover_state =
+                            build_failover_state(pool_name, pool_config, &config.general);
 
                         let manager = ServerPool::new(
                             address.clone(),
@@ -847,23 +848,32 @@ fn compute_spare(
 fn build_failover_state(
     pool_name: &str,
     pool_config: &ConfigPool,
+    general: &crate::config::General,
 ) -> Option<Arc<failover::FailoverState>> {
-    let urls = pool_config.patroni_discovery_urls.as_ref()?;
+    // Pool-level overrides general-level
+    let urls = pool_config
+        .patroni_discovery_urls
+        .as_ref()
+        .or(general.patroni_discovery_urls.as_ref())?;
 
     let blacklist_dur = pool_config
         .failover_blacklist_duration
+        .or(general.failover_blacklist_duration)
         .map(|d| d.as_std())
         .unwrap_or(std::time::Duration::from_secs(30));
     let discovery_timeout = pool_config
         .failover_discovery_timeout
+        .or(general.failover_discovery_timeout)
         .map(|d| d.as_std())
         .unwrap_or(std::time::Duration::from_secs(5));
     let connect_timeout = pool_config
         .failover_connect_timeout
+        .or(general.failover_connect_timeout)
         .map(|d| d.as_std())
         .unwrap_or(std::time::Duration::from_secs(5));
     let lifetime = pool_config
         .failover_server_lifetime
+        .or(general.failover_server_lifetime)
         .map(|d| d.as_millis())
         .unwrap_or(blacklist_dur.as_millis() as u64);
 
