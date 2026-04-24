@@ -34,6 +34,7 @@ Feature: Pool-level timeout overrides for auth_query dynamic pools and min_pool_
         server_lifetime: 60000
         retain_connections_time: 200
         server_idle_check_timeout: 0
+        server_tls_mode: "disable"
         tls_private_key: "${DOORMAN_SSL_KEY}"
         tls_certificate: "${DOORMAN_SSL_CERT}"
         pg_hba:
@@ -94,6 +95,7 @@ Feature: Pool-level timeout overrides for auth_query dynamic pools and min_pool_
         admin_password: "admin"
         server_lifetime: 60000
         server_idle_check_timeout: 0
+        server_tls_mode: "disable"
         tls_private_key: "${DOORMAN_SSL_KEY}"
         tls_certificate: "${DOORMAN_SSL_CERT}"
         pg_hba:
