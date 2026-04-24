@@ -326,10 +326,13 @@ impl PoolInner {
         obj: Server,
         coordinator_permit: Option<pool_coordinator::CoordinatorPermit>,
     ) -> ObjectInner {
+        let lifetime_ms = obj
+            .override_lifetime_ms
+            .unwrap_or(self.server_pool.lifetime_ms());
         ObjectInner {
             obj,
             metrics: Metrics::new(
-                self.server_pool.lifetime_ms(),
+                lifetime_ms,
                 self.server_pool.idle_timeout_ms(),
                 self.server_pool.current_epoch(),
             ),

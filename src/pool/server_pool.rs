@@ -367,8 +367,9 @@ impl ServerPool {
         .await;
 
         match result {
-            Ok(conn) => {
+            Ok(mut conn) => {
                 conn.stats.idle(0);
+                conn.override_lifetime_ms = Some(target.lifetime_ms);
                 Ok(conn)
             }
             Err(err) => {
