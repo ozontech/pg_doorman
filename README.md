@@ -252,12 +252,32 @@ general:
 
 ### Server-facing TLS
 
-Encrypt connections from PgDoorman to PostgreSQL:
+Encrypt connections from PgDoorman to PostgreSQL. Set `server_tls_mode` in `[general]` for a global default; override per pool as needed.
+
+| Mode | Behavior |
+|------|----------|
+| `disable` | never use TLS |
+| `allow` | try plain first; retry with TLS if server rejects plain (default, matches libpq `sslmode=allow`) |
+| `prefer` | try TLS first; fall back to plain if server declines |
+| `require` | require TLS, do not verify certificate |
+| `verify-ca` | require TLS + verify server certificate against CA |
+| `verify-full` | require TLS + verify CA + verify hostname |
 
 ```yaml
 general:
-  server_tls: true
-  verify_server_certificate: true         # verify PostgreSQL server certificate
+  server_tls_mode: "verify-ca"
+  server_tls_ca_cert: "/path/to/ca.crt"
+  server_tls_certificate: "/path/to/client.crt"   # optional: mTLS client cert
+  server_tls_private_key: "/path/to/client.key"   # optional: mTLS client key
+```
+
+All four fields can be overridden per pool:
+
+```yaml
+pools:
+  mypool:
+    server_tls_mode: "require"
+    server_tls_ca_cert: "/path/to/other-ca.crt"
 ```
 
 ### Security defaults
