@@ -37,7 +37,7 @@ pub mod retain;
 mod server_pool;
 
 pub use auth_query_state::AuthQueryState;
-pub use dynamic::{create_dynamic_pool, insert_dynamic_pool_into_pools};
+pub use dynamic::create_dynamic_pool;
 pub use eviction::PoolEvictionSource;
 pub use server_pool::ServerPool;
 
@@ -259,6 +259,10 @@ pub struct ConnectionPool {
     /// Consecutive replenish failure counter for log noise suppression.
     /// Reset to 0 on successful replenish.
     pub(crate) replenish_failures: Arc<AtomicU32>,
+
+    /// When this pool was created. Used by GC to avoid removing
+    /// dynamic pools that are still establishing their first connection.
+    pub(crate) created_at: std::time::Instant,
 }
 
 impl ConnectionPool {
@@ -470,6 +474,7 @@ impl ConnectionPool {
                     },
                     coordinator: coordinators.get(pool_name).cloned(),
                     replenish_failures: Arc::new(AtomicU32::new(0)),
+                    created_at: std::time::Instant::now(),
                 };
 
                 // There is one pool per database/user pair.
@@ -639,6 +644,7 @@ impl ConnectionPool {
                             },
                             coordinator: coordinators.get(pool_name).cloned(),
                             replenish_failures: Arc::new(AtomicU32::new(0)),
+                            created_at: std::time::Instant::now(),
                         };
 
                         new_pools.insert(identifier.clone(), conn_pool);

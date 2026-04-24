@@ -343,6 +343,7 @@ mod tests {
             prepared_statement_cache: None,
             coordinator: None,
             replenish_failures: Arc::new(AtomicU32::new(0)),
+            created_at: std::time::Instant::now(),
         }
     }
 
