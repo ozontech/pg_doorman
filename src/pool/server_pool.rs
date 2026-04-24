@@ -244,11 +244,19 @@ impl ServerPool {
         //    the TLS retry will fail with the same error, which we then return.
         //
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
-        let (result, active_stats) = if result.is_err()
-            && self.address.server_tls.mode.retries_with_tls()
-        {
+        // Only retry with TLS when the server rejected us at the protocol level
+        // (pg_hba "no encryption"). Transport-level failures (socket not found,
+        // connection refused) won't be helped by TLS — skip the pointless retry.
+        let should_tls_retry = match &result {
+            Err(err) if self.address.server_tls.mode.retries_with_tls() => !matches!(
+                err,
+                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+            ),
+            _ => false,
+        };
+        let (result, active_stats) = if should_tls_retry {
             info!(
-                "plain connection failed, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
+                "plain connection rejected, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
                 self.address.username, self.address.pool_name,
                 self.address.host, self.address.port,
             );
@@ -366,12 +374,18 @@ impl ServerPool {
         )
         .await;
 
-        // sslmode=allow retry for fallback connections (same logic as primary path)
-        let (result, active_stats) = if result.is_err()
-            && fallback_address.server_tls.mode.retries_with_tls()
-        {
+        // Only retry with TLS when the server rejected us at the protocol level.
+        // Transport-level failures (connection refused, timeout) won't be helped by TLS.
+        let should_tls_retry = match &result {
+            Err(err) if fallback_address.server_tls.mode.retries_with_tls() => !matches!(
+                err,
+                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+            ),
+            _ => false,
+        };
+        let (result, active_stats) = if should_tls_retry {
             info!(
-                "[{}@{}] failover: plain connection to {}:{} failed, retrying with tls",
+                "[{}@{}] failover: plain connection to {}:{} rejected, retrying with tls",
                 self.address.username,
                 self.address.pool_name,
                 fallback_address.host,
