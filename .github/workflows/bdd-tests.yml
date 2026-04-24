@@ -614,6 +614,7 @@ jobs:
             docker run --rm \
               -v ${{ github.workspace }}:/workspace \
               -w /workspace \
+              -e DEBUG=${DEBUG:-} \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-tests.outputs.image-tag }} \
               cargo test --test bdd -- --tags @auth-query
 

@@ -156,14 +156,21 @@ pub(crate) async fn create_tcp_stream_inner(
     configure_tcp_socket(&stream);
 
     if !server_tls.mode.sends_ssl_request() {
+        log::debug!("server_tls_mode=disable for {host}:{port}, skipping SSLRequest");
         return Ok(StreamInner::TCPPlain { stream });
     }
 
+    log::debug!("Sending SSLRequest to {host}:{port} (mode: {})", server_tls.mode);
     ssl_request(&mut stream).await?;
 
+    log::debug!("SSLRequest sent to {host}:{port}, waiting for response");
     let response = match stream.read_u8().await {
-        Ok(response) => response as char,
+        Ok(response) => {
+            log::debug!("SSLRequest response from {host}:{port}: '{}' (0x{:02x})", response as char, response);
+            response as char
+        }
         Err(err) => {
+            error!("Failed to read TLS response from {host}:{port}: {err}");
             return Err(Error::SocketError(format!(
                 "Failed to read TLS response from {host}:{port}: {err}"
             )));

@@ -738,6 +738,11 @@ impl Server {
     ) -> Result<Server, Error> {
         let config = get_config();
 
+        log::debug!(
+            "[{}@{}] Server::startup connecting to {}:{} (server_tls_mode={})",
+            user.username, database, address.host, address.port, address.server_tls.mode
+        );
+
         let mut stream = if address.host.starts_with('/') {
             create_unix_stream_inner(&address.host, address.port).await?
         } else {
@@ -745,6 +750,10 @@ impl Server {
         };
 
         let connected_with_tls = matches!(&stream, StreamInner::TCPTls { .. });
+        log::debug!(
+            "[{}@{}] Server connection to {}:{} established (tls={})",
+            user.username, database, address.host, address.port, connected_with_tls
+        );
 
         let username = user
             .server_username
