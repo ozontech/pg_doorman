@@ -84,6 +84,11 @@ pub struct ServerStats {
     pub prepared_miss_count: AtomicU64,
     /// Current size of the prepared statement cache
     pub prepared_cache_size: AtomicU64,
+
+    /// Transport security
+    /// ------------------------------------------------------------------------------------------
+    /// Whether this server connection uses TLS/SSL encryption
+    use_tls: AtomicBool,
 }
 
 /// Default implementation for ServerStats.
@@ -115,6 +120,7 @@ impl Default for ServerStats {
             prepared_hit_count: AtomicU64::new(0),
             prepared_miss_count: AtomicU64::new(0),
             prepared_cache_size: AtomicU64::new(0),
+            use_tls: AtomicBool::new(false),
         }
     }
 }
@@ -524,6 +530,20 @@ impl ServerStats {
     /// Returns the server connection timestamp.
     pub fn connect_time(&self) -> quanta::Instant {
         self.connect_time
+    }
+
+    /// Records whether this server connection uses TLS.
+    ///
+    /// Called once during startup after the transport is established.
+    #[inline(always)]
+    pub fn set_tls(&self, tls: bool) {
+        self.use_tls.store(tls, Ordering::Relaxed);
+    }
+
+    /// Returns whether this server connection uses TLS/SSL encryption.
+    #[inline(always)]
+    pub fn tls(&self) -> bool {
+        self.use_tls.load(Ordering::Relaxed)
     }
 }
 
