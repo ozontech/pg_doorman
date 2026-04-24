@@ -35,8 +35,8 @@ use crate::messages::{
     scram_start_challenge, vec_to_string, wrong_password,
 };
 use crate::pool::{
-    create_dynamic_pool, get_auth_query_state, get_pool, get_pool_config, is_dynamic_pool,
-    ConnectionPool, PoolIdentifier,
+    create_dynamic_pool, get_auth_query_state, get_pool, get_pool_config,
+    insert_dynamic_pool_into_pools, is_dynamic_pool, ConnectionPool, PoolIdentifier,
 };
 use crate::server::ServerParameters;
 
@@ -936,6 +936,11 @@ where
                     return Err(err);
                 }
             };
+
+            // Register pool in POOLS only after the first connection is
+            // established. This prevents GC from removing a pool that has
+            // 0 connections because it is still initializing.
+            insert_dynamic_pool_into_pools(pool_name, username, &pool);
 
             aq_state.stats.auth_success.fetch_add(1, Ordering::Relaxed);
             info!("[{username}@{pool_name}] auth_query: authenticated (passthrough mode)");

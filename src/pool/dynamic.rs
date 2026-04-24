@@ -67,7 +67,10 @@ pub fn create_dynamic_pool(
     let ba_arc = backend_auth.map(|ba| Arc::new(parking_lot::RwLock::new(ba)));
     debug!(
         "[{username}@{pool_name}] building server TLS config (mode={})",
-        pool_config.server_tls_mode.as_deref().unwrap_or(&config.general.server_tls_mode)
+        pool_config
+            .server_tls_mode
+            .as_deref()
+            .unwrap_or(&config.general.server_tls_mode)
     );
     let server_tls = build_server_tls_for_pool(pool_config, &config.general)?;
 
@@ -180,15 +183,22 @@ pub fn create_dynamic_pool(
         },
         coordinator: get_coordinator(pool_name),
         replenish_failures: Arc::new(AtomicU32::new(0)),
-        created_at: std::time::Instant::now(),
     };
 
-    // Atomic insert into POOLS
+    Ok(conn_pool)
+}
+
+/// Insert a dynamic pool into POOLS and register it for GC tracking.
+///
+/// Call this AFTER the pool has established its first server connection
+/// (via `get_server_parameters`). This ordering prevents GC from seeing
+/// a pool with 0 connections during initialization.
+pub fn insert_dynamic_pool_into_pools(pool_name: &str, username: &str, conn_pool: &ConnectionPool) {
     let identifier = PoolIdentifier::new(pool_name, username);
     let current = POOLS.load();
     let mut new_pools = (**current).clone();
 
-    // Re-check after clone (another thread may have created it)
+    // Another thread may have inserted the pool concurrently — skip if so
     if let Some(existing) = new_pools.get(&identifier) {
         if let (Some(ref ba_lock), Some(ref new_ba)) = (
             &existing.address.backend_auth,
@@ -196,7 +206,7 @@ pub fn create_dynamic_pool(
         ) {
             *ba_lock.write() = new_ba.read().clone();
         }
-        return Ok(existing.clone());
+        return;
     }
 
     let auth_method = match &conn_pool.address.backend_auth {
@@ -216,19 +226,26 @@ pub fn create_dynamic_pool(
     register_dynamic_pool(&identifier);
 
     // Prewarm: spawn background task to create min_pool_size connections
-    if aq_config.min_pool_size > 0 {
-        let pool_clone = conn_pool.clone();
-        let min = aq_config.min_pool_size as usize;
-        let pn = pool_name.to_string();
-        let un = username.to_string();
-        tokio::spawn(async move {
-            let created = pool_clone.database.replenish(min).await;
-            if created > 0 {
-                info!("[{un}@{pn}] prewarmed {created} dynamic server(s) (min_pool_size={min})");
-            } else {
-                warn!("[{un}@{pn}] dynamic prewarm failed: 0 of {min} connections created");
+    let config = get_config();
+    if let Some(pool_config) = config.pools.get(pool_name) {
+        if let Some(ref aq_config) = pool_config.auth_query {
+            if aq_config.min_pool_size > 0 {
+                let pool_clone = conn_pool.clone();
+                let min = aq_config.min_pool_size as usize;
+                let pn = pool_name.to_string();
+                let un = username.to_string();
+                tokio::spawn(async move {
+                    let created = pool_clone.database.replenish(min).await;
+                    if created > 0 {
+                        info!(
+                            "[{un}@{pn}] prewarmed {created} dynamic server(s) (min_pool_size={min})"
+                        );
+                    } else {
+                        warn!("[{un}@{pn}] dynamic prewarm failed: 0 of {min} connections created");
+                    }
+                });
             }
-        });
+        }
     }
 
     // Increment dynamic_pools_created stat
@@ -238,6 +255,4 @@ pub fn create_dynamic_pool(
             .dynamic_pools_created
             .fetch_add(1, Ordering::Relaxed);
     }
-
-    Ok(conn_pool)
 }
