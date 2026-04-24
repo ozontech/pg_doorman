@@ -260,6 +260,7 @@ Feature: Server-side TLS connections
   Scenario: mTLS — pg_doorman presents client certificate to server
     Given PostgreSQL started with options "-c ssl=on -c ssl_cert_file=${PG_SSL_CERT} -c ssl_key_file=${PG_SSL_KEY} -c ssl_ca_file=${PG_SSL_CA_CERT}" and pg_hba.conf:
       """
+      host all postgres 127.0.0.1/32 trust
       hostssl all all 127.0.0.1/32 cert
       """
     And fixtures from "tests/fixture.sql" applied
