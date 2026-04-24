@@ -47,10 +47,17 @@ pub(crate) async fn handle_startup_error(
                         f.code,
                         f.message
                     );
-                    Err(Error::ServerStartupError(
-                        f.message,
-                        server_identifier.clone(),
-                    ))
+                    if f.code.starts_with("57P") {
+                        Err(Error::ServerUnavailableError(
+                            f.message,
+                            server_identifier.clone(),
+                        ))
+                    } else {
+                        Err(Error::ServerStartupError(
+                            f.message,
+                            server_identifier.clone(),
+                        ))
+                    }
                 }
                 Err(err) => {
                     error!(

@@ -38,6 +38,14 @@ where
                 let message = format!("Network connection error: {msg}. Please check your network connection.");
                 self.send_error_response(&message, "08006", err).await
             }
+            Error::ConnectError(ref msg) => {
+                let message = format!("Network connection error: {msg}. Please check your network connection.");
+                self.send_error_response(&message, "08006", err).await
+            }
+            Error::ServerUnavailableError(ref msg, _) => {
+                let message = format!("Server unavailable: {msg}. Please try again later.");
+                self.send_error_response(&message, "08006", err).await
+            }
             Error::QueryWaitTimeout => {
                 self.send_error_response(
                     "Query wait timed out. The server may be overloaded.",

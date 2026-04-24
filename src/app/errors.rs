@@ -8,6 +8,10 @@ use crate::auth::hba::CheckResult;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Error {
     SocketError(String),
+    /// TCP or Unix socket connect() failed. Backend process unreachable.
+    /// Distinct from SocketError, which covers read/write/protocol failures
+    /// on an already established connection.
+    ConnectError(String),
     ClientBadStartup,
     ProtocolSyncError(String),
     BadQuery(String),
@@ -15,6 +19,10 @@ pub enum Error {
     ServerMessageParserError(String),
     ServerStartupError(String, ServerIdentifier),
     ServerAuthError(String, ServerIdentifier),
+    /// PG startup FATAL with SQLSTATE class 57P (operator intervention):
+    /// 57P01 admin_shutdown, 57P02 crash_shutdown, 57P03 cannot_connect_now.
+    /// Backend accepted the connection but is not serving queries.
+    ServerUnavailableError(String, ServerIdentifier),
     ServerStartupReadParameters(String),
     BadConfig(String),
     AllServersDown,
@@ -120,6 +128,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self {
             Error::SocketError(msg) => write!(f, "Socket connection error: {msg}"),
+            Error::ConnectError(msg) => write!(f, "Backend connect error: {msg}"),
             Error::ClientBadStartup => write!(f, "Client sent an invalid startup message"),
             Error::ProtocolSyncError(msg) => write!(f, "Protocol synchronization error: {msg}"),
             Error::BadQuery(msg) => write!(f, "Invalid query: {msg}"),
@@ -133,6 +142,9 @@ impl std::fmt::Display for Error {
             ),
             Error::ServerAuthError(error, server_identifier) => {
                 write!(f, "{error} for {server_identifier}")
+            }
+            Error::ServerUnavailableError(error, server_identifier) => {
+                write!(f, "Backend unavailable: {error} for {server_identifier}")
             }
             Error::ServerStartupReadParameters(msg) => {
                 write!(f, "Failed to read server parameters: {msg}")
