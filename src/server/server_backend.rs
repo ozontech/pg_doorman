@@ -273,6 +273,17 @@ impl Server {
     /// Returns true if the connection is alive (WouldBlock = no real data).
     /// Returns false if the server sent data or closed the connection (dead).
     pub fn check_server_alive(&self) -> bool {
+        if self.stream.get_ref().is_tls() {
+            // For TLS connections, readable() fires on raw TCP socket readiness.
+            // Calling try_read() on the raw socket would consume bytes that the
+            // TLS layer hasn't processed, corrupting the session.
+            //
+            // On an idle PostgreSQL connection, the raw socket should never become
+            // readable (PostgreSQL does not send unsolicited data, and TLS
+            // renegotiation is disabled since PG14). If readable() fired, the
+            // server disconnected or sent an error — treat as dead.
+            return false;
+        }
         let mut buf = [0u8; 1];
         matches!(
             self.stream.get_ref().try_read(&mut buf),

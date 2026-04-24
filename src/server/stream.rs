@@ -125,6 +125,11 @@ impl StreamInner {
         }
     }
 
+    /// Returns true if this stream uses TLS encryption.
+    pub fn is_tls(&self) -> bool {
+        matches!(self, StreamInner::TCPTls { .. })
+    }
+
     /// Non-blocking read attempt on the raw socket (bypasses BufStream).
     /// Used to verify that `readable()` readiness is genuine, not spurious
     /// from BufStream buffering. Returns WouldBlock if no data available.
