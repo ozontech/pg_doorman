@@ -192,12 +192,18 @@ impl ServerPool {
         //    the TLS retry will fail with the same error, which we then return.
         //
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
-        let result = if result.is_err() && self.address.server_tls.mode.retries_with_tls() {
+        let (result, active_stats) = if result.is_err()
+            && self.address.server_tls.mode.retries_with_tls()
+        {
             info!(
                 "plain connection failed, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
                 self.address.username, self.address.pool_name,
                 self.address.host, self.address.port,
             );
+            // Disconnect the plain-attempt stats before registering the TLS-retry stats.
+            // Without this, both entries would remain in SERVER_STATS: the plain one
+            // as a ghost if the retry succeeds, or the retry one leaking if it fails.
+            stats.disconnect();
             let mut retry_address = self.address.clone();
             retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
                 mode: crate::config::tls::ServerTlsMode::Require,
@@ -208,21 +214,22 @@ impl ServerPool {
                 crate::utils::clock::now(),
             ));
             retry_stats.register(retry_stats.clone());
-            Server::startup(
+            let retry_result = Server::startup(
                 &retry_address,
                 &self.user,
                 &self.database,
                 self.client_server_map.clone(),
-                retry_stats,
+                retry_stats.clone(),
                 self.cleanup_connections,
                 self.log_client_parameter_status_changes,
                 self.prepared_statement_cache_size,
                 self.application_name.clone(),
                 self.session_mode,
             )
-            .await
+            .await;
+            (retry_result, retry_stats)
         } else {
-            result
+            (result, stats)
         };
 
         match result {
@@ -234,7 +241,7 @@ impl ServerPool {
             Err(err) => {
                 // Brief backoff on error to avoid hammering a failing server
                 tokio::time::sleep(Duration::from_millis(10)).await;
-                stats.disconnect();
+                active_stats.disconnect();
                 Err(err)
             }
         }
