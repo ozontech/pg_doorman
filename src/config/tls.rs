@@ -1,4 +1,3 @@
-// TLS functionality for secure connections
 use std::io::{self, Read};
 use std::path::Path;
 
@@ -6,7 +5,6 @@ use crate::errors::Error;
 use native_tls::TlsClientCertificateVerification::{DoNotRequestCertificate, RequireCertificate};
 use native_tls::{Certificate, Identity, Protocol, TlsClientCertificateVerification};
 
-/// Helper function to read a file into a byte vector
 fn read_file(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     let mut content = Vec::new();
     let mut file = std::fs::File::open(path)?;
@@ -14,7 +12,6 @@ fn read_file(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     Ok(content)
 }
 
-/// Load identity from certificate and key files
 pub fn load_identity(cert: &Path, key: &Path) -> io::Result<Identity> {
     let cert_body = read_file(cert)?;
     let key_body = read_file(key)?;
@@ -164,7 +161,6 @@ fn load_certificate(path: &Path) -> Result<Certificate, Error> {
 }
 
 /// Resolved TLS configuration for server-facing connections.
-/// Built once per pool during config load, shared via Arc.
 #[derive(Debug)]
 pub struct ServerTlsConfig {
     pub mode: ServerTlsMode,
@@ -172,7 +168,6 @@ pub struct ServerTlsConfig {
 }
 
 impl ServerTlsConfig {
-    /// Build a ServerTlsConfig from mode and optional certificate paths.
     pub fn new(
         mode: ServerTlsMode,
         ca_cert: Option<&Path>,

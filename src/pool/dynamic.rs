@@ -67,7 +67,10 @@ pub fn create_dynamic_pool(
     let ba_arc = backend_auth.map(|ba| Arc::new(parking_lot::RwLock::new(ba)));
     debug!(
         "[{username}@{pool_name}] building server TLS config (mode={})",
-        pool_config.server_tls_mode.as_deref().unwrap_or(&config.general.server_tls_mode)
+        pool_config
+            .server_tls_mode
+            .as_deref()
+            .unwrap_or(&config.general.server_tls_mode)
     );
     let server_tls = build_server_tls_for_pool(pool_config, &config.general)?;
 

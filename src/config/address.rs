@@ -66,7 +66,6 @@ pub struct Address {
     /// `Arc<RwLock<>>` allows credential updates: all Address clones share
     /// the same lock, so updates (e.g. ScramPending → ScramPassthrough) propagate.
     pub backend_auth: Option<Arc<RwLock<BackendAuthMethod>>>,
-    /// Resolved TLS config for server-facing connections.
     pub server_tls: Arc<crate::config::tls::ServerTlsConfig>,
 }
 

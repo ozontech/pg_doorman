@@ -106,19 +106,13 @@ pub struct DoormanWorld {
     pub vars: HashMap<String, String>,
     /// Extra environment variables to pass to pg_doorman process
     pub doorman_env: Vec<(String, String)>,
-    /// CA certificate for server-side TLS testing
     pub pg_ssl_ca_cert_file: Option<NamedTempFile>,
-    /// CA private key (needed to sign server/client certs)
     pub pg_ssl_ca_key_file: Option<NamedTempFile>,
-    /// PostgreSQL server SSL certificate
     pub pg_ssl_cert_file: Option<NamedTempFile>,
-    /// PostgreSQL server SSL key
     pub pg_ssl_key_file: Option<NamedTempFile>,
-    /// Client certificate for mTLS testing (pg_doorman -> PostgreSQL)
     pub pg_ssl_client_cert_file: Option<NamedTempFile>,
-    /// Client key for mTLS testing
     pub pg_ssl_client_key_file: Option<NamedTempFile>,
-    /// "Wrong" CA cert (not the one that signed server cert, for negative tests)
+    /// CA that did NOT sign the server cert, for negative verification tests.
     pub pg_ssl_wrong_ca_cert_file: Option<NamedTempFile>,
 }
 
@@ -234,7 +228,6 @@ impl DoormanWorld {
             .unwrap_or_else(|| "4".to_string());
         result = result.replace("${PGBENCH_JOBS_C10000}", &pgbench_jobs_c10000);
 
-        // Replace PostgreSQL server SSL file path placeholders
         if let Some(ref f) = self.pg_ssl_ca_cert_file {
             result = result.replace("${PG_SSL_CA_CERT}", f.path().to_str().unwrap());
         }

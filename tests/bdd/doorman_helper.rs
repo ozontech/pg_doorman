@@ -64,7 +64,6 @@ pub async fn generate_ssl_certificates(world: &mut DoormanWorld) {
     world.ssl_cert_file = Some(cert_file);
 }
 
-/// Helper: run openssl command and panic on failure
 fn run_openssl(args: &[&str]) {
     let output = Command::new("openssl")
         .args(args)
@@ -80,8 +79,6 @@ fn run_openssl(args: &[&str]) {
     }
 }
 
-/// Generate a full PKI for PostgreSQL server-side TLS testing:
-/// CA, server cert (with SAN for localhost/127.0.0.1), client cert, and a "wrong" CA.
 #[given("PostgreSQL SSL certificates are generated")]
 pub async fn generate_pg_ssl_certificates(world: &mut DoormanWorld) {
     // --- CA ---
@@ -113,7 +110,6 @@ pub async fn generate_pg_ssl_certificates(world: &mut DoormanWorld) {
     let server_cert_path = server_cert_file.path().to_str().unwrap().to_string();
     let server_csr_path = server_csr_file.path().to_str().unwrap().to_string();
 
-    // SAN extension file
     let san_ext_file = tempfile::Builder::new()
         .suffix(".cnf")
         .tempfile()
@@ -224,7 +220,7 @@ pub async fn generate_pg_ssl_certificates(world: &mut DoormanWorld) {
         "/CN=WrongCA",
     ]);
 
-    // Store everything in world (NamedTempFile keeps files alive until dropped)
+    // NamedTempFile keeps files alive until dropped
     world.pg_ssl_ca_key_file = Some(ca_key_file);
     world.pg_ssl_ca_cert_file = Some(ca_cert_file);
     world.pg_ssl_cert_file = Some(server_cert_file);

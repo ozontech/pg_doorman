@@ -894,7 +894,7 @@ fields:
           - "verify-ca"   : TLS обязателен, сертификат сервера проверяется по CA
           - "verify-full" : TLS обязателен, проверяется сертификат и имя хоста
       doc: |
-        TLS mode for outgoing connections to PostgreSQL servers. Controls whether and how TLS is used when connecting to backend servers.
+        TLS mode for outgoing connections to PostgreSQL servers.
 
         * `allow` — Try plain first; if server rejects, retry with TLS. Matches libpq sslmode=allow (default).
         * `disable` — TLS is not used.
@@ -912,7 +912,7 @@ fields:
         ru: |
           Путь к файлу CA-сертификата для проверки сертификатов серверов PostgreSQL.
           Обязателен при server_tls_mode = "verify-ca" или "verify-full".
-      doc: "Path to the CA certificate file used to verify the PostgreSQL server's TLS certificate. Required when `server_tls_mode` is set to `verify-ca` or `verify-full`."
+      doc: "CA certificate for verifying PostgreSQL server certificates. Required when `server_tls_mode` is `verify-ca` or `verify-full`."
       default: "None"
 
     server_tls_certificate:
@@ -923,7 +923,7 @@ fields:
         ru: |
           Путь к клиентскому TLS-сертификату для взаимной TLS-аутентификации с серверами PostgreSQL.
           Используется вместе с server_tls_private_key.
-      doc: "Path to the client certificate file for mutual TLS authentication with PostgreSQL servers. Must be used together with `server_tls_private_key`."
+      doc: "Client certificate for mTLS with PostgreSQL servers. Pair with `server_tls_private_key`."
       default: "None"
 
     server_tls_private_key:
@@ -934,7 +934,7 @@ fields:
         ru: |
           Путь к приватному ключу клиентского TLS-сертификата.
           Используется вместе с server_tls_certificate.
-      doc: "Path to the private key file for the client certificate used in mutual TLS authentication with PostgreSQL servers. Must be used together with `server_tls_certificate`."
+      doc: "Private key for the mTLS client certificate. Pair with `server_tls_certificate`."
       default: "None"
 
     daemon_pid_file:
@@ -1242,28 +1242,28 @@ fields:
       config:
         en: "Override global server_tls_mode for this pool."
         ru: "Переопределить глобальный server_tls_mode для этого пула."
-      doc: "Override the global `server_tls_mode` for this pool. If not specified, the global setting is used."
+      doc: "Per-pool override of `server_tls_mode`."
       default: "None (uses global setting)"
 
     server_tls_ca_cert:
       config:
         en: "Override CA certificate path for TLS server verification in this pool."
         ru: "Переопределить путь к CA-сертификату для проверки TLS-сервера в этом пуле."
-      doc: "Override the global `server_tls_ca_cert` for this pool. If not specified, the global setting is used."
+      doc: "Per-pool override of `server_tls_ca_cert`."
       default: "None (uses global setting)"
 
     server_tls_certificate:
       config:
         en: "Override client TLS certificate path for this pool."
         ru: "Переопределить путь к клиентскому TLS-сертификату для этого пула."
-      doc: "Override the global `server_tls_certificate` for this pool. If not specified, the global setting is used."
+      doc: "Per-pool override of `server_tls_certificate`."
       default: "None (uses global setting)"
 
     server_tls_private_key:
       config:
         en: "Override client TLS private key path for this pool."
         ru: "Переопределить путь к приватному ключу TLS-клиента для этого пула."
-      doc: "Override the global `server_tls_private_key` for this pool. If not specified, the global setting is used."
+      doc: "Per-pool override of `server_tls_private_key`."
       default: "None (uses global setting)"
 
   user:

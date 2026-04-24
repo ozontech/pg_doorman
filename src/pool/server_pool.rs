@@ -164,7 +164,6 @@ impl ServerPool {
 
         stats.register(stats.clone());
 
-        // Connect to the PostgreSQL server.
         let result = Server::startup(
             &self.address,
             &self.user,
