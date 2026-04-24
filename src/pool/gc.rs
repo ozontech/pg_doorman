@@ -44,10 +44,9 @@ fn gc_idle_dynamic_pools() {
                     debug!("[{id}] GC: min_pool_size > 0, skipping despite size=0");
                     continue;
                 }
-                // Grace period: TLS handshake adds 1-2 RTT to connection setup.
-                // With allow-mode retry (two sequential connects), total setup
-                // can take >1s over WAN. 2s covers this with margin while keeping
-                // GC responsive for abandoned pools.
+                // Grace period: allow-mode retry does two sequential TCP connects
+                // (plain + TLS), each needing 1-2 RTT for handshake. Over WAN
+                // this totals ~1s. 2s = 2x worst case.
                 let age = pool.created_at.elapsed();
                 if age < std::time::Duration::from_secs(2) {
                     debug!("[{id}] GC: pool age {age:?} < 2s, skipping");

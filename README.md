@@ -258,7 +258,7 @@ Encrypt connections from PgDoorman to PostgreSQL. Set `server_tls_mode` in `[gen
 |------|----------|
 | `disable` | never use TLS |
 | `allow` | try plain first; retry with TLS if server rejects plain (default, matches libpq `sslmode=allow`) |
-| `prefer` | try TLS first; fall back to plain if server declines |
+| `prefer` | try TLS first; fall back to plain if server does not support TLS |
 | `require` | require TLS, do not verify certificate |
 | `verify-ca` | require TLS + verify server certificate against CA |
 | `verify-full` | require TLS + verify CA + verify hostname |
@@ -282,7 +282,7 @@ pools:
 
 **Known limitations:**
 
-- **`prefer` mode fallback:** If the server accepts the SSL request but the TLS handshake fails (e.g., cipher mismatch), the connection is not retried on plain TCP (unlike libpq). This edge case is rare in practice.
+- **`prefer` mode fallback:** If the server accepts the SSL request but the TLS handshake fails (e.g., cipher mismatch), the connection is not retried on plain TCP.
 - **`channel_binding = require`:** PostgreSQL's `channel_binding = require` setting is incompatible with pg_doorman. The pooler uses separate TLS sessions for client-to-pooler and pooler-to-server connections, so SCRAM channel binding cannot be forwarded.
 - **Cipher suites:** Cipher suite selection is not currently configurable; system OpenSSL defaults are used. TLS 1.2 is the minimum protocol version.
 

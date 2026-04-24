@@ -291,6 +291,36 @@ Feature: Server-side TLS connections
     Then session "s1" should receive DataRow with "1"
     When we close session "s1"
 
+  @server-tls-mtls-no-client-cert
+  Scenario: mTLS fails when server requires client certificate but pg_doorman has none
+    Given PostgreSQL started with options "-c ssl=on -c ssl_cert_file=${PG_SSL_CERT} -c ssl_key_file=${PG_SSL_KEY} -c ssl_ca_file=${PG_SSL_CA_CERT}" and pg_hba.conf:
+      """
+      hostnossl all postgres 127.0.0.1/32 trust
+      hostssl all all 127.0.0.1/32 trust clientcert=verify-ca
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      server_tls_mode = "verify-ca"
+      server_tls_ca_cert = "${PG_SSL_CA_CERT}"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = ${PG_PORT}
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 1
+      """
+    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "" fails
+
   @server-tls-show-servers-tls
   Scenario: SHOW SERVERS shows tls=true for TLS backend connection
     Given PostgreSQL started with options "-c ssl=on -c ssl_cert_file=${PG_SSL_CERT} -c ssl_key_file=${PG_SSL_KEY}" and pg_hba.conf:

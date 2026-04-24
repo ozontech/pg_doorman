@@ -4,7 +4,7 @@
 
 #### Server-side TLS (pg_doorman → PostgreSQL)
 
-Encrypted connections from pg_doorman to PostgreSQL servers. Six SSL modes matching libpq semantics: `disable`, `allow` (default), `prefer`, `require`, `verify-ca`, `verify-full`. Mutual TLS supported via `server_tls_certificate` / `server_tls_private_key`.
+Six SSL modes matching libpq semantics: `disable`, `allow` (default), `prefer`, `require`, `verify-ca`, `verify-full`. Mutual TLS supported via `server_tls_certificate` / `server_tls_private_key`.
 
 Configuration is per-pool with global defaults in `[general]`. Cancel requests use TLS when the main connection used TLS.
 
@@ -15,7 +15,7 @@ Configuration is per-pool with global defaults in `[general]`. Cancel requests u
 | `server_tls: false` | `server_tls_mode: "disable"` |
 | `server_tls: true` | `server_tls_mode: "require"` |
 | `server_tls: true` + `verify_server_certificate: true` | `server_tls_mode: "verify-full"` |
-| *(not set)* | `server_tls_mode: "allow"` (new default) |
+| (not set) | `server_tls_mode: "allow"` (new default) |
 
 The new default `allow` tries plain TCP first. If the server rejects the connection (e.g. `pg_hba.conf` requires TLS), pg_doorman retries with TLS on a new TCP socket. This matches libpq `sslmode=allow`.
 

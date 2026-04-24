@@ -20,7 +20,7 @@ use crate::messages::{
     check_query_response, deallocate_response, error_response, error_response_terminal,
     insert_close_complete_after_last_close_complete, read_message_reuse, write_all_flush,
 };
-use crate::pool::{CancelTarget, CANCELED_PIDS};
+use crate::pool::CANCELED_PIDS;
 use crate::server::Server;
 use crate::utils::debug_messages::{log_client_to_server, log_server_to_client};
 
@@ -288,15 +288,7 @@ where
                     let mut cancel_guard = CANCELED_PIDS.lock();
                     cancel_guard.insert(t.process_id);
                 }
-                CancelTarget {
-                    process_id: t.process_id,
-                    secret_key: t.secret_key,
-                    host: t.host.clone(),
-                    port: t.port,
-                    server_tls: t.server_tls.clone(),
-                    connected_with_tls: t.connected_with_tls,
-                    pool_name: t.pool_name.clone(),
-                }
+                t.clone()
             }
 
             // The client doesn't know / got the wrong server,

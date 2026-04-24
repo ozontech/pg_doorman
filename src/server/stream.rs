@@ -228,11 +228,9 @@ pub(crate) async fn create_tcp_stream_inner(
                         .observe(elapsed.as_secs_f64());
                     Ok(StreamInner::TCPTls { stream: tls_stream })
                 }
-                // Note: unlike libpq, we do NOT retry on a new plain TCP socket
-                // when TLS handshake fails after server responded 'S'. The TCP
-                // connection is already consumed by the partial handshake, and
-                // this edge case (server accepts SSL but handshake fails due to
-                // cipher/version mismatch) is rare in practice.
+                // We do NOT retry on a new plain TCP socket when TLS handshake
+                // fails after server responded 'S'. The TCP connection is already
+                // consumed by the partial handshake.
                 Err(err) => {
                     let elapsed = start.elapsed();
                     log::error!(

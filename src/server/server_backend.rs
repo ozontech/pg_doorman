@@ -140,7 +140,7 @@ pub struct Server {
     /// that any Bind referencing them in the client buffer succeeds first.
     pub(crate) deferred_eviction_closes: Vec<String>,
 
-    /// Whether this connection uses TLS. Determines if cancel requests use TLS.
+    /// Cancel requests must use the same transport as the main connection.
     connected_with_tls: bool,
 
     /// Session mode flag: true when the pool operates in session mode.
@@ -753,7 +753,7 @@ impl Server {
         let config = get_config();
 
         log::debug!(
-            "[{}@{}] Server::startup connecting to {}:{} (server_tls_mode={})",
+            "[{}@{}] server startup connecting to {}:{} server_tls_mode={}",
             user.username,
             database,
             address.host,
@@ -775,7 +775,7 @@ impl Server {
 
         let connected_with_tls = matches!(&stream, StreamInner::TCPTls { .. });
         log::debug!(
-            "[{}@{}] Server connection to {}:{} established (tls={})",
+            "[{}@{}] server connection to {}:{} established tls={}",
             user.username,
             database,
             address.host,

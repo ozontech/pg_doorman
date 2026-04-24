@@ -219,6 +219,9 @@ pub struct ServerTlsConfig {
     pub cert_hash: Option<[u8; 32]>,
 }
 
+/// Manual impl: `connector` is opaque (no PartialEq), so equality is
+/// determined by `mode` + `cert_hash`. Update this if new config fields
+/// are added to `ServerTlsConfig`.
 impl PartialEq for ServerTlsConfig {
     fn eq(&self, other: &Self) -> bool {
         self.mode == other.mode && self.cert_hash == other.cert_hash

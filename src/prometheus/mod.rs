@@ -418,7 +418,6 @@ pub(crate) static SHOW_SERVER_TLS_CONNECTIONS: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
-#[allow(dead_code)]
 pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     let histogram = HistogramVec::new(
         prometheus::HistogramOpts::new(
@@ -435,12 +434,11 @@ pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_DURATION: Lazy<HistogramVec> = Lazy:
     histogram
 });
 
-#[allow(dead_code)]
 pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_ERRORS: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
             "pg_doorman_server_tls_handshake_errors_total",
-            "Total number of failed TLS handshakes to backend servers, by pool.",
+            "Total number of failed TLS negotiations to backend servers, by pool.",
         ),
         &["pool"],
     )

@@ -47,7 +47,7 @@ pub type ServerHost = String;
 pub type ServerPort = u16;
 
 /// Target information for forwarding a CancelRequest to the correct backend.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CancelTarget {
     pub process_id: ProcessId,
     pub secret_key: SecretKey,
