@@ -208,6 +208,7 @@ impl ServerPool {
             retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
                 mode: crate::config::tls::ServerTlsMode::Require,
                 connector: self.address.server_tls.connector.clone(),
+                cert_hash: self.address.server_tls.cert_hash,
             });
             let retry_stats = Arc::new(ServerStats::new(
                 self.address.clone(),

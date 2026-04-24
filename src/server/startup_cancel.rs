@@ -22,6 +22,7 @@ pub(crate) async fn cancel(
     let disable_config = ServerTlsConfig {
         mode: ServerTlsMode::Disable,
         connector: None,
+        cert_hash: None,
     };
     let cancel_tls = if connected_with_tls {
         server_tls

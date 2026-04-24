@@ -327,10 +327,20 @@ impl ConnectionPool {
                 if let Some(pool) = old_pool_ref {
                     // If the pool hasn't changed, get existing reference and insert it into the new_pools.
                     // We replace all pools at the end, but if the reference is kept, the pool won't get re-created (bb8).
-                    if pool.config_hash == new_pool_hash_value {
+                    if pool.config_hash == new_pool_hash_value
+                        && pool.address.server_tls.as_ref() == server_tls_config.as_ref()
+                    {
                         info!("[{}@{}] config unchanged", user.username, pool_name);
                         new_pools.insert(identifier.clone(), pool.clone());
                         continue;
+                    }
+                    if pool.config_hash == new_pool_hash_value
+                        && pool.address.server_tls.as_ref() != server_tls_config.as_ref()
+                    {
+                        info!(
+                            "[{}@{}] tls certificates changed on disk, recreating pool",
+                            user.username, pool_name
+                        );
                     }
                 }
 

@@ -83,6 +83,7 @@ impl Default for Address {
             server_tls: Arc::new(crate::config::tls::ServerTlsConfig {
                 mode: crate::config::tls::ServerTlsMode::Disable,
                 connector: None,
+                cert_hash: None,
             }),
         }
     }

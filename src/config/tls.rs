@@ -1,6 +1,8 @@
 use std::io::{self, Read};
 use std::path::Path;
 
+use sha2::{Digest, Sha256};
+
 use crate::errors::Error;
 use native_tls::TlsClientCertificateVerification::{DoNotRequestCertificate, RequireCertificate};
 use native_tls::{Certificate, Identity, Protocol, TlsClientCertificateVerification};
@@ -207,7 +209,19 @@ fn load_certificates(path: &Path) -> Result<Vec<Certificate>, Error> {
 pub struct ServerTlsConfig {
     pub mode: ServerTlsMode,
     pub connector: Option<tokio_native_tls::TlsConnector>,
+    /// SHA-256 hash of certificate file contents (ca + client cert + client key).
+    /// Used to detect cert changes on SIGHUP reload without comparing opaque
+    /// TlsConnector objects.
+    pub cert_hash: Option<[u8; 32]>,
 }
+
+impl PartialEq for ServerTlsConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.mode == other.mode && self.cert_hash == other.cert_hash
+    }
+}
+
+impl Eq for ServerTlsConfig {}
 
 impl ServerTlsConfig {
     pub fn new(
@@ -220,6 +234,7 @@ impl ServerTlsConfig {
             return Ok(ServerTlsConfig {
                 mode,
                 connector: None,
+                cert_hash: None,
             });
         }
 
@@ -276,9 +291,30 @@ impl ServerTlsConfig {
                 Error::BadConfig(format!("Failed to create server TLS connector: {err}"))
             })?;
 
+        let cert_hash = {
+            let mut hasher = Sha256::new();
+            if let Some(ca_path) = ca_cert {
+                if let Ok(data) = read_file(ca_path) {
+                    hasher.update(&data);
+                }
+            }
+            if let Some(cert_path) = client_cert {
+                if let Ok(data) = read_file(cert_path) {
+                    hasher.update(&data);
+                }
+            }
+            if let Some(key_path) = client_key {
+                if let Ok(data) = read_file(key_path) {
+                    hasher.update(&data);
+                }
+            }
+            Some(hasher.finalize().into())
+        };
+
         Ok(ServerTlsConfig {
             mode,
             connector: Some(connector),
+            cert_hash,
         })
     }
 }
