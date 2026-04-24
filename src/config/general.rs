@@ -216,7 +216,7 @@ impl General {
     }
 
     pub fn default_server_tls_mode() -> String {
-        "prefer".to_string()
+        "allow".to_string()
     }
     pub fn default_server_lifetime() -> Duration {
         Duration::from_mins(20) // 20 min

@@ -44,10 +44,12 @@ fn gc_idle_dynamic_pools() {
                     debug!("[{id}] GC: min_pool_size > 0, skipping despite size=0");
                     continue;
                 }
-                // Don't GC pools younger than 30s — they may still be
-                // establishing their first server connection (e.g. TLS handshake)
+                // Don't GC pools younger than 5s — they may still be
+                // establishing their first server connection (e.g. TLS handshake
+                // adds an extra roundtrip that widens the window between pool
+                // creation and first connection appearing in the pool)
                 let age = pool.created_at.elapsed();
-                if age < std::time::Duration::from_secs(30) {
+                if age < std::time::Duration::from_secs(5) {
                     debug!("[{id}] GC: pool age {age:?} < 30s, skipping");
                     continue;
                 }

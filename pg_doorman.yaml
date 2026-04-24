@@ -343,7 +343,7 @@ general:
   # - "verify-ca"   : TLS required, server certificate verified against CA
   # - "verify-full" : TLS required, server certificate and hostname verified
   # Default: "prefer"
-  server_tls_mode: "prefer"
+  server_tls_mode: "allow"
 
   # Path to the CA certificate file for verifying PostgreSQL server certificates.
   # Required when server_tls_mode is "verify-ca" or "verify-full".

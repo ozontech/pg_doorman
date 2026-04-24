@@ -140,7 +140,7 @@ fn test_generate_config_with_default_parameters() {
     // Verify the configuration has the expected values
     assert_eq!(config_result.general.host, "localhost");
     assert_eq!(config_result.general.port, 6432);
-    assert_eq!(config_result.general.server_tls_mode, "prefer");
+    assert_eq!(config_result.general.server_tls_mode, "allow");
 
     // Verify the pools
     assert_eq!(config_result.pools.len(), 2);
@@ -208,7 +208,7 @@ fn test_generate_config_with_custom_parameters() {
     // Verify the configuration has the expected values
     assert_eq!(config_result.general.host, "testhost");
     assert_eq!(config_result.general.port, 6432);
-    assert_eq!(config_result.general.server_tls_mode, "prefer");
+    assert_eq!(config_result.general.server_tls_mode, "allow");
 
     // Verify the pools
     assert_eq!(config_result.pools.len(), 2);

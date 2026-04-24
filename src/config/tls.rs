@@ -23,12 +23,17 @@ pub fn load_identity(cert: &Path, key: &Path) -> io::Result<Identity> {
 }
 
 /// TLS mode for server-facing (backend) connections.
+/// Ordered from least to most secure, matching libpq sslmode semantics.
 #[derive(Default, PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 pub enum ServerTlsMode {
     /// Do not use TLS
     Disable,
-    /// Try TLS, fall back to plain if server doesn't support it
+    /// Try plain first; if server rejects, retry with TLS on a new TCP socket.
+    /// Matches libpq sslmode=allow: "first try a non-SSL connection;
+    /// if that fails, try an SSL connection."
     #[default]
+    Allow,
+    /// Send SSLRequest first; if server says 'N', fall back to plain
     Prefer,
     /// Require TLS, fail if server doesn't support it
     Require,
@@ -42,6 +47,7 @@ impl std::fmt::Display for ServerTlsMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ServerTlsMode::Disable => write!(f, "disable"),
+            ServerTlsMode::Allow => write!(f, "allow"),
             ServerTlsMode::Prefer => write!(f, "prefer"),
             ServerTlsMode::Require => write!(f, "require"),
             ServerTlsMode::VerifyCa => write!(f, "verify-ca"),
@@ -54,6 +60,7 @@ impl ServerTlsMode {
     pub fn from_string(s: &str) -> Result<Self, Error> {
         match s {
             "disable" => Ok(ServerTlsMode::Disable),
+            "allow" => Ok(ServerTlsMode::Allow),
             "prefer" => Ok(ServerTlsMode::Prefer),
             "require" => Ok(ServerTlsMode::Require),
             "verify-ca" => Ok(ServerTlsMode::VerifyCa),
@@ -67,9 +74,10 @@ impl ServerTlsMode {
         matches!(self, ServerTlsMode::VerifyCa | ServerTlsMode::VerifyFull)
     }
 
-    /// Whether this mode sends an SSLRequest to the server.
+    /// Whether this mode sends an SSLRequest on the first connection attempt.
+    /// `Allow` skips SSLRequest initially (tries plain first, retries with TLS on failure).
     pub fn sends_ssl_request(&self) -> bool {
-        !matches!(self, ServerTlsMode::Disable)
+        !matches!(self, ServerTlsMode::Disable | ServerTlsMode::Allow)
     }
 
     /// Whether this mode requires the server to support TLS.
@@ -78,6 +86,11 @@ impl ServerTlsMode {
             self,
             ServerTlsMode::Require | ServerTlsMode::VerifyCa | ServerTlsMode::VerifyFull
         )
+    }
+
+    /// Whether this mode retries with TLS after a plain connection failure.
+    pub fn retries_with_tls(&self) -> bool {
+        matches!(self, ServerTlsMode::Allow)
     }
 }
 
@@ -177,7 +190,7 @@ impl ServerTlsConfig {
         builder.min_protocol_version(Some(Protocol::Tlsv12));
 
         match mode {
-            ServerTlsMode::Prefer | ServerTlsMode::Require => {
+            ServerTlsMode::Allow | ServerTlsMode::Prefer | ServerTlsMode::Require => {
                 builder.danger_accept_invalid_certs(true);
                 builder.danger_accept_invalid_hostnames(true);
             }
@@ -289,6 +302,10 @@ mod tests {
             ServerTlsMode::Disable
         );
         assert_eq!(
+            ServerTlsMode::from_string("allow").unwrap(),
+            ServerTlsMode::Allow
+        );
+        assert_eq!(
             ServerTlsMode::from_string("prefer").unwrap(),
             ServerTlsMode::Prefer
         );
@@ -311,6 +328,7 @@ mod tests {
     #[test]
     fn test_server_tls_mode_display() {
         assert_eq!(ServerTlsMode::Disable.to_string(), "disable");
+        assert_eq!(ServerTlsMode::Allow.to_string(), "allow");
         assert_eq!(ServerTlsMode::Prefer.to_string(), "prefer");
         assert_eq!(ServerTlsMode::Require.to_string(), "require");
         assert_eq!(ServerTlsMode::VerifyCa.to_string(), "verify-ca");
@@ -320,6 +338,7 @@ mod tests {
     #[test]
     fn test_server_tls_mode_requires_ca() {
         assert!(!ServerTlsMode::Disable.requires_ca());
+        assert!(!ServerTlsMode::Allow.requires_ca());
         assert!(!ServerTlsMode::Prefer.requires_ca());
         assert!(!ServerTlsMode::Require.requires_ca());
         assert!(ServerTlsMode::VerifyCa.requires_ca());
