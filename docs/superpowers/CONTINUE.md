@@ -1,36 +1,31 @@
-# Продолжение: Patroni failover discovery
+# Patroni failover discovery — COMPLETED
 
-## Промт для новой сессии
+## Status
 
-```
-Продолжаем реализацию Patroni failover discovery.
+All 10 tasks implemented and committed on `feature/patroni-failover-discovery`.
 
-Ветка: feature/patroni-failover-discovery
-План: docs/superpowers/plans/2026-04-24-patroni-failover-discovery.md
-Спека: docs/superpowers/specs/2026-04-24-patroni-failover-discovery-design.md
-Контекст (результаты ресерча): ~/Projects/pg_doorman_failover.md и ~/Projects/pg_doorman_failover_ru.md
+| Task | Status | Commit |
+|------|--------|--------|
+| 1. ConnectError + ServerUnavailableError | DONE | 78d6f1a |
+| 2. Patroni types (Member, Role, ClusterResponse) | DONE | 9090b23 |
+| 3. PatroniClient (parallel /cluster fetch) | DONE | 62c839d |
+| 4. Config fields (patroni_discovery_urls, failover_*) | DONE | b37f1e8 |
+| 5. FailoverState (blacklist, whitelist, coalescing) | DONE | 4c34410 |
+| 6. Wire into ServerPool::create() | DONE | 416168f |
+| 7. Mock Patroni BDD helper | DONE | ac3b5e9 |
+| 8. BDD scenarios (3 scenarios, 14 steps) | DONE | dc467f6 |
+| 9. Prometheus metrics (5 metrics) | DONE | 3f4c516 |
+| 10. Documentation update | DONE | 45c8973 |
 
-Статус:
-- Task 1: DONE — ConnectError + ServerUnavailableError (закоммичено)
-- Task 2-10: pending
+## Verification
 
-Режим: subagent-driven-development, model: opus, effort: max
-Каждый task: implementer subagent → spec review → code quality review → fix → commit.
+- 483 unit tests pass
+- 3 BDD scenarios pass (14 steps)
+- clippy zero warnings
+- fmt clean
 
-Продолжай с Task 2.
-```
+## Next steps
 
-## Ключевые решения (не терять между сессиями)
-
-1. Модуль `src/patroni/` — HTTP-клиент + types, отдельно от pool
-2. `src/pool/failover.rs` — FailoverState (blacklist, whitelist, coalescing)
-3. Error classification: `ConnectError` + `ServerUnavailableError` (SQLSTATE 57P), не string parsing
-4. Parallel fetch Patroni URLs — fire-and-take-first
-5. Parallel TCP connect к members — sync_standby приоритет с 2s grace
-6. Сниженный `failover_server_lifetime` для fallback-соединений
-7. Request coalescing через `Shared<Future>`
-8. Duration config — human parsing ("30s"), не _ms
-9. Своя структура Member, не извлекаем из patroni_proxy
-10. Reload сбрасывает blacklist + whitelist
-11. `patroni_discovery_role` — overengineering, не делаем
-12. BDD тесты: inline JSON в feature-файлах, mock Patroni HTTP-сервер
+- Review full diff before merge
+- Run full BDD suite to check for regressions
+- Consider adding more BDD scenarios (blacklist expiry, whitelist reuse)
