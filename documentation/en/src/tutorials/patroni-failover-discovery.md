@@ -2,24 +2,27 @@
 
 When pg_doorman runs next to PostgreSQL on the same machine and connects
 via unix socket, a Patroni switchover or an unexpected PostgreSQL crash
-leaves doorman without a backend. Every client query fails until the DBA
-reconfigures doorman or the local PostgreSQL comes back.
+leaves doorman without a backend. Until Patroni finishes promoting a
+replica or restarting the local PostgreSQL, every client query fails.
 
 Patroni failover discovery lets doorman bridge that gap automatically.
 When the local PostgreSQL stops responding, doorman queries the Patroni
 REST API, finds another cluster member, and routes new connections there.
 Existing pooled connections to the dead backend are recycled normally.
 
-This is a short-term measure. It covers the 10-30 seconds of a typical
-Patroni switchover. Long-term routing (pointing doorman at the new
-primary permanently) remains the DBA's responsibility via config reload.
+This is a short-term measure. It bridges the 10-30 seconds while
+Patroni completes its own failover. Once Patroni restores the local
+PostgreSQL — as a replica of the new primary, or as the recovered
+primary itself — doorman returns to the local socket on its own.
+No operator action required.
 
 ## When it helps
 
 **Planned switchover.** A DBA runs `patroni switchover --candidate node2`.
 Patroni promotes node2, then shuts down PostgreSQL on node1. Between the
-shutdown and the config update, doorman on node1 has no backend. With
-discovery enabled, doorman connects to node2 within 1-2 TCP round trips.
+shutdown and Patroni restarting node1 as a replica of node2, doorman on
+node1 has no backend. With discovery enabled, doorman connects to node2
+within 1-2 TCP round trips.
 
 **Unplanned crash.** PostgreSQL on node1 is killed by the OOM killer.
 Patroni hasn't detected the failure yet. Doorman gets connection refused
