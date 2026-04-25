@@ -15,6 +15,24 @@ Patroni completes its own failover. Once Patroni restores the local
 PostgreSQL — as a replica of the new primary, or as the recovered
 primary itself — pg_doorman returns to the local socket.
 
+## Quick start
+
+The recommended deployment puts pg_doorman next to PostgreSQL on the
+same host and talks to it through the unix socket. With Patroni's REST
+API also on `localhost`, fallback turns on with one line in `[general]`:
+
+```yaml
+general:
+  patroni_api_urls: ["http://localhost:8008"]
+```
+
+Every pool picks this up automatically. When the unix socket stops
+responding, pg_doorman queries `/cluster`, prefers `sync_standby` over
+`replica` over leader, and routes new connections to the chosen host
+until the local PostgreSQL recovers. Defaults: cooldown 30s, HTTP
+timeout 5s, TCP timeout 5s, fallback connection lifetime 30s. Override
+them under [Tuning parameters](#tuning-parameters).
+
 ## When it helps
 
 **Planned switchover.** A DBA runs `patroni switchover --candidate node2`.
