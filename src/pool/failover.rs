@@ -378,7 +378,16 @@ impl FailoverState {
 
 /// Filter and sort members from a /cluster response.
 ///
-/// Excluded: non-running members, noloadbalance, nofailover, archive replicas.
+/// Excluded:
+/// - non-running members (state ≠ "streaming"/"running")
+/// - `noloadbalance`: admin-disabled for query traffic
+/// - `nofailover`: admin-disabled for promotion (writes would fail)
+/// - `archive`: passive archive replica
+///
+/// Not excluded:
+/// - `nostream`: cascade replicas reach data via another replica.
+///   They are valid read targets — possibly higher lag, but live.
+///
 /// Sorted: sync_standby first, then replica, then others (including leader).
 fn select_candidates(members: &[Member]) -> Vec<(String, u16, Role)> {
     let mut candidates: Vec<(String, u16, Role)> = members
@@ -663,5 +672,14 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].0, "10.0.0.1");
         assert_eq!(candidates[0].2, Role::Leader);
+    }
+
+    #[test]
+    fn select_candidates_keeps_nostream() {
+        let mut cascade = make_member("pg-cascade", Role::Replica, "streaming", "10.0.0.1", 5432);
+        cascade.tags.nostream = true;
+        let normal = make_member("pg-normal", Role::Replica, "streaming", "10.0.0.2", 5432);
+        let candidates = select_candidates(&[cascade, normal]);
+        assert_eq!(candidates.len(), 2);
     }
 }
