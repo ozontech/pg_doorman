@@ -713,4 +713,74 @@ mod tests {
 
         assert_eq!(after - before, 2);
     }
+
+    /// Spawns a test-scope HTTP/1.1 server on 127.0.0.1:0 that replies to
+    /// every request with `response_body` and Connection: close. Returns
+    /// the bound port. The server runs until the runtime shuts down.
+    async fn start_mock_patroni_success(response_body: String) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let body = response_body.clone();
+                tokio::spawn(async move {
+                    // 4 KiB fits a typical HTTP/1.1 GET request line + headers
+                    // from reqwest; the test does not parse the request.
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn successful_inflight_is_coalesced_in_subsequent_call() {
+        let body = r#"{"members":[{"name":"n","host":"127.0.0.1","port":5432,"role":"replica","state":"streaming"}]}"#.to_string();
+        let port = start_mock_patroni_success(body).await;
+
+        let state = FailoverState::new(
+            "test_pool_inflight_ok_coalesce".to_string(),
+            vec![format!("http://127.0.0.1:{}/cluster", port)],
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+            30_000,
+        )
+        .unwrap();
+
+        let before = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+            .with_label_values(&["test_pool_inflight_ok_coalesce"])
+            .get();
+        let r1 = state.fetch_cluster_coalesced().await;
+        let r2 = state.fetch_cluster_coalesced().await;
+        let after = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+            .with_label_values(&["test_pool_inflight_ok_coalesce"])
+            .get();
+
+        assert!(
+            r1.is_ok(),
+            "first call must succeed against the mock server"
+        );
+        assert!(r2.is_ok(), "second call must succeed via coalesced cache");
+        assert_eq!(
+            after - before,
+            1,
+            "second call must coalesce on cached success, not start fresh discovery"
+        );
+    }
 }
