@@ -279,9 +279,16 @@ impl FailoverState {
                 .observe(start.elapsed().as_secs_f64());
         }
 
-        // No clearing of inflight here — staleness-based expiry handles it.
-        // Clearing here would race: a new inflight created by another task
-        // between our await and this point would be erroneously wiped.
+        // Clear cached future on error so the next caller retries fresh
+        // instead of inheriting the same failure for up to INFLIGHT_STALENESS.
+        // Only the creator clears. If the creator's await ran longer than
+        // INFLIGHT_STALENESS, another task may have already installed a
+        // fresh inflight; this clear can wipe it. Worst case is one extra
+        // /cluster request — accepted to keep the cleanup branch simple.
+        if is_creator && result.is_err() {
+            let mut guard = self.inflight.lock().await;
+            *guard = None;
+        }
 
         result
     }
@@ -681,5 +688,29 @@ mod tests {
         let normal = make_member("pg-normal", Role::Replica, "streaming", "10.0.0.2", 5432);
         let candidates = select_candidates(&[cascade, normal]);
         assert_eq!(candidates.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_inflight_does_not_poison_next_caller() {
+        let state = FailoverState::new(
+            "test_pool_inflight_fail".to_string(),
+            vec!["http://127.0.0.1:1/cluster".to_string()],
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+            Duration::from_millis(200),
+            30_000,
+        )
+        .unwrap();
+
+        let before = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+            .with_label_values(&["test_pool_inflight_fail"])
+            .get();
+        let _ = state.fetch_cluster_coalesced().await;
+        let _ = state.fetch_cluster_coalesced().await;
+        let after = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+            .with_label_values(&["test_pool_inflight_fail"])
+            .get();
+
+        assert_eq!(after - before, 2);
     }
 }
