@@ -1822,6 +1822,317 @@
         "y": 87
       },
       "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Patroni-assisted fallback",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 95
+      }
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(pg_doorman_fallback_active{instance=~\"$instance\"})",
+          "refId": ""
+        }
+      ],
+      "title": "Local backend in cooldown",
+      "description": "1 if any pool is currently using a fallback host. Sustained = local backend not recovering.",
+      "datasource": {
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 96
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "none",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "blue"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(pg_doorman_fallback_connections_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "refId": ""
+        }
+      ],
+      "title": "Fallback Connections",
+      "description": "Connections routed to fallback hosts in the current window.",
+      "datasource": {
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 96
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "stat",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": []
+        },
+        "textMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(pg_doorman_patroni_api_errors_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "refId": ""
+        }
+      ],
+      "title": "Patroni API Errors",
+      "description": "Failed /cluster requests (all Patroni URLs unreachable).",
+      "datasource": {
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 96
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_patroni_api_requests_total{instance=~\"$instance\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{pool}} requests/s"
+        },
+        {
+          "expr": "rate(pg_doorman_fallback_connections_total{instance=~\"$instance\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{pool}} connections/s"
+        },
+        {
+          "expr": "rate(pg_doorman_patroni_api_errors_total{instance=~\"$instance\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{pool}} errors/s"
+        }
+      ],
+      "title": "Patroni API Rate",
+      "description": "Patroni API calls, fallback connections, and errors per second. Errors without connections = all Patroni URLs or all candidates unreachable.",
+      "datasource": {
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 12,
+        "y": 96
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(pg_doorman_patroni_api_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(pg_doorman_patroni_api_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval]))",
+          "refId": "",
+          "legendFormat": "p99"
+        }
+      ],
+      "title": "Patroni API Duration",
+      "description": "Time to fetch /cluster from Patroni API. p99 above 1s = network issues or overloaded Patroni nodes.",
+      "datasource": {
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 20,
+        "y": 96
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_fallback_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{pool}}"
+        }
+      ],
+      "title": "Fallback Cache Hits",
+      "description": "Fallback host served from cache without querying Patroni API. High rate during cooldown = cache working correctly.",
+      "datasource": {
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 104
+      },
+      "repeatDirection": "h"
     }
   ],
   "__inputs": [

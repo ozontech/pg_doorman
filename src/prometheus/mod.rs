@@ -446,3 +446,95 @@ pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_ERRORS: Lazy<IntCounterVec> = Lazy::
     REGISTRY.register(Box::new(counter.clone())).unwrap();
     counter
 });
+
+pub(crate) static PATRONI_API_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_patroni_api_requests_total",
+            "Total number of Patroni /cluster requests, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static FALLBACK_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_fallback_connections_total",
+            "Total number of fallback connections established, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static PATRONI_API_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_patroni_api_errors_total",
+            "Total number of failed Patroni /cluster requests, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static FALLBACK_ACTIVE: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_fallback_active",
+            "1 when the local backend is in cooldown and the pool is using a fallback host, 0 otherwise. Per pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static FALLBACK_HOST: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_fallback_host",
+            "Currently active fallback host (1 = active), by pool/host/port.",
+        ),
+        &["pool", "host", "port"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static FALLBACK_CACHE_HITS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_fallback_cache_hits_total",
+            "Total number of times the cached fallback host was reused without re-querying Patroni, by pool.",
+        ),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
+pub(crate) static PATRONI_API_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+    let histogram = HistogramVec::new(
+        prometheus::HistogramOpts::new(
+            "pg_doorman_patroni_api_duration_seconds",
+            "Duration of Patroni /cluster requests, by pool.",
+        )
+        .buckets(vec![0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]),
+        &["pool"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(histogram.clone())).unwrap();
+    histogram
+});

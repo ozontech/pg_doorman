@@ -783,6 +783,36 @@ fields:
         Set to `0` to disable the limit (unlimited cache size, relies on client calling `DEALLOCATE`).
       default: "0 (unlimited)"
 
+    patroni_api_urls:
+      config:
+        en: "Default Patroni REST API endpoints. Pools inherit this unless they set their own patroni_api_urls."
+        ru: "URL Patroni REST API по умолчанию. Пулы наследуют, если не задали собственные patroni_api_urls."
+      default: "not set (disabled)"
+
+    fallback_cooldown:
+      config:
+        en: "Default cooldown for the local backend after a failed connect. Pools inherit this unless they set their own."
+        ru: "Период по умолчанию, на который локальный backend помечается недоступным после неудачного коннекта. Пулы наследуют, если не задали собственный."
+      default: '"30s"'
+
+    patroni_api_timeout:
+      config:
+        en: "Default HTTP timeout for Patroni API requests. Pools inherit this unless they set their own."
+        ru: "HTTP-таймаут запросов к Patroni API по умолчанию. Пулы наследуют, если не задали собственный."
+      default: '"5s"'
+
+    fallback_connect_timeout:
+      config:
+        en: "Default TCP connect timeout for fallback candidates. Pools inherit this unless they set their own."
+        ru: "TCP-таймаут к fallback-кандидатам по умолчанию. Пулы наследуют, если не задали собственный."
+      default: '"5s"'
+
+    fallback_lifetime:
+      config:
+        en: "Default lifetime of fallback connections. Pools inherit this unless they set their own."
+        ru: "Время жизни fallback-соединений по умолчанию. Пулы наследуют, если не задали собственное."
+      default: "same as fallback_cooldown"
+
     admin_username:
       config:
         en: "Admin username for the virtual admin database (pgdoorman)."
@@ -1220,6 +1250,49 @@ fields:
         The effective protection for a user is `max(user.min_pool_size, pool.min_guaranteed_pool_size)`.
         Set to `0` (or omit) for no eviction protection. Only relevant when `max_db_connections > 0`.
       default: "0 (no protection)"
+
+    patroni_api_urls:
+      config:
+        en: |
+          Patroni REST API endpoints. When the local backend becomes
+          unreachable, pg_doorman queries /cluster to find a live fallback host.
+        ru: |
+          Эндпоинты Patroni REST API. Когда локальный backend становится
+          недоступен, pg_doorman запрашивает /cluster для поиска живого хоста.
+      default: "disabled"
+
+    fallback_cooldown:
+      config:
+        en: |
+          How long the local backend stays marked as down after a failed connect.
+        ru: |
+          Как долго локальный backend остаётся помеченным как недоступный после
+          неудачного коннекта.
+      default: "\"30s\""
+
+    patroni_api_timeout:
+      config:
+        en: |
+          HTTP timeout for Patroni API requests.
+        ru: |
+          HTTP-таймаут запросов к Patroni API.
+      default: "\"5s\""
+
+    fallback_connect_timeout:
+      config:
+        en: |
+          TCP connect timeout for fallback candidates.
+        ru: |
+          TCP-таймаут для коннекта к fallback-кандидатам.
+      default: "\"5s\""
+
+    fallback_lifetime:
+      config:
+        en: |
+          Lifetime of fallback connections; defaults to fallback_cooldown.
+        ru: |
+          Время жизни fallback-соединений; по умолчанию равно fallback_cooldown.
+      default: "fallback_cooldown"
 
     application_name:
       config:

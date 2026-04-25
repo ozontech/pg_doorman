@@ -146,7 +146,7 @@ pub(crate) async fn create_unix_stream_inner(host: &str, port: u16) -> Result<St
         Ok(s) => s,
         Err(err) => {
             log::error!("Failed to connect to Unix socket {host}:{port}: {err}");
-            return Err(Error::SocketError(format!(
+            return Err(Error::ConnectError(format!(
                 "Failed to connect to Unix socket {host}:{port}: {err}"
             )));
         }
@@ -167,7 +167,7 @@ pub(crate) async fn create_tcp_stream_inner(
         Ok(stream) => stream,
         Err(err) => {
             log::error!("Failed to connect to TCP {host}:{port}: {err}");
-            return Err(Error::SocketError(format!(
+            return Err(Error::ConnectError(format!(
                 "Could not connect to {host}:{port}: {err}"
             )));
         }

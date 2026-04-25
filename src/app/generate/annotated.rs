@@ -148,6 +148,11 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         reserve_pool_size: None,
         reserve_pool_timeout: None,
         min_guaranteed_pool_size: None,
+        patroni_api_urls: None,
+        fallback_cooldown: None,
+        patroni_api_timeout: None,
+        fallback_connect_timeout: None,
+        fallback_lifetime: None,
         server_tls_mode: None,
         server_tls_ca_cert: None,
         server_tls_certificate: None,
@@ -1257,6 +1262,43 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
         w.kv(fi, "min_guaranteed_pool_size", &w.num_val(val));
     } else {
         w.commented_kv(fi, "min_guaranteed_pool_size", "0");
+    }
+    w.blank();
+
+    // --- Patroni-assisted fallback ---
+    write_field_desc(w, fi, "pool", "patroni_api_urls");
+    w.commented_kv(fi, "patroni_api_urls", "[]");
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "fallback_cooldown");
+    if let Some(val) = pool.fallback_cooldown {
+        w.kv(fi, "fallback_cooldown", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "fallback_cooldown", "\"30s\"");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "patroni_api_timeout");
+    if let Some(val) = pool.patroni_api_timeout {
+        w.kv(fi, "patroni_api_timeout", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "patroni_api_timeout", "\"5s\"");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "fallback_connect_timeout");
+    if let Some(val) = pool.fallback_connect_timeout {
+        w.kv(fi, "fallback_connect_timeout", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "fallback_connect_timeout", "\"5s\"");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "fallback_lifetime");
+    if let Some(val) = pool.fallback_lifetime {
+        w.kv(fi, "fallback_lifetime", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "fallback_lifetime", "\"30s\"");
     }
     w.blank();
 

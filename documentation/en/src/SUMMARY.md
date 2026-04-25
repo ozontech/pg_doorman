@@ -14,6 +14,7 @@
 - [Basic Usage](tutorials/basic-usage.md)
 - [Binary Upgrade](tutorials/binary-upgrade.md)
 - [Patroni Proxy](tutorials/patroni-proxy.md)
+- [Patroni-assisted Fallback](tutorials/patroni-assisted-fallback.md)
 - [Pool Pressure](tutorials/pool-pressure.md)
 - [Troubleshooting](tutorials/troubleshooting.md)
 

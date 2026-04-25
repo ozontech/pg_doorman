@@ -4,6 +4,7 @@ mod extended;
 mod fuzz_client;
 mod fuzz_helper;
 mod generate_helper;
+mod mock_patroni_helper;
 mod odyssey_helper;
 mod pg_connection;
 mod pgbench_helper;
@@ -116,6 +117,7 @@ fn main() {
                     if let Some(abort_handle) = w.slow_warning_abort.take() {
                         abort_handle.abort();
                     }
+                    mock_patroni_helper::stop_mock_patroni_servers(w);
                     if let Some(ref mut child) = w.doorman_process {
                         doorman_helper::stop_doorman(child);
                     }

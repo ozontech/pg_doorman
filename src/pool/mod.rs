@@ -36,6 +36,8 @@ pub mod pool_coordinator;
 pub mod retain;
 mod server_pool;
 
+pub mod fallback;
+
 pub use auth_query_state::AuthQueryState;
 pub use dynamic::create_dynamic_pool;
 pub use eviction::PoolEvictionSource;
@@ -412,6 +414,8 @@ impl ConnectionPool {
 
                 let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
 
+                let fallback_state = build_fallback_state(pool_name, pool_config, &config.general);
+
                 let manager = ServerPool::new(
                     address.clone(),
                     user.clone(),
@@ -431,6 +435,7 @@ impl ConnectionPool {
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
                     pool_mode == PoolMode::Session,
+                    fallback_state,
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -575,6 +580,9 @@ impl ConnectionPool {
 
                         let pool_mode = shared_user.pool_mode.unwrap_or(pool_config.pool_mode);
 
+                        let fallback_state =
+                            build_fallback_state(pool_name, pool_config, &config.general);
+
                         let manager = ServerPool::new(
                             address.clone(),
                             shared_user.clone(),
@@ -594,6 +602,7 @@ impl ConnectionPool {
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
                             pool_mode == PoolMode::Session,
+                            fallback_state,
                         );
 
                         let queue_strategy = match config.general.server_round_robin {
@@ -833,6 +842,55 @@ fn compute_spare(
     let pool_min = pool_min_guaranteed as usize;
     let effective_min = user_min.max(pool_min);
     current_pool_size.saturating_sub(effective_min)
+}
+
+/// Build Patroni-assisted fallback state. Returns None when no `patroni_api_urls`
+/// are configured at either pool or general level.
+fn build_fallback_state(
+    pool_name: &str,
+    pool_config: &ConfigPool,
+    general: &crate::config::General,
+) -> Option<Arc<fallback::FallbackState>> {
+    let urls = pool_config
+        .patroni_api_urls
+        .as_ref()
+        .or(general.patroni_api_urls.as_ref())?;
+
+    let cooldown = pool_config
+        .fallback_cooldown
+        .or(general.fallback_cooldown)
+        .map(|d| d.as_std())
+        .unwrap_or(std::time::Duration::from_secs(30));
+    let api_timeout = pool_config
+        .patroni_api_timeout
+        .or(general.patroni_api_timeout)
+        .map(|d| d.as_std())
+        .unwrap_or(std::time::Duration::from_secs(5));
+    let connect_timeout = pool_config
+        .fallback_connect_timeout
+        .or(general.fallback_connect_timeout)
+        .map(|d| d.as_std())
+        .unwrap_or(std::time::Duration::from_secs(5));
+    let lifetime = pool_config
+        .fallback_lifetime
+        .or(general.fallback_lifetime)
+        .map(|d| d.as_millis())
+        .unwrap_or(cooldown.as_millis() as u64);
+
+    match fallback::FallbackState::new(
+        pool_name.to_string(),
+        urls.clone(),
+        cooldown,
+        connect_timeout,
+        api_timeout,
+        lifetime,
+    ) {
+        Ok(state) => Some(Arc::new(state)),
+        Err(e) => {
+            log::error!("pool {pool_name}: Patroni-assisted fallback disabled: {e}");
+            None
+        }
+    }
 }
 
 /// Get the connection pool

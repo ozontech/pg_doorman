@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::config::{Address, User};
@@ -68,6 +68,9 @@ pub struct ServerPool {
     /// Session mode flag passed to created Server connections.
     session_mode: bool,
 
+    /// Patroni-assisted fallback state.
+    fallback_state: Option<Arc<super::fallback::FallbackState>>,
+
     /// Combined pool state: bit 32 = paused, bits 0-31 = reconnect epoch (u32).
     pool_state: AtomicU64,
 
@@ -116,6 +119,7 @@ impl ServerPool {
         idle_check_timeout_ms: u64,
         connect_timeout: Duration,
         session_mode: bool,
+        fallback_state: Option<Arc<super::fallback::FallbackState>>,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -135,6 +139,7 @@ impl ServerPool {
             pool_state: AtomicU64::new(0),
             resume_notify: Notify::new(),
             session_mode,
+            fallback_state,
         }
     }
 
@@ -147,6 +152,53 @@ impl ServerPool {
             .acquire()
             .await
             .map_err(|_| Error::ServerStartupReadParameters("Semaphore closed".to_string()))?;
+
+        // Local backend is in cooldown — skip directly to fallback.
+        // JustExpired bumps epoch to drain stale fallback connections.
+        if let Some(ref fallback) = self.fallback_state {
+            use super::fallback::BlacklistCheck;
+            match fallback.check_blacklist() {
+                BlacklistCheck::Active => {
+                    if fallback.should_log_blacklist() {
+                        info!(
+                            "[{}@{}] fallback: local backend in cooldown, routing to fallback",
+                            self.address.username, self.address.pool_name,
+                        );
+                    } else {
+                        debug!(
+                            "[{}@{}] fallback: local backend in cooldown, routing to fallback",
+                            self.address.username, self.address.pool_name,
+                        );
+                    }
+                    match fallback.get_fallback_target().await {
+                        Ok(target) => {
+                            crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
+                                .with_label_values(&[&self.address.pool_name])
+                                .inc();
+                            return self.create_fallback_connection(target).await;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "[{}@{}] fallback: Patroni API failed during cooldown: {e}",
+                                self.address.username, self.address.pool_name,
+                            );
+                            crate::prometheus::PATRONI_API_ERRORS_TOTAL
+                                .with_label_values(&[&self.address.pool_name])
+                                .inc();
+                            // Fall through to try the local backend anyway
+                        }
+                    }
+                }
+                BlacklistCheck::JustExpired => {
+                    info!(
+                        "[{}@{}] fallback: cooldown expired, resuming local backend",
+                        self.address.username, self.address.pool_name,
+                    );
+                    self.bump_epoch();
+                }
+                BlacklistCheck::NotBlacklisted => {}
+            }
+        }
 
         let conn_num = self.connection_counter.fetch_add(1, Ordering::Relaxed) + 1;
         info!(
@@ -178,25 +230,24 @@ impl ServerPool {
         )
         .await;
 
-        // libpq sslmode=allow retry: try plain first, retry with TLS on any failure.
-        //
-        // PostgreSQL has no protocol-level "TLS required" signal. The server
-        // rejects non-TLS connections via pg_hba.conf AFTER StartupMessage
-        // with FATAL 28000 ("no pg_hba.conf entry ... no encryption").
-        // The connection is dead after FATAL, so retry requires a new TCP socket.
-        //
-        // We retry on ANY startup failure (not just SSL-related) because:
-        // 1. libpq does the same: "first try a non-SSL connection; if that fails,
-        //    try an SSL connection" — no message parsing.
-        // 2. If the real error is unrelated to TLS (wrong password, DB not found),
-        //    the TLS retry will fail with the same error, which we then return.
+        // libpq sslmode=allow: PostgreSQL has no protocol-level "TLS required"
+        // signal — pg_hba rejects plain connections via FATAL 28000 only after
+        // StartupMessage. The socket is dead after FATAL, so retry needs a fresh
+        // TCP connection. We retry on any startup failure (matching libpq), but
+        // skip retry on transport-level errors (ConnectError, ServerUnavailableError)
+        // since TLS cannot help when the server was never reached.
         //
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
-        let (result, active_stats) = if result.is_err()
-            && self.address.server_tls.mode.retries_with_tls()
-        {
+        let should_tls_retry = match &result {
+            Err(err) if self.address.server_tls.mode.retries_with_tls() => !matches!(
+                err,
+                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+            ),
+            _ => false,
+        };
+        let (result, active_stats) = if should_tls_retry {
             info!(
-                "plain connection failed, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
+                "plain connection rejected, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
                 self.address.username, self.address.pool_name,
                 self.address.host, self.address.port,
             );
@@ -240,9 +291,42 @@ impl ServerPool {
                 Ok(conn)
             }
             Err(err) => {
+                active_stats.disconnect();
+                // Local backend unreachable + Patroni-assisted fallback configured: route via fallback.
+                if is_backend_unreachable(&err) {
+                    if let Some(ref fallback) = self.fallback_state {
+                        fallback.blacklist();
+                        crate::prometheus::FALLBACK_ACTIVE
+                            .with_label_values(&[&self.address.pool_name])
+                            .set(1.0);
+                        match fallback.get_fallback_target().await {
+                            Ok(target) => {
+                                info!(
+                                    "[{}@{}] fallback: connecting to {}:{} (original error: {err})",
+                                    self.address.username,
+                                    self.address.pool_name,
+                                    target.host,
+                                    target.port,
+                                );
+                                crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
+                                    .with_label_values(&[&self.address.pool_name])
+                                    .inc();
+                                return self.create_fallback_connection(target).await;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "[{}@{}] fallback: Patroni API failed: {e}",
+                                    self.address.username, self.address.pool_name,
+                                );
+                                crate::prometheus::PATRONI_API_ERRORS_TOTAL
+                                    .with_label_values(&[&self.address.pool_name])
+                                    .inc();
+                            }
+                        }
+                    }
+                }
                 // Brief backoff on error to avoid hammering a failing server
                 tokio::time::sleep(Duration::from_millis(10)).await;
-                active_stats.disconnect();
                 Err(err)
             }
         }
@@ -251,6 +335,106 @@ impl ServerPool {
     /// Returns the address of this pool.
     pub fn address(&self) -> &Address {
         &self.address
+    }
+
+    async fn create_fallback_connection(
+        &self,
+        target: super::fallback::FallbackTarget,
+    ) -> Result<Server, Error> {
+        let mut fallback_address = self.address.clone();
+        fallback_address.host = target.host;
+        fallback_address.port = target.port;
+
+        let stats = Arc::new(ServerStats::new(
+            fallback_address.clone(),
+            crate::utils::clock::now(),
+        ));
+        stats.register(stats.clone());
+
+        let result = Server::startup(
+            &fallback_address,
+            &self.user,
+            &self.database,
+            self.client_server_map.clone(),
+            stats.clone(),
+            self.cleanup_connections,
+            self.log_client_parameter_status_changes,
+            self.prepared_statement_cache_size,
+            self.application_name.clone(),
+            self.session_mode,
+        )
+        .await;
+
+        // Same sslmode=allow retry as the local-backend path: TLS only when the
+        // server rejected us at the protocol level, never on transport failures.
+        let should_tls_retry = match &result {
+            Err(err) if fallback_address.server_tls.mode.retries_with_tls() => !matches!(
+                err,
+                Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+            ),
+            _ => false,
+        };
+        let (result, active_stats) = if should_tls_retry {
+            info!(
+                "[{}@{}] fallback: plain connection to {}:{} rejected, retrying with tls",
+                self.address.username,
+                self.address.pool_name,
+                fallback_address.host,
+                fallback_address.port,
+            );
+            stats.disconnect();
+            let mut retry_address = fallback_address.clone();
+            retry_address.server_tls = std::sync::Arc::new(crate::config::tls::ServerTlsConfig {
+                mode: crate::config::tls::ServerTlsMode::Require,
+                connector: fallback_address.server_tls.connector.clone(),
+                cert_hash: fallback_address.server_tls.cert_hash,
+            });
+            let retry_stats = Arc::new(ServerStats::new(
+                fallback_address.clone(),
+                crate::utils::clock::now(),
+            ));
+            retry_stats.register(retry_stats.clone());
+            let retry_result = Server::startup(
+                &retry_address,
+                &self.user,
+                &self.database,
+                self.client_server_map.clone(),
+                retry_stats.clone(),
+                self.cleanup_connections,
+                self.log_client_parameter_status_changes,
+                self.prepared_statement_cache_size,
+                self.application_name.clone(),
+                self.session_mode,
+            )
+            .await;
+            (retry_result, retry_stats)
+        } else {
+            (result, stats)
+        };
+
+        match result {
+            Ok(mut conn) => {
+                conn.stats.idle(0);
+                conn.override_lifetime_ms = Some(target.lifetime_ms);
+                Ok(conn)
+            }
+            Err(err) => {
+                active_stats.disconnect();
+                warn!(
+                    "[{}@{}] fallback: connection to {}:{} failed: {}",
+                    self.address.username,
+                    self.address.pool_name,
+                    fallback_address.host,
+                    fallback_address.port,
+                    err
+                );
+                // Drop the cached host so the next attempt re-queries Patroni.
+                if let Some(ref fallback) = self.fallback_state {
+                    fallback.clear_whitelist();
+                }
+                Err(err)
+            }
+        }
     }
 
     /// Returns the base lifetime in milliseconds for connections in this pool.
@@ -379,6 +563,13 @@ impl ServerPool {
 
         Ok(())
     }
+}
+
+fn is_backend_unreachable(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::ConnectError(_) | Error::ServerUnavailableError(_, _)
+    )
 }
 
 /// Returns `Some(age_ms)` when a connection should be closed because it

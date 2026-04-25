@@ -8,6 +8,9 @@ use crate::auth::hba::CheckResult;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Error {
     SocketError(String),
+    /// `connect()` failed: backend unreachable. Distinct from `SocketError`,
+    /// which fires on read/write of an already established connection.
+    ConnectError(String),
     ClientBadStartup,
     ProtocolSyncError(String),
     BadQuery(String),
@@ -15,6 +18,9 @@ pub enum Error {
     ServerMessageParserError(String),
     ServerStartupError(String, ServerIdentifier),
     ServerAuthError(String, ServerIdentifier),
+    /// FATAL with SQLSTATE 57P01/57P02/57P03: backend accepted the connection
+    /// but is shutting down or starting up.
+    ServerUnavailableError(String, ServerIdentifier),
     ServerStartupReadParameters(String),
     BadConfig(String),
     AllServersDown,
@@ -120,6 +126,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match &self {
             Error::SocketError(msg) => write!(f, "Socket connection error: {msg}"),
+            Error::ConnectError(msg) => write!(f, "Backend connect error: {msg}"),
             Error::ClientBadStartup => write!(f, "Client sent an invalid startup message"),
             Error::ProtocolSyncError(msg) => write!(f, "Protocol synchronization error: {msg}"),
             Error::BadQuery(msg) => write!(f, "Invalid query: {msg}"),
@@ -133,6 +140,9 @@ impl std::fmt::Display for Error {
             ),
             Error::ServerAuthError(error, server_identifier) => {
                 write!(f, "{error} for {server_identifier}")
+            }
+            Error::ServerUnavailableError(error, server_identifier) => {
+                write!(f, "Backend unavailable: {error} for {server_identifier}")
             }
             Error::ServerStartupReadParameters(msg) => {
                 write!(f, "Failed to read server parameters: {msg}")

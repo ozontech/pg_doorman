@@ -160,6 +160,10 @@ pub struct Server {
     /// Reason for closing this connection, set before dropping.
     /// Used by Drop to produce a single log line with cause and effect.
     pub(crate) close_reason: Option<String>,
+
+    /// Per-connection lifetime override (ms). Set on fallback connections so
+    /// they expire before the local backend recovers.
+    pub(crate) override_lifetime_ms: Option<u64>,
 }
 
 impl std::fmt::Display for Server {
@@ -976,6 +980,7 @@ impl Server {
                             as i32,
                         pending_large_message: None,
                         close_reason: None,
+                        override_lifetime_ms: None,
                     };
                     server.stats.update_process_id(process_id);
                     server.stats.set_tls(connected_with_tls);

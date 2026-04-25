@@ -439,6 +439,55 @@ p_sockets = ts_panel(
 )
 
 # ---------------------------------------------------------------------------
+# Row 12: Patroni-assisted fallback (collapsed)
+# ---------------------------------------------------------------------------
+SI = 'instance=~"$instance"'
+
+row12 = collapsed_row("Patroni-assisted fallback")
+
+p_fallback_active = stat_panel(
+    "Local backend in cooldown",
+    f'max(pg_doorman_fallback_active{{{SI}}})',
+    thresholds=[(None, "green"), (1, "red")],
+    desc="1 if any pool is currently using a fallback host. Sustained = local backend not recovering.",
+)
+p_fallback_connections = stat_panel(
+    "Fallback Connections",
+    f'sum(increase(pg_doorman_fallback_connections_total{{{SI}}}[$__rate_interval]))',
+    thresholds=[(None, "blue")],
+    color_mode="none",
+    desc="Connections routed to fallback hosts in the current window.",
+)
+p_patroni_api_errors = stat_panel(
+    "Patroni API Errors",
+    f'sum(increase(pg_doorman_patroni_api_errors_total{{{SI}}}[$__rate_interval]))',
+    thresholds=[(None, "green"), (1, "red")],
+    desc="Failed /cluster requests (all Patroni URLs unreachable).",
+)
+
+p_patroni_api_rate = ts_panel(
+    "Patroni API Rate", [
+        prom(f'rate(pg_doorman_patroni_api_requests_total{{{SI}}}[$__rate_interval])', "{{pool}} requests/s"),
+        prom(f'rate(pg_doorman_fallback_connections_total{{{SI}}}[$__rate_interval])', "{{pool}} connections/s"),
+        prom(f'rate(pg_doorman_patroni_api_errors_total{{{SI}}}[$__rate_interval])', "{{pool}} errors/s"),
+    ], w=8,
+    desc="Patroni API calls, fallback connections, and errors per second. Errors without connections = all Patroni URLs or all candidates unreachable.",
+)
+p_patroni_api_duration = ts_panel(
+    "Patroni API Duration", [
+        prom(f'histogram_quantile(0.50, rate(pg_doorman_patroni_api_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p50"),
+        prom(f'histogram_quantile(0.99, rate(pg_doorman_patroni_api_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p99"),
+    ], unit="s", w=8,
+    desc="Time to fetch /cluster from Patroni API. p99 above 1s = network issues or overloaded Patroni nodes.",
+)
+p_fallback_cache_hits = ts_panel(
+    "Fallback Cache Hits", [
+        prom(f'rate(pg_doorman_fallback_cache_hits_total{{{SI}}}[$__rate_interval])', "{{pool}}"),
+    ], w=8,
+    desc="Fallback host served from cache without querying Patroni API. High rate during cooldown = cache working correctly.",
+)
+
+# ---------------------------------------------------------------------------
 # Build dashboard
 # ---------------------------------------------------------------------------
 d = (
@@ -507,6 +556,14 @@ d = (
     .with_row(row11)
     .with_panel(p_memory_ts)
     .with_panel(p_sockets)
+    # Row 12: Patroni-assisted fallback (collapsed)
+    .with_row(row12)
+    .with_panel(p_fallback_active)
+    .with_panel(p_fallback_connections)
+    .with_panel(p_patroni_api_errors)
+    .with_panel(p_patroni_api_rate)
+    .with_panel(p_patroni_api_duration)
+    .with_panel(p_fallback_cache_hits)
 )
 
 dashboard_obj = d.build()
