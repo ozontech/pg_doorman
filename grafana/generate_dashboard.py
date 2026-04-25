@@ -439,52 +439,52 @@ p_sockets = ts_panel(
 )
 
 # ---------------------------------------------------------------------------
-# Row 12: Patroni Failover Discovery (collapsed)
+# Row 12: Patroni-assisted fallback (collapsed)
 # ---------------------------------------------------------------------------
 SI = 'instance=~"$instance"'
 
-row12 = collapsed_row("Patroni Failover Discovery")
+row12 = collapsed_row("Patroni-assisted fallback")
 
-p_failover_blacklisted = stat_panel(
-    "Primary Blacklisted",
-    f'max(pg_doorman_failover_host_blacklisted{{{SI}}})',
+p_fallback_active = stat_panel(
+    "Local backend in cooldown",
+    f'max(pg_doorman_fallback_active{{{SI}}})',
     thresholds=[(None, "green"), (1, "red")],
-    desc="1 if any pool has its primary host blacklisted. Sustained = primary not recovering.",
+    desc="1 if any pool is currently using a fallback host. Sustained = local backend not recovering.",
 )
-p_failover_connections = stat_panel(
+p_fallback_connections = stat_panel(
     "Fallback Connections",
-    f'sum(increase(pg_doorman_failover_connections_total{{{SI}}}[$__rate_interval]))',
+    f'sum(increase(pg_doorman_fallback_connections_total{{{SI}}}[$__rate_interval]))',
     thresholds=[(None, "blue")],
     color_mode="none",
     desc="Connections routed to fallback hosts in the current window.",
 )
-p_failover_errors = stat_panel(
-    "Discovery Errors",
-    f'sum(increase(pg_doorman_failover_discovery_errors_total{{{SI}}}[$__rate_interval]))',
+p_patroni_api_errors = stat_panel(
+    "Patroni API Errors",
+    f'sum(increase(pg_doorman_patroni_api_errors_total{{{SI}}}[$__rate_interval]))',
     thresholds=[(None, "green"), (1, "red")],
     desc="Failed /cluster requests (all Patroni URLs unreachable).",
 )
 
-p_failover_discovery_rate = ts_panel(
-    "Discovery Rate", [
-        prom(f'rate(pg_doorman_failover_discovery_total{{{SI}}}[$__rate_interval])', "{{pool}} discovery/s"),
-        prom(f'rate(pg_doorman_failover_connections_total{{{SI}}}[$__rate_interval])', "{{pool}} connections/s"),
-        prom(f'rate(pg_doorman_failover_discovery_errors_total{{{SI}}}[$__rate_interval])', "{{pool}} errors/s"),
+p_patroni_api_rate = ts_panel(
+    "Patroni API Rate", [
+        prom(f'rate(pg_doorman_patroni_api_requests_total{{{SI}}}[$__rate_interval])', "{{pool}} requests/s"),
+        prom(f'rate(pg_doorman_fallback_connections_total{{{SI}}}[$__rate_interval])', "{{pool}} connections/s"),
+        prom(f'rate(pg_doorman_patroni_api_errors_total{{{SI}}}[$__rate_interval])', "{{pool}} errors/s"),
     ], w=8,
     desc="Patroni API calls, fallback connections, and errors per second. Errors without connections = all Patroni URLs or all candidates unreachable.",
 )
-p_failover_duration = ts_panel(
-    "Discovery Duration", [
-        prom(f'histogram_quantile(0.50, rate(pg_doorman_failover_discovery_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p50"),
-        prom(f'histogram_quantile(0.99, rate(pg_doorman_failover_discovery_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p99"),
+p_patroni_api_duration = ts_panel(
+    "Patroni API Duration", [
+        prom(f'histogram_quantile(0.50, rate(pg_doorman_patroni_api_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p50"),
+        prom(f'histogram_quantile(0.99, rate(pg_doorman_patroni_api_duration_seconds_bucket{{{SI}}}[$__rate_interval]))', "p99"),
     ], unit="s", w=8,
     desc="Time to fetch /cluster from Patroni API. p99 above 1s = network issues or overloaded Patroni nodes.",
 )
-p_failover_whitelist = ts_panel(
-    "Whitelist Cache Hits", [
-        prom(f'rate(pg_doorman_failover_whitelist_hits_total{{{SI}}}[$__rate_interval])', "{{pool}}"),
+p_fallback_cache_hits = ts_panel(
+    "Fallback Cache Hits", [
+        prom(f'rate(pg_doorman_fallback_cache_hits_total{{{SI}}}[$__rate_interval])', "{{pool}}"),
     ], w=8,
-    desc="Fallback host served from cache without querying Patroni API. High rate during blacklist = cache working correctly.",
+    desc="Fallback host served from cache without querying Patroni API. High rate during cooldown = cache working correctly.",
 )
 
 # ---------------------------------------------------------------------------
@@ -556,14 +556,14 @@ d = (
     .with_row(row11)
     .with_panel(p_memory_ts)
     .with_panel(p_sockets)
-    # Row 12: Patroni Failover Discovery (collapsed)
+    # Row 12: Patroni-assisted fallback (collapsed)
     .with_row(row12)
-    .with_panel(p_failover_blacklisted)
-    .with_panel(p_failover_connections)
-    .with_panel(p_failover_errors)
-    .with_panel(p_failover_discovery_rate)
-    .with_panel(p_failover_duration)
-    .with_panel(p_failover_whitelist)
+    .with_panel(p_fallback_active)
+    .with_panel(p_fallback_connections)
+    .with_panel(p_patroni_api_errors)
+    .with_panel(p_patroni_api_rate)
+    .with_panel(p_patroni_api_duration)
+    .with_panel(p_fallback_cache_hits)
 )
 
 dashboard_obj = d.build()

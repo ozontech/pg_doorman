@@ -68,8 +68,8 @@ pub struct ServerPool {
     /// Session mode flag passed to created Server connections.
     session_mode: bool,
 
-    /// Failover state for Patroni discovery. None if not configured.
-    failover_state: Option<Arc<super::failover::FailoverState>>,
+    /// Patroni-assisted fallback state.
+    fallback_state: Option<Arc<super::fallback::FallbackState>>,
 
     /// Combined pool state: bit 32 = paused, bits 0-31 = reconnect epoch (u32).
     pool_state: AtomicU64,
@@ -119,7 +119,7 @@ impl ServerPool {
         idle_check_timeout_ms: u64,
         connect_timeout: Duration,
         session_mode: bool,
-        failover_state: Option<Arc<super::failover::FailoverState>>,
+        fallback_state: Option<Arc<super::fallback::FallbackState>>,
     ) -> ServerPool {
         ServerPool {
             address,
@@ -139,7 +139,7 @@ impl ServerPool {
             pool_state: AtomicU64::new(0),
             resume_notify: Notify::new(),
             session_mode,
-            failover_state,
+            fallback_state,
         }
     }
 
@@ -153,45 +153,45 @@ impl ServerPool {
             .await
             .map_err(|_| Error::ServerStartupReadParameters("Semaphore closed".to_string()))?;
 
-        // If primary is blacklisted, skip directly to fallback.
+        // Local backend is in cooldown — skip directly to fallback.
         // JustExpired bumps epoch to drain stale fallback connections.
-        if let Some(ref failover) = self.failover_state {
-            use super::failover::BlacklistCheck;
-            match failover.check_blacklist() {
+        if let Some(ref fallback) = self.fallback_state {
+            use super::fallback::BlacklistCheck;
+            match fallback.check_blacklist() {
                 BlacklistCheck::Active => {
-                    if failover.should_log_blacklist() {
+                    if fallback.should_log_blacklist() {
                         info!(
-                            "[{}@{}] failover: primary blacklisted, routing to fallback",
+                            "[{}@{}] fallback: local backend in cooldown, routing to fallback",
                             self.address.username, self.address.pool_name,
                         );
                     } else {
                         debug!(
-                            "[{}@{}] failover: primary blacklisted, routing to fallback",
+                            "[{}@{}] fallback: local backend in cooldown, routing to fallback",
                             self.address.username, self.address.pool_name,
                         );
                     }
-                    match failover.get_fallback_target().await {
+                    match fallback.get_fallback_target().await {
                         Ok(target) => {
-                            crate::prometheus::FAILOVER_CONNECTIONS_TOTAL
+                            crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
                                 .with_label_values(&[&self.address.pool_name])
                                 .inc();
                             return self.create_fallback_connection(target).await;
                         }
                         Err(e) => {
                             warn!(
-                                "[{}@{}] failover: discovery failed while blacklisted: {e}",
+                                "[{}@{}] fallback: Patroni API failed during cooldown: {e}",
                                 self.address.username, self.address.pool_name,
                             );
-                            crate::prometheus::FAILOVER_DISCOVERY_ERRORS_TOTAL
+                            crate::prometheus::PATRONI_API_ERRORS_TOTAL
                                 .with_label_values(&[&self.address.pool_name])
                                 .inc();
-                            // Fall through to try primary anyway
+                            // Fall through to try the local backend anyway
                         }
                     }
                 }
                 BlacklistCheck::JustExpired => {
                     info!(
-                        "[{}@{}] failover: blacklist expired, resuming primary",
+                        "[{}@{}] fallback: cooldown expired, resuming local backend",
                         self.address.username, self.address.pool_name,
                     );
                     self.bump_epoch();
@@ -230,23 +230,14 @@ impl ServerPool {
         )
         .await;
 
-        // libpq sslmode=allow retry: try plain first, retry with TLS on any failure.
-        //
-        // PostgreSQL has no protocol-level "TLS required" signal. The server
-        // rejects non-TLS connections via pg_hba.conf AFTER StartupMessage
-        // with FATAL 28000 ("no pg_hba.conf entry ... no encryption").
-        // The connection is dead after FATAL, so retry requires a new TCP socket.
-        //
-        // We retry on ANY startup failure (not just SSL-related) because:
-        // 1. libpq does the same: "first try a non-SSL connection; if that fails,
-        //    try an SSL connection" — no message parsing.
-        // 2. If the real error is unrelated to TLS (wrong password, DB not found),
-        //    the TLS retry will fail with the same error, which we then return.
+        // libpq sslmode=allow: PostgreSQL has no protocol-level "TLS required"
+        // signal — pg_hba rejects plain connections via FATAL 28000 only after
+        // StartupMessage. The socket is dead after FATAL, so retry needs a fresh
+        // TCP connection. We retry on any startup failure (matching libpq), but
+        // skip retry on transport-level errors (ConnectError, ServerUnavailableError)
+        // since TLS cannot help when the server was never reached.
         //
         // Reference: PostgreSQL docs, "SSL Support" → sslmode parameter.
-        // Only retry with TLS when the server rejected us at the protocol level
-        // (pg_hba "no encryption"). Transport-level failures (socket not found,
-        // connection refused) won't be helped by TLS — skip the pointless retry.
         let should_tls_retry = match &result {
             Err(err) if self.address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
@@ -301,33 +292,33 @@ impl ServerPool {
             }
             Err(err) => {
                 active_stats.disconnect();
-                // Failover: if backend unreachable and failover configured
+                // Local backend unreachable + Patroni-assisted fallback configured: route via fallback.
                 if is_backend_unreachable(&err) {
-                    if let Some(ref failover) = self.failover_state {
-                        failover.blacklist();
-                        crate::prometheus::FAILOVER_HOST_BLACKLISTED
+                    if let Some(ref fallback) = self.fallback_state {
+                        fallback.blacklist();
+                        crate::prometheus::FALLBACK_ACTIVE
                             .with_label_values(&[&self.address.pool_name])
                             .set(1.0);
-                        match failover.get_fallback_target().await {
+                        match fallback.get_fallback_target().await {
                             Ok(target) => {
                                 info!(
-                                    "[{}@{}] failover: connecting to {}:{} (original error: {err})",
+                                    "[{}@{}] fallback: connecting to {}:{} (original error: {err})",
                                     self.address.username,
                                     self.address.pool_name,
                                     target.host,
                                     target.port,
                                 );
-                                crate::prometheus::FAILOVER_CONNECTIONS_TOTAL
+                                crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
                                     .with_label_values(&[&self.address.pool_name])
                                     .inc();
                                 return self.create_fallback_connection(target).await;
                             }
                             Err(e) => {
                                 warn!(
-                                    "[{}@{}] failover: discovery failed: {e}",
+                                    "[{}@{}] fallback: Patroni API failed: {e}",
                                     self.address.username, self.address.pool_name,
                                 );
-                                crate::prometheus::FAILOVER_DISCOVERY_ERRORS_TOTAL
+                                crate::prometheus::PATRONI_API_ERRORS_TOTAL
                                     .with_label_values(&[&self.address.pool_name])
                                     .inc();
                             }
@@ -348,7 +339,7 @@ impl ServerPool {
 
     async fn create_fallback_connection(
         &self,
-        target: super::failover::FallbackTarget,
+        target: super::fallback::FallbackTarget,
     ) -> Result<Server, Error> {
         let mut fallback_address = self.address.clone();
         fallback_address.host = target.host;
@@ -374,8 +365,8 @@ impl ServerPool {
         )
         .await;
 
-        // Only retry with TLS when the server rejected us at the protocol level.
-        // Transport-level failures (connection refused, timeout) won't be helped by TLS.
+        // Same sslmode=allow retry as the local-backend path: TLS only when the
+        // server rejected us at the protocol level, never on transport failures.
         let should_tls_retry = match &result {
             Err(err) if fallback_address.server_tls.mode.retries_with_tls() => !matches!(
                 err,
@@ -385,7 +376,7 @@ impl ServerPool {
         };
         let (result, active_stats) = if should_tls_retry {
             info!(
-                "[{}@{}] failover: plain connection to {}:{} rejected, retrying with tls",
+                "[{}@{}] fallback: plain connection to {}:{} rejected, retrying with tls",
                 self.address.username,
                 self.address.pool_name,
                 fallback_address.host,
@@ -430,17 +421,16 @@ impl ServerPool {
             Err(err) => {
                 active_stats.disconnect();
                 warn!(
-                    "[{}@{}] failover: connection to {}:{} failed: {}",
+                    "[{}@{}] fallback: connection to {}:{} failed: {}",
                     self.address.username,
                     self.address.pool_name,
                     fallback_address.host,
                     fallback_address.port,
                     err
                 );
-                // Clear whitelist so next attempt re-runs discovery
-                // instead of reusing a now-unreachable cached host.
-                if let Some(ref failover) = self.failover_state {
-                    failover.clear_whitelist();
+                // Drop the cached host so the next attempt re-queries Patroni.
+                if let Some(ref fallback) = self.fallback_state {
+                    fallback.clear_whitelist();
                 }
                 Err(err)
             }

@@ -535,17 +535,17 @@ impl Config {
             }
         }
 
-        // Validate general-level failover discovery settings
-        if let Some(ref urls) = self.general.patroni_discovery_urls {
+        // Validate general-level Patroni-assisted fallback settings
+        if let Some(ref urls) = self.general.patroni_api_urls {
             if urls.is_empty() {
                 return Err(Error::BadConfig(
-                    "general.patroni_discovery_urls cannot be an empty list".into(),
+                    "general.patroni_api_urls cannot be an empty list".into(),
                 ));
             }
             for url in urls {
                 if !url.starts_with("http://") && !url.starts_with("https://") {
                     return Err(Error::BadConfig(format!(
-                        "general.patroni_discovery_urls: invalid URL '{url}'; \
+                        "general.patroni_api_urls: invalid URL '{url}'; \
                          must start with http:// or https://"
                     )));
                 }

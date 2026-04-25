@@ -73,7 +73,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         0,                       // idle_check_timeout_ms (0 = disabled)
         Duration::from_secs(10), // connect_timeout
         false,                   // session_mode
-        None,                    // failover_state
+        None,                    // fallback_state
     );
 
     // Create Pool with configuration

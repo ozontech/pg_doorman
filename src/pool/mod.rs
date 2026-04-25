@@ -36,7 +36,7 @@ pub mod pool_coordinator;
 pub mod retain;
 mod server_pool;
 
-pub mod failover;
+pub mod fallback;
 
 pub use auth_query_state::AuthQueryState;
 pub use dynamic::create_dynamic_pool;
@@ -414,7 +414,7 @@ impl ConnectionPool {
 
                 let pool_mode = user.pool_mode.unwrap_or(pool_config.pool_mode);
 
-                let failover_state = build_failover_state(pool_name, pool_config, &config.general);
+                let fallback_state = build_fallback_state(pool_name, pool_config, &config.general);
 
                 let manager = ServerPool::new(
                     address.clone(),
@@ -435,7 +435,7 @@ impl ConnectionPool {
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
                     pool_mode == PoolMode::Session,
-                    failover_state,
+                    fallback_state,
                 );
 
                 let queue_strategy = match config.general.server_round_robin {
@@ -580,8 +580,8 @@ impl ConnectionPool {
 
                         let pool_mode = shared_user.pool_mode.unwrap_or(pool_config.pool_mode);
 
-                        let failover_state =
-                            build_failover_state(pool_name, pool_config, &config.general);
+                        let fallback_state =
+                            build_fallback_state(pool_name, pool_config, &config.general);
 
                         let manager = ServerPool::new(
                             address.clone(),
@@ -602,7 +602,7 @@ impl ConnectionPool {
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
                             pool_mode == PoolMode::Session,
-                            failover_state,
+                            fallback_state,
                         );
 
                         let queue_strategy = match config.general.server_round_robin {
@@ -844,50 +844,50 @@ fn compute_spare(
     current_pool_size.saturating_sub(effective_min)
 }
 
-/// Build failover state from pool config. Returns None if patroni_discovery_urls is not set.
-fn build_failover_state(
+/// Build Patroni-assisted fallback state. Returns None when no `patroni_api_urls`
+/// are configured at either pool or general level.
+fn build_fallback_state(
     pool_name: &str,
     pool_config: &ConfigPool,
     general: &crate::config::General,
-) -> Option<Arc<failover::FailoverState>> {
-    // Pool-level overrides general-level
+) -> Option<Arc<fallback::FallbackState>> {
     let urls = pool_config
-        .patroni_discovery_urls
+        .patroni_api_urls
         .as_ref()
-        .or(general.patroni_discovery_urls.as_ref())?;
+        .or(general.patroni_api_urls.as_ref())?;
 
-    let blacklist_dur = pool_config
-        .failover_blacklist_duration
-        .or(general.failover_blacklist_duration)
+    let cooldown = pool_config
+        .fallback_cooldown
+        .or(general.fallback_cooldown)
         .map(|d| d.as_std())
         .unwrap_or(std::time::Duration::from_secs(30));
-    let discovery_timeout = pool_config
-        .failover_discovery_timeout
-        .or(general.failover_discovery_timeout)
+    let api_timeout = pool_config
+        .patroni_api_timeout
+        .or(general.patroni_api_timeout)
         .map(|d| d.as_std())
         .unwrap_or(std::time::Duration::from_secs(5));
     let connect_timeout = pool_config
-        .failover_connect_timeout
-        .or(general.failover_connect_timeout)
+        .fallback_connect_timeout
+        .or(general.fallback_connect_timeout)
         .map(|d| d.as_std())
         .unwrap_or(std::time::Duration::from_secs(5));
     let lifetime = pool_config
-        .failover_server_lifetime
-        .or(general.failover_server_lifetime)
+        .fallback_lifetime
+        .or(general.fallback_lifetime)
         .map(|d| d.as_millis())
-        .unwrap_or(blacklist_dur.as_millis() as u64);
+        .unwrap_or(cooldown.as_millis() as u64);
 
-    match failover::FailoverState::new(
+    match fallback::FallbackState::new(
         pool_name.to_string(),
         urls.clone(),
-        blacklist_dur,
+        cooldown,
         connect_timeout,
-        discovery_timeout,
+        api_timeout,
         lifetime,
     ) {
         Ok(state) => Some(Arc::new(state)),
         Err(e) => {
-            log::error!("pool {pool_name}: failover discovery disabled: {e}");
+            log::error!("pool {pool_name}: Patroni-assisted fallback disabled: {e}");
             None
         }
     }

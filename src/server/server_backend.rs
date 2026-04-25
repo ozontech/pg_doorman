@@ -161,8 +161,8 @@ pub struct Server {
     /// Used by Drop to produce a single log line with cause and effect.
     pub(crate) close_reason: Option<String>,
 
-    /// Overrides pool-level lifetime for this connection (milliseconds).
-    /// Used by failover connections that need a shorter lifetime.
+    /// Per-connection lifetime override (ms). Set on fallback connections so
+    /// they expire before the local backend recovers.
     pub(crate) override_lifetime_ms: Option<u64>,
 }
 

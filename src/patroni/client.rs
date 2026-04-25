@@ -17,7 +17,7 @@ fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
-/// Errors returned by Patroni API discovery.
+/// Errors from the Patroni REST API client.
 #[derive(Debug)]
 pub enum PatroniError {
     AllUrlsFailed(Vec<(String, String)>),
@@ -37,7 +37,7 @@ impl std::fmt::Display for PatroniError {
     }
 }
 
-/// HTTP client for fetching cluster topology from Patroni REST API.
+/// HTTP client for the Patroni REST API.
 #[derive(Clone)]
 pub struct PatroniClient {
     http: reqwest::Client,
@@ -128,7 +128,7 @@ impl PatroniClient {
             remaining = rest;
         }
 
-        error!("all patroni discovery urls failed");
+        error!("all patroni api urls failed");
         Err(PatroniError::AllUrlsFailed(errors))
     }
 }

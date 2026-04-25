@@ -27,11 +27,11 @@ username = "app_user_2"
 password = "md5a05c39aae7f2198b1f06c4291434ee85"
 pool_size = 10
 
-# Patroni failover discovery (uncomment to enable)
-# patroni_discovery_urls = ["http://10.0.0.1:8008", "http://10.0.0.2:8008"]
-# failover_blacklist_duration = "30s"
-# failover_discovery_timeout = "5s"
-# failover_connect_timeout = "5s"
+# Patroni-assisted fallback (uncomment to enable)
+# patroni_api_urls = ["http://10.0.0.1:8008", "http://10.0.0.2:8008"]
+# fallback_cooldown = "30s"
+# patroni_api_timeout = "5s"
+# fallback_connect_timeout = "5s"
 
 [pools.app_db.auth_query]
 query = "SELECT username, password FROM pg_doorman_auth($1)"

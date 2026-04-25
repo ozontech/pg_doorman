@@ -132,27 +132,27 @@ pub struct Pool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_guaranteed_pool_size: Option<u32>,
 
-    /// Patroni REST API URLs for failover discovery.
-    /// When the local backend is unreachable, doorman queries /cluster
-    /// to find an alternative. Feature is disabled when not set.
+    /// Patroni REST API endpoints. When the local backend becomes unreachable,
+    /// pg_doorman queries `/cluster` to find a live fallback host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub patroni_discovery_urls: Option<Vec<String>>,
+    pub patroni_api_urls: Option<Vec<String>>,
 
-    /// How long a failed host stays blacklisted. Default: "30s".
+    /// How long the local backend stays marked as down after a failed connect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_blacklist_duration: Option<Duration>,
+    pub fallback_cooldown: Option<Duration>,
 
-    /// HTTP timeout for Patroni API requests. Default: "5s".
+    /// HTTP timeout for Patroni API requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_discovery_timeout: Option<Duration>,
+    pub patroni_api_timeout: Option<Duration>,
 
-    /// TCP connect timeout for fallback servers. Default: "5s".
+    /// TCP connect timeout for fallback candidates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_connect_timeout: Option<Duration>,
+    pub fallback_connect_timeout: Option<Duration>,
 
-    /// Lifetime for fallback connections. Default: same as blacklist duration.
+    /// Lifetime of fallback connections; defaults to `fallback_cooldown` so the
+    /// pool returns to the local backend once the cooldown expires.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_server_lifetime: Option<Duration>,
+    pub fallback_lifetime: Option<Duration>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_tls_mode: Option<String>,
@@ -317,19 +317,19 @@ impl Pool {
             user.validate().await?;
         }
 
-        // Validate failover discovery settings
-        if let Some(ref urls) = self.patroni_discovery_urls {
+        // Validate Patroni-assisted fallback settings
+        if let Some(ref urls) = self.patroni_api_urls {
             if urls.is_empty() {
                 return Err(Error::BadConfig(
-                    "patroni_discovery_urls cannot be an empty list; \
-                     remove the setting to disable failover discovery"
+                    "patroni_api_urls cannot be an empty list; \
+                     remove the setting to disable Patroni-assisted fallback"
                         .into(),
                 ));
             }
             for url in urls {
                 if !url.starts_with("http://") && !url.starts_with("https://") {
                     return Err(Error::BadConfig(format!(
-                        "patroni_discovery_urls: invalid URL '{}'; \
+                        "patroni_api_urls: invalid URL '{}'; \
                          must start with http:// or https://",
                         url
                     )));
@@ -337,15 +337,13 @@ impl Pool {
             }
         }
 
-        if let Some(ref dur) = self.failover_blacklist_duration {
+        if let Some(ref dur) = self.fallback_cooldown {
             if dur.as_millis() == 0 {
-                return Err(Error::BadConfig(
-                    "failover_blacklist_duration must be > 0".into(),
-                ));
+                return Err(Error::BadConfig("fallback_cooldown must be > 0".into()));
             }
             if dur.as_millis() < 1000 {
                 log::warn!(
-                    "failover_blacklist_duration is {}ms (< 1s), \
+                    "fallback_cooldown is {}ms (< 1s), \
                      this will cause frequent Patroni API requests; \
                      did you mean \"{}s\"?",
                     dur.as_millis(),
@@ -354,41 +352,38 @@ impl Pool {
             }
         }
 
-        if let Some(ref dur) = self.failover_discovery_timeout {
+        if let Some(ref dur) = self.patroni_api_timeout {
+            if dur.as_millis() == 0 {
+                return Err(Error::BadConfig("patroni_api_timeout must be > 0".into()));
+            }
+        }
+
+        if let Some(ref dur) = self.fallback_connect_timeout {
             if dur.as_millis() == 0 {
                 return Err(Error::BadConfig(
-                    "failover_discovery_timeout must be > 0".into(),
+                    "fallback_connect_timeout must be > 0".into(),
                 ));
             }
         }
 
-        if let Some(ref dur) = self.failover_connect_timeout {
+        if let Some(ref dur) = self.fallback_lifetime {
             if dur.as_millis() == 0 {
-                return Err(Error::BadConfig(
-                    "failover_connect_timeout must be > 0".into(),
-                ));
+                return Err(Error::BadConfig("fallback_lifetime must be > 0".into()));
             }
         }
 
-        if let Some(ref dur) = self.failover_server_lifetime {
-            if dur.as_millis() == 0 {
-                return Err(Error::BadConfig(
-                    "failover_server_lifetime must be > 0".into(),
-                ));
-            }
-        }
-
-        // Warn if fallback connections outlive the blacklist window
-        if let (Some(ref lifetime), Some(ref blacklist)) = (
-            &self.failover_server_lifetime,
-            &self.failover_blacklist_duration,
-        ) {
-            if lifetime.as_millis() > blacklist.as_millis() {
+        // Lifetime longer than the cooldown lets fallback connections outlive
+        // the local-backend recovery, mixing primary and fallback in the pool.
+        if let (Some(ref lifetime), Some(ref cooldown)) =
+            (&self.fallback_lifetime, &self.fallback_cooldown)
+        {
+            if lifetime.as_millis() > cooldown.as_millis() {
                 log::warn!(
-                    "failover_server_lifetime ({}ms) > failover_blacklist_duration ({}ms): \
-                     fallback connections will coexist with primary connections after blacklist expires",
+                    "fallback_lifetime ({}ms) > fallback_cooldown ({}ms): \
+                     fallback connections will coexist with local-backend connections \
+                     after the cooldown expires",
                     lifetime.as_millis(),
-                    blacklist.as_millis()
+                    cooldown.as_millis()
                 );
             }
         }
@@ -444,11 +439,11 @@ impl Default for Pool {
             reserve_pool_size: None,
             reserve_pool_timeout: None,
             min_guaranteed_pool_size: None,
-            patroni_discovery_urls: None,
-            failover_blacklist_duration: None,
-            failover_discovery_timeout: None,
-            failover_connect_timeout: None,
-            failover_server_lifetime: None,
+            patroni_api_urls: None,
+            fallback_cooldown: None,
+            patroni_api_timeout: None,
+            fallback_connect_timeout: None,
+            fallback_lifetime: None,
             server_tls_mode: None,
             server_tls_ca_cert: None,
             server_tls_certificate: None,

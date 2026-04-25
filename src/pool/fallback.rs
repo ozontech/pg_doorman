@@ -15,7 +15,7 @@ use crate::patroni::types::{ClusterResponse, Member, Role};
 type SharedClusterFuture =
     Shared<Pin<Box<dyn Future<Output = Result<ClusterResponse, String>> + Send>>>;
 
-/// A discovered fallback host to connect to when the primary is unavailable.
+/// Fallback host chosen via Patroni `/cluster`.
 pub struct FallbackTarget {
     pub host: String,
     pub port: u16,
@@ -23,29 +23,27 @@ pub struct FallbackTarget {
     pub lifetime_ms: u64,
 }
 
-/// Result of checking blacklist state, distinguishing natural expiry
-/// from active blacklist and no-blacklist states.
+/// Three-way blacklist state. `JustExpired` exists so callers can drain stale
+/// fallback connections on natural expiry.
 #[derive(Debug, PartialEq)]
 pub enum BlacklistCheck {
-    /// Host is not blacklisted and was not recently.
     NotBlacklisted,
-    /// Blacklist is currently active (not yet expired).
     Active,
-    /// Blacklist just expired on this check. Caller should
-    /// bump epoch to drain stale fallback connections.
+    /// Blacklist just expired on this check. Caller should bump epoch to drain
+    /// stale fallback connections.
     JustExpired,
 }
 
-pub struct FailoverState {
-    /// When Some and in the future, local host is considered down
+pub struct FallbackState {
+    /// When `Some` and in the future, local host is considered down.
     blacklisted_until: Mutex<Option<Instant>>,
-    /// Cached fallback host and its role from last successful discovery
+    /// Last successful fallback. Reused while blacklist is active.
     whitelisted_host: Mutex<Option<(String, u16, Role)>>,
-    /// Shared inflight /cluster request for coalescing.
+    /// Shared inflight `/cluster` request for coalescing.
     /// Stores creation timestamp alongside the future to detect staleness.
     inflight: tokio::sync::Mutex<Option<(Instant, SharedClusterFuture)>>,
 
-    /// Suppresses repeated blacklist log messages after the first one.
+    /// Suppresses repeat blacklist log lines.
     blacklist_logged: AtomicBool,
 
     pool_name: String,
@@ -53,15 +51,14 @@ pub struct FailoverState {
     blacklist_duration: Duration,
     connect_timeout: Duration,
     server_lifetime_ms: u64,
-    /// Reusable HTTP client for Patroni API calls.
     patroni_client: PatroniClient,
 }
 
-/// Age threshold for inflight coalesced requests. Futures older than
-/// this are treated as stale and replaced with a fresh request.
+/// Coalesced `/cluster` requests older than this are replaced.
+/// 1 second balances coalescing with not stalling on a hung request.
 const INFLIGHT_STALENESS: Duration = Duration::from_secs(1);
 
-impl FailoverState {
+impl FallbackState {
     pub fn new(
         pool_name: String,
         discovery_urls: Vec<String>,
@@ -86,21 +83,17 @@ impl FailoverState {
         })
     }
 
-    /// Check the blacklist state, handling natural expiry.
-    ///
-    /// On `JustExpired`: clears the internal blacklist timer, resets the
-    /// prometheus gauge, clears the whitelist cache, and resets the
-    /// log-suppression flag so the next blacklist event is logged.
+    /// Check blacklist state. On natural expiry, also clears whitelist,
+    /// the prometheus gauge, and the log-suppression flag.
     pub fn check_blacklist(&self) -> BlacklistCheck {
         let mut guard = self.blacklisted_until.lock();
         match *guard {
             Some(until) if Instant::now() < until => BlacklistCheck::Active,
             Some(_) => {
-                // Blacklist just expired — clean up
                 *guard = None;
                 drop(guard);
 
-                crate::prometheus::FAILOVER_HOST_BLACKLISTED
+                crate::prometheus::FALLBACK_ACTIVE
                     .with_label_values(&[&self.pool_name])
                     .set(0.0);
                 self.blacklist_logged.store(false, Ordering::Relaxed);
@@ -111,7 +104,7 @@ impl FailoverState {
                     wl.take()
                 };
                 if let Some((host, port, _)) = old_host {
-                    let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
+                    let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
                         &self.pool_name,
                         &host,
                         &port.to_string(),
@@ -129,14 +122,12 @@ impl FailoverState {
         *guard = Some(Instant::now() + self.blacklist_duration);
     }
 
-    /// Returns true only on the first call after a blacklist is set.
-    /// Subsequent calls return false until the blacklist expires and
-    /// is re-set, preventing log flooding.
+    /// True only on the first call after a fresh blacklist; rate-limits log lines.
     pub fn should_log_blacklist(&self) -> bool {
         !self.blacklist_logged.swap(true, Ordering::Relaxed)
     }
 
-    /// Reset blacklist, whitelist, and metrics. Available for programmatic reset.
+    /// Reset blacklist, whitelist, and metrics.
     pub fn clear(&self) {
         {
             let mut guard = self.blacklisted_until.lock();
@@ -147,26 +138,26 @@ impl FailoverState {
             guard.take()
         };
         if let Some((host, port, _)) = old_host {
-            let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
+            let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
                 &self.pool_name,
                 &host,
                 &port.to_string(),
             ]);
         }
         self.blacklist_logged.store(false, Ordering::Relaxed);
-        crate::prometheus::FAILOVER_HOST_BLACKLISTED
+        crate::prometheus::FALLBACK_ACTIVE
             .with_label_values(&[&self.pool_name])
             .set(0.0);
     }
 
-    /// Clear whitelist cache so next `get_fallback_target` re-runs discovery.
+    /// Clear whitelist cache so the next `get_fallback_target` re-runs discovery.
     pub fn clear_whitelist(&self) {
         let old = {
             let mut guard = self.whitelisted_host.lock();
             guard.take()
         };
         if let Some((host, port, _)) = old {
-            let _ = crate::prometheus::FAILOVER_FALLBACK_HOST.remove_label_values(&[
+            let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
                 &self.pool_name,
                 &host,
                 &port.to_string(),
@@ -180,10 +171,10 @@ impl FailoverState {
             let guard = self.whitelisted_host.lock();
             if let Some((ref host, port, ref role)) = *guard {
                 debug!(
-                    "[pool: {}] failover: returning whitelisted host {}:{}",
+                    "[pool: {}] fallback: returning whitelisted host {}:{}",
                     self.pool_name, host, port
                 );
-                crate::prometheus::FAILOVER_WHITELIST_HITS_TOTAL
+                crate::prometheus::FALLBACK_CACHE_HITS_TOTAL
                     .with_label_values(&[&self.pool_name])
                     .inc();
                 return Ok(FallbackTarget {
@@ -201,7 +192,7 @@ impl FailoverState {
         // 3-4. Filter and sort candidates
         let candidates = select_candidates(&cluster.members);
         info!(
-            "[pool: {}] failover: discovered {} members, {} candidates: {}",
+            "[pool: {}] fallback: discovered {} members, {} candidates: {}",
             self.pool_name,
             cluster.members.len(),
             candidates.len(),
@@ -225,10 +216,10 @@ impl FailoverState {
             *guard = Some((host.clone(), port, role.clone()));
         }
         info!(
-            "[pool: {}] failover: whitelisted {}:{} (role: {:?})",
+            "[pool: {}] fallback: whitelisted {}:{} (role: {:?})",
             self.pool_name, host, port, role
         );
-        crate::prometheus::FAILOVER_FALLBACK_HOST
+        crate::prometheus::FALLBACK_HOST
             .with_label_values(&[&self.pool_name, &host, &port.to_string()])
             .set(1.0);
 
@@ -245,12 +236,10 @@ impl FailoverState {
         let (shared, is_creator) = {
             let mut guard = self.inflight.lock().await;
 
-            // Reuse existing inflight if it was created recently
             if let Some((created_at, ref shared)) = *guard {
                 if created_at.elapsed() < INFLIGHT_STALENESS {
                     (shared.clone(), false)
                 } else {
-                    // Stale — replace with a new request
                     let shared = self.create_inflight();
                     *guard = Some((Instant::now(), shared.clone()));
                     (shared, true)
@@ -262,9 +251,8 @@ impl FailoverState {
             }
         };
 
-        // Only the creator increments the discovery counter
         if is_creator {
-            crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+            crate::prometheus::PATRONI_API_REQUESTS_TOTAL
                 .with_label_values(&[&self.pool_name])
                 .inc();
         }
@@ -272,24 +260,21 @@ impl FailoverState {
         let start = Instant::now();
         let result = shared.await;
 
-        // Only the creator records duration — joiners measure wait time, not discovery time
+        // Joiners measure wait time, not discovery time — only the creator records it.
         if is_creator {
-            crate::prometheus::FAILOVER_DISCOVERY_DURATION
+            crate::prometheus::PATRONI_API_DURATION
                 .with_label_values(&[&self.pool_name])
                 .observe(start.elapsed().as_secs_f64());
         }
 
-        // Clear cached future on error so the next caller retries fresh
-        // instead of inheriting the same failure for up to INFLIGHT_STALENESS.
+        // On creator-side error: drop the cached future so the next caller starts
+        // fresh instead of inheriting this failure for INFLIGHT_STALENESS.
         //
-        // Only the creator clears. Joiners share the same shared future
-        // and would compound the wipe-fresh-inflight race described below
-        // — every failed task contending for the slot multiplies the
-        // chance of erasing someone else's healthy inflight. If the
-        // creator's await itself ran longer than INFLIGHT_STALENESS,
-        // another task may have already installed a fresh inflight and
-        // this clear can wipe it. Worst case is one extra /cluster
-        // request — accepted to keep the cleanup branch simple.
+        // Joiners must NOT clear: every failed joiner would race for the slot
+        // and could erase a fresh inflight installed by another task. The
+        // creator-only guard bounds this to one race per failure — if the
+        // creator's await outran INFLIGHT_STALENESS, this clear may wipe a
+        // fresh inflight. Worst case: one redundant /cluster fetch.
         if is_creator && result.is_err() {
             let mut guard = self.inflight.lock().await;
             *guard = None;
@@ -305,10 +290,9 @@ impl FailoverState {
         fut.boxed().shared()
     }
 
-    /// TCP-connect to candidates in parallel, returning the best that responds.
-    /// Prefers sync_standby over replica over leader (by role_priority).
-    /// Uses pinned futures instead of tokio::spawn to ensure cancellation
-    /// when the remaining futures are dropped.
+    /// Parallel TCP-connect; returns the highest-priority responder
+    /// (sync_standby > replica > leader). Pinned futures over `tokio::spawn`
+    /// so cancellation propagates when `rest` is dropped.
     async fn try_connect_candidates(
         &self,
         candidates: &[(String, u16, Role)],
@@ -328,20 +312,20 @@ impl FailoverState {
                 match tokio::time::timeout(timeout, TcpStream::connect(&addr)).await {
                     Ok(Ok(_stream)) => {
                         debug!(
-                            "[pool: {}] failover: TCP connect ok to {} (role: {:?})",
+                            "[pool: {}] fallback: TCP connect ok to {} (role: {:?})",
                             pn, addr, role
                         );
                         Some((host, port, role))
                     }
                     Ok(Err(e)) => {
                         warn!(
-                            "[pool: {}] failover: TCP connect failed to {}: {}",
+                            "[pool: {}] fallback: TCP connect failed to {}: {}",
                             pn, addr, e
                         );
                         None
                     }
                     Err(_) => {
-                        warn!("[pool: {}] failover: TCP connect timeout to {}", pn, addr);
+                        warn!("[pool: {}] fallback: TCP connect timeout to {}", pn, addr);
                         None
                     }
                 }
@@ -349,7 +333,6 @@ impl FailoverState {
             futs.push(fut);
         }
 
-        // Track best candidate seen so far, with its role priority.
         let mut best: Option<(String, u16, Role)> = None;
         let mut remaining = futs;
 
@@ -359,8 +342,7 @@ impl FailoverState {
             if let Some((host, port, role)) = result {
                 let priority = role_priority(&role);
                 if priority == 0 {
-                    // Top priority (sync_standby) — return immediately,
-                    // dropping `rest` cancels remaining futures.
+                    // sync_standby found — return now; dropping `rest` cancels in-flight probes.
                     return Ok((host, port, role));
                 }
                 let dominated = best
@@ -378,7 +360,7 @@ impl FailoverState {
             Some((h, p, r)) => Ok((h, p, r)),
             None => {
                 warn!(
-                    "[pool: {}] failover: all {} candidates unreachable",
+                    "[pool: {}] fallback: all {} candidates unreachable",
                     self.pool_name,
                     candidates.len()
                 );
@@ -390,17 +372,10 @@ impl FailoverState {
 
 /// Filter and sort members from a /cluster response.
 ///
-/// Excluded:
-/// - non-running members (state ≠ "streaming"/"running")
-/// - `noloadbalance`: admin-disabled for query traffic
-/// - `nofailover`: admin-disabled for promotion (writes would fail)
-/// - `archive`: passive archive replica
+/// Excluded: non-running, `noloadbalance`, `nofailover`, `archive`.
+/// Kept: `nostream` — cascade replicas serve reads, just with higher lag.
 ///
-/// Not excluded:
-/// - `nostream`: cascade replicas reach data via another replica.
-///   They are valid read targets — possibly higher lag, but live.
-///
-/// Sorted: sync_standby first, then replica, then others (including leader).
+/// Sort: sync_standby > replica > everything else (including leader).
 fn select_candidates(members: &[Member]) -> Vec<(String, u16, Role)> {
     let mut candidates: Vec<(String, u16, Role)> = members
         .iter()
@@ -445,7 +420,7 @@ mod tests {
 
     #[test]
     fn blacklist_lifecycle() {
-        let state = FailoverState::new(
+        let state = FallbackState::new(
             "test_pool".to_string(),
             vec![],
             Duration::from_secs(10),
@@ -455,21 +430,18 @@ mod tests {
         )
         .unwrap();
 
-        // Initially not blacklisted
         assert_eq!(state.check_blacklist(), BlacklistCheck::NotBlacklisted);
 
-        // After blacklist() — active
         state.blacklist();
         assert_eq!(state.check_blacklist(), BlacklistCheck::Active);
 
-        // After clear() — not blacklisted
         state.clear();
         assert_eq!(state.check_blacklist(), BlacklistCheck::NotBlacklisted);
     }
 
     #[test]
     fn blacklist_expiry_returns_just_expired() {
-        let state = FailoverState::new(
+        let state = FallbackState::new(
             "test_pool".to_string(),
             vec![],
             // Very short blacklist so it expires within the test
@@ -482,19 +454,15 @@ mod tests {
 
         state.blacklist();
 
-        // Wait for the blacklist to expire
         std::thread::sleep(Duration::from_millis(5));
 
-        // First check after expiry returns JustExpired
         assert_eq!(state.check_blacklist(), BlacklistCheck::JustExpired);
-
-        // Subsequent check returns NotBlacklisted (already cleaned up)
         assert_eq!(state.check_blacklist(), BlacklistCheck::NotBlacklisted);
     }
 
     #[test]
     fn blacklist_expiry_clears_whitelist() {
-        let state = FailoverState::new(
+        let state = FallbackState::new(
             "test_pool".to_string(),
             vec![],
             Duration::from_millis(1),
@@ -504,7 +472,6 @@ mod tests {
         )
         .unwrap();
 
-        // Set a whitelist entry
         {
             let mut guard = state.whitelisted_host.lock();
             *guard = Some(("10.0.0.5".to_string(), 5432, Role::Replica));
@@ -513,7 +480,6 @@ mod tests {
         state.blacklist();
         std::thread::sleep(Duration::from_millis(5));
 
-        // JustExpired clears the whitelist
         assert_eq!(state.check_blacklist(), BlacklistCheck::JustExpired);
 
         let guard = state.whitelisted_host.lock();
@@ -522,7 +488,7 @@ mod tests {
 
     #[test]
     fn should_log_blacklist_only_first_time() {
-        let state = FailoverState::new(
+        let state = FallbackState::new(
             "test_pool".to_string(),
             vec![],
             Duration::from_secs(10),
@@ -534,13 +500,10 @@ mod tests {
 
         state.blacklist();
 
-        // First call returns true
         assert!(state.should_log_blacklist());
-        // Subsequent calls return false
         assert!(!state.should_log_blacklist());
         assert!(!state.should_log_blacklist());
 
-        // After clear, flag is reset
         state.clear();
         state.blacklist();
         assert!(state.should_log_blacklist());
@@ -548,7 +511,7 @@ mod tests {
 
     #[test]
     fn clear_whitelist_removes_cached_host() {
-        let state = FailoverState::new(
+        let state = FallbackState::new(
             "test_pool".to_string(),
             vec![],
             Duration::from_secs(10),
@@ -584,15 +547,12 @@ mod tests {
         // Stopped replica is excluded, leader included as last resort
         assert_eq!(candidates.len(), 4);
 
-        // sync_standby comes first
         assert_eq!(candidates[0].0, "10.0.0.3");
         assert_eq!(candidates[0].2, Role::SyncStandby);
 
-        // Replicas follow
         assert_eq!(candidates[1].2, Role::Replica);
         assert_eq!(candidates[2].2, Role::Replica);
 
-        // Leader is last
         assert_eq!(candidates[3].0, "10.0.0.1");
         assert_eq!(candidates[3].2, Role::Leader);
     }
@@ -602,7 +562,6 @@ mod tests {
         let candidates = select_candidates(&[]);
         assert!(candidates.is_empty());
 
-        // Only stopped replicas — no valid candidates
         let members = vec![
             make_member("pg-stopped1", Role::Replica, "stopped", "10.0.0.1", 5432),
             make_member("pg-stopped2", Role::Replica, "starting", "10.0.0.2", 5432),
@@ -664,7 +623,6 @@ mod tests {
         let candidates = select_candidates(&members);
         assert_eq!(candidates.len(), 3);
 
-        // Replicas come before leader even without sync_standby
         assert_eq!(candidates[0].2, Role::Replica);
         assert_eq!(candidates[1].2, Role::Replica);
         assert_eq!(candidates[2].2, Role::Leader);
@@ -697,7 +655,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_inflight_does_not_poison_next_caller() {
-        let state = FailoverState::new(
+        let state = FallbackState::new(
             "test_pool_inflight_fail".to_string(),
             vec!["http://127.0.0.1:1/cluster".to_string()],
             Duration::from_secs(10),
@@ -707,21 +665,20 @@ mod tests {
         )
         .unwrap();
 
-        let before = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+        let before = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_fail"])
             .get();
         let _ = state.fetch_cluster_coalesced().await;
         let _ = state.fetch_cluster_coalesced().await;
-        let after = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+        let after = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_fail"])
             .get();
 
         assert_eq!(after - before, 2);
     }
 
-    /// Spawns a test-scope HTTP/1.1 server on 127.0.0.1:0 that replies to
-    /// every request with `response_body` and Connection: close. Returns
-    /// the bound port. The server runs until the runtime shuts down.
+    /// Mock HTTP/1.1 server replying with `response_body` to every request.
+    /// Lives until the tokio runtime shuts down.
     async fn start_mock_patroni_success(response_body: String) -> u16 {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
@@ -736,8 +693,7 @@ mod tests {
                 };
                 let body = response_body.clone();
                 tokio::spawn(async move {
-                    // 4 KiB fits a typical HTTP/1.1 GET request line + headers
-                    // from reqwest; the test does not parse the request.
+                    // Buffer for a typical HTTP/1.1 request; not parsed.
                     let mut buf = [0u8; 4096];
                     let _ = stream.read(&mut buf).await;
                     let resp = format!(
@@ -758,7 +714,7 @@ mod tests {
         let body = r#"{"members":[{"name":"n","host":"127.0.0.1","port":5432,"role":"replica","state":"streaming"}]}"#.to_string();
         let port = start_mock_patroni_success(body).await;
 
-        let state = FailoverState::new(
+        let state = FallbackState::new(
             "test_pool_inflight_ok_coalesce".to_string(),
             vec![format!("http://127.0.0.1:{}/cluster", port)],
             Duration::from_secs(10),
@@ -768,12 +724,12 @@ mod tests {
         )
         .unwrap();
 
-        let before = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+        let before = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_ok_coalesce"])
             .get();
         let r1 = state.fetch_cluster_coalesced().await;
         let r2 = state.fetch_cluster_coalesced().await;
-        let after = crate::prometheus::FAILOVER_DISCOVERY_TOTAL
+        let after = crate::prometheus::PATRONI_API_REQUESTS_TOTAL
             .with_label_values(&["test_pool_inflight_ok_coalesce"])
             .get();
 

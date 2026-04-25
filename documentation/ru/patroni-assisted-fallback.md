@@ -1,27 +1,26 @@
-# Patroni failover discovery
+# Patroni-assisted fallback
 
 Когда pg_doorman работает на одной машине с PostgreSQL и подключён
 через unix socket, switchover в Patroni или аварийное падение PG
 оставляют doorman без бэкенда. Пока Patroni не закончит promote реплики
 или не перезапустит локальный PostgreSQL, все клиентские запросы падают.
 
-Patroni failover discovery позволяет doorman перекрыть этот промежуток
-автоматически. Когда локальный PostgreSQL перестаёт отвечать, doorman
-запрашивает Patroni REST API, находит другой член кластера и направляет
-новые соединения туда. Существующие соединения к мёртвому бэкенду
-закрываются при штатном recycle.
+Patroni-assisted fallback перекрывает этот промежуток. Когда локальный
+PostgreSQL перестаёт отвечать, pg_doorman запрашивает Patroni REST API,
+выбирает другого члена кластера и направляет новые соединения туда.
+Существующие соединения к мёртвому бэкенду закрываются при штатном recycle.
 
 Это краткосрочная мера. Она перекрывает 10-30 секунд, пока Patroni
 завершает свой failover. Когда Patroni восстановит локальный PostgreSQL
-(как реплику нового primary или как восстановленный primary), doorman
-сам вернётся к локальному socket. Действий оператора не требуется.
+(как реплику нового primary или как восстановленный primary), pg_doorman
+сам вернётся к локальному socket.
 
 ## Когда это помогает
 
 **Плановый switchover.** DBA запускает `patroni switchover --candidate node2`.
 Patroni промотирует node2, затем останавливает PostgreSQL на node1.
 Между остановкой и тем, как Patroni перезапустит node1 как реплику node2,
-doorman на node1 не имеет бэкенда. С включённым discovery doorman
+doorman на node1 не имеет бэкенда. С включённым fallback doorman
 подключается к node2 за 1-2 TCP round trip.
 
 **Аварийное падение.** PostgreSQL на node1 убит OOM killer. Patroni ещё
@@ -36,7 +35,7 @@ doorman на node1 не имеет бэкенда. С включённым disco
 patroni_proxy, DNS failover, VIP).
 
 **Ошибки аутентификации.** Если PostgreSQL отклоняет credentials
-doorman, бэкенд жив. Discovery не активируется.
+doorman, бэкенд жив. Fallback не активируется.
 
 ## Как это работает
 
@@ -51,27 +50,26 @@ Fallback:
 ```
 
 1. Doorman пробует локальный unix socket.
-2. Connection refused или socket error: doorman помещает локальный хост
-   в blacklist на `failover_blacklist_duration` (по умолчанию
-   30 секунд).
+2. Connection refused или socket error: doorman помечает локальный
+   backend как недоступный на `fallback_cooldown` (по умолчанию 30 секунд).
 3. doorman отправляет `GET /cluster` ко всем Patroni URL из конфига
    **параллельно** и берёт первый успешный ответ.
-4. Из списка members doorman выбирает первый доступный хост:
+4. Из списка members doorman выбирает кандидата с наивысшим приоритетом:
    сначала `sync_standby`, потом `replica`, потом любой другой.
    TCP connect ко всем кандидатам запускается параллельно; если
    `sync_standby` отвечает, он выбирается немедленно, обходя replica.
 5. Новое соединение попадает в пул со **сниженным lifetime**
-   (по умолчанию 30 секунд, совпадает с длительностью blacklist).
+   (по умолчанию 30 секунд, совпадает с `fallback_cooldown`).
    На него действуют все обычные правила пула: лимиты coordinator,
    idle timeout, recycle.
-6. Последующие соединения в рамках blacklist-окна идут к тому же
+6. Последующие соединения в рамках cooldown идут к тому же
    fallback-хосту напрямую, без повторного запроса к Patroni API.
-7. Когда blacklist истекает, doorman снова пробует локальный socket.
+7. Когда cooldown истекает, doorman снова пробует локальный socket.
    Если работает — штатный режим. Если нет — цикл повторяется.
 
 ## Write-запросы на реплике
 
-Если fallback-хост -- реплика, которая ещё не промотирована,
+Если fallback-хост — реплика, которая ещё не промотирована,
 write-запросы получат ошибку от PostgreSQL:
 
 ```
@@ -86,8 +84,8 @@ Read-запросы работают нормально. При типичном
 
 ## Конфигурация
 
-Добавьте `patroni_discovery_urls` к любому пулу, который должен
-использовать discovery. Без этого параметра фича полностью отключена,
+Добавьте `patroni_api_urls` к любому пулу, который должен
+использовать fallback. Без этого параметра фича отключена,
 doorman работает как раньше.
 
 ```yaml
@@ -99,7 +97,7 @@ pools:
 
     # Адреса Patroni REST API. Укажите минимум 2 для отказоустойчивости.
     # Первый ответивший URL выигрывает; порядок не важен.
-    patroni_discovery_urls:
+    patroni_api_urls:
       - "http://10.0.0.1:8008"
       - "http://10.0.0.2:8008"
       - "http://10.0.0.3:8008"
@@ -113,7 +111,7 @@ pool_mode = "transaction"
 server_host = "/var/run/postgresql"
 server_port = 5432
 
-patroni_discovery_urls = [
+patroni_api_urls = [
     "http://10.0.0.1:8008",
     "http://10.0.0.2:8008",
     "http://10.0.0.3:8008",
@@ -126,16 +124,16 @@ patroni_discovery_urls = [
 
 | Параметр | По умолчанию | Описание |
 |----------|--------------|----------|
-| `failover_blacklist_duration` | `"30s"` | Сколько локальный хост остаётся в blacklist после ошибки соединения. В течение этого окна все новые соединения идут на fallback-хост. |
-| `failover_discovery_timeout` | `"5s"` | HTTP-таймаут запросов к Patroni API. Действует на каждый URL; так как все URL опрашиваются параллельно, реальный таймаут равен этому значению, а не умноженному на количество URL. |
-| `failover_connect_timeout` | `"5s"` | Таймаут TCP connect к fallback-серверам. Действует на всю пачку параллельных connect, не на каждый member отдельно. |
-| `failover_server_lifetime` | = `failover_blacklist_duration` | Lifetime fallback-соединений. Короче штатного `server_lifetime`, чтобы doorman быстро вернулся к локальному хосту после завершения switchover. |
+| `fallback_cooldown` | `"30s"` | Сколько локальный backend остаётся помеченным как недоступный после ошибки соединения. В течение этого окна все новые соединения идут на fallback-хост. |
+| `patroni_api_timeout` | `"5s"` | HTTP-таймаут запросов к Patroni API. Действует на каждый URL; так как все URL опрашиваются параллельно, реальный таймаут равен этому значению, а не умноженному на количество URL. |
+| `fallback_connect_timeout` | `"5s"` | Таймаут TCP connect к fallback-кандидатам. Действует на всю пачку параллельных connect, не на каждый member отдельно. |
+| `fallback_lifetime` | = `fallback_cooldown` | Lifetime fallback-соединений. Короче штатного `server_lifetime`, чтобы doorman быстро вернулся к локальному backend после восстановления. |
 
-### Что указывать в `patroni_discovery_urls`
+### Что указывать в `patroni_api_urls`
 
 Перечислите адреса Patroni REST API ваших узлов кластера. Endpoint
 `/cluster` на любом узле Patroni возвращает полную топологию кластера,
-поэтому даже одного URL достаточно для обнаружения всех members.
+поэтому даже одного URL достаточно для перечисления всех members.
 
 Два и более URL рекомендуется: если первый URL указывает на ту же
 машину что и мёртвый PostgreSQL, он тоже не ответит. doorman
@@ -145,13 +143,13 @@ patroni_discovery_urls = [
 
 | Метрика | Тип | Описание |
 |---------|-----|----------|
-| `pg_doorman_failover_discovery_total` | counter | Количество запросов `/cluster` |
-| `pg_doorman_failover_connections_total` | counter | Создано fallback-соединений |
-| `pg_doorman_failover_discovery_errors_total` | counter | Неудачные запросы `/cluster` (все URL недоступны) |
-| `pg_doorman_failover_host_blacklisted` | gauge | 1, если основной хост в blacklist |
-| `pg_doorman_failover_fallback_host` | gauge | Текущий активный fallback-хост (1 = активен). Labels: pool, host, port |
-| `pg_doorman_failover_whitelist_hits_total` | counter | Повторное использование кешированного fallback-хоста без запроса к Patroni API |
-| `pg_doorman_failover_discovery_duration_seconds` | histogram | Время запроса `/cluster` |
+| `pg_doorman_patroni_api_requests_total` | counter | Количество запросов `/cluster` |
+| `pg_doorman_fallback_connections_total` | counter | Создано fallback-соединений |
+| `pg_doorman_patroni_api_errors_total` | counter | Неудачные запросы `/cluster` (все URL недоступны) |
+| `pg_doorman_fallback_active` | gauge | 1, пока локальный backend в cooldown и пул использует fallback |
+| `pg_doorman_fallback_host` | gauge | Текущий активный fallback-хост (1 = активен). Labels: pool, host, port |
+| `pg_doorman_fallback_cache_hits_total` | counter | Повторное использование кешированного fallback-хоста без запроса к Patroni API |
+| `pg_doorman_patroni_api_duration_seconds` | histogram | Время запроса `/cluster` |
 
 ## Активные транзакции
 
@@ -171,33 +169,33 @@ fallback.
 credentials.
 
 **TLS.** Fallback-соединения используют тот же `server_tls_mode`,
-что и primary. Если primary использует unix socket (без TLS),
-fallback TCP-соединения тоже пойдут без TLS. Настройте
-`server_tls_mode` явно, если fallback-соединения должны быть
-зашифрованы.
+что и локальный backend. Если локальный backend идёт через unix
+socket (без TLS), fallback TCP-соединения тоже пойдут без TLS.
+Настройте `server_tls_mode` явно, если fallback-соединения должны
+быть зашифрованы.
 
-**DNS.** Используйте IP-адреса в `patroni_discovery_urls`, а не
-hostname. Неудача DNS-резолва во время failover добавляет задержку
-и может привести к полному отказу discovery.
+**DNS.** Используйте IP-адреса в `patroni_api_urls`, а не hostname.
+Неудача DNS-резолва во время failover добавляет задержку и может
+привести к полному отказу запроса.
 
 **standby_leader.** В standby-кластерах Patroni используется роль
-`standby_leader`. doorman обрабатывает её как "other" (наименьший
+`standby_leader`. doorman обрабатывает её как «other» (наименьший
 приоритет, после sync_standby и replica). Для большинства
 развёртываний это корректно.
 
 ## Связь с patroni_proxy
 
-patroni_proxy и failover discovery решают разные задачи.
+patroni_proxy и Patroni-assisted fallback решают разные задачи.
 
-**patroni_proxy** -- TCP-балансировщик, разворачивается рядом с
+**patroni_proxy** — TCP-балансировщик, разворачивается рядом с
 клиентскими приложениями. Маршрутизирует соединения к нужному узлу
 PostgreSQL по роли (leader, sync, async). Не пулит соединения.
 
-**Failover discovery** -- встроен в pooler doorman, который
+**Patroni-assisted fallback** — встроен в pooler doorman, который
 разворачивается рядом с PostgreSQL. Обрабатывает ситуацию, когда
-локальный бэкенд умер и doorman нуждается во временной альтернативе.
+локальный backend умер и doorman нуждается во временной альтернативе.
 Пулит соединения.
 
-В рекомендуемой архитектуре (patroni_proxy -> pg_doorman -> PostgreSQL)
-failover discovery сохраняет read-трафик на уровне doorman при
-падении локального бэкенда, не затрагивая маршрутизацию patroni_proxy.
+В рекомендуемой архитектуре (patroni_proxy → pg_doorman → PostgreSQL)
+fallback сохраняет read-трафик на уровне doorman при падении
+локального backend, не затрагивая маршрутизацию patroni_proxy.

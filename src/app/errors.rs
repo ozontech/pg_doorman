@@ -8,9 +8,8 @@ use crate::auth::hba::CheckResult;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Error {
     SocketError(String),
-    /// TCP or Unix socket connect() failed. Backend process unreachable.
-    /// Distinct from SocketError, which covers read/write/protocol failures
-    /// on an already established connection.
+    /// `connect()` failed: backend unreachable. Distinct from `SocketError`,
+    /// which fires on read/write of an already established connection.
     ConnectError(String),
     ClientBadStartup,
     ProtocolSyncError(String),
@@ -19,9 +18,8 @@ pub enum Error {
     ServerMessageParserError(String),
     ServerStartupError(String, ServerIdentifier),
     ServerAuthError(String, ServerIdentifier),
-    /// PG startup FATAL with SQLSTATE class 57P (operator intervention):
-    /// 57P01 admin_shutdown, 57P02 crash_shutdown, 57P03 cannot_connect_now.
-    /// Backend accepted the connection but is not serving queries.
+    /// FATAL with SQLSTATE 57P01/57P02/57P03: backend accepted the connection
+    /// but is shutting down or starting up.
     ServerUnavailableError(String, ServerIdentifier),
     ServerStartupReadParameters(String),
     BadConfig(String),

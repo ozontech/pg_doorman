@@ -28,7 +28,7 @@ A high-performance multithreaded PostgreSQL connection pooler built in Rust. Doe
 
 **Dead backend detection.** When a client holds a transaction open, pg_doorman probes the backend and returns an error immediately if the server is gone (failover, OOM kill). Other poolers rely on TCP keepalive, leaving clients hanging for minutes.
 
-**Patroni failover discovery.** When pg_doorman sits next to PostgreSQL on the same machine (unix socket), a Patroni switchover kills the local backend. pg_doorman queries the Patroni REST API `/cluster` endpoint, finds a live cluster member (`sync_standby` preferred), and routes new connections there within 1-2 TCP round trips. The local host is blacklisted for a configurable window (default 30s); fallback connections get a short lifetime so the pool returns to the primary once it recovers. No external routing changes needed — the pooler handles the gap.
+**Patroni-assisted fallback.** When pg_doorman sits next to PostgreSQL on the same machine (unix socket), a Patroni switchover kills the local backend. pg_doorman queries the Patroni REST API `/cluster` endpoint, picks a live cluster member (`sync_standby` preferred), and routes new connections there within 1-2 TCP round trips. The local backend stays in cooldown for a configurable window (default 30s); fallback connections use a short lifetime so the pool returns to the local backend once it recovers.
 
 ## Benchmarks
 
@@ -67,7 +67,7 @@ PgBouncer is single-threaded — these ratios reflect a single PgBouncer instanc
 | Runtime log level control (`SET log_level`) | Yes | No | No |
 | PAUSE / RESUME / RECONNECT | Yes | Yes | Yes |
 | TLS: minimum TLS 1.2, Mozilla ciphers | Yes | Yes | No (allows TLS 1.0, weak ciphers) |
-| Patroni failover discovery (automatic backend failover) | Yes | No | No |
+| Patroni-assisted fallback (automatic backend rerouting) | Yes | No | No |
 | Prometheus metrics | Built-in | External | Built-in |
 
 ## Quick Start
@@ -335,13 +335,13 @@ Scrape `http://host:9127/` to collect metrics. Key metrics:
 | `pg_doorman_pool_coordinator` | type, database | Coordinator stats (connections, reserve, evictions, exhaustions) |
 | `pg_doorman_total_memory` | — | Process memory usage (bytes)                |
 | `pg_doorman_connection_count` | type | Connections by type (plain / tls / total)   |
-| `pg_doorman_failover_discovery_total` | pool | Patroni `/cluster` discovery attempts |
-| `pg_doorman_failover_connections_total` | pool | Fallback connections established |
-| `pg_doorman_failover_discovery_errors_total` | pool | Failed `/cluster` requests (all URLs unreachable) |
-| `pg_doorman_failover_host_blacklisted` | pool | 1 if the primary host is currently blacklisted |
-| `pg_doorman_failover_fallback_host` | pool, host, port | Currently active fallback host (1 = active) |
-| `pg_doorman_failover_whitelist_hits_total` | pool | Cached fallback host reused without re-discovery |
-| `pg_doorman_failover_discovery_duration_seconds` | pool | Time spent fetching `/cluster` (histogram) |
+| `pg_doorman_patroni_api_requests_total` | pool | Patroni `/cluster` requests |
+| `pg_doorman_fallback_connections_total` | pool | Fallback connections established |
+| `pg_doorman_patroni_api_errors_total` | pool | Failed `/cluster` requests (all URLs unreachable) |
+| `pg_doorman_fallback_active` | pool | 1 while the local backend is in cooldown and the pool is using a fallback |
+| `pg_doorman_fallback_host` | pool, host, port | Currently active fallback host (1 = active) |
+| `pg_doorman_fallback_cache_hits_total` | pool | Cached fallback host reused without re-querying Patroni |
+| `pg_doorman_patroni_api_duration_seconds` | pool | Time spent fetching `/cluster` (histogram) |
 
 A ready-to-import [Grafana dashboard](grafana/) is included — pool utilization, latency percentiles, coordinator state, prepared statement cache, and auth query metrics.
 

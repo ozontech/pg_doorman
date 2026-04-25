@@ -447,11 +447,11 @@ pub(crate) static SHOW_SERVER_TLS_HANDSHAKE_ERRORS: Lazy<IntCounterVec> = Lazy::
     counter
 });
 
-pub(crate) static FAILOVER_DISCOVERY_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+pub(crate) static PATRONI_API_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
-            "pg_doorman_failover_discovery_total",
-            "Total number of Patroni /cluster discovery attempts, by pool.",
+            "pg_doorman_patroni_api_requests_total",
+            "Total number of Patroni /cluster requests, by pool.",
         ),
         &["pool"],
     )
@@ -460,11 +460,11 @@ pub(crate) static FAILOVER_DISCOVERY_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     counter
 });
 
-pub(crate) static FAILOVER_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+pub(crate) static FALLBACK_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
-            "pg_doorman_failover_connections_total",
-            "Total number of successful fallback connections established, by pool.",
+            "pg_doorman_fallback_connections_total",
+            "Total number of fallback connections established, by pool.",
         ),
         &["pool"],
     )
@@ -473,11 +473,11 @@ pub(crate) static FAILOVER_CONNECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(||
     counter
 });
 
-pub(crate) static FAILOVER_DISCOVERY_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+pub(crate) static PATRONI_API_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
-            "pg_doorman_failover_discovery_errors_total",
-            "Total number of failed Patroni discovery attempts, by pool.",
+            "pg_doorman_patroni_api_errors_total",
+            "Total number of failed Patroni /cluster requests, by pool.",
         ),
         &["pool"],
     )
@@ -486,11 +486,11 @@ pub(crate) static FAILOVER_DISCOVERY_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::n
     counter
 });
 
-pub(crate) static FAILOVER_HOST_BLACKLISTED: Lazy<GaugeVec> = Lazy::new(|| {
+pub(crate) static FALLBACK_ACTIVE: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
-            "pg_doorman_failover_host_blacklisted",
-            "Whether the primary host is currently blacklisted (1) or not (0), by pool.",
+            "pg_doorman_fallback_active",
+            "1 when the local backend is in cooldown and the pool is using a fallback host, 0 otherwise. Per pool.",
         ),
         &["pool"],
     )
@@ -499,11 +499,11 @@ pub(crate) static FAILOVER_HOST_BLACKLISTED: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
-pub(crate) static FAILOVER_FALLBACK_HOST: Lazy<GaugeVec> = Lazy::new(|| {
+pub(crate) static FALLBACK_HOST: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
-            "pg_doorman_failover_fallback_host",
-            "Currently active fallback host for a pool (1 = active), by pool/host/port.",
+            "pg_doorman_fallback_host",
+            "Currently active fallback host (1 = active), by pool/host/port.",
         ),
         &["pool", "host", "port"],
     )
@@ -512,11 +512,11 @@ pub(crate) static FAILOVER_FALLBACK_HOST: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
-pub(crate) static FAILOVER_WHITELIST_HITS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+pub(crate) static FALLBACK_CACHE_HITS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let counter = IntCounterVec::new(
         Opts::new(
-            "pg_doorman_failover_whitelist_hits_total",
-            "Total number of times a cached whitelist host was reused, by pool.",
+            "pg_doorman_fallback_cache_hits_total",
+            "Total number of times the cached fallback host was reused without re-querying Patroni, by pool.",
         ),
         &["pool"],
     )
@@ -525,11 +525,11 @@ pub(crate) static FAILOVER_WHITELIST_HITS_TOTAL: Lazy<IntCounterVec> = Lazy::new
     counter
 });
 
-pub(crate) static FAILOVER_DISCOVERY_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+pub(crate) static PATRONI_API_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     let histogram = HistogramVec::new(
         prometheus::HistogramOpts::new(
-            "pg_doorman_failover_discovery_duration_seconds",
-            "Duration of Patroni /cluster discovery requests, by pool.",
+            "pg_doorman_patroni_api_duration_seconds",
+            "Duration of Patroni /cluster requests, by pool.",
         )
         .buckets(vec![0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]),
         &["pool"],

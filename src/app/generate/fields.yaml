@@ -783,35 +783,35 @@ fields:
         Set to `0` to disable the limit (unlimited cache size, relies on client calling `DEALLOCATE`).
       default: "0 (unlimited)"
 
-    patroni_discovery_urls:
+    patroni_api_urls:
       config:
-        en: "Global Patroni REST API URLs for failover discovery. Pools inherit this unless they set their own."
-        ru: "Глобальные URL Patroni REST API для failover discovery. Пулы наследуют, если не переопределяют."
+        en: "Default Patroni REST API endpoints. Pools inherit this unless they set their own patroni_api_urls."
+        ru: "URL Patroni REST API по умолчанию. Пулы наследуют, если не задали собственные patroni_api_urls."
       default: "not set (disabled)"
 
-    failover_blacklist_duration:
+    fallback_cooldown:
       config:
-        en: "Global failover blacklist duration. Pools inherit this unless they set their own."
-        ru: "Глобальная длительность blacklist при failover. Пулы наследуют, если не переопределяют."
+        en: "Default cooldown for the local backend after a failed connect. Pools inherit this unless they set their own."
+        ru: "Период по умолчанию, на который локальный backend помечается недоступным после неудачного коннекта. Пулы наследуют, если не задали собственный."
       default: '"30s"'
 
-    failover_discovery_timeout:
+    patroni_api_timeout:
       config:
-        en: "Global HTTP timeout for Patroni API requests. Pools inherit this unless they set their own."
-        ru: "Глобальный HTTP-таймаут запросов к Patroni API. Пулы наследуют, если не переопределяют."
+        en: "Default HTTP timeout for Patroni API requests. Pools inherit this unless they set their own."
+        ru: "HTTP-таймаут запросов к Patroni API по умолчанию. Пулы наследуют, если не задали собственный."
       default: '"5s"'
 
-    failover_connect_timeout:
+    fallback_connect_timeout:
       config:
-        en: "Global TCP connect timeout for fallback servers. Pools inherit this unless they set their own."
-        ru: "Глобальный таймаут TCP-соединения к fallback-серверам. Пулы наследуют, если не переопределяют."
+        en: "Default TCP connect timeout for fallback candidates. Pools inherit this unless they set their own."
+        ru: "TCP-таймаут к fallback-кандидатам по умолчанию. Пулы наследуют, если не задали собственный."
       default: '"5s"'
 
-    failover_server_lifetime:
+    fallback_lifetime:
       config:
-        en: "Global lifetime for fallback connections. Pools inherit this unless they set their own."
-        ru: "Глобальный lifetime fallback-соединений. Пулы наследуют, если не переопределяют."
-      default: "same as failover_blacklist_duration"
+        en: "Default lifetime of fallback connections. Pools inherit this unless they set their own."
+        ru: "Время жизни fallback-соединений по умолчанию. Пулы наследуют, если не задали собственное."
+      default: "same as fallback_cooldown"
 
     admin_username:
       config:
@@ -1251,49 +1251,48 @@ fields:
         Set to `0` (or omit) for no eviction protection. Only relevant when `max_db_connections > 0`.
       default: "0 (no protection)"
 
-    patroni_discovery_urls:
+    patroni_api_urls:
       config:
         en: |
-          Patroni REST API URLs for failover discovery.
-          When the local backend is unreachable, doorman queries /cluster
-          to find a live cluster member. Disabled when not set.
+          Patroni REST API endpoints. When the local backend becomes
+          unreachable, pg_doorman queries /cluster to find a live fallback host.
         ru: |
-          URL-адреса Patroni REST API для обнаружения при failover.
-          Когда локальный бэкенд недоступен, doorman запрашивает /cluster
-          для поиска живого узла кластера. Отключено, если не задано.
+          Эндпоинты Patroni REST API. Когда локальный backend становится
+          недоступен, pg_doorman запрашивает /cluster для поиска живого хоста.
       default: "disabled"
 
-    failover_blacklist_duration:
+    fallback_cooldown:
       config:
         en: |
-          How long a failed host stays blacklisted before retrying.
+          How long the local backend stays marked as down after a failed connect.
         ru: |
-          Как долго упавший хост остаётся в чёрном списке перед повторной попыткой.
+          Как долго локальный backend остаётся помеченным как недоступный после
+          неудачного коннекта.
       default: "\"30s\""
 
-    failover_discovery_timeout:
+    patroni_api_timeout:
       config:
         en: |
           HTTP timeout for Patroni API requests.
         ru: |
-          Таймаут HTTP-запросов к Patroni API.
+          HTTP-таймаут запросов к Patroni API.
       default: "\"5s\""
 
-    failover_connect_timeout:
+    fallback_connect_timeout:
       config:
         en: |
-          TCP connect timeout for fallback servers.
+          TCP connect timeout for fallback candidates.
         ru: |
-          Таймаут TCP-соединения с fallback-серверами.
+          TCP-таймаут для коннекта к fallback-кандидатам.
       default: "\"5s\""
 
-    failover_server_lifetime:
+    fallback_lifetime:
       config:
         en: |
-          Lifetime for fallback connections. Defaults to blacklist duration.
+          Lifetime of fallback connections; defaults to fallback_cooldown.
         ru: |
-          Время жизни fallback-соединений. По умолчанию равно blacklist duration.
-      default: "blacklist duration"
+          Время жизни fallback-соединений; по умолчанию равно fallback_cooldown.
+      default: "fallback_cooldown"
 
     application_name:
       config:

@@ -1,7 +1,7 @@
-@patroni_failover
-Feature: Patroni failover discovery
+@patroni_fallback
+Feature: Patroni-assisted fallback
 
-  Scenario: Query succeeds via Patroni failover when local PG is down
+  Scenario: Query succeeds via Patroni-assisted fallback when local PG is down
     Given PostgreSQL started with pg_hba.conf:
       """
       host all all 127.0.0.1/32 trust
@@ -45,10 +45,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -57,7 +57,7 @@ Feature: Patroni failover discovery
       """
     Then psql query "SELECT 1" via pg_doorman as user "example_user_1" to database "example_db" with password "" returns "1"
 
-  Scenario: Auth error does not trigger Patroni discovery
+  Scenario: Auth error does not trigger Patroni API call
     Given PostgreSQL started with pg_hba.conf:
       """
       local   all             all                                     trust
@@ -94,10 +94,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -127,10 +127,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:59998"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:59998"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -139,7 +139,7 @@ Feature: Patroni failover discovery
       """
     Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "" fails
 
-  Scenario: Discovery succeeds via second Patroni URL when first is unreachable
+  Scenario: Fallback succeeds via second Patroni URL when first is unreachable
     Given PostgreSQL started with pg_hba.conf:
       """
       host all all 127.0.0.1/32 trust
@@ -175,10 +175,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:59997", "http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:59997", "http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -230,10 +230,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -285,10 +285,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "2s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "2s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -370,10 +370,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -418,10 +418,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}/cluster"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}/cluster"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"
@@ -430,7 +430,7 @@ Feature: Patroni failover discovery
       """
     Then psql query "SELECT 1" via pg_doorman as user "example_user_1" to database "example_db" with password "" returns "1"
 
-  Scenario: Global patroni_discovery_urls inherited by pool
+  Scenario: Global patroni_api_urls inherited by pool
     Given PostgreSQL started with pg_hba.conf:
       """
       host all all 127.0.0.1/32 trust
@@ -462,10 +462,10 @@ Feature: Patroni failover discovery
       admin_password = "admin"
       pg_hba.content = "host all all 127.0.0.1/32 trust"
       connect_timeout = "5s"
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -535,10 +535,10 @@ Feature: Patroni failover discovery
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = 59999
-      patroni_discovery_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
-      failover_blacklist_duration = "5s"
-      failover_connect_timeout = "3s"
-      failover_discovery_timeout = "3s"
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_PATRONI1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "3s"
+      patroni_api_timeout = "3s"
 
       [[pools.example_db.users]]
       username = "example_user_1"

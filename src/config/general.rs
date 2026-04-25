@@ -168,26 +168,26 @@ pub struct General {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_tls_private_key: Option<String>,
 
-    /// Global Patroni REST API URLs for failover discovery.
-    /// Pools inherit this unless they override with their own patroni_discovery_urls.
+    /// Default Patroni REST API endpoints. Pools inherit this unless they set
+    /// their own `patroni_api_urls`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub patroni_discovery_urls: Option<Vec<String>>,
+    pub patroni_api_urls: Option<Vec<String>>,
 
-    /// Global failover blacklist duration. Default: "30s".
+    /// Default fallback cooldown for pools that do not set their own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_blacklist_duration: Option<super::Duration>,
+    pub fallback_cooldown: Option<super::Duration>,
 
-    /// Global failover discovery timeout. Default: "5s".
+    /// Default HTTP timeout for Patroni API requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_discovery_timeout: Option<super::Duration>,
+    pub patroni_api_timeout: Option<super::Duration>,
 
-    /// Global failover connect timeout. Default: "5s".
+    /// Default TCP connect timeout for fallback candidates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_connect_timeout: Option<super::Duration>,
+    pub fallback_connect_timeout: Option<super::Duration>,
 
-    /// Global failover server lifetime. Default: same as blacklist duration.
+    /// Default fallback connection lifetime.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failover_server_lifetime: Option<super::Duration>,
+    pub fallback_lifetime: Option<super::Duration>,
 
     pub admin_username: String,
     pub admin_password: String,
@@ -462,11 +462,11 @@ impl Default for General {
             server_tls_ca_cert: None,
             server_tls_certificate: None,
             server_tls_private_key: None,
-            patroni_discovery_urls: None,
-            failover_blacklist_duration: None,
-            failover_discovery_timeout: None,
-            failover_connect_timeout: None,
-            failover_server_lifetime: None,
+            patroni_api_urls: None,
+            fallback_cooldown: None,
+            patroni_api_timeout: None,
+            fallback_connect_timeout: None,
+            fallback_lifetime: None,
             admin_username: String::from("admin"),
             admin_password: String::from("admin"),
             server_lifetime: Self::default_server_lifetime(),

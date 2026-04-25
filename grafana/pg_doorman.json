@@ -1828,7 +1828,7 @@
       "collapsed": true,
       "id": 0,
       "panels": [],
-      "title": "Patroni Failover Discovery",
+      "title": "Patroni-assisted fallback",
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1870,12 +1870,12 @@
       },
       "targets": [
         {
-          "expr": "max(pg_doorman_failover_host_blacklisted{instance=~\"$instance\"})",
+          "expr": "max(pg_doorman_fallback_active{instance=~\"$instance\"})",
           "refId": ""
         }
       ],
-      "title": "Primary Blacklisted",
-      "description": "1 if any pool has its primary host blacklisted. Sustained = primary not recovering.",
+      "title": "Local backend in cooldown",
+      "description": "1 if any pool is currently using a fallback host. Sustained = local backend not recovering.",
       "datasource": {
         "uid": "${DS_PROMETHEUS}"
       },
@@ -1917,7 +1917,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(pg_doorman_failover_connections_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum(increase(pg_doorman_fallback_connections_total{instance=~\"$instance\"}[$__rate_interval]))",
           "refId": ""
         }
       ],
@@ -1968,11 +1968,11 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(pg_doorman_failover_discovery_errors_total{instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum(increase(pg_doorman_patroni_api_errors_total{instance=~\"$instance\"}[$__rate_interval]))",
           "refId": ""
         }
       ],
-      "title": "Discovery Errors",
+      "title": "Patroni API Errors",
       "description": "Failed /cluster requests (all Patroni URLs unreachable).",
       "datasource": {
         "uid": "${DS_PROMETHEUS}"
@@ -2011,22 +2011,22 @@
       },
       "targets": [
         {
-          "expr": "rate(pg_doorman_failover_discovery_total{instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "rate(pg_doorman_patroni_api_requests_total{instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
-          "legendFormat": "{{pool}} discovery/s"
+          "legendFormat": "{{pool}} requests/s"
         },
         {
-          "expr": "rate(pg_doorman_failover_connections_total{instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "rate(pg_doorman_fallback_connections_total{instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "{{pool}} connections/s"
         },
         {
-          "expr": "rate(pg_doorman_failover_discovery_errors_total{instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "rate(pg_doorman_patroni_api_errors_total{instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "{{pool}} errors/s"
         }
       ],
-      "title": "Discovery Rate",
+      "title": "Patroni API Rate",
       "description": "Patroni API calls, fallback connections, and errors per second. Errors without connections = all Patroni URLs or all candidates unreachable.",
       "datasource": {
         "uid": "${DS_PROMETHEUS}"
@@ -2067,17 +2067,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, rate(pg_doorman_failover_discovery_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "histogram_quantile(0.50, rate(pg_doorman_patroni_api_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval]))",
           "refId": "",
           "legendFormat": "p50"
         },
         {
-          "expr": "histogram_quantile(0.99, rate(pg_doorman_failover_discovery_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "histogram_quantile(0.99, rate(pg_doorman_patroni_api_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval]))",
           "refId": "",
           "legendFormat": "p99"
         }
       ],
-      "title": "Discovery Duration",
+      "title": "Patroni API Duration",
       "description": "Time to fetch /cluster from Patroni API. p99 above 1s = network issues or overloaded Patroni nodes.",
       "datasource": {
         "uid": "${DS_PROMETHEUS}"
@@ -2116,13 +2116,13 @@
       },
       "targets": [
         {
-          "expr": "rate(pg_doorman_failover_whitelist_hits_total{instance=~\"$instance\"}[$__rate_interval])",
+          "expr": "rate(pg_doorman_fallback_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
           "legendFormat": "{{pool}}"
         }
       ],
-      "title": "Whitelist Cache Hits",
-      "description": "Fallback host served from cache without querying Patroni API. High rate during blacklist = cache working correctly.",
+      "title": "Fallback Cache Hits",
+      "description": "Fallback host served from cache without querying Patroni API. High rate during cooldown = cache working correctly.",
       "datasource": {
         "uid": "${DS_PROMETHEUS}"
       },
