@@ -1,0 +1,383 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Patroni-assisted Fallback - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/patroni-assisted-fallback.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="patroni-assisted-fallback"><a class="header" href="#patroni-assisted-fallback">Patroni-assisted fallback</a></h1>
+<p>When pg_doorman runs next to PostgreSQL on the same machine and connects
+via unix socket, a Patroni switchover or an unexpected PostgreSQL crash
+leaves doorman without a backend. Until Patroni finishes promoting a
+replica or restarting the local PostgreSQL, every client query fails.</p>
+<p>Patroni-assisted fallback bridges that gap. When the local PostgreSQL
+stops responding, pg_doorman queries the Patroni REST API, picks another
+cluster member, and routes new connections there. Existing pooled
+connections to the dead backend are recycled normally.</p>
+<p>This is a short-term measure. It bridges the 10-30 seconds while
+Patroni completes its own failover. Once Patroni restores the local
+PostgreSQL — as a replica of the new primary, or as the recovered
+primary itself — pg_doorman returns to the local socket.</p>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>
+<p>The recommended deployment puts pg_doorman next to PostgreSQL on the
+same host and talks to it through the unix socket. With Patroni's REST
+API also on <code>localhost</code>, fallback turns on with one line in <code>[general]</code>:</p>
+<pre><code class="language-yaml">general:
+  patroni_api_urls: ["http://localhost:8008"]
+</code></pre>
+<p>Every pool picks this up automatically. When the unix socket stops
+responding, pg_doorman queries <code>/cluster</code>, prefers <code>sync_standby</code> over
+<code>replica</code> over leader, and routes new connections to the chosen host
+until the local PostgreSQL recovers. Defaults: cooldown 30s, HTTP
+timeout 5s, TCP timeout 5s, fallback connection lifetime 30s. Override
+them under <a href="#tuning-parameters">Tuning parameters</a>.</p>
+<h2 id="when-it-helps"><a class="header" href="#when-it-helps">When it helps</a></h2>
+<p><strong>Planned switchover.</strong> A DBA runs <code>patroni switchover --candidate node2</code>.
+Patroni promotes node2, then shuts down PostgreSQL on node1. Between the
+shutdown and Patroni restarting node1 as a replica of node2, doorman on
+node1 has no backend. With fallback enabled, doorman connects to node2
+within 1-2 TCP round trips.</p>
+<p><strong>Unplanned crash.</strong> PostgreSQL on node1 is killed by the OOM killer.
+Patroni hasn't detected the failure yet. Doorman gets connection refused
+on the unix socket, queries the Patroni API, and connects to the
+<code>sync_standby</code> (most likely the next leader).</p>
+<h2 id="when-it-does-not-help"><a class="header" href="#when-it-does-not-help">When it does not help</a></h2>
+<p><strong>Machine failure.</strong> If the entire machine is down, doorman dies with it.
+No fallback logic can run. This scenario requires external routing
+(HAProxy, patroni_proxy, DNS failover, VIP).</p>
+<p><strong>Authentication errors.</strong> If PostgreSQL rejects doorman's credentials,
+the backend is alive. Fallback does not activate.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<pre><code>Normal:
+  client --unix--&gt; doorman --unix--&gt; PostgreSQL (local)
+
+Fallback:
+  client --unix--&gt; doorman --TCP---&gt; PostgreSQL (remote, from /cluster)
+                      |
+                      +-- GET /cluster --&gt; Patroni API
+</code></pre>
+<ol>
+<li>Doorman tries the local unix socket.</li>
+<li>Connection refused or socket error: doorman puts the local backend
+into cooldown for <code>fallback_cooldown</code> (default 30 seconds).</li>
+<li>Doorman sends <code>GET /cluster</code> to all configured Patroni URLs
+<strong>in parallel</strong> and takes the first successful response.</li>
+<li>From the member list, doorman picks the highest-priority host:
+<code>sync_standby</code> first, then <code>replica</code>, then any other member.
+TCP connect to all candidates runs in parallel; if a <code>sync_standby</code>
+responds, it is chosen immediately over any replica.</li>
+<li>The new connection enters the pool with a <strong>reduced lifetime</strong>
+(default 30 seconds, matching the cooldown). It follows
+all normal pool rules: coordinator limits, idle timeout, recycle.</li>
+<li>Subsequent connections during the cooldown go to the same fallback
+host directly, without re-querying the Patroni API.</li>
+<li>When the cooldown expires, doorman tries the local socket again.
+If it works, normal mode resumes. If not, the cycle repeats.</li>
+</ol>
+<h2 id="write-queries-on-a-replica"><a class="header" href="#write-queries-on-a-replica">Write queries on a replica</a></h2>
+<p>If the fallback host is a replica that hasn't been promoted yet,
+write queries return:</p>
+<pre><code>ERROR: cannot execute INSERT in a read-only transaction
+</code></pre>
+<p>Read queries work normally. In a typical switchover, <code>sync_standby</code>
+is promoted before doorman even detects the failure, so most write
+queries succeed. Worst case, write errors last until the reduced
+lifetime expires (30 seconds) and the next connection attempt finds
+the new primary via a fresh <code>/cluster</code> call.</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Add <code>patroni_api_urls</code> to any pool that should use fallback.
+Without this setting, the feature is disabled and doorman behaves
+as before.</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    pool_mode: transaction
+    server_host: "/var/run/postgresql"
+    server_port: 5432
+
+    # Patroni API endpoints. Specify at least 2 for redundancy.
+    # The first URL that responds wins; order does not matter.
+    patroni_api_urls:
+      - "http://10.0.0.1:8008"
+      - "http://10.0.0.2:8008"
+      - "http://10.0.0.3:8008"
+</code></pre>
+<p>TOML equivalent:</p>
+<pre><code class="language-toml">[pools.mydb]
+pool_mode = "transaction"
+server_host = "/var/run/postgresql"
+server_port = 5432
+
+patroni_api_urls = [
+    "http://10.0.0.1:8008",
+    "http://10.0.0.2:8008",
+    "http://10.0.0.3:8008",
+]
+</code></pre>
+<h3 id="tuning-parameters"><a class="header" href="#tuning-parameters">Tuning parameters</a></h3>
+<p>All parameters are optional and have sensible defaults.</p>
+<div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>fallback_cooldown</code></td><td><code>"30s"</code></td><td>How long the local backend stays marked as down after a failed connect. During this window, all new connections go to the fallback host.</td></tr>
+<tr><td><code>patroni_api_timeout</code></td><td><code>"5s"</code></td><td>HTTP timeout for Patroni API requests. Applies per URL; since all URLs are queried in parallel, the effective timeout is this value, not multiplied by the number of URLs.</td></tr>
+<tr><td><code>fallback_connect_timeout</code></td><td><code>"5s"</code></td><td>TCP connect timeout for fallback candidates. Applies to the entire parallel connect batch, not per member.</td></tr>
+<tr><td><code>fallback_lifetime</code></td><td>same as <code>fallback_cooldown</code></td><td>Lifetime of fallback connections. Shorter than normal <code>server_lifetime</code> so the pool returns to the local backend quickly after recovery.</td></tr>
+</tbody></table>
+</div>
+<h3 id="what-to-put-in-patroni_api_urls"><a class="header" href="#what-to-put-in-patroni_api_urls">What to put in <code>patroni_api_urls</code></a></h3>
+<p>List the Patroni REST API addresses of your cluster nodes. The
+<code>/cluster</code> endpoint on any Patroni node returns the full cluster
+topology, so even a single URL is enough to enumerate all members.</p>
+<p>Two or more URLs are recommended: if the first URL points to the same
+machine as the dead PostgreSQL, it won't respond either. Doorman
+queries all URLs in parallel and takes the first response.</p>
+<h2 id="prometheus-metrics"><a class="header" href="#prometheus-metrics">Prometheus metrics</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_patroni_api_requests_total</code></td><td>counter</td><td>Number of <code>/cluster</code> requests made</td></tr>
+<tr><td><code>pg_doorman_fallback_connections_total</code></td><td>counter</td><td>Fallback connections created</td></tr>
+<tr><td><code>pg_doorman_patroni_api_errors_total</code></td><td>counter</td><td>Failed <code>/cluster</code> requests (all URLs unreachable)</td></tr>
+<tr><td><code>pg_doorman_fallback_active</code></td><td>gauge</td><td>1 while the local backend is in cooldown and the pool is using a fallback</td></tr>
+<tr><td><code>pg_doorman_fallback_host</code></td><td>gauge</td><td>Currently active fallback host (1 = active). Labels: pool, host, port</td></tr>
+<tr><td><code>pg_doorman_fallback_cache_hits_total</code></td><td>counter</td><td>Cached fallback host reused without re-querying Patroni</td></tr>
+<tr><td><code>pg_doorman_patroni_api_duration_seconds</code></td><td>histogram</td><td>Time spent fetching <code>/cluster</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="active-transactions"><a class="header" href="#active-transactions">Active transactions</a></h2>
+<p>If PostgreSQL crashes while a client is in the middle of a transaction,
+the client receives a connection error. doorman does not migrate
+in-flight transactions to a fallback host — the client must retry.</p>
+<p>New queries from the same or other clients go through the fallback path
+automatically.</p>
+<h2 id="operational-notes"><a class="header" href="#operational-notes">Operational notes</a></h2>
+<p><strong>Credentials.</strong> All cluster nodes must accept the same username and
+password that doorman uses. Patroni clusters typically share
+<code>pg_hba.conf</code> via bootstrap configuration, but this is not guaranteed.
+Verify that fallback nodes accept the configured credentials.</p>
+<p><strong>TLS.</strong> Fallback connections use the same <code>server_tls_mode</code> as the
+local backend. If the local backend uses a unix socket (no TLS),
+fallback TCP connections will also run without TLS. Configure
+<code>server_tls_mode</code> explicitly if fallback connections must be encrypted.</p>
+<p><strong>DNS.</strong> Use IP addresses in <code>patroni_api_urls</code>, not hostnames.
+DNS resolution failure during a failover adds latency and may cause
+the lookup to fail entirely.</p>
+<p><strong>standby_leader.</strong> Patroni standby clusters use the <code>standby_leader</code>
+role. doorman treats it as "other" (lowest priority, after sync_standby
+and replica). This is correct for most deployments.</p>
+<h2 id="relationship-to-patroni_proxy"><a class="header" href="#relationship-to-patroni_proxy">Relationship to patroni_proxy</a></h2>
+<p>patroni_proxy and Patroni-assisted fallback solve different problems.</p>
+<p><strong>patroni_proxy</strong> is a TCP load balancer deployed near application
+clients. It routes connections to the correct PostgreSQL node based on
+role (leader, sync, async). It does not pool connections.</p>
+<p><strong>Patroni-assisted fallback</strong> is built into the doorman pooler deployed
+next to PostgreSQL. It handles the case where the local backend dies and
+doorman needs a temporary alternative. It does pool connections.</p>
+<p>In the recommended deployment (patroni_proxy → pg_doorman → PostgreSQL),
+fallback keeps read traffic flowing at the doorman layer when the local
+backend dies, without affecting patroni_proxy routing.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/patroni-proxy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/patroni-proxy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+
+
+    </div>
+    </body>
+</html>

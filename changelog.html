@@ -162,6 +162,22 @@
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <h3 id="360-apr-24-2026"><a class="header" href="#360-apr-24-2026">3.6.0 <small>Apr 24, 2026</small></a></h3>
+<h4 id="patroni-assisted-fallback"><a class="header" href="#patroni-assisted-fallback">Patroni-assisted fallback</a></h4>
+<p>When pg_doorman runs next to PostgreSQL on the same machine and connects via unix socket, a Patroni switchover or PostgreSQL crash leaves the pooler without a backend. With <code>patroni_api_urls</code> configured, pg_doorman queries the Patroni REST API <code>/cluster</code> endpoint, picks a live cluster member, and routes new connections there.</p>
+<p>Candidate selection: <code>sync_standby</code> first (most likely next leader), then <code>replica</code>, then any other member. Members with <code>noloadbalance</code>, <code>nofailover</code>, or <code>archive</code> tags are excluded. All candidates are TCP-probed in parallel; the first responding <code>sync_standby</code> wins immediately.</p>
+<p>The local backend stays in cooldown for <code>fallback_cooldown</code> (default 30s). During the cooldown, subsequent connection requests reuse the cached fallback host without re-querying Patroni. Fallback connections use a short <code>fallback_lifetime</code> (defaults to <code>fallback_cooldown</code>) so the pool returns to the local backend once it recovers.</p>
+<p>Configuration:</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    patroni_api_urls:
+      - "http://10.0.0.1:8008"
+      - "http://10.0.0.2:8008"
+    fallback_cooldown: "30s"
+    patroni_api_timeout: "5s"
+    fallback_connect_timeout: "5s"
+</code></pre>
+<p>Prometheus metrics: <code>pg_doorman_patroni_api_requests_total</code>, <code>pg_doorman_fallback_connections_total</code>, <code>pg_doorman_patroni_api_errors_total</code>, <code>pg_doorman_fallback_active</code>, <code>pg_doorman_patroni_api_duration_seconds</code>, <code>pg_doorman_fallback_host</code>, <code>pg_doorman_fallback_cache_hits_total</code>.</p>
+<p>If you tracked this feature under its working name in 3.5.x dev builds, the config keys and metric names changed before the public release: <code>patroni_discovery_urls</code> → <code>patroni_api_urls</code>, <code>failover_blacklist_duration</code> → <code>fallback_cooldown</code>, <code>failover_discovery_timeout</code> → <code>patroni_api_timeout</code>, <code>failover_connect_timeout</code> → <code>fallback_connect_timeout</code>, <code>failover_server_lifetime</code> → <code>fallback_lifetime</code>. Old <code>pg_doorman_failover_*</code> metrics are renamed to <code>pg_doorman_patroni_api_*</code> / <code>pg_doorman_fallback_*</code>.</p>
 <h4 id="server-side-tls-pg_doorman--postgresql"><a class="header" href="#server-side-tls-pg_doorman--postgresql">Server-side TLS (pg_doorman → PostgreSQL)</a></h4>
 <p>Six SSL modes matching libpq semantics: <code>disable</code>, <code>allow</code> (default), <code>prefer</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>. Mutual TLS supported via <code>server_tls_certificate</code> / <code>server_tls_private_key</code>.</p>
 <p>Configuration is per-pool with global defaults in <code>[general]</code>. Cancel requests use TLS when the main connection used TLS.</p>
