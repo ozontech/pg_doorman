@@ -281,10 +281,15 @@ impl FailoverState {
 
         // Clear cached future on error so the next caller retries fresh
         // instead of inheriting the same failure for up to INFLIGHT_STALENESS.
-        // Only the creator clears. If the creator's await ran longer than
-        // INFLIGHT_STALENESS, another task may have already installed a
-        // fresh inflight; this clear can wipe it. Worst case is one extra
-        // /cluster request — accepted to keep the cleanup branch simple.
+        //
+        // Only the creator clears. Joiners share the same shared future
+        // and would compound the wipe-fresh-inflight race described below
+        // — every failed task contending for the slot multiplies the
+        // chance of erasing someone else's healthy inflight. If the
+        // creator's await itself ran longer than INFLIGHT_STALENESS,
+        // another task may have already installed a fresh inflight and
+        // this clear can wipe it. Worst case is one extra /cluster
+        // request — accepted to keep the cleanup branch simple.
         if is_creator && result.is_err() {
             let mut guard = self.inflight.lock().await;
             *guard = None;
