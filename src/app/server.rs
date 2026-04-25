@@ -878,10 +878,12 @@ async fn binary_upgrade_and_shutdown(
 fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
     tokio::task::spawn(async move {
         let clients_in_tx = CLIENTS_IN_TRANSACTIONS.load(Ordering::Relaxed);
+        let clients_total = CURRENT_CLIENT_COUNT.load(Ordering::Relaxed);
         info!(
-            "waiting for {} client{} in transactions",
-            clients_in_tx,
-            if clients_in_tx == 1 { "" } else { "s" }
+            "waiting for {} client{} to disconnect ({} in transactions)",
+            clients_total,
+            if clients_total == 1 { "" } else { "s" },
+            clients_in_tx
         );
 
         // Poll frequently to detect client count reaching zero quickly,
@@ -915,7 +917,9 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
 
             if start.elapsed() >= shutdown_timeout {
                 error!(
-                    "Graceful shutdown timed out. {} active clients in transactions being closed",
+                    "Graceful shutdown timed out. {} client{} remain ({} in transactions), closing forcibly",
+                    clients_total,
+                    if clients_total == 1 { "" } else { "s" },
                     clients_in_tx
                 );
                 let _ = exit_tx.send(()).await;
