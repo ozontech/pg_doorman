@@ -54,7 +54,7 @@ install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg lsb-release gettext-base
+    ca-certificates curl gnupg lsb-release
   install -d /usr/share/postgresql-common/pgdg
   curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
@@ -69,6 +69,12 @@ EOF
     pgbouncer postgresql-client \
     build-essential pkg-config libssl-dev libpq-dev cmake git \
     netcat-openbsd openssl jq runit
+  # The Ubuntu/PGDG packages auto-start postgres on 5432 and pgbouncer on
+  # 6432 — exactly the ports our runit instances want to claim. Without
+  # disabling them, our pg_doorman silently loses 6432 to the system
+  # pgbouncer and pgbench then talks to the wrong process.
+  systemctl stop postgresql pgbouncer 2>/dev/null || true
+  systemctl disable postgresql pgbouncer 2>/dev/null || true
 }
 
 install_rust() {
@@ -326,10 +332,11 @@ cleanup() {
     kill "$RUNSVDIR_PID" 2>/dev/null || true
     wait "$RUNSVDIR_PID" 2>/dev/null || true
   fi
-  # Always copy service logs into the results dir so even a failed run gives
-  # us something to debug.
+  # Always copy service logs and the wrapper output into the results dir so
+  # even a failed run gives us something to debug.
   mkdir -p "$RESULTS_DIR"
-  for f in /tmp/doorman.log /tmp/odyssey.log /tmp/pgbouncer.log /tmp/pg.log; do
+  for f in /tmp/doorman.log /tmp/odyssey.log /tmp/pgbouncer.log /tmp/pg.log \
+           /tmp/bench.out /tmp/bench-wrap.log; do
     [[ -f "$f" ]] && cp -f "$f" "$RESULTS_DIR/" 2>/dev/null || true
   done
   if [[ -d "$RESULTS_DIR" ]]; then
@@ -337,10 +344,28 @@ cleanup() {
   fi
 }
 
+substitute_pgbench_placeholders() {
+  # Replace the ${VAR} markers from bench.feature with concrete values using
+  # bash parameter expansion. This used to be 'envsubst' but that depended on
+  # exporting every var into the environment; one accidental shadowing left
+  # literal '${PGBENCH_FILE}' in pgbench's argv and caused 'env: '\'''\'':
+  # No such file or directory' for those rounds.
+  local s=$1
+  s="${s//\${DOORMAN_PORT\}/$DOORMAN_PORT}"
+  s="${s//\${ODYSSEY_PORT\}/$ODYSSEY_PORT}"
+  s="${s//\${PGBOUNCER_PORT\}/$PGBOUNCER_PORT}"
+  s="${s//\${PGBENCH_FILE\}/$PGBENCH_FILE}"
+  s="${s//\${PGBENCH_JOBS_C1\}/$PGBENCH_JOBS_C1}"
+  s="${s//\${PGBENCH_JOBS_C40\}/$PGBENCH_JOBS_C40}"
+  s="${s//\${PGBENCH_JOBS_C120\}/$PGBENCH_JOBS_C120}"
+  s="${s//\${PGBENCH_JOBS_C500\}/$PGBENCH_JOBS_C500}"
+  s="${s//\${PGBENCH_JOBS_C10000\}/$PGBENCH_JOBS_C10000}"
+  s="${s// -T 30 / -T $BENCH_DURATION }"
+  printf '%s' "$s"
+}
+
 run_all_pgbench() {
   mkdir -p "$RESULTS_DIR"
-  export DOORMAN_PORT ODYSSEY_PORT PGBOUNCER_PORT PGBENCH_FILE
-  export PGBENCH_JOBS_C1 PGBENCH_JOBS_C40 PGBENCH_JOBS_C120 PGBENCH_JOBS_C500 PGBENCH_JOBS_C10000
 
   local total=0
   local failed=0
@@ -348,8 +373,7 @@ run_all_pgbench() {
     [[ -z "$name" ]] && continue
     total=$((total+1))
     local args_subst
-    args_subst=$(printf '%s' "$args" | envsubst)
-    args_subst="${args_subst// -T 30 / -T $BENCH_DURATION }"
+    args_subst=$(substitute_pgbench_placeholders "$args")
     # Hard wall-clock cap: BENCH_DURATION plus a generous buffer for the
     # connect/warmup phase (10k-client scenarios spend tens of seconds opening
     # sockets before the timed window even starts).
