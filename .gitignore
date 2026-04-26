@@ -34,6 +34,9 @@ documentation/en/src/reference/
 documentation/en/mdbook-admonish.css
 documentation/en/mermaid-init.js
 documentation/en/mermaid.min.js
+documentation/ru/mdbook-admonish.css
+documentation/ru/mermaid-init.js
+documentation/ru/mermaid.min.js
 
 # bv (beads viewer) local config and caches
 .bv/
