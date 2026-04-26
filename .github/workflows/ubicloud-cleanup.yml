@@ -11,13 +11,6 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      vm_location:
-        description: 'Ubicloud location to scan'
-        required: false
-        default: 'eu-central-h1'
-        type: choice
-        options:
-          - eu-central-h1
       name_prefix:
         description: 'Only touch VMs whose name starts with this'
         required: false
@@ -42,7 +35,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           PREFIX: ${{ inputs.name_prefix }}
         run: |
           set -euo pipefail
@@ -69,7 +62,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           NAMES: ${{ steps.list.outputs.names }}
         run: |
           set -uo pipefail

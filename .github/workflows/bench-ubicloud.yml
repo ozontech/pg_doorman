@@ -17,13 +17,6 @@ on:
           - standard-16
           - standard-30
           - standard-60
-      vm_location:
-        description: 'Ubicloud location'
-        required: false
-        default: 'eu-central-h1'
-        type: choice
-        options:
-          - eu-central-h1
       bench_duration:
         description: 'Seconds per pgbench run'
         required: false
@@ -69,7 +62,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           SIZE: ${{ inputs.vm_size }}
         run: |
           set -euo pipefail
@@ -100,7 +93,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
         run: |
           set -euo pipefail
@@ -259,7 +252,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
         run: |
           curl -sS -w 'HTTP:%{http_code}\n' -X DELETE \
@@ -301,6 +294,6 @@ jobs:
           # Create Pull Request to master
           gh pr create \
             --title "Update Ubicloud benchmark results" \
-            --body "Automated benchmark results from Ubicloud (${{ inputs.vm_size }}, ${{ inputs.vm_location }}). This PR updates the benchmark comparison table in documentation/en/src/benchmarks.md." \
+            --body "Automated benchmark results from Ubicloud (${{ inputs.vm_size }}, eu-central-h1). This PR updates the benchmark comparison table in documentation/en/src/benchmarks.md." \
             --base "master" \
             --head "$BRANCH_NAME"
