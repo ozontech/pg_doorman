@@ -5,8 +5,11 @@
 [![BDD Tests](https://github.com/ozontech/pg_doorman/actions/workflows/bdd-tests.yml/badge.svg)](https://github.com/ozontech/pg_doorman/actions/workflows/bdd-tests.yml)
 [![Library Tests](https://github.com/ozontech/pg_doorman/actions/workflows/lib-tests.yml/badge.svg)](https://github.com/ozontech/pg_doorman/actions/workflows/lib-tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-ozontech.github.io%2Fpg__doorman-blue)](https://ozontech.github.io/pg_doorman/)
 
 A high-performance multithreaded PostgreSQL connection pooler built in Rust. Does one thing and does it well — pools connections so your PostgreSQL handles thousands of clients without breaking a sweat.
+
+**📖 Documentation:** [ozontech.github.io/pg_doorman](https://ozontech.github.io/pg_doorman/) ([Russian](https://ozontech.github.io/pg_doorman/ru/)) — full reference, tutorials, comparison with PgBouncer/Odyssey, benchmarks.
 
 ## Why PgDoorman?
 
