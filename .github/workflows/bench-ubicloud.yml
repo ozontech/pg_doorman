@@ -36,10 +36,6 @@ on:
         description: 'pgbench -j for c40/c120/c500/c10000 (c1 stays at 1)'
         required: false
         default: '4'
-      storage_gib:
-        description: 'VM storage size (GiB)'
-        required: false
-        default: '80'
       create_pr:
         description: 'Open a PR with the new benchmarks.md (uncheck for smoke runs)'
         required: false
@@ -75,21 +71,26 @@ jobs:
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
           LOCATION: ${{ inputs.vm_location }}
           SIZE: ${{ inputs.vm_size }}
-          STORAGE: ${{ inputs.storage_gib }}
         run: |
           set -euo pipefail
           VM_NAME="bench-${{ github.run_id }}-${{ github.run_attempt }}"
           BODY=$(jq -n \
             --arg pk "$PUBKEY" \
             --arg size "$SIZE" \
-            --argjson storage "$STORAGE" \
-            '{public_key:$pk, size:$size, unix_user:"ubuntu", enable_ip4:true, storage_size_gib:$storage}')
-          RESP=$(curl -fsS -X POST \
+            '{public_key:$pk, size:$size, unix_user:"ubuntu", enable_ip4:true}')
+          # Capture body and HTTP code so a failure surfaces the API's
+          # validation message instead of a bare curl exit code.
+          CODE=$(curl -sS -o /tmp/vm-create.json -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$BODY" \
             "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$VM_NAME")
-          VM_ID=$(echo "$RESP" | jq -r '.id')
+          if [[ "$CODE" != "200" && "$CODE" != "201" ]]; then
+            echo "VM create failed: HTTP $CODE"
+            cat /tmp/vm-create.json
+            exit 1
+          fi
+          VM_ID=$(jq -r '.id' /tmp/vm-create.json)
           echo "VM created: id=$VM_ID name=$VM_NAME"
           echo "vm_name=$VM_NAME" >> "$GITHUB_OUTPUT"
           echo "vm_id=$VM_ID" >> "$GITHUB_OUTPUT"
