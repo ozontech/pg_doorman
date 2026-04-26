@@ -1,0 +1,240 @@
+name: Ubicloud Benchmarks
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      vm_size:
+        description: 'Ubicloud VM size (cores/RAM grow with the suffix)'
+        required: false
+        default: 'standard-30'
+        type: choice
+        options:
+          - standard-8
+          - standard-16
+          - standard-30
+          - standard-60
+      vm_location:
+        description: 'Ubicloud location'
+        required: false
+        default: 'eu-central-h1'
+        type: choice
+        options:
+          - eu-central-h1
+      bench_duration:
+        description: 'Seconds per pgbench run'
+        required: false
+        default: '30'
+      doorman_workers:
+        description: 'worker_threads for pg_doorman and odyssey'
+        required: false
+        default: '12'
+      pgbench_jobs:
+        description: 'pgbench -j for c40/c120/c500/c10000 (c1 stays at 1)'
+        required: false
+        default: '4'
+      storage_gib:
+        description: 'VM storage size (GiB)'
+        required: false
+        default: '80'
+
+env:
+  UBICLOUD_API: https://api.ubicloud.com
+
+jobs:
+  bench:
+    name: Bench on Ubicloud (${{ inputs.vm_size }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate ephemeral SSH key
+        run: |
+          set -euo pipefail
+          ssh-keygen -t ed25519 -f /tmp/bench_key -N '' -q -C "ubicloud-bench-${{ github.run_id }}"
+          chmod 600 /tmp/bench_key
+          {
+            echo 'PUBKEY<<KEYEOF'
+            cat /tmp/bench_key.pub
+            echo 'KEYEOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Create Ubicloud VM
+        id: create_vm
+        env:
+          TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
+          PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
+          LOCATION: ${{ inputs.vm_location }}
+          SIZE: ${{ inputs.vm_size }}
+          STORAGE: ${{ inputs.storage_gib }}
+        run: |
+          set -euo pipefail
+          VM_NAME="bench-${{ github.run_id }}-${{ github.run_attempt }}"
+          BODY=$(jq -n \
+            --arg pk "$PUBKEY" \
+            --arg size "$SIZE" \
+            --argjson storage "$STORAGE" \
+            '{public_key:$pk, size:$size, unix_user:"ubuntu", enable_ip4:true, storage_size_gib:$storage}')
+          RESP=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$VM_NAME")
+          VM_ID=$(echo "$RESP" | jq -r '.id')
+          echo "VM created: id=$VM_ID name=$VM_NAME"
+          echo "vm_name=$VM_NAME" >> "$GITHUB_OUTPUT"
+          echo "vm_id=$VM_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for VM running
+        id: wait_vm
+        env:
+          TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
+          PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
+          LOCATION: ${{ inputs.vm_location }}
+          VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            RESP=$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+              "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$VM_NAME")
+            STATE=$(echo "$RESP" | jq -r '.state')
+            IP=$(echo "$RESP" | jq -r '.ip4 // empty')
+            printf '[%s] state=%s ip=%s\n' "$i" "$STATE" "${IP:-none}"
+            if [[ "$STATE" == "running" && -n "$IP" ]]; then
+              echo "ip=$IP" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "VM did not become running in 5 minutes" >&2
+          exit 1
+
+      - name: Wait for SSH
+        env:
+          IP: ${{ steps.wait_vm.outputs.ip }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if ssh -i /tmp/bench_key \
+                  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o ConnectTimeout=5 -o LogLevel=ERROR \
+                  ubuntu@"$IP" true 2>/dev/null; then
+              echo "ssh ready"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "ssh did not respond" >&2
+          exit 1
+
+      - name: Upload source to VM
+        env:
+          IP: ${{ steps.wait_vm.outputs.ip }}
+        run: |
+          set -euo pipefail
+          git archive --format=tar HEAD -o /tmp/source.tar
+          scp -i /tmp/bench_key \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            /tmp/source.tar ubuntu@"$IP":/tmp/source.tar
+          ssh -i /tmp/bench_key \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$IP" \
+            'sudo mkdir -p /workspace && sudo chown "$USER" /workspace && tar -C /workspace -xf /tmp/source.tar'
+
+      - name: Run setup-and-run-bench.sh on VM
+        env:
+          IP: ${{ steps.wait_vm.outputs.ip }}
+          BENCH_DURATION: ${{ inputs.bench_duration }}
+          WORKERS: ${{ inputs.doorman_workers }}
+          PGBENCH_JOBS: ${{ inputs.pgbench_jobs }}
+        run: |
+          set -euo pipefail
+          # The script requires root (apt, initdb, runuser).
+          ssh -i /tmp/bench_key \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=60 -o ServerAliveCountMax=30 \
+            ubuntu@"$IP" \
+            "sudo WORKSPACE=/workspace \
+                 BENCH_DURATION=$BENCH_DURATION \
+                 BENCH_DOORMAN_WORKERS=$WORKERS \
+                 BENCH_ODYSSEY_WORKERS=$WORKERS \
+                 BENCH_PGBENCH_JOBS_C40=$PGBENCH_JOBS \
+                 BENCH_PGBENCH_JOBS_C120=$PGBENCH_JOBS \
+                 BENCH_PGBENCH_JOBS_C500=$PGBENCH_JOBS \
+                 BENCH_PGBENCH_JOBS_C10000=$PGBENCH_JOBS \
+                 bash /workspace/benches/setup-and-run-bench.sh"
+
+      - name: Download bench-results.tar.gz
+        id: download
+        if: always() && steps.wait_vm.outputs.ip != ''
+        env:
+          IP: ${{ steps.wait_vm.outputs.ip }}
+        run: |
+          mkdir -p artifacts
+          if scp -i /tmp/bench_key \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              ubuntu@"$IP":/tmp/bench-results.tar.gz artifacts/bench-results.tar.gz; then
+            ls -lh artifacts/bench-results.tar.gz
+            echo "got_tarball=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no tarball produced"
+            echo "got_tarball=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Parse logs into benchmarks.md
+        if: steps.download.outputs.got_tarball == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p documentation/en/src
+          python3 benches/parse-bench-logs.py \
+            artifacts/bench-results.tar.gz \
+            documentation/en/src/benchmarks.md
+          head -60 documentation/en/src/benchmarks.md
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubicloud-bench-${{ github.run_number }}
+          path: artifacts/
+          retention-days: 30
+
+      - name: Delete VM
+        if: always() && steps.create_vm.outputs.vm_name != ''
+        env:
+          TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
+          PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
+          LOCATION: ${{ inputs.vm_location }}
+          VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
+        run: |
+          curl -sS -w 'HTTP:%{http_code}\n' -X DELETE \
+            -H "Authorization: Bearer $TOKEN" \
+            "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$VM_NAME" || true
+
+      - name: Create PR with benchmarks.md
+        if: steps.download.outputs.got_tarball == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          BRANCH="ubicloud-bench-results-$(date +%Y%m%d-%H%M%S)"
+          cp documentation/en/src/benchmarks.md /tmp/benchmarks.md.tmp
+          git fetch origin master
+          git checkout -b "$BRANCH" origin/master
+          mv /tmp/benchmarks.md.tmp documentation/en/src/benchmarks.md
+          git add documentation/en/src/benchmarks.md
+          if git diff --staged --quiet; then
+            echo "no changes to commit"; exit 0
+          fi
+          git commit -m "Update Ubicloud benchmark results [skip ci]"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "Update Ubicloud benchmark results (${{ inputs.vm_size }})" \
+            --body "Automated benchmark on Ubicloud (${{ inputs.vm_size }}, ${{ inputs.vm_location }}, duration ${{ inputs.bench_duration }}s)." \
+            --base master --head "$BRANCH"
