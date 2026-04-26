@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>Signals and Reload - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/operations/signals.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,104 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="signals-and-reload"><a class="header" href="#signals-and-reload">Signals and Reload</a></h1>
+<p>PgDoorman responds to four POSIX signals: <code>SIGHUP</code>, <code>SIGINT</code>, <code>SIGUSR2</code>, and <code>SIGTERM</code>. Each does one specific thing.</p>
+<h2 id="quick-reference"><a class="header" href="#quick-reference">Quick reference</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Signal</th><th>Effect</th><th>Existing connections</th><th>When to use</th></tr></thead><tbody>
+<tr><td><code>SIGHUP</code></td><td>Reload config from disk.</td><td>Preserved.</td><td>Adjust pools, rotate server TLS certs, edit <code>pg_hba.conf</code>.</td></tr>
+<tr><td><code>SIGTERM</code></td><td>Graceful shutdown.</td><td>Drained until idle, then closed.</td><td>Stopping the service.</td></tr>
+<tr><td><code>SIGUSR2</code></td><td>Graceful binary upgrade.</td><td>Migrated to a new process.</td><td>Replacing the binary without downtime.</td></tr>
+<tr><td><code>SIGINT</code></td><td>Depends on TTY (see below).</td><td>Varies.</td><td>Ctrl+C in development; deprecated in production.</td></tr>
+</tbody></table>
+</div>
+<h2 id="reload-sighup"><a class="header" href="#reload-sighup">Reload (<code>SIGHUP</code>)</a></h2>
+<pre><code class="language-bash">kill -HUP $(pidof pg_doorman)
+</code></pre>
+<p>Re-reads the config file and applies changes. What reloads:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>Pool definitions (added, removed, resized).</li>
+<li>User lists, passwords, <code>auth_query</code> blocks.</li>
+<li><code>pg_hba.conf</code> rules (file or inline content).</li>
+<li>Server-side TLS certificates and CA bundles (lock-free swap; existing TLS connections keep their original context).</li>
+<li>Talos and JWT public keys.</li>
+<li>Log level and format.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
+<p>What does <strong>not</strong> reload:</p>
 <ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+<li><code>general.host</code>, <code>general.port</code> — listening socket is fixed at startup.</li>
+<li>Client-side TLS certificates — process restart required, or use binary upgrade.</li>
+<li>Worker thread count and Tokio runtime parameters.</li>
 </ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
+<p>After reload, <code>SHOW CONFIG</code> reflects the new values. Existing client connections are not re-evaluated against the new <code>pg_hba.conf</code> — only new connections.</p>
+<h2 id="graceful-shutdown-sigterm"><a class="header" href="#graceful-shutdown-sigterm">Graceful shutdown (<code>SIGTERM</code>)</a></h2>
+<pre><code class="language-bash">kill -TERM $(pidof pg_doorman)
+</code></pre>
+<p>PgDoorman:</p>
+<ol>
+<li>Stops accepting new connections.</li>
+<li>Closes idle backend connections.</li>
+<li>Logs how many clients are still in transactions.</li>
+<li>Waits up to <code>shutdown_timeout</code> (default 10s) for clients to finish.</li>
+<li>Exits.</li>
+</ol>
+<p><code>shutdown_timeout</code> is a hard cap. Clients still in transactions when it fires receive a connection close.</p>
+<pre><code class="language-yaml">general:
+  shutdown_timeout: "30s"
+</code></pre>
+<p>For systemd, set <code>TimeoutStopSec</code> to a value larger than <code>shutdown_timeout</code> so systemd does not <code>SIGKILL</code> while PgDoorman is still draining.</p>
+<h2 id="binary-upgrade-sigusr2"><a class="header" href="#binary-upgrade-sigusr2">Binary upgrade (<code>SIGUSR2</code>)</a></h2>
+<pre><code class="language-bash">kill -USR2 $(pidof pg_doorman)
+</code></pre>
+<p>The recommended way to replace the binary without dropping clients:</p>
+<ol>
+<li>Replace the binary on disk with the new version.</li>
+<li>Send <code>SIGUSR2</code> to the running process.</li>
+<li>The current process spawns a child running the new binary, hands over the listening socket, and continues serving existing clients until they finish.</li>
+<li>New clients connect to the child immediately.</li>
+<li>The old process exits when the last client transaction completes (or on <code>shutdown_timeout</code>).</li>
+</ol>
+<p>The child sends <code>sd_notify MAINPID=&lt;new_pid&gt;</code> so systemd <code>Type=notify</code> units update their main PID seamlessly.</p>
+<p>For the full protocol, TLS migration, and rollback, see <a href="../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
+<h2 id="sigint-ctrlc"><a class="header" href="#sigint-ctrlc"><code>SIGINT</code> (Ctrl+C)</a></h2>
+<p><code>SIGINT</code> is context-sensitive:</p>
 <ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
+<li><strong>Foreground with a TTY</strong> (development, <code>cargo run</code>): graceful shutdown only.</li>
+<li><strong>Daemon mode or no TTY</strong> (legacy production): triggers a binary upgrade + graceful shutdown, like <code>SIGUSR2</code>.</li>
 </ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
+<p>The legacy <code>SIGINT</code> upgrade path exists for backward compatibility with deployments that send <code>SIGINT</code> from init scripts. New deployments should use <code>SIGUSR2</code> for upgrade and <code>SIGTERM</code> for shutdown explicitly.</p>
+<h2 id="systemd-integration"><a class="header" href="#systemd-integration">systemd integration</a></h2>
+<p>PgDoorman supports <code>Type=notify</code>. The shipped <code>pg_doorman.service</code> unit runs the binary in the foreground and notifies systemd via <code>sd_notify</code>:</p>
+<pre><code class="language-ini">[Service]
+Type=notify
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman/pg_doorman.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Restart=on-failure
+</code></pre>
+<p><code>sd_notify READY=1</code> is sent after the listening socket is bound and pools are initialized. <code>sd_notify MAINPID=&lt;child&gt;</code> is sent during binary upgrade so systemd tracks the new process correctly.</p>
+<p>If you migrate from <code>Type=forking</code> + <code>--daemon</code>, drop <code>--daemon</code> and switch to <code>Type=notify</code> — fewer moving parts and proper readiness tracking. Older deployments using <code>--daemon</code> continue to work but do not benefit from <code>sd_notify</code>.</p>
+<h2 id="daemon-mode"><a class="header" href="#daemon-mode">Daemon mode</a></h2>
+<p><code>pg_doorman --daemon</code> forks into the background and writes its PID to <code>daemon_pid_file</code> (default <code>/tmp/pg_doorman.pid</code>). For systemd users, prefer <code>Type=notify</code> over <code>--daemon</code>.</p>
+<pre><code class="language-yaml">general:
+  daemon_pid_file: "/var/run/pg_doorman.pid"
+</code></pre>
+<h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
 <ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
+<li><a href="../tutorials/binary-upgrade.html">Binary Upgrade</a> — full upgrade protocol with TLS migration.</li>
+<li><a href="../tutorials/troubleshooting.html">Troubleshooting</a> — what to check when reload does not pick up changes.</li>
+<li><a href="../guides/tls.html#hot-reload">TLS</a> — <code>SIGHUP</code> reload semantics for server-side certificates.</li>
 </ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../tutorials/binary-upgrade.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +267,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../tutorials/binary-upgrade.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../tutorials/troubleshooting.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

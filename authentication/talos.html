@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>Talos - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/authentication/talos.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,89 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="talos-authentication"><a class="header" href="#talos-authentication">Talos Authentication</a></h1>
+<p>Talos is a JWT-based authentication scheme developed at Ozon. The token carries a role assignment per database in its <code>resource_access</code> claim, and PgDoorman extracts the highest role to pick the backend identity. Multiple signing keys are supported via the <code>kid</code> header.</p>
+<p>If you operate inside Ozon's Talos identity stack, this is the integration. Outside, prefer plain <a href="jwt.html">JWT</a>.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<ol>
+<li>A client connects with username <code>talos</code> and a JWT as the password.</li>
+<li>PgDoorman reads the <code>kid</code> field from the JWT header and looks up the matching public key in <code>general.talos.keys</code>.</li>
+<li>The token is verified (RS256, <code>exp</code>, <code>nbf</code>).</li>
+<li>PgDoorman walks <code>resource_access</code> keys, splits each on <code>:</code>, and matches the part <strong>after the colon</strong> against <code>general.talos.databases</code>. So a key like <code>"postgres.stg:billing"</code> matches the <code>billing</code> database. The roles from every matching entry are collected; the highest wins (<code>owner</code> &gt; <code>read_write</code> &gt; <code>read_only</code>).</li>
+<li>The connection is authenticated against a pool user named after the role: <code>owner</code>, <code>read_write</code>, or <code>read_only</code>. That user must exist in the pool with <code>server_username</code> and <code>server_password</code> configured.</li>
+</ol>
+<p>The client identity (<code>clientId</code> from the token) is preserved in <code>application_name</code> and audit logs.</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<pre><code class="language-yaml">general:
+  host: "0.0.0.0"
+  port: 6432
+  talos:
+    keys:
+      - "/etc/pg_doorman/talos/keys/abc123.pem"
+      - "/etc/pg_doorman/talos/keys/def456.pem"
+    databases:
+      - "billing"
+      - "inventory"
+
+pools:
+  billing:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "owner"
+        server_username: "billing_owner"
+        server_password: "md5..."
+        pool_size: 20
+      - username: "read_write"
+        server_username: "billing_app"
+        server_password: "md5..."
+        pool_size: 40
+      - username: "read_only"
+        server_username: "billing_ro"
+        server_password: "md5..."
+        pool_size: 60
+</code></pre>
+<p>The file stem of each key (<code>abc123</code>, <code>def456</code>) is the <code>kid</code> matched against the JWT header.</p>
+<p><code>databases</code> is a filter: only listed databases are eligible for Talos. A token without an entry for the requested database is rejected.</p>
+<h2 id="token-shape"><a class="header" href="#token-shape">Token shape</a></h2>
+<pre><code class="language-json">{
+  "kid": "abc123",
+  "alg": "RS256"
+}
+.
+{
+  "exp": 1714500000,
+  "nbf": 1714400000,
+  "clientId": "billing-service",
+  "resource_access": {
+    "postgres.stg:billing": { "roles": ["read_write"] },
+    "postgres.stg:inventory": { "roles": ["read_only", "read_write"] }
+  }
+}
+</code></pre>
+<p><code>resource_access</code> keys must include a colon. PgDoorman ignores everything before it and matches the suffix against <code>general.talos.databases</code>. A token built without the colon prefix will produce no role and authentication will fail with "Token may not contain valid roles for the requested databases".</p>
+<p>A client connecting to <code>inventory</code> with this token lands in the <code>read_write</code> user (max of the two listed roles).</p>
+<h2 id="dispatch-order"><a class="header" href="#dispatch-order">Dispatch order</a></h2>
+<p>Talos has highest priority. If a client connects with username <code>talos</code> and <code>general.talos.keys</code> is non-empty, no other authentication method is tried.</p>
+<p>See <a href="overview.html#dispatch-order">Overview</a>.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>Talos requires the special <code>talos</code> username. Non-Talos clients use other authentication methods normally.</li>
+<li>The role-to-user mapping is fixed: <code>owner</code>, <code>read_write</code>, <code>read_only</code>. Custom role names need code changes.</li>
+<li>Multiple roles in the same <code>resource_access</code> entry collapse to the maximum. There is no "deny" semantics.</li>
+<li>Public keys are loaded once at startup and reloaded on <code>SIGHUP</code>.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
-<ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
-</ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
-<ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
-</ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
-<ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
-</ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../authentication/jwt.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../authentication/hba.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +252,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../authentication/jwt.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../authentication/hba.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

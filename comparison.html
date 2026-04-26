@@ -1,0 +1,348 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Comparison - PgDoorman Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="css/custom.css">
+        <link rel="stylesheet" href="mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">PgDoorman Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/comparison.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat">PgDoorman vs PgBouncer vs Odyssey vs PgCat</a></h1>
+<p>A practical feature matrix for choosing a PostgreSQL connection pooler. PgDoorman targets workloads where prepared statements in transaction mode, multithreaded performance, and operational ergonomics matter.</p>
+<p>For benchmark numbers, see <a href="benchmarks.html">Benchmarks</a>.</p>
+<h2 id="authentication"><a class="header" href="#authentication">Authentication</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>MD5 password</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>SCRAM-SHA-256 (client)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>SCRAM-SHA-256 passthrough (no plaintext password in config)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>MD5 passthrough</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>auth_query</code> (dynamic users)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>auth_query</code> passthrough mode (per-user backend identity)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>pg_hba.conf</code> format</td><td style="text-align: center">Yes (file or inline)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.4</td></tr>
+<tr><td>PAM</td><td style="text-align: center">Yes (Linux)</td><td style="text-align: center">Yes (HBA)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>JWT (RSA-SHA256)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Talos (custom JWT with role extraction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes</td></tr>
+<tr><td>SCRAM channel binding (<code>scram-sha-256-plus</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>User name maps (cert/peer → DB user)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Tunable <code>scram_iterations</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="authentication/overview.html">Authentication</a>.</p>
+<h2 id="tls"><a class="header" href="#tls">TLS</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Client-side TLS (4 modes: disable, allow, require, verify-full)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Server-side TLS to PostgreSQL (6 modes incl. verify-ca, verify-full)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>mTLS to PostgreSQL (client cert)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Hot reload of TLS certificates on <code>SIGHUP</code></td><td style="text-align: center">Yes (server-side)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Minimum TLS 1.2 + Mozilla cipher list</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No (allows TLS 1.0)</td></tr>
+<tr><td>Direct TLS handshake (PG17, no <code>SSLRequest</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+<tr><td>TLS 1.3 cipher control</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="guides/tls.html">TLS</a>.</p>
+<h2 id="routing-and-high-availability"><a class="header" href="#routing-and-high-availability">Routing and high availability</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Patroni-assisted fallback (built-in <code>/cluster</code> lookup)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Bundled TCP proxy with role-based routing (<code>patroni_proxy</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Replica lag guard</td><td style="text-align: center">Yes (<code>max_lag_in_bytes</code> in <code>patroni_proxy</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (watchdog query)</td></tr>
+<tr><td>Round-robin / least-connections multi-host</td><td style="text-align: center">Yes (<code>patroni_proxy</code>)</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>target_session_attrs</code> (read-write / read-only)</td><td style="text-align: center">Yes (via <code>patroni_proxy</code> roles)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Sequential routing (rules in order)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Connection type routing (TCP vs UNIX)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Availability zone-aware host selection</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a>, <a href="tutorials/patroni-proxy.html"><code>patroni_proxy</code></a>.</p>
+<h2 id="pooling"><a class="header" href="#pooling">Pooling</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Pool modes (transaction, session)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (+ statement)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Pool Coordinator (cross-user <code>max_db_connections</code> with priority eviction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (no eviction)</td><td style="text-align: center">No</td></tr>
+<tr><td>Reserve pool with <code>min_guaranteed_pool_size</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Reserve only</td><td style="text-align: center">No</td></tr>
+<tr><td>Pre-replacement on <code>server_lifetime</code> expiry</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Anticipation/burst scaling (<code>scaling_warm_pool_ratio</code>, fast retries)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Direct-handoff (waiter receives returning connection in microseconds)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>min_pool_size</code> (warm connections)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Prepared statement cache (two-level, query interner, statement remap)</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.21</td><td style="text-align: center">Since 1.3</td></tr>
+<tr><td>Smart <code>DISCARD</code> on checkin</td><td style="text-align: center">RESET ALL + drop cache</td><td style="text-align: center">No</td><td style="text-align: center">Yes (auto)</td></tr>
+<tr><td>LISTEN / NOTIFY pinning in transaction mode</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Experimental</td></tr>
+<tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.5.1</td></tr>
+<tr><td><code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (1.4.1+)</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="concepts/pool-coordinator.html">Pool Coordinator</a>, <a href="tutorials/pool-pressure.html">Pool pressure</a>.</p>
+<h2 id="limits-and-timeouts"><a class="header" href="#limits-and-timeouts">Limits and timeouts</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td><code>server_idle_check_timeout</code> (probe before checkout)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>idle_timeout</code> (server connection)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>server_lifetime</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>query_wait_timeout</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>client_idle_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
+<tr><td><code>transaction_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+<tr><td><code>max_user_client_connections</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>query_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>reserve_pool_size</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
+<tr><td><code>query_wait_notify</code> (NOTICE while waiting for backend)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes (<code>pool_notice_after_waiting_ms</code>)</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="reference/general.html">General settings reference</a>, <a href="reference/pool.html">Pool settings reference</a>.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Built-in Prometheus endpoint</td><td style="text-align: center">Yes</td><td style="text-align: center">External (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Latency percentiles per pool (p50, p90, p95, p99)</td><td style="text-align: center">Yes (HDR Histogram)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (TDigest)</td></tr>
+<tr><td>Prepared statement counters in stats</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
+<tr><td>JSON structured logging</td><td style="text-align: center">Yes (<code>--log-format Structured</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Runtime log level control (<code>SET log_level</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Admin <code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Admin <code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Admin <code>SHOW HOSTS</code> (host CPU/memory)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Admin <code>SHOW RULES</code> (dump routing)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>TLS connection metrics (handshake duration, errors, active count)</td><td style="text-align: center">Yes (server-side)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Patroni API metrics</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Fallback metrics (active flag, current host, hits)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="reference/prometheus.html">Prometheus metrics reference</a>, <a href="observability/admin-commands.html">Admin commands</a>.</p>
+<h2 id="operations"><a class="header" href="#operations">Operations</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Graceful binary upgrade (zero-downtime, in-flight clients preserved)</td><td style="text-align: center">Yes</td><td style="text-align: center">Limited (<code>SO_REUSEPORT</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>YAML config</td><td style="text-align: center">Yes</td><td style="text-align: center">No (INI)</td><td style="text-align: center">No (own format)</td></tr>
+<tr><td>TOML config</td><td style="text-align: center">Yes (legacy)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Human-readable durations &amp; sizes (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Config test mode (<code>pg_doorman -t</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Auto-config from PostgreSQL (<code>pg_doorman generate --host</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Yes (incl. server TLS certs)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>systemd <code>sd-notify</code> integration</td><td style="text-align: center">Yes (<code>Type=notify</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Memory cap (<code>max_memory_usage</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Signals</a>.</p>
+<h2 id="protocol"><a class="header" href="#protocol">Protocol</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Simple query</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Extended query</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Partial</td></tr>
+<tr><td>Pipelined batches</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Partial</td></tr>
+<tr><td>Async Flush</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
+<tr><td>Cancel requests over TLS</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>COPY IN</code> / <code>COPY OUT</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Replication passthrough (<code>replication=true</code> startup)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">No</td></tr>
+<tr><td>Protocol version negotiation (3.2)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">No</td></tr>
+<tr><td><code>server_drop_on_cached_plan_error</code></td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.5.1</td></tr>
+</tbody></table>
+</div>
+<h2 id="when-pgdoorman-is-not-the-right-fit"><a class="header" href="#when-pgdoorman-is-not-the-right-fit">When PgDoorman is not the right fit</a></h2>
+<ul>
+<li>You need LDAP authentication. Use Odyssey or PgBouncer 1.25+.</li>
+<li>You need SCRAM channel binding (<code>scram-sha-256-plus</code>) end-to-end. Use PgBouncer or Odyssey.</li>
+<li>You need replication passthrough for logical replication tools. Use PgBouncer 1.23+.</li>
+<li>You need availability-zone-aware routing or sequential <code>pg_hba</code>-style routing rules. Use Odyssey.</li>
+<li>You need <code>transaction_timeout</code> enforced by the pooler. Use PgBouncer 1.25+.</li>
+</ul>
+<p>For prepared statements in transaction mode, Patroni HA without external proxies, multithreaded throughput, and zero-downtime restarts, PgDoorman is the closer fit.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="tutorials/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="tutorials/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid-init.js"></script>
+        <script src="mermaid.min.js"></script>
+
+
+    </div>
+    </body>
+</html>

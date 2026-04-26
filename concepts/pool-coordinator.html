@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>Pool Coordinator - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/concepts/pool-coordinator.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,110 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="pool-coordinator"><a class="header" href="#pool-coordinator">Pool Coordinator</a></h1>
+<p>The Pool Coordinator caps total backend connections per database across all users in that pool, with priority eviction when the cap is reached. It is what PgBouncer's <code>max_db_connections</code> should have been: enforced fairly, with a reserve for short bursts, and per-user minimums to protect critical workloads.</p>
+<p>This page explains the concept and when to use it. For tuning recipes and read-out from <code>SHOW POOL_COORDINATOR</code>, see <a href="../tutorials/pool-pressure.html#coordinator-mode">Pool Pressure</a>.</p>
+<h2 id="what-problem-it-solves"><a class="header" href="#what-problem-it-solves">What problem it solves</a></h2>
+<p>Without a coordinator, every user-pool is independent. A <code>pool_size</code> of 40 across 5 users means up to 200 backend connections — and PostgreSQL fights to maintain its own limits.</p>
+<p><code>max_db_connections</code> in PgBouncer caps the total but blocks new requests once the cap is reached. Whoever hit the cap first keeps their connections regardless of how heavily they use them, and slow workloads never yield to fast ones.</p>
+<p>PgDoorman's Pool Coordinator caps the total <strong>and</strong>:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li><strong>Evicts</strong> idle connections from over-allocated users when another user needs to grow.</li>
+<li><strong>Ranks</strong> users by p95 transaction time so slow pools donate first. Users with fast queries keep their reuse advantage; users with long transactions release first because their connections were idle longer anyway.</li>
+<li><strong>Reserves</strong> a small overflow for short bursts. Configured separately from the main cap.</li>
+<li><strong>Guarantees</strong> a per-user minimum that is never evicted. Critical workloads keep their footing during contention.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
+<h2 id="when-to-use-it"><a class="header" href="#when-to-use-it">When to use it</a></h2>
+<p>Turn on the coordinator when:</p>
 <ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+<li>Multiple distinct workloads share the same database and you need an upper bound on backend connection count (PostgreSQL <code>max_connections</code>, RAM, file descriptors).</li>
+<li>One workload has bursty demand and you want it to absorb idle slots from others without crowding them out permanently.</li>
+<li>You operate near the PostgreSQL connection ceiling and need fair degradation rather than first-come-first-served.</li>
 </ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
+<p>You do <strong>not</strong> need it when:</p>
 <ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
+<li>Each user's <code>pool_size</code> is small enough that the sum is comfortably below PostgreSQL's <code>max_connections</code>.</li>
+<li>Workloads are predictable and pre-sized.</li>
+<li>You want PgBouncer-level simplicity. <code>max_db_connections</code> without eviction is supported but discouraged for shared databases.</li>
 </ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<pre><code class="language-yaml">pools:
+  shared_db:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+
+    # Total cap across all users in this pool.
+    max_db_connections: 80
+
+    # Reserve overflow above max_db_connections for short bursts.
+    # Acquired only when no idle connection is available within reserve_pool_timeout.
+    reserve_pool_size: 16
+    reserve_pool_timeout: "3s"
+
+    # Per-user safety net: connections never evicted from a user, even under pressure.
+    # Sum across users should be ≤ max_db_connections.
+    min_guaranteed_pool_size: 5
+
+    # Eviction grace period: connections younger than this are not evicted.
+    # Prevents thrashing when a workload briefly idles.
+    min_connection_lifetime: "30s"
+
+    users:
+      - username: "fast_app"
+        password: "md5..."
+        pool_size: 40
+
+      - username: "batch_job"
+        password: "md5..."
+        pool_size: 60
+</code></pre>
+<p>Effective ceiling: <code>max_db_connections + reserve_pool_size = 96</code>. The reserve absorbs sub-second spikes; if the spike persists, eviction kicks in.</p>
+<h2 id="how-it-picks-who-donates"><a class="header" href="#how-it-picks-who-donates">How it picks who donates</a></h2>
+<p>When a user requests a new backend and the cap is reached:</p>
+<ol>
+<li><strong>Find candidates with idle connections.</strong> A user holding only active connections cannot donate — its work is in flight.</li>
+<li><strong>Skip protected users.</strong> A user below <code>min_guaranteed_pool_size</code> is excluded.</li>
+<li><strong>Skip recently-created connections.</strong> Connections younger than <code>min_connection_lifetime</code> are not evicted (avoids churn during minor idle gaps).</li>
+<li><strong>Rank by surplus.</strong> Users with the most idle connections above their <code>min_guaranteed_pool_size</code> rank highest.</li>
+<li><strong>Tiebreak by p95 transaction time.</strong> Among equally-idle users, the slow pool donates first. Their connections were probably idle because their next query is still being prepared upstream.</li>
+</ol>
+<p>The chosen idle connection is closed; the requesting user receives a fresh connection from PostgreSQL.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p><code>SHOW POOL_COORDINATOR</code> shows current state per database:</p>
+<pre><code>database    | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+shared_db   | 80          | 78      | 16           | 2            | 142       | 18          | 0
+</code></pre>
 <ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
+<li><code>evictions</code> rising fast — one user is starved repeatedly. Either raise <code>max_db_connections</code> or set <code>min_guaranteed_pool_size</code> for that user.</li>
+<li><code>reserve_acq</code> high — bursts are normal but you might be undersized; consider raising <code>max_db_connections</code> instead of relying on reserve.</li>
+<li><code>exhaustions</code> non-zero — even reserve was full. Clients hit <code>query_wait_timeout</code> waiting for a backend. Raise the cap.</li>
 </ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
+<p>Prometheus: <code>pg_doorman_pool_coordinator{type="..."}</code> (gauges) and <code>pg_doorman_pool_coordinator_total{type="evictions|reserve_acquisitions|exhaustions"}</code> (counters). See <a href="../observability/admin-commands.html">Admin commands</a> and <a href="../reference/prometheus.html">Prometheus reference</a>.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
+<ul>
+<li>The coordinator only operates within one pool (one database). Cross-pool / cross-database limits are not supported.</li>
+<li>Eviction picks idle connections; a user holding all connections in long transactions cannot donate, so other users may starve. If this is your shape, raise <code>max_db_connections</code> or split the workload.</li>
+<li><code>min_guaranteed_pool_size</code> is a floor for eviction, not a <code>min_pool_size</code> for warm-up. The pool still has to create those connections on demand.</li>
+<li>Setting <code>max_db_connections</code> without <code>min_guaranteed_pool_size</code> is the PgBouncer mode — works, but starves smaller users under pressure. Always set both for shared databases.</li>
+</ul>
+<h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
+<ul>
+<li>Sizing recipe with worked examples: <a href="../tutorials/pool-pressure.html#sizing-the-cap-against-postgresql">Pool Pressure → Sizing the cap</a>.</li>
+<li>Tuning under load: <a href="../tutorials/pool-pressure.html#tuning-parameters">Pool Pressure → Tuning parameters</a>.</li>
+<li>Reading admin output: <a href="../observability/admin-commands.html">Admin Commands → SHOW POOL_COORDINATOR</a>.</li>
+<li>Pool modes (transaction vs session): <a href="pool-modes.html">Pool Modes</a>.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../concepts/pool-modes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +273,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../concepts/pool-modes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>JWT - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/authentication/jwt.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,83 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="jwt-authentication"><a class="header" href="#jwt-authentication">JWT Authentication</a></h1>
+<p>Authenticate clients with a JSON Web Token signed by an external identity provider. PgDoorman verifies the token's RSA-SHA256 signature using a public key from disk, checks the <code>preferred_username</code> claim, and forwards the connection to PostgreSQL with a configured backend identity.</p>
+<p>This fits service-to-database access where short-lived tokens are issued by an OIDC provider, Vault, or an internal token service.</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Generate (or obtain) an RSA public key and reference it in the user's <code>password</code> field with the <code>jwt-pkey-fpath:</code> prefix:</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "billing-service"
+        password: "jwt-pkey-fpath:/etc/pg_doorman/jwt-public.pem"
+        server_username: "billing"
+        server_password: "md5..."
+        pool_size: 40
+</code></pre>
+<p>Whatever the client sends as a password is treated as a JWT and verified against <code>/etc/pg_doorman/jwt-public.pem</code>. The token must:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>Be signed with RS256 (RSA-SHA256). HS256 and EC variants are not supported.</li>
+<li>Have a <code>preferred_username</code> claim equal to the configured <code>username</code> (<code>billing-service</code> in the example above).</li>
+<li>Pass standard <code>exp</code> and <code>nbf</code> validation.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
+<p>The backend connection is opened as <code>billing</code> with the <code>server_password</code> hash. The client's identity (<code>billing-service</code>) is decoupled from the database identity (<code>billing</code>).</p>
+<h2 id="generating-a-key-pair"><a class="header" href="#generating-a-key-pair">Generating a key pair</a></h2>
+<pre><code class="language-bash">openssl genrsa -out jwt-private.pem 2048
+openssl rsa -in jwt-private.pem -pubout -out jwt-public.pem
+</code></pre>
+<p>Keep <code>jwt-private.pem</code> on the token issuer. Distribute <code>jwt-public.pem</code> to PgDoorman.</p>
+<h2 id="issuing-a-token"><a class="header" href="#issuing-a-token">Issuing a token</a></h2>
+<p>Any RS256 JWT library works. Example with Python (<code>PyJWT</code>):</p>
+<pre><code class="language-python">import jwt
+import time
+
+private_key = open("jwt-private.pem").read()
+
+token = jwt.encode(
+    {
+        "preferred_username": "billing-service",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 300,  # 5 minutes
+    },
+    private_key,
+    algorithm="RS256",
+)
+</code></pre>
+<p>The client connects to PgDoorman with <code>user=billing-service</code> and <code>password=&lt;token&gt;</code>. Most PostgreSQL drivers accept any string in the password field.</p>
+<h2 id="token-rotation"><a class="header" href="#token-rotation">Token rotation</a></h2>
+<p>PgDoorman reads the public key file once at startup and on <code>SIGHUP</code>. Rotate the key by:</p>
+<ol>
+<li>Add the new public key to a second user entry with a parallel name.</li>
+<li>Reload (<code>kill -HUP</code>).</li>
+<li>Switch the issuer to the new key.</li>
+<li>Remove the old user entry after the grace period.</li>
+</ol>
+<p>Or, simpler, replace the file in place and <code>SIGHUP</code>. There is no support for multiple keys per user.</p>
+<h2 id="dispatch-order"><a class="header" href="#dispatch-order">Dispatch order</a></h2>
+<p>JWT is the lowest-priority password format: PgDoorman checks <code>SCRAM-SHA-256$</code> and <code>md5</code> prefixes first, then <code>jwt-pkey-fpath:</code>. In practice this only matters if you use a placeholder password — set <code>auth_pam_service</code> for PAM, or use the <code>jwt-pkey-fpath:</code> prefix exclusively for JWT users.</p>
+<p>If the same user has both <code>auth_pam_service</code> and a <code>jwt-pkey-fpath:</code> password, PAM wins.</p>
+<p>See <a href="overview.html#dispatch-order">Overview</a>.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
 <ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+<li>The <code>preferred_username</code> claim must match exactly. There is no claim mapping or aliasing.</li>
+<li>No JWKS endpoint support: the public key must be on disk.</li>
+<li>No issuer (<code>iss</code>) or audience (<code>aud</code>) checks. If you need them, terminate JWT at a sidecar and translate to passthrough.</li>
+<li>For client identity carrying database role information (e.g., <code>read_only</code> vs <code>read_write</code>), see <a href="talos.html">Talos</a>.</li>
 </ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
-<ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
-</ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
-<ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
-</ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../authentication/pam.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../authentication/talos.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +246,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../authentication/pam.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../authentication/talos.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

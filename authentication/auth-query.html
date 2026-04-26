@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>auth_query - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/authentication/auth-query.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,106 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="auth_query"><a class="header" href="#auth_query">auth_query</a></h1>
+<p>Look up user credentials from PostgreSQL itself instead of listing every user in the pool config. Useful when users are provisioned dynamically or rotated frequently.</p>
+<h2 id="two-modes"><a class="header" href="#two-modes">Two modes</a></h2>
+<p>PgDoorman supports two modes; both are configured in the same <code>auth_query</code> block. Choose by whether you set <code>server_user</code>:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li><strong>Passthrough mode</strong> (no <code>server_user</code>): each authenticated user gets its own backend pool, authenticated as that user. Preserves per-user backend identity for <code>current_user</code>, row-level security, and audit logs.</li>
+<li><strong>Dedicated mode</strong> (with <code>server_user</code>): all dynamic users share a single backend pool authenticated as <code>server_user</code>. Trades per-user identity for higher pool reuse and lower connection count.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
+<p>PgBouncer-style auth_query is dedicated mode. Odyssey supports both. PgDoorman's passthrough mode is the default.</p>
+<h2 id="passthrough-mode"><a class="header" href="#passthrough-mode">Passthrough mode</a></h2>
+<pre><code class="language-yaml">pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    auth_query:
+      query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
+      user: "postgres"
+      password: "md5..."
+      database: "postgres"
+      cache_ttl: "1h"
+      cache_failure_ttl: "30s"
+</code></pre>
+<p>The query must return a column named <code>passwd</code> or <code>password</code> containing the MD5 or SCRAM hash. Extra columns are ignored.</p>
+<p><code>user</code> and <code>password</code> are the credentials PgDoorman uses to run the lookup query. They must have permission to read the credential column. Either grant access to a custom view (recommended) or use a user in <code>pg_read_server_files</code> group.</p>
+<p>When a client connects as <code>alice</code>:</p>
+<ol>
+<li>PgDoorman runs the query with <code>$1 = 'alice'</code> and gets her hash.</li>
+<li>Caches the hash in memory for <code>cache_ttl</code> seconds.</li>
+<li>Performs MD5 or SCRAM passthrough authentication (see <a href="passthrough.html">Passthrough</a>).</li>
+<li>Opens a backend connection authenticated as <code>alice</code> with the same hash.</li>
+</ol>
+<h2 id="dedicated-mode"><a class="header" href="#dedicated-mode">Dedicated mode</a></h2>
+<pre><code class="language-yaml">pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    auth_query:
+      query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
+      user: "auth_lookup"
+      password: "md5..."
+      database: "postgres"
+      server_user: "app"
+      server_password: "md5..."
+      pool_size: 40
+      min_pool_size: 5
+      cache_ttl: "1h"
+</code></pre>
+<p>Setting <code>server_user</code> switches the mode. Now:</p>
+<ol>
+<li>The client authenticates as <code>alice</code> against the hash returned by the query.</li>
+<li>The backend pool is authenticated as <code>app</code> (the <code>server_user</code>), and is shared across all dynamic users.</li>
+<li><code>current_user</code> in PostgreSQL will always be <code>app</code>, regardless of which client connected.</li>
+</ol>
+<p>Use this when you have many users (thousands) and per-user backend pools would exhaust PostgreSQL's connection slots.</p>
+<h2 id="recommended-postgresql-setup"><a class="header" href="#recommended-postgresql-setup">Recommended PostgreSQL setup</a></h2>
+<p>Avoid using a superuser for the lookup. Create a dedicated function with <code>SECURITY DEFINER</code>:</p>
+<pre><code class="language-sql">CREATE OR REPLACE FUNCTION pg_doorman_lookup(uname text)
+RETURNS TABLE(passwd text)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT passwd FROM pg_shadow WHERE usename = uname;
+$$;
+
+REVOKE ALL ON FUNCTION pg_doorman_lookup(text) FROM public;
+GRANT EXECUTE ON FUNCTION pg_doorman_lookup(text) TO auth_lookup;
+</code></pre>
+<p>Then in the pool config:</p>
+<pre><code class="language-yaml">auth_query:
+  query: "SELECT passwd FROM pg_doorman_lookup($1)"
+  user: "auth_lookup"
+  password: "md5..."
+</code></pre>
+<h2 id="caching"><a class="header" href="#caching">Caching</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Default</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>cache_ttl</code></td><td><code>"1h"</code></td><td>How long a successful lookup is cached.</td></tr>
+<tr><td><code>cache_failure_ttl</code></td><td><code>"30s"</code></td><td>How long a failed lookup is cached. Prevents brute-force amplification.</td></tr>
+<tr><td><code>min_interval</code></td><td><code>"1s"</code></td><td>Minimum interval between repeated lookups for the same user.</td></tr>
+</tbody></table>
 </div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
-<ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
-</ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
-<ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
-</ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
-<ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
-</ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
+<p>Duration values are quoted strings: <code>"1h"</code>, <code>"30m"</code>, <code>"300s"</code>. A bare integer is interpreted as milliseconds — <code>cache_ttl: 3600</code> would cache for 3.6 seconds, not one hour.</p>
+<p>Cache is per-pool, in-memory, evicted on <code>RELOAD</code>. Restart or <code>RELOAD</code> after rotating a user's password.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p><code>SHOW AUTH_QUERY</code> exposes per-database stats:</p>
+<pre><code>database | cache_entries | cache_hits | cache_misses | cache_refetches | rate_limited | auth_success | auth_failure | executor_queries | executor_errors
+</code></pre>
+<p>Prometheus metrics: <code>pg_doorman_auth_query_cache</code>, <code>pg_doorman_auth_query_auth</code>, <code>pg_doorman_auth_query_executor</code>, <code>pg_doorman_auth_query_dynamic_pools</code>. See <a href="../observability/admin-commands.html">Admin commands</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../authentication/passthrough.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../authentication/pam.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +269,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../authentication/passthrough.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../authentication/pam.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

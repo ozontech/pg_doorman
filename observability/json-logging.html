@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>JSON Structured Logging - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/observability/json-logging.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,91 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="json-structured-logging"><a class="header" href="#json-structured-logging">JSON Structured Logging</a></h1>
+<p>PgDoorman emits structured JSON logs when run with <code>--log-format Structured</code>. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.</p>
+<h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
+<p>Three equivalent ways:</p>
+<pre><code class="language-bash"># Command line flag
+pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+
+# Long form
+pg_doorman --log-format Structured /etc/pg_doorman/pg_doorman.yaml
+
+# Environment variable
+LOG_FORMAT=Structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
+</code></pre>
+<p>The default is <code>Text</code> (human-readable). The <code>--log-format</code> flag accepts <code>Text</code>, <code>Structured</code>, or <code>Debug</code>; the last is currently an alias for <code>Text</code>.</p>
+<h2 id="output"><a class="header" href="#output">Output</a></h2>
+<pre><code class="language-json">{"timestamp":"2026-04-25T08:32:14.512Z","level":"INFO","file":"src/app/server.rs","line":357,"message":"Server is up at 0.0.0.0:6432"}
+{"timestamp":"2026-04-25T08:32:14.514Z","level":"INFO","file":"src/pool/mod.rs","line":421,"message":"Pool 'mydb' initialized: 1 user, pool_size=40"}
+{"timestamp":"2026-04-25T08:32:18.103Z","level":"WARN","file":"src/server/protocol_io.rs","line":189,"message":"Backend connection lost: connection reset by peer"}
+</code></pre>
+<p>Fields:</p>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>timestamp</code></td><td>RFC 3339 string</td><td>UTC, millisecond precision.</td></tr>
+<tr><td><code>level</code></td><td>string</td><td><code>ERROR</code>, <code>WARN</code>, <code>INFO</code>, <code>DEBUG</code>, <code>TRACE</code>.</td></tr>
+<tr><td><code>file</code></td><td>string</td><td>Source file emitting the log.</td></tr>
+<tr><td><code>line</code></td><td>integer</td><td>Line number.</td></tr>
+<tr><td><code>message</code></td><td>string</td><td>Human-readable message.</td></tr>
+</tbody></table>
+</div>
+<p>There are no nested fields or per-event labels — PgDoorman's logger is plain <code>log</code> macro events serialized to JSON. For richer metadata (per-pool counters, per-client events), use Prometheus metrics instead. See <a href="../reference/prometheus.html">Prometheus reference</a>.</p>
+<h2 id="log-level"><a class="header" href="#log-level">Log level</a></h2>
+<p>Set via <code>general.log_level</code> in the config or override at startup:</p>
+<pre><code class="language-yaml">general:
+  log_level: "info"
+</code></pre>
+<pre><code class="language-bash">pg_doorman -l debug -F Structured /etc/pg_doorman/pg_doorman.yaml
+</code></pre>
+<p>Change at runtime via the admin database:</p>
+<pre><code class="language-sql">SET log_level = 'debug';
+SHOW LOG_LEVEL;
+</code></pre>
+<p>This affects the running process only. Persisting requires editing the config and <code>RELOAD</code>/<code>SIGHUP</code>.</p>
+<h2 id="recommended-pipeline"><a class="header" href="#recommended-pipeline">Recommended pipeline</a></h2>
+<p>For Kubernetes:</p>
+<pre><code class="language-yaml">spec:
+  containers:
+    - name: pg_doorman
+      image: ghcr.io/ozontech/pg_doorman:latest
+      args:
+        - "-F"
+        - "Structured"
+        - "/etc/pg_doorman/pg_doorman.yaml"
+      env:
+        - name: LOG_LEVEL
+          value: "info"
+</code></pre>
+<p>Logs go to stdout, container runtime captures them, your log shipper (Promtail, Fluent Bit, Vector) forwards as-is — JSON is preserved end to end.</p>
+<p>For systemd:</p>
+<pre><code class="language-ini">[Service]
+ExecStart=/usr/bin/pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+StandardOutput=journal
+StandardError=journal
+</code></pre>
+<p><code>journalctl -u pg_doorman -o json</code> gives you the JSON back.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>For production, choose <code>Text</code> (terminals, syslog) or <code>Structured</code> (log shippers). <code>Debug</code> is reserved for future use and currently equals <code>Text</code>.</li>
+<li>Source <code>file</code> and <code>line</code> come from <code>log</code> macro call sites. They survive in release builds because PgDoorman ships with debug info enabled.</li>
+<li>The logger does not include trace IDs or request correlation. For per-request tracing, use <code>SHOW CLIENTS</code> and Prometheus metrics.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
+<h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
 <ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+<li><a href="../reference/prometheus.html">Prometheus reference</a> — for machine-readable metrics.</li>
+<li><a href="percentiles.html">Latency Percentiles</a> — for performance signals.</li>
+<li><a href="admin-commands.html">Admin Commands</a> — for runtime introspection.</li>
 </ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
-<ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
-</ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
-<ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
-</ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../observability/admin-commands.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../observability/percentiles.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +254,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../observability/admin-commands.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../observability/percentiles.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

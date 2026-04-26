@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>Pool Modes - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/concepts/pool-modes.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,91 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="pool-modes"><a class="header" href="#pool-modes">Pool Modes</a></h1>
+<p>PgDoorman supports two pool modes: <code>transaction</code> and <code>session</code>. Set per pool, with optional per-user override.</p>
+<p>There is no <code>statement</code> mode. Statement-level pooling breaks more drivers than it helps and PgDoorman optimizes for transaction mode aggressively (prepared statement cache, direct handoff, FIFO scheduling).</p>
+<h2 id="transaction-mode-recommended"><a class="header" href="#transaction-mode-recommended">Transaction mode (recommended)</a></h2>
+<pre><code class="language-yaml">pools:
+  mydb:
+    pool_mode: "transaction"
+</code></pre>
+<p>A backend connection is held for the duration of a transaction, then returned to the pool on <code>COMMIT</code>, <code>ROLLBACK</code>, or implicit completion.</p>
+<p>This is the mode that delivers PgDoorman's connection efficiency: a <code>pool_size</code> of 40 can serve thousands of clients as long as transactions are short.</p>
+<p>What works in transaction mode (where most poolers fail):</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>Prepared statements. PgDoorman caches them per-pool, remaps statement names across backend connections, and replays preparation transparently. Drivers that pin to <code>unnamed</code> statement (Go pgx, .NET Npgsql, Python asyncpg) work without configuration.</li>
+<li>Pipelined batches and async <code>Flush</code> flow.</li>
+<li>Cancel requests over TLS.</li>
+<li><code>LISTEN</code> / <code>NOTIFY</code> — but only inside a transaction; cross-transaction notifications are lost (PgBouncer same).</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
+<p>What does <strong>not</strong> work in transaction mode:</p>
 <ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+<li><code>SET</code> and <code>RESET</code> outside a transaction. Use session mode for clients that rely on session-level GUC changes (<code>SET TIME ZONE</code>, <code>SET search_path</code> once per connection).</li>
+<li>Advisory locks held across transactions. Use session mode.</li>
+<li>Cursors held outside transactions (<code>WITH HOLD</code>). Use session mode.</li>
+<li><code>SET LOCAL</code> works as expected — it is transaction-scoped.</li>
 </ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
+<h2 id="session-mode"><a class="header" href="#session-mode">Session mode</a></h2>
+<pre><code class="language-yaml">pools:
+  legacy_app:
+    pool_mode: "session"
+</code></pre>
+<p>A backend connection is held for the duration of the client session. Returned to the pool only when the client disconnects.</p>
+<p>Use this when:</p>
 <ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
+<li>The application uses session-scoped state (<code>SET search_path</code>, <code>SET TIME ZONE</code>).</li>
+<li>The application uses <code>WITH HOLD</code> cursors.</li>
+<li>The application uses advisory locks across transactions.</li>
+<li>You are migrating an unmodified PgBouncer deployment that was using session mode and you want a like-for-like swap.</li>
 </ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
+<p>In session mode, <code>pool_size</code> is effectively the maximum number of concurrent clients. Sizing matches PostgreSQL's <code>max_connections</code> minus reserves.</p>
+<h2 id="per-user-override"><a class="header" href="#per-user-override">Per-user override</a></h2>
+<p>A pool's mode can be overridden per user:</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    pool_mode: "transaction"
+    users:
+      - username: "app"
+        password: "md5..."
+        pool_size: 40
+      - username: "admin_tools"
+        password: "md5..."
+        pool_size: 4
+        pool_mode: "session"
+</code></pre>
+<p>Useful when one user (operations tooling, migrations) needs session semantics but the main application stays in transaction mode.</p>
+<h2 id="cleanup-on-checkin"><a class="header" href="#cleanup-on-checkin">Cleanup on checkin</a></h2>
+<p>Returning to transaction mode in detail: when a backend goes back to the pool, PgDoorman runs <code>RESET ALL</code> and <code>ROLLBACK</code> (if <code>cleanup_server_connections: true</code>, the default). This drops:</p>
 <ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
+<li>Session-level <code>SET</code> values.</li>
+<li>Cursors.</li>
+<li>Prepared statement names that the driver bound to specific backend names (PgDoorman's prepared statement cache survives — it is keyed by query text, not backend statement name).</li>
+<li>Advisory locks (<code>pg_advisory_unlock_all</code> is implicit in <code>RESET ALL</code>).</li>
 </ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
+<p><code>DEALLOCATE ALL</code> and <code>DISCARD ALL</code> from the client also trigger PgDoorman's prepared statement cache to drop everything cached for that client. The pool-level cache is not affected.</p>
+<p>To opt out of cleanup (for performance, in tightly-controlled deployments):</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    pool_mode: "transaction"
+    cleanup_server_connections: false
+</code></pre>
+<p>Only do this if you are sure your application never leaks session state.</p>
+<h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
+<ul>
+<li><code>pool_mode</code> parameter: <a href="../reference/pool.html#pool_mode">Pool Settings</a>.</li>
+<li><code>cleanup_server_connections</code>: <a href="../reference/pool.html#cleanup_server_connections">Pool Settings</a>.</li>
+<li>Pool sizing: <a href="pool-coordinator.html">Pool Coordinator</a>, <a href="../tutorials/pool-pressure.html">Pool Pressure</a>.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../guides/tls.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../concepts/pool-coordinator.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +254,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../guides/tls.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../concepts/pool-coordinator.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

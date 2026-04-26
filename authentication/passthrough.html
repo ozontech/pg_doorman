@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>Passthrough (default) - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/authentication/passthrough.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,80 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="passthrough-authentication-default"><a class="header" href="#passthrough-authentication-default">Passthrough Authentication (Default)</a></h1>
+<p>PgDoorman reuses the client's cryptographic proof — MD5 hash or SCRAM <code>ClientKey</code> — to authenticate to PostgreSQL. The plaintext password never leaves the client and is never stored in the pool config.</p>
+<p>This is the recommended setup when the pool username matches the PostgreSQL user.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<h3 id="md5"><a class="header" href="#md5">MD5</a></h3>
+<p>PostgreSQL's MD5 password protocol stores <code>md5(password + username)</code> server-side. The client also hashes the password the same way and sends <code>md5(stored_hash + salt)</code>. PgDoorman:</p>
+<ol>
+<li>Receives the client's hashed response.</li>
+<li>Looks up the stored MD5 hash in its config (or via <code>auth_query</code>).</li>
+<li>Verifies the client response matches.</li>
+<li>Forwards the <strong>stored hash</strong> to PostgreSQL as the password during backend authentication. PostgreSQL accepts it because the hash is what <code>pg_authid</code> actually stores.</li>
+</ol>
+<p>The <code>password</code> field in the pool config holds the stored hash, formatted as <code>md5XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</code> (the 32-character MD5 of <code>password + username</code>, prefixed with literal <code>md5</code>).</p>
+<h3 id="scram-sha-256"><a class="header" href="#scram-sha-256">SCRAM-SHA-256</a></h3>
+<p>SCRAM verifies the client without sending any password-equivalent material. PgDoorman:</p>
+<ol>
+<li>Performs SCRAM handshake with the client, validating the <code>ClientProof</code>.</li>
+<li>Extracts the <code>ClientKey</code> from a successful exchange.</li>
+<li>Performs SCRAM handshake with PostgreSQL, replaying the same <code>ClientKey</code> to compute a fresh <code>ClientProof</code> for the backend nonce.</li>
+</ol>
+<p>The <code>password</code> field in the pool config holds the SCRAM verifier from <code>pg_authid.rolpassword</code>, formatted as <code>SCRAM-SHA-256$&lt;iterations&gt;:&lt;salt&gt;$&lt;StoredKey&gt;:&lt;ServerKey&gt;</code>.</p>
+<p>PgDoorman does not support SCRAM channel binding (<code>scram-sha-256-plus</code>).</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<pre><code class="language-yaml">pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "app"
+        password: "md5d41d8cd98f00b204e9800998ecf8427e"
+        pool_size: 40
+</code></pre>
+<p>Note what is <strong>not</strong> there: no <code>server_username</code>, no <code>server_password</code>. PgDoorman infers passthrough from the absence of these fields.</p>
+<p>For SCRAM, the password field looks like:</p>
+<pre><code class="language-yaml">password: "SCRAM-SHA-256$4096:random_salt$stored_key:server_key"
+</code></pre>
+<h2 id="getting-the-hash"><a class="header" href="#getting-the-hash">Getting the hash</a></h2>
+<p>Connect as a superuser to PostgreSQL and read <code>pg_shadow</code> (or <code>pg_authid</code>):</p>
+<pre><code class="language-sql">SELECT usename, passwd FROM pg_shadow WHERE usename = 'app';
+</code></pre>
+<p>The <code>passwd</code> column contains either an MD5 hash (<code>md5...</code>) or a SCRAM verifier (<code>SCRAM-SHA-256$...</code>), depending on <code>password_encryption</code> setting at the time the password was set.</p>
+<p>To force MD5 storage: <code>SET password_encryption = 'md5'; ALTER ROLE app PASSWORD 'plaintext';</code>
+To force SCRAM: <code>SET password_encryption = 'scram-sha-256'; ALTER ROLE app PASSWORD 'plaintext';</code></p>
+<h2 id="when-passthrough-is-not-enough"><a class="header" href="#when-passthrough-is-not-enough">When passthrough is not enough</a></h2>
+<p>Set <code>server_username</code> and <code>server_password</code> explicitly when:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>The pool user differs from the backend user (username remapping).</li>
+<li>The client authenticates with <a href="jwt.html">JWT</a> — there is no MD5 hash or SCRAM key to pass through.</li>
+<li>The client authenticates with <a href="talos.html">Talos</a> and you want a fixed backend identity per role.</li>
+<li>You use <a href="auth-query.html">auth_query</a> in dedicated mode.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
-<ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
-</ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
-<ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
-</ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
-<ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
-</ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
+<pre><code class="language-yaml">users:
+  - username: "external_app"
+    password: "jwt-pkey-fpath:/etc/pg_doorman/jwt.pub"
+    server_username: "app"
+    server_password: "md5..."
+    pool_size: 40
+</code></pre>
+<h2 id="auto-generated-config"><a class="header" href="#auto-generated-config">Auto-generated config</a></h2>
+<p><code>pg_doorman generate --host your-pg-host --user your-admin-user</code> introspects PostgreSQL and produces a config with hashes from <code>pg_shadow</code> filled in automatically. Use this for new deployments to avoid copy-paste mistakes.</p>
+<pre><code class="language-bash">pg_doorman generate --host db.example.com --user postgres --output pg_doorman.yaml
+</code></pre>
+<p>See <a href="../tutorials/basic-usage.html">Basic Usage</a> for the full generate flow.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../authentication/overview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../authentication/auth-query.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +243,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../authentication/overview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../authentication/auth-query.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

@@ -160,48 +160,133 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="pgdoorman-postgresql-pooler"><a class="header" href="#pgdoorman-postgresql-pooler">PgDoorman: PostgreSQL Pooler</a></h2>
-<p>PgDoorman is a stable and high-performance alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, or <a href="https://github.com/postgresml/pgcat">PgCat</a>.
-It was created with the Unix philosophy in mind. Development focused on performance, efficiency, and reliability.
-Additionally, PgDoorman provides improved driver support for languages like Go (pgx), .NET (npgsql), and asynchronous drivers for Python and Node.js.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.6.0</a></p>
-<h3 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h3>
-<p>Run PgDoorman instantly using Docker:</p>
+                        <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
+<p>A multithreaded PostgreSQL connection pooler written in Rust. Drop-in alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, and <a href="https://github.com/postgresml/pgcat">PgCat</a>. Used in production at Ozon for two years across Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.6.0</a> · <a href="comparison.html">Compare</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<h2 id="what-makes-pgdoorman-different"><a class="header" href="#what-makes-pgdoorman-different">What makes PgDoorman different</a></h2>
+<p>Three things you will not find in PgBouncer or Odyssey.</p>
+<div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
+<div class="admonition-title">
+<div id="admonition-pool-coordinator-title">
+<p>Pool Coordinator</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-pool-coordinator"></a>
+</div>
+<div>
+<p>Database-level connection cap with priority eviction. <code>max_db_connections</code> limits total backend connections per database; when exhausted, idle connections are evicted from users with the largest surplus, ranked by p95 transaction time so slow pools donate first. A reserve pool absorbs short bursts. Per-user <code>min_guaranteed_pool_size</code> protects critical workloads.</p>
+<p>PgBouncer has <code>max_db_connections</code> without eviction or fairness. Odyssey has no equivalent.</p>
+<p><a href="concepts/pool-coordinator.html">Read more →</a></p>
+</div>
+</div>
+<div id="admonition-patroni-assisted-fallback" class="admonition admonish-success" role="note" aria-labelledby="admonition-patroni-assisted-fallback-title">
+<div class="admonition-title">
+<div id="admonition-patroni-assisted-fallback-title">
+<p>Patroni-assisted Fallback</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-patroni-assisted-fallback"></a>
+</div>
+<div>
+<p>When PgDoorman runs next to PostgreSQL on the same machine and a Patroni switchover kills the local backend, PgDoorman queries the Patroni REST API <code>/cluster</code> endpoint, picks a live cluster member (<code>sync_standby</code> preferred), and routes new connections there within 1–2 TCP round trips. The local backend stays in cooldown; fallback connections use a short lifetime so the pool returns to local once it recovers.</p>
+<p>One line in <code>[general]</code> enables it for every pool. No external HAProxy, no consul-template.</p>
+<p><a href="tutorials/patroni-assisted-fallback.html">Read more →</a></p>
+</div>
+</div>
+<div id="admonition-graceful-binary-upgrade" class="admonition admonish-success" role="note" aria-labelledby="admonition-graceful-binary-upgrade-title">
+<div class="admonition-title">
+<div id="admonition-graceful-binary-upgrade-title">
+<p>Graceful Binary Upgrade</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-graceful-binary-upgrade"></a>
+</div>
+<div>
+<p>Replace the binary without dropping a single client. The new process accepts new connections immediately while existing clients finish their transactions on the old process. TLS, connection state, and cancel keys all transfer cleanly.</p>
+<p>PgBouncer requires <code>SO_REUSEPORT</code> with separate processes (which causes pool imbalance). Odyssey lacks an equivalent flow.</p>
+<p><a href="tutorials/binary-upgrade.html">Read more →</a></p>
+</div>
+</div>
+<h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
+<ul>
+<li><strong>Drop-in replacement.</strong> Caches and remaps prepared statements transparently in transaction mode — no <code>DISCARD ALL</code>, no <code>DEALLOCATE</code>, no driver hacks.</li>
+<li><strong>Multithreaded.</strong> Single shared pool across all worker threads. PgBouncer is single-threaded; running multiple instances via <code>SO_REUSEPORT</code> causes unbalanced pools.</li>
+<li><strong>Thundering herd suppression.</strong> When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates and routes waiters to recycled connections via direct handoff — most land within microseconds.</li>
+<li><strong>Bounded tail latency.</strong> Strict FIFO via direct-handoff channels keeps p99 within 10% of p50 regardless of client count. Pre-replacement on <code>server_lifetime</code> expiry — no spike during connection rotation.</li>
+<li><strong>Dead backend detection.</strong> When a client holds a transaction open and the backend dies (failover, OOM kill), PgDoorman returns an error immediately. Other poolers wait for TCP keepalive, leaving clients hanging for minutes.</li>
+<li><strong>Built for operations.</strong> YAML or TOML config with human-readable durations (<code>"30s"</code>, <code>"5m"</code>). <code>pg_doorman generate --host your-db</code> introspects PostgreSQL to produce a config. <code>pg_doorman -t</code> validates before deploy. Prometheus endpoint is built-in.</li>
+</ul>
+<h2 id="comparison"><a class="header" href="#comparison">Comparison</a></h2>
+<div class="table-wrapper"><table><thead><tr><th></th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Multithreaded</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Prepared statements in transaction mode</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.21</td><td style="text-align: center">Since 1.3</td></tr>
+<tr><td>Full extended query protocol</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Partial</td></tr>
+<tr><td>Pool Coordinator with priority eviction</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Patroni-assisted fallback (built-in)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Pre-replacement on <code>server_lifetime</code> expiry</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Stale backend detection (idle-in-transaction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Graceful binary upgrade</td><td style="text-align: center">Yes</td><td style="text-align: center">Limited</td><td style="text-align: center">No</td></tr>
+<tr><td>Server-side TLS (mTLS, hot reload)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Auth: SCRAM passthrough (no plaintext password in config)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Auth: JWT</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Auth: PAM / <code>pg_hba.conf</code> / auth_query</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Auth: LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes</td></tr>
+<tr><td>YAML / TOML config</td><td style="text-align: center">Yes</td><td style="text-align: center">No (INI)</td><td style="text-align: center">No (own format)</td></tr>
+<tr><td>JSON structured logging</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Latency percentiles (p50/90/95/99)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Config test mode (<code>-t</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Auto-config from PostgreSQL</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Built-in Prometheus endpoint</td><td style="text-align: center">Yes</td><td style="text-align: center">External</td><td style="text-align: center">Yes</td></tr>
+</tbody></table>
+</div>
+<p><a href="comparison.html">Full feature matrix →</a></p>
+<h2 id="benchmarks"><a class="header" href="#benchmarks">Benchmarks</a></h2>
+<p>AWS Fargate (16 vCPU), pool size 40, <code>pgbench</code> 30s per test:</p>
+<div class="table-wrapper"><table><thead><tr><th>Scenario</th><th style="text-align: center">vs PgBouncer</th><th style="text-align: center">vs Odyssey</th></tr></thead><tbody>
+<tr><td>Extended protocol, 500 clients + SSL</td><td style="text-align: center">×3.5</td><td style="text-align: center">+61%</td></tr>
+<tr><td>Prepared statements, 500 clients + SSL</td><td style="text-align: center">×4.0</td><td style="text-align: center">+5%</td></tr>
+<tr><td>Simple protocol, 10 000 clients</td><td style="text-align: center">×2.8</td><td style="text-align: center">+20%</td></tr>
+<tr><td>Extended + SSL + Reconnect, 500 clients</td><td style="text-align: center">+96%</td><td style="text-align: center">~0%</td></tr>
+</tbody></table>
+</div>
+<p><a href="benchmarks.html">Full results →</a></p>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>
+<p>Run via Docker:</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
-  -v $(pwd)/pg_doorman.toml:/etc/pg_doorman/pg_doorman.toml \
+  -v $(pwd)/pg_doorman.yaml:/etc/pg_doorman/pg_doorman.yaml \
   ghcr.io/ozontech/pg_doorman
 </code></pre>
-<p><em>For more details, see the <a href="tutorials/installation.html">Installation Guide</a>.</em></p>
-<h3 id="why-not-multi-pgbouncer"><a class="header" href="#why-not-multi-pgbouncer">Why not multi-PgBouncer?</a></h3>
-<p>Why do we think that using <a href="https://www.pgbouncer.org/config.html#so_reuseport">multiple instances of PgBouncer</a> is not a suitable solution?
-This approach has problems with reusing prepared statements and strange and inefficient control over query cancellation.
-Additionally, the main issue we have encountered is that the operating system distributes new clients round-robin,
-but each client can disconnect at any time, leading to an imbalance after prolonged use.</p>
-<h3 id="why-not-odyssey"><a class="header" href="#why-not-odyssey">Why not Odyssey?</a></h3>
-<p>We had difficulties using NPGSQL and SCRAM, as well as with <code>prepared_statements</code> support.
-However, the main serious problem related to data consistency and, for a long time, we were unable to solve it.</p>
-<h3 id="differences-from-pgcat"><a class="header" href="#differences-from-pgcat">Differences from PgCat</a></h3>
-<p>While PgDoorman was initially based on the PgCat project, it has since evolved into a standalone solution with its own set of features.
-Some of the key differences include:</p>
+<p>Minimal config (<code>pg_doorman.yaml</code>):</p>
+<pre><code class="language-yaml">general:
+  host: "0.0.0.0"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "change_me"
+
+pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "app"
+        password: "md5..."   # hash from pg_shadow / pg_authid
+        pool_size: 40
+</code></pre>
+<p><code>server_username</code> and <code>server_password</code> are omitted on purpose — PgDoorman reuses the client's MD5 hash or SCRAM ClientKey to authenticate to PostgreSQL. No plaintext passwords in config.</p>
+<p><a href="tutorials/installation.html">Installation guide →</a> · <a href="reference/general.html">Configuration reference →</a></p>
+<h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
 <ul>
-<li>Performance improvements compared to PgCat/PgBouncer/Odyssey.</li>
-<li>Support for extended protocol with popular programming language drivers.</li>
-<li>Enhanced monitoring metrics to improve visibility into database activity.</li>
-<li>Careful resource management to avoid memory issues (<code>max_memory_usage</code>, <code>message_size_to_be_stream</code>).</li>
-<li>SCRAM client/server authentication support.</li>
-<li><a href="tutorials/binary-upgrade.html">Gracefully binary upgrade</a>.</li>
-<li>Supporting JWT for service-to-database authentication.</li>
-<li>Many micro-optimizations (for example, the time spent with the client is longer than the server's busy time).</li>
+<li>New to PgDoorman? Start with <a href="tutorials/overview.html">Overview</a>, then <a href="tutorials/installation.html">Installation</a> and <a href="tutorials/basic-usage.html">Basic usage</a>.</li>
+<li>Migrating from PgBouncer or Odyssey? Read <a href="comparison.html">Comparison</a> and <a href="authentication/overview.html">Authentication</a>.</li>
+<li>Running Patroni? See <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a> and <a href="tutorials/patroni-proxy.html"><code>patroni_proxy</code></a>.</li>
+<li>Production sizing? Read <a href="tutorials/pool-pressure.html">Pool pressure</a> and <a href="concepts/pool-coordinator.html">Pool Coordinator</a>.</li>
+<li>Operating PgDoorman? See <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Signals</a>, <a href="tutorials/troubleshooting.html">Troubleshooting</a>.</li>
 </ul>
-<h3 id="additional-binary-patroni_proxy"><a class="header" href="#additional-binary-patroni_proxy">Additional Binary: patroni_proxy</a></h3>
-<p>This repository also includes <a href="tutorials/patroni-proxy.html">patroni_proxy</a> — a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Unlike HAProxy + confd, it preserves existing connections during cluster topology changes and provides native role-based routing with replication lag awareness.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
 
-                            <a rel="next prefetch" href="tutorials/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="comparison.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -212,7 +297,7 @@ Some of the key differences include:</p>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
 
-                    <a rel="next prefetch" href="tutorials/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="comparison.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

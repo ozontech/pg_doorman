@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>Latency Percentiles - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/observability/percentiles.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,97 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="latency-percentiles"><a class="header" href="#latency-percentiles">Latency Percentiles</a></h1>
+<p>PgDoorman tracks query and transaction latency per pool using HDR Histograms. Four percentiles are exposed to Prometheus: p50, p90, p95, p99.</p>
+<p>This page explains where the numbers come from and how to read them.</p>
+<h2 id="what-is-measured"><a class="header" href="#what-is-measured">What is measured</a></h2>
+<p>Three latency series per user×database:</p>
+<div class="table-wrapper"><table><thead><tr><th>Series</th><th>What it covers</th></tr></thead><tbody>
+<tr><td><code>query_histogram</code></td><td>Time from query start to query completion on a backend. Measures PostgreSQL execution time as observed by PgDoorman.</td></tr>
+<tr><td><code>xact_histogram</code></td><td>Time from <code>BEGIN</code> (or first statement of an implicit transaction) to <code>COMMIT</code> / <code>ROLLBACK</code>.</td></tr>
+<tr><td><code>wait_histogram</code></td><td>Time a client spent waiting for a backend connection to become available.</td></tr>
+</tbody></table>
+</div>
+<p><code>wait_histogram</code> is the pool's own contribution to latency. If <code>wait_histogram</code> p99 is high but <code>query_histogram</code> p99 is low, the bottleneck is connection acquisition, not PostgreSQL.</p>
+<h2 id="histogram-details"><a class="header" href="#histogram-details">Histogram details</a></h2>
+<p>PgDoorman uses <a href="https://github.com/HdrHistogram/HdrHistogram_rust">HDR Histogram</a> with:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>Maximum value: 10 minutes (600 seconds).</li>
+<li>Significant figures: 2 (about 0.1% relative error).</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
+<p>Memory cost: about 10 KB per histogram. Three histograms per user×database means ~30 KB per pool — comfortable for hundreds of pools.</p>
+<p>The default reporting horizon is the lifetime of the process. Histograms reset on <code>SIGHUP</code> (config reload) and on explicit <code>RECONNECT</code>.</p>
+<p>Odyssey uses TDigest, PgBouncer does not expose percentiles. HDR is preferred when you know the upper bound (10 minutes is generous for a connection pool); TDigest handles unbounded streams.</p>
+<h2 id="prometheus-exposure"><a class="header" href="#prometheus-exposure">Prometheus exposure</a></h2>
+<pre><code># HELP pg_doorman_pools_queries_percentile Query latency percentiles in milliseconds
+# TYPE pg_doorman_pools_queries_percentile gauge
+pg_doorman_pools_queries_percentile{percentile="50",user="app",database="mydb"} 1.2
+pg_doorman_pools_queries_percentile{percentile="90",user="app",database="mydb"} 4.7
+pg_doorman_pools_queries_percentile{percentile="95",user="app",database="mydb"} 8.1
+pg_doorman_pools_queries_percentile{percentile="99",user="app",database="mydb"} 24.5
+
+# HELP pg_doorman_pools_transactions_percentile Transaction latency percentiles in milliseconds
+# TYPE pg_doorman_pools_transactions_percentile gauge
+pg_doorman_pools_transactions_percentile{percentile="50",user="app",database="mydb"} 3.8
+# ... (90, 95, 99)
+
+# HELP pg_doorman_pools_avg_wait_time Average client wait time in milliseconds
+# TYPE pg_doorman_pools_avg_wait_time gauge
+pg_doorman_pools_avg_wait_time{user="app",database="mydb"} 0.05
+</code></pre>
+<p><code>avg_wait_time</code> is the mean rather than a percentile (HDR for waits is also tracked but only the mean is currently exported).</p>
+<h2 id="reading-the-numbers"><a class="header" href="#reading-the-numbers">Reading the numbers</a></h2>
+<h3 id="healthy-pool"><a class="header" href="#healthy-pool">Healthy pool</a></h3>
+<pre><code>queries:    p50=1.2  p90=4.7   p95=8.1   p99=24.5
+xacts:      p50=3.8  p90=11.2  p95=18.5  p99=42.7
+wait avg:   0.05ms
+</code></pre>
+<p>p99 is within 20× of p50 — typical for OLTP workloads with rare slow queries. Wait time is microseconds — pool is not the bottleneck.</p>
+<h3 id="pool-under-pressure"><a class="header" href="#pool-under-pressure">Pool under pressure</a></h3>
+<pre><code>queries:    p50=1.5   p90=4.9   p95=8.5   p99=25.0
+xacts:      p50=215   p90=1850  p95=2400  p99=4900
+wait avg:   180ms
+</code></pre>
+<p>Query latency is fine — PostgreSQL is healthy. But transactions are slow and wait time is 180ms. Clients are queuing for backends. Check <code>SHOW POOLS</code> for <code>cl_waiting &gt; 0</code> and <code>SHOW POOL_COORDINATOR</code> for evictions or exhaustions. Likely fix: raise <code>pool_size</code> or <code>max_db_connections</code>. See <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</p>
+<h3 id="one-slow-user"><a class="header" href="#one-slow-user">One slow user</a></h3>
+<pre><code>user "fast_app":   queries p99=12   xacts p99=35
+user "report_job": queries p99=4500 xacts p99=8000
+</code></pre>
+<p><code>report_job</code> is dragging down the shared database. With Pool Coordinator on, <code>report_job</code>'s slow transactions cause it to donate connections first under pressure (eviction is biased by p95 transaction time). Without Coordinator, isolate <code>report_job</code> to its own <code>min_guaranteed_pool_size</code> so it cannot starve <code>fast_app</code>.</p>
+<h2 id="grafana"><a class="header" href="#grafana">Grafana</a></h2>
+<p>Sample query for query latency by percentile:</p>
+<pre><code class="language-promql">pg_doorman_pools_queries_percentile{database="mydb"}
+</code></pre>
+<p>Sample alert: query p99 above 100ms for 5 minutes:</p>
+<pre><code class="language-promql">pg_doorman_pools_queries_percentile{percentile="99"} &gt; 100
+</code></pre>
+<p>Sample queue saturation alert:</p>
+<pre><code class="language-promql">pg_doorman_pools_avg_wait_time &gt; 50
+</code></pre>
+<p>A dashboard JSON is available in the project's <code>grafana/</code> directory.</p>
+<h2 id="caveats"><a class="header" href="#caveats">Caveats</a></h2>
 <ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+<li>Percentiles are per pool, not per query. PgDoorman cannot tell you which query is slow — use <code>pg_stat_statements</code> on PostgreSQL for that.</li>
+<li>HDR histograms hold values, not events. The same query running 100k times contributes to 100k samples; sampling rate is not adjustable.</li>
+<li>Exporting all four percentiles per series is intentional — exporting raw histogram buckets to Prometheus would be much heavier and rarely useful.</li>
 </ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
+<h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
 <ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
+<li><a href="admin-commands.html">Admin Commands</a> — read percentiles directly via <code>SHOW POOLS_EXTENDED</code>.</li>
+<li><a href="../reference/prometheus.html">Prometheus reference</a> — full metric list with labels.</li>
+<li><a href="../tutorials/pool-pressure.html">Pool Pressure</a> — diagnostic recipes when percentiles look wrong.</li>
+<li><a href="../benchmarks.html">Benchmarks</a> — reference percentile distributions under load.</li>
 </ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
-<ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
-</ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../observability/json-logging.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/general.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +260,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../observability/json-logging.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/general.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

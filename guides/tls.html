@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Overview - PgDoorman Documentation</title>
+        <title>Client and Server TLS - PgDoorman Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -131,7 +131,7 @@
                         <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/tutorials/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/en/src/src/guides/tls.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -160,75 +160,95 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
-<pre class="mermaid">graph LR
-    App1[Application A] --&gt; Pooler(PgDoorman)
-    App2[Application B] --&gt; Pooler
-    App3[Application C] --&gt; Pooler
-    Pooler --&gt; DB[(PostgreSQL)]
-</pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+                        <h1 id="tls"><a class="header" href="#tls">TLS</a></h1>
+<p>PgDoorman terminates TLS on the client side (clients → PgDoorman) and originates TLS on the server side (PgDoorman → PostgreSQL). The two sides are configured independently.</p>
+<h2 id="client-side-tls"><a class="header" href="#client-side-tls">Client-side TLS</a></h2>
+<p>Encrypt connections between client applications and PgDoorman.</p>
+<h3 id="modes"><a class="header" href="#modes">Modes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Mode</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>disable</code></td><td>Do not advertise TLS. Clients sending <code>SSLRequest</code> get <code>'N'</code> (rejected).</td></tr>
+<tr><td><code>allow</code></td><td>Advertise TLS but accept plain TCP.</td></tr>
+<tr><td><code>require</code></td><td>Require TLS. Plain connections are dropped after <code>SSLRequest</code> fails.</td></tr>
+<tr><td><code>verify-full</code></td><td>Require TLS and a valid client certificate. Used for mTLS.</td></tr>
+</tbody></table>
+</div>
+<p><code>verify-full</code> is mTLS — the server verifies the client's certificate. Set up a client CA bundle with <code>tls_ca_cert</code>.</p>
+<h3 id="configuration"><a class="header" href="#configuration">Configuration</a></h3>
+<pre><code class="language-yaml">general:
+  tls_mode: "require"
+  tls_certificate: "/etc/pg_doorman/tls/server.crt"
+  tls_private_key: "/etc/pg_doorman/tls/server.key"
+  tls_ca_cert: "/etc/pg_doorman/tls/client_ca.pem"   # only for verify-full
+  tls_rate_limit_per_second: 100                       # optional handshake throttle
+</code></pre>
+<p>The certificate may be self-signed for development; production deployments typically use Let's Encrypt or an internal CA.</p>
+<h3 id="reload-client-side"><a class="header" href="#reload-client-side">Reload (client side)</a></h3>
+<p>Client-side certificates are loaded at startup. Changing them requires a process restart. There is no <code>SIGHUP</code> reload for client-side TLS.</p>
+<p>For zero-downtime certificate rotation, see <a href="../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
+<h3 id="cipher-policy"><a class="header" href="#cipher-policy">Cipher policy</a></h3>
+<p>Minimum TLS 1.2. The cipher list is the Mozilla "intermediate" recommendation; this is not configurable. Direct TLS handshake (PG17, no <code>SSLRequest</code>) is not supported.</p>
+<p>For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.</p>
+<h2 id="server-side-tls"><a class="header" href="#server-side-tls">Server-side TLS</a></h2>
+<p>Encrypt connections between PgDoorman and PostgreSQL backends. Added in 3.6.0.</p>
+<h3 id="modes-1"><a class="header" href="#modes-1">Modes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Mode</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>disable</code></td><td>Plain TCP.</td></tr>
+<tr><td><code>allow</code> (default)</td><td>Try plain first; if the server rejects, retry on a new socket with TLS. Matches <code>libpq sslmode=allow</code>.</td></tr>
+<tr><td><code>prefer</code></td><td>Send <code>SSLRequest</code>; if the server says <code>'N'</code>, fall back to plain.</td></tr>
+<tr><td><code>require</code></td><td>Require TLS. Fail if the server does not support it.</td></tr>
+<tr><td><code>verify-ca</code></td><td>Require TLS and verify the server certificate against the configured CA.</td></tr>
+<tr><td><code>verify-full</code></td><td>Require TLS, verify CA, and verify the server hostname against the certificate.</td></tr>
+</tbody></table>
+</div>
+<p><code>allow</code> is the default to keep backward compatibility — existing deployments where PostgreSQL has TLS configured automatically upgrade without config changes. New deployments wanting explicit guarantees should use <code>require</code> or <code>verify-full</code>.</p>
+<h3 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h3>
+<pre><code class="language-yaml">general:
+  server_tls_mode: "verify-full"
+  server_tls_ca_cert: "/etc/pg_doorman/tls/pg_ca_bundle.pem"
+
+# Optional: client certificate for mTLS to PostgreSQL
+  server_tls_certificate: "/etc/pg_doorman/tls/pg_client.crt"
+  server_tls_private_key: "/etc/pg_doorman/tls/pg_client.key"
+</code></pre>
+<p><code>server_tls_ca_cert</code> accepts a PEM bundle (multiple CA certificates concatenated). All are loaded.</p>
+<h3 id="hot-reload"><a class="header" href="#hot-reload">Hot reload</a></h3>
+<p>On <code>SIGHUP</code>, server-side certificates are re-read from disk. Existing connections keep using their original TLS context; new connections use the reloaded certificates. The reload is lock-free via <code>Arc&lt;ArcSwap&lt;...&gt;&gt;</code> — no connection drop, no handshake stall.</p>
+<pre><code class="language-bash">kill -HUP $(pidof pg_doorman)
+</code></pre>
+<p>This is the only TLS reload path. Client-side certificates do not reload on <code>SIGHUP</code>.</p>
+<h3 id="mtls-to-postgresql"><a class="header" href="#mtls-to-postgresql">mTLS to PostgreSQL</a></h3>
+<p>Set <code>server_tls_certificate</code> and <code>server_tls_private_key</code>. PostgreSQL must be configured with <code>ssl_ca_file</code> matching the client cert's signer, and the role must have <code>clientcert=verify-ca</code> (or <code>verify-full</code>) in <code>pg_hba.conf</code> on the PostgreSQL side.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p>Three Prometheus series cover server-side TLS:</p>
+<div class="table-wrapper"><table><thead><tr><th>Metric</th><th>Type</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_server_tls_connections</code></td><td>gauge per pool</td><td>Number of active TLS connections to PostgreSQL.</td></tr>
+<tr><td><code>pg_doorman_server_tls_handshake_duration_seconds</code></td><td>histogram per pool</td><td>Handshake duration buckets.</td></tr>
+<tr><td><code>pg_doorman_server_tls_handshake_errors_total</code></td><td>counter per pool</td><td>Failed handshakes. Alert if non-zero rate.</td></tr>
+</tbody></table>
+</div>
+<p>See <a href="../reference/prometheus.html">Prometheus reference</a>.</p>
+<h2 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h2>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>The <code>COPY</code> protocol over server TLS is not exercised by the BDD test suite. Behavior is expected to work but unverified.</li>
+<li>Cancel requests to the backend bypass server TLS — they use a fresh plain TCP connection. This matches PostgreSQL's protocol design (cancel is sent on a separate socket).</li>
+<li>Direct TLS handshake (PG17 fast handshake without <code>SSLRequest</code>) is not supported on either side.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
-<div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
-</div>
-<div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
-</div>
-</div>
+<h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
 <ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
+<li>New cluster setup? See <a href="../tutorials/installation.html">Installation</a>.</li>
+<li>Rotating certificates? See <a href="../tutorials/binary-upgrade.html">Binary Upgrade</a> and <a href="../operations/signals.html">Signals</a>.</li>
+<li>Hardening an existing deployment? Combine with <a href="../authentication/hba.html">pg_hba.conf</a>: force <code>hostssl</code> for non-local connections.</li>
 </ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
-<div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
-</div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
-</div>
-<div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
-</div>
-</div>
-<ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
-</ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
-<ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
-</ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../authentication/hba.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../tutorials/installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../concepts/pool-modes.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -238,11 +258,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../authentication/hba.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../tutorials/installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../concepts/pool-modes.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
