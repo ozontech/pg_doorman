@@ -305,7 +305,8 @@ If you find a bug or have a feature request, please create an issue on the [GitH
 
 If you need help with your contribution, you can:
 
-- Ask questions in the GitHub issues
+- Ask questions in [GitHub issues](https://github.com/ozontech/pg_doorman/issues)
+- Join the Telegram channel: [@pg_doorman](https://t.me/pg_doorman)
 - Reach out to the maintainers
 
 Thank you for contributing to PgDoorman!

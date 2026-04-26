@@ -1,6 +1,6 @@
 # PgDoorman
 
-A multithreaded PostgreSQL connection pooler written in Rust. Drop-in alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat). Used in production at Ozon for two years across Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.
+A multithreaded PostgreSQL connection pooler written in Rust. Drop-in alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat). In production at Ozon for over three years across Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.
 
 [Get PgDoorman {{VERSION}}](tutorials/installation.md) · [Compare](comparison.md) · [Benchmarks](benchmarks.md)
 
