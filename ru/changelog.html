@@ -1,0 +1,913 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Changelog - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="css/custom.css">
+        <link rel="stylesheet" href="mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/changelog.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="360-apr-24-2026"><a class="header" href="#360-apr-24-2026">3.6.0 <small>Apr 24, 2026</small></a></h3>
+<h4 id="patroni-assisted-fallback"><a class="header" href="#patroni-assisted-fallback">Patroni-assisted fallback</a></h4>
+<p>When pg_doorman runs next to PostgreSQL on the same machine and connects via unix socket, a Patroni switchover or PostgreSQL crash leaves the pooler without a backend. With <code>patroni_api_urls</code> configured, pg_doorman queries the Patroni REST API <code>/cluster</code> endpoint, picks a live cluster member, and routes new connections there.</p>
+<p>Candidate selection: <code>sync_standby</code> first (most likely next leader), then <code>replica</code>, then any other member. Members with <code>noloadbalance</code>, <code>nofailover</code>, or <code>archive</code> tags are excluded. All candidates are TCP-probed in parallel; the first responding <code>sync_standby</code> wins immediately.</p>
+<p>The local backend stays in cooldown for <code>fallback_cooldown</code> (default 30s). During the cooldown, subsequent connection requests reuse the cached fallback host without re-querying Patroni. Fallback connections use a short <code>fallback_lifetime</code> (defaults to <code>fallback_cooldown</code>) so the pool returns to the local backend once it recovers.</p>
+<p>Configuration:</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    patroni_api_urls:
+      - "http://10.0.0.1:8008"
+      - "http://10.0.0.2:8008"
+    fallback_cooldown: "30s"
+    patroni_api_timeout: "5s"
+    fallback_connect_timeout: "5s"
+</code></pre>
+<p>Prometheus metrics: <code>pg_doorman_patroni_api_requests_total</code>, <code>pg_doorman_fallback_connections_total</code>, <code>pg_doorman_patroni_api_errors_total</code>, <code>pg_doorman_fallback_active</code>, <code>pg_doorman_patroni_api_duration_seconds</code>, <code>pg_doorman_fallback_host</code>, <code>pg_doorman_fallback_cache_hits_total</code>.</p>
+<p>If you tracked this feature under its working name in 3.5.x dev builds, the config keys and metric names changed before the public release: <code>patroni_discovery_urls</code> → <code>patroni_api_urls</code>, <code>failover_blacklist_duration</code> → <code>fallback_cooldown</code>, <code>failover_discovery_timeout</code> → <code>patroni_api_timeout</code>, <code>failover_connect_timeout</code> → <code>fallback_connect_timeout</code>, <code>failover_server_lifetime</code> → <code>fallback_lifetime</code>. Old <code>pg_doorman_failover_*</code> metrics are renamed to <code>pg_doorman_patroni_api_*</code> / <code>pg_doorman_fallback_*</code>.</p>
+<h4 id="server-side-tls-pg_doorman--postgresql"><a class="header" href="#server-side-tls-pg_doorman--postgresql">Server-side TLS (pg_doorman → PostgreSQL)</a></h4>
+<p>Six SSL modes matching libpq semantics: <code>disable</code>, <code>allow</code> (default), <code>prefer</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>. Mutual TLS supported via <code>server_tls_certificate</code> / <code>server_tls_private_key</code>.</p>
+<p>Configuration is per-pool with global defaults in <code>[general]</code>. Cancel requests use TLS when the main connection used TLS.</p>
+<p><strong>Breaking change:</strong> <code>server_tls</code> (bool) and <code>verify_server_certificate</code> (bool) are removed. They were parsed but non-functional. Replace with:</p>
+<div class="table-wrapper"><table><thead><tr><th>Old config</th><th>New config</th></tr></thead><tbody>
+<tr><td><code>server_tls: false</code></td><td><code>server_tls_mode: "disable"</code></td></tr>
+<tr><td><code>server_tls: true</code></td><td><code>server_tls_mode: "require"</code></td></tr>
+<tr><td><code>server_tls: true</code> + <code>verify_server_certificate: true</code></td><td><code>server_tls_mode: "verify-full"</code></td></tr>
+<tr><td>(not set)</td><td><code>server_tls_mode: "allow"</code> (new default)</td></tr>
+</tbody></table>
+</div>
+<p>The new default <code>allow</code> tries plain TCP first. If the server rejects the connection (e.g. <code>pg_hba.conf</code> requires TLS), pg_doorman retries with TLS on a new TCP socket. This matches libpq <code>sslmode=allow</code>.</p>
+<p><code>SHOW SERVERS</code> now includes a <code>tls</code> column showing whether each backend connection uses TLS.</p>
+<h3 id="353-apr-22-2026"><a class="header" href="#353-apr-22-2026">3.5.3 <small>Apr 22, 2026</small></a></h3>
+<h4 id="prepared-statement-cache-overflow-under-concurrent-load"><a class="header" href="#prepared-statement-cache-overflow-under-concurrent-load">Prepared statement cache overflow under concurrent load</a></h4>
+<p>The pool-level prepared statement cache could grow well above its configured <code>prepared_statements_cache_size</code> under concurrent client traffic. Production showed 480 entries with a limit of 300. The check-then-insert sequence in the cache had a race: multiple clients passed the size check simultaneously, each inserted without evicting. Now insertion happens first, followed by eviction in a loop until the cache is within bounds.</p>
+<h3 id="352-apr-21-2026"><a class="header" href="#352-apr-21-2026">3.5.2 <small>Apr 21, 2026</small></a></h3>
+<h4 id="semaphore-permit-leak-on-direct-handoff"><a class="header" href="#semaphore-permit-leak-on-direct-handoff">Semaphore permit leak on direct handoff</a></h4>
+<p>Each <code>return_object</code> handoff (delivering a connection to a waiting client via oneshot channel) permanently consumed one semaphore permit. After <code>max_size</code> handoffs the pool semaphore was fully drained, blocking all new <code>timeout_get</code> callers. The pool could not create connections and stabilized at whatever size it reached during cold start (typically 4-8 out of 40).</p>
+<p>Root cause: <code>wrap_checkout</code> calls <code>permit.forget()</code>, and the handoff path in <code>return_object</code> skipped <code>add_permits(1)</code>. Now <code>return_object</code> restores the permit on both the handoff and idle-queue paths. Compensating <code>add_permits(1)</code> in <code>pre_replace_one</code> removed (no longer needed).</p>
+<h4 id="burst-gate-select-race"><a class="header" href="#burst-gate-select-race">Burst gate select race</a></h4>
+<p>The <code>tokio::select!</code> in the burst gate loop randomly picked among ready branches. When <code>sleep(5ms)</code> or <code>create_done</code> won over an already-delivered oneshot, the connection was silently dropped, inflating <code>slots.size</code> without a live server. Fixed with <code>biased;</code> (oneshot checked first) and a <code>try_recv</code> drain that pushes orphaned connections to idle without double-counting the permit.</p>
+<h4 id="migration-fixes"><a class="header" href="#migration-fixes">Migration fixes</a></h4>
+<ul>
+<li>
+<p><strong>Client ID collision after migration.</strong> The new process started its connection counter at 0, colliding with migrated client IDs. Now the counter advances past the highest migrated ID.</p>
+</li>
+<li>
+<p><strong>SCRAM passthrough state preserved.</strong> The ClientKey from the first client's SCRAM handshake is serialized in the migration payload (v2 format, backward compatible). The new process skips the <code>ScramPending</code> fallback to <code>server_password</code>.</p>
+</li>
+</ul>
+<h4 id="session-mode-statistics-fix"><a class="header" href="#session-mode-statistics-fix">Session mode statistics fix</a></h4>
+<p><code>xact_time</code> percentiles in session mode showed the entire session duration instead of individual transaction time. Now recorded per-transaction at each <code>ReadyForQuery(Idle)</code>, matching transaction mode semantics.</p>
+<p><code>query_time</code> had the same accumulation bug: the timer was set once before the inner loop and never reset, so each subsequent query reported the cumulative session duration. Now reset per-query in session mode.</p>
+<h4 id="adaptive-anticipation-budget"><a class="header" href="#adaptive-anticipation-budget">Adaptive anticipation budget</a></h4>
+<p>Anticipation wait (formerly fixed 300-500ms) scales with real transaction latency: <code>xact_p99 * 2 +/- 20%</code> jitter, clamped to [5ms, 500ms]. Cold start default: 100ms.</p>
+<h4 id="diagnostic-logging"><a class="header" href="#diagnostic-logging">Diagnostic logging</a></h4>
+<p>Slow checkout warnings (&gt;500ms) now include pool state: <code>size</code>, <code>avail</code>, <code>waiting</code>, <code>inflight</code>, <code>creates</code>, <code>gate_waits</code>, <code>antic_ok</code>, <code>antic_to</code>, <code>fallback</code>. Phase-specific warnings added for semaphore timeout, burst gate timeout, coordinator exhaustion, and create failure.</p>
+<h3 id="351-apr-20-2026"><a class="header" href="#351-apr-20-2026">3.5.1 <small>Apr 20, 2026</small></a></h3>
+<h4 id="systemd-typenotify-support"><a class="header" href="#systemd-typenotify-support">systemd Type=notify support</a></h4>
+<p>pg_doorman now sends <code>sd_notify(READY=1)</code> on startup and <code>sd_notify(MAINPID=&lt;child_pid&gt;)</code> during binary upgrade. With <code>Type=notify</code> in the systemd unit, <code>systemctl reload</code> performs a zero-downtime binary upgrade without PID tracking issues — systemd follows the new process correctly and does not restart the service.</p>
+<p>The shipped <code>pg_doorman.service</code> changes from <code>Type=forking</code> + <code>--daemon</code> to <code>Type=notify</code> (foreground). Existing installations using <code>--daemon</code> continue to work but do not benefit from client migration.</p>
+<p>Docker <code>STOPSIGNAL</code> changed from <code>SIGINT</code> to <code>SIGTERM</code> to prevent binary upgrade in containers (where PID 1 exit kills the container).</p>
+<h3 id="350-apr-15-2026"><a class="header" href="#350-apr-15-2026">3.5.0 <small>Apr 15, 2026</small></a></h3>
+<h4 id="client-migration-during-binary-upgrade"><a class="header" href="#client-migration-during-binary-upgrade">Client migration during binary upgrade</a></h4>
+<p>Idle clients now transfer to the new process via Unix socket (<code>SCM_RIGHTS</code>) without reconnecting. Active-transaction clients finish their transaction on the old process, then migrate. Prepared statement caches are serialized and transparently re-parsed on the new backend. The old process exits once all clients have migrated or <code>shutdown_timeout</code> expires.</p>
+<h4 id="tls-connection-migration-opt-in"><a class="header" href="#tls-connection-migration-opt-in">TLS connection migration (opt-in)</a></h4>
+<p>Build with <code>--features tls-migration</code> to migrate TLS sessions without re-handshake. A patched vendored OpenSSL 3.5.5 exports/imports symmetric cipher state (keys, IVs, sequence numbers). Linux-only. Offline builds supported via <code>OPENSSL_SOURCE_TARBALL</code> env var with SHA-256 verification.</p>
+<h3 id="340-apr-11-2026"><a class="header" href="#340-apr-11-2026">3.4.0 <small>Apr 11, 2026</small></a></h3>
+<h4 id="pool-coordinator--database-level-connection-limits"><a class="header" href="#pool-coordinator--database-level-connection-limits">Pool Coordinator — database-level connection limits</a></h4>
+<p>When multiple user pools share one PostgreSQL database, the sum of their <code>pool_size</code> values can exceed <code>max_connections</code>. A spike in one pool starves the others, or PostgreSQL rejects connections outright.</p>
+<p><code>max_db_connections</code> caps total backend connections per database across all user pools. When the cap is reached, the coordinator frees capacity through three mechanisms, tried in order:</p>
+<ol>
+<li>
+<p><strong>Reserve pool.</strong> If <code>reserve_pool_size &gt; 0</code> and the reserve has headroom, a permit is granted immediately — no eviction, no wait. The reserve is a burst buffer: idle reserve connections are upgraded to main permits by the retain cycle once pressure drops, and closed if they stay idle longer than <code>min_connection_lifetime</code>.</p>
+</li>
+<li>
+<p><strong>Eviction.</strong> The coordinator closes one idle connection from a peer pool with the largest surplus above its <code>min_guaranteed_pool_size</code> floor. Candidates are ranked by p95 transaction time — slow pools donate first, because a 1 ms reconnect cost is negligible against a 15 ms p95 but doubles a 0.96 ms one. Only connections older than <code>min_connection_lifetime</code> (default 30 s) are eligible, which suppresses cyclic reconnect between pools that take turns stealing slots.</p>
+</li>
+<li>
+<p><strong>Wait.</strong> If nothing is evictable, the caller parks for up to <code>reserve_pool_timeout</code> (default 3 s), waking on any peer connection return or permit drop. After the wait, the reserve is retried once more before the client receives an error.</p>
+</li>
+</ol>
+<p>Disabled by default (<code>max_db_connections = 0</code>) — zero overhead when not configured. The hot path (idle connection reuse) never touches the coordinator; only new connection creation does, at the cost of one atomic operation.</p>
+<p>New pool-level config fields:</p>
+<div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Default</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>max_db_connections</code></td><td><code>0</code> (disabled)</td><td>Hard cap on backend connections per database</td></tr>
+<tr><td><code>min_connection_lifetime</code></td><td><code>30000</code> ms</td><td>Eviction age floor — connections younger than this are immune</td></tr>
+<tr><td><code>reserve_pool_size</code></td><td><code>0</code> (disabled)</td><td>Extra permits above the cap, granted on burst</td></tr>
+<tr><td><code>reserve_pool_timeout</code></td><td><code>3000</code> ms</td><td>Coordinator wait budget before error</td></tr>
+<tr><td><code>min_guaranteed_pool_size</code></td><td><code>0</code></td><td>Per-user eviction protection floor</td></tr>
+</tbody></table>
+</div>
+<p>New admin commands: <code>SHOW POOL_COORDINATOR</code> (per-database coordinator state), <code>SHOW POOL_SCALING</code> (per-pool checkout counters). Both are also exported as Prometheus metrics under <code>pg_doorman_pool_coordinator{type, database}</code> and <code>pg_doorman_pool_scaling{type, user, database}</code>.</p>
+<p>See the <a href="tutorials/pool-pressure.html">pool pressure tutorial</a> for acquisition phases, tuning recipes, and alert examples.</p>
+<h4 id="connection-checkout-under-pressure"><a class="header" href="#connection-checkout-under-pressure">Connection checkout under pressure</a></h4>
+<p>Replaces <code>scaling_cooldown_sleep</code> (a fixed 10 ms delay before creating a backend connection) with a multi-phase checkout that reuses connections about to be returned before resorting to <code>connect()</code>.</p>
+<p>When the idle pool is empty and the pool is above its warm threshold (<code>scaling_warm_pool_ratio</code>, default 20%), a caller first spins briefly (<code>scaling_fast_retries</code>, default 10 yield iterations), then registers a direct-handoff waiter. Connections returned by other clients are delivered through the waiter channel — no idle-queue round-trip, no race with other checkout attempts. The waiter deadline is bounded by <code>query_wait_timeout</code> minus a 500 ms reserve for the create path. If no connection arrives, the caller proceeds to create.</p>
+<p>Backend <code>connect()</code> calls are capped at <code>scaling_max_parallel_creates</code> (default 2) per pool. Callers above the cap wait for a peer create to finish or a connection to be returned. Background replenish (<code>min_pool_size</code>) respects the same cap and defers to the next retain cycle when the gate is full, so it does not compete with client-driven creates during spikes.</p>
+<p>Connections nearing <code>server_lifetime</code> expiry (95% of age) trigger a pre-replacement: a background task creates a successor before the old connection fails recycle, so the next checkout hits the hot path.</p>
+<p>The direct-handoff queue is FIFO. On a 500-client / 40-connection AWS Fargate benchmark, p99/p50 ratio is 1.08 (pg_doorman) vs 25.5 (Odyssey). Every client pays roughly the same queue cost.</p>
+<p><strong>Migration:</strong> remove <code>scaling_cooldown_sleep</code> from your config if present. Replace with <code>scaling_max_parallel_creates</code> (default 2) if you need to tune the concurrency cap.</p>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>
+<p><strong>Runtime log level control.</strong> <code>SET log_level = 'debug'</code> changes the log filter without restart; <code>SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug'</code> targets specific modules. <code>SHOW LOG_LEVEL</code> displays the current filter. Changes are ephemeral (lost on restart).</p>
+</li>
+<li>
+<p><strong>Log readability overhaul.</strong> Consistent <code>[user@pool #cN]</code> prefix. Durations as <code>4m30s</code> instead of raw milliseconds. Stats line in logfmt. PG error newlines escaped. Expensive debug computations guarded by <code>log_enabled!()</code> to avoid allocations at production log levels.</p>
+</li>
+<li>
+<p><strong>Auth failure logs include client IP.</strong> SCRAM, MD5, JWT, and PAM failures show the source address.</p>
+</li>
+<li>
+<p><strong>Replenish failure noise suppression.</strong> Repeated <code>min_pool_size</code> failures log once at warn, then a periodic reminder every ~10 minutes with the failure count.</p>
+</li>
+<li>
+<p><strong><code>avg_xact_time</code> column in <code>SHOW POOLS</code>.</strong> Average transaction time per pool, visible alongside existing connection counts.</p>
+</li>
+<li>
+<p><strong>Smart session cleanup in transaction mode.</strong> pg_doorman tracks which session state a client dirtied (<code>SET</code>, <code>DECLARE CURSOR</code>, prepared statements) and sends the matching reset on checkin. If the client cleaned up after itself — <code>RESET ALL</code>, <code>CLOSE ALL</code>, <code>DEALLOCATE ALL</code>, or <code>DISCARD ALL</code> — pg_doorman sees the confirmation and skips its own reset. Drivers like <code>jackc/pgx</code> that send a cleanup batch on disconnect no longer cause a redundant round-trip to PostgreSQL. A <code>SET</code> without a follow-up reset still triggers cleanup as before.</p>
+</li>
+</ul>
+<h3 id="335-mar-31-2026"><a class="header" href="#335-mar-31-2026">3.3.5 <small>Mar 31, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Prepared statement eviction during batch breaks buffered Bind.</strong> When a client sent a batch like <code>Parse(A), Bind(A), Parse(C), Sync</code> and <code>Parse(C)</code> triggered server-side LRU eviction of statement A, the <code>Close(A)</code> was sent to PostgreSQL immediately (out-of-band), deleting A before the client buffer was flushed. <code>Bind(A)</code> then failed with <code>prepared statement "DOORMAN_X" does not exist</code> (error 26000). Two fixes: (1) <code>has_prepared_statement()</code> now promotes entries in the LRU on access (<code>get()</code> instead of <code>contains()</code>), so actively-used statements resist eviction. (2) Eviction <code>Close</code> is deferred until after the batch completes — the statement stays alive on PostgreSQL while Binds in the buffer are processed, then <code>Close</code> is sent as post-batch cleanup. If the client disconnects before <code>Sync</code>, <code>checkin_cleanup</code> detects the pending deferred closes and triggers <code>DEALLOCATE ALL</code>.</li>
+</ul>
+<h3 id="334-mar-30-2026"><a class="header" href="#334-mar-30-2026">3.3.4 <small>Mar 30, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Prepared statement cache desync after client disconnect.</strong> When a client sent Parse but disconnected before Sync/Flush, pg_doorman registered the statement in the server-side LRU cache but never sent the actual Parse to PostgreSQL (it was still in the client buffer, which was dropped on disconnect). The next client that got the same server connection and used the same query saw the stale cache entry, skipped sending Parse, and received <code>prepared statement "DOORMAN_X" does not exist</code> (error 26000) from PostgreSQL. Fixed by tracking a <code>has_pending_cache_entries</code> flag on the server connection: set when a statement is added to the cache without immediate Parse confirmation, cleared after successful buffer flush. If the client disconnects before flushing, <code>checkin_cleanup</code> detects the flag and triggers <code>DEALLOCATE ALL</code> to re-synchronize the cache. Zero overhead on the normal path (one boolean check per checkin).</li>
+</ul>
+<h3 id="333-mar-26-2026"><a class="header" href="#333-mar-26-2026">3.3.3 <small>Mar 26, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>
+<p><strong>Log spam from missing <code>/proc/net/tcp6</code> when IPv6 disabled.</strong> <code>get_socket_states_count</code> failed entirely if any of the three /proc files was absent, logging errors every 15 seconds and losing tcp/unix metrics that were available. Missing files are now skipped — counters stay at zero. Other I/O errors (permission denied) still propagate.</p>
+</li>
+<li>
+<p><strong>Protocol violation when streaming large DataRow with cached prepared statements.</strong> <code>handle_large_data_row</code> wrote accumulated protocol messages (BindComplete, RowDescription) directly to the client socket, bypassing <code>reorder_parse_complete_responses</code>. When Parse was skipped (prepared statement cache hit), the client received BindComplete without the synthetic ParseComplete — causing <code>Received backend message BindComplete while expecting ParseCompleteMessage</code> in Npgsql and similar drivers. Triggered when <code>message_size_to_be_stream</code> ≤ 64KB. Fixed by returning accumulated messages from <code>recv()</code> before entering the streaming path, so response reordering runs first. Same fix applied to <code>handle_large_copy_data</code>.</p>
+</li>
+</ul>
+<h3 id="332-mar-1-2026"><a class="header" href="#332-mar-1-2026">3.3.2 <small>Mar 1, 2026</small></a></h3>
+<p><strong>Breaking Changes:</strong></p>
+<ul>
+<li><strong><code>auth_query</code> config field renames</strong>: Two fields in the <code>auth_query</code> section have been renamed for clarity. <code>auth_query.pool_size</code> (number of connections for running auth queries) is now <code>auth_query.workers</code>. <code>auth_query.default_pool_size</code> (data pool size for dynamic users) is now <code>auth_query.pool_size</code>, matching the same parameter name used in static pools. <strong>Migration</strong>: rename <code>pool_size</code> to <code>workers</code> and <code>default_pool_size</code> to <code>pool_size</code> in your <code>auth_query</code> config. If you don't update, the old <code>pool_size</code> value (typically 1-2) will be interpreted as the data pool size, drastically reducing connection capacity. The old <code>default_pool_size</code> key is silently ignored and defaults to 40.</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>
+<p><strong>Session mode: keep server connections alive after SQL errors.</strong> A query like <code>SELECT 1/0</code> returns an <code>ErrorResponse</code> from PostgreSQL but leaves the connection fully usable. Previously, <code>handle_error_response</code> called <code>mark_bad()</code> unconditionally in async mode, so the connection was destroyed at session end. Now <code>mark_bad</code> is skipped when the pool runs in session mode. Transaction mode still calls <code>mark_bad</code> because the connection returns to a shared pool where protocol desync is dangerous.</p>
+</li>
+<li>
+<p><strong>Pool-level <code>server_lifetime</code> and <code>idle_timeout</code> overrides ignored</strong>: Pool-level overrides for <code>server_lifetime</code> and <code>idle_timeout</code> were silently ignored — the general (global) values were always used instead. Fixed in 6 places across 3 pool creation contexts (static pools, auth_query shared pools, dynamic pools). Now <code>pool.server_lifetime</code> and <code>pool.idle_timeout</code> correctly override the general settings when specified.</p>
+</li>
+<li>
+<p><strong><code>idle_timeout</code> default was 83 hours instead of 10 minutes</strong>: The default <code>idle_timeout</code> was set to 300,000,000ms (83 hours), effectively disabling idle connection cleanup. Idle server connections could accumulate indefinitely. Changed default to 600,000ms (10 minutes).</p>
+</li>
+<li>
+<p><strong><code>retain_connections_max</code> quota exhaustion causing unlimited closure</strong>: When <code>retain_connections_max &gt; 0</code> and the global counter reached the limit, the remaining quota became <code>0</code> via <code>saturating_sub</code>. Since <code>0</code> means "unlimited" in <code>retain_oldest_first()</code>, pools processed after quota exhaustion lost ALL idle connections in a single retain cycle instead of none. With non-deterministic HashMap iteration order, this bug manifested as random pools losing all connections. Fixed by adding an early return when the quota is exhausted.</p>
+</li>
+<li>
+<p><strong><code>retain_connections_max</code> doc comment incorrectly stated default as <code>0</code> (unlimited)</strong>: The actual default is <code>3</code>.</p>
+</li>
+<li>
+<p><strong><code>server_lifetime</code> default changed from 5 minutes to 20 minutes</strong>: The previous default of 5 minutes was shorter than <code>idle_timeout</code> (10 minutes), which meant <code>idle_timeout</code> could never trigger — connections were always killed by <code>server_lifetime</code> first. Changed to 20 minutes so that <code>idle_timeout</code> (10 min) handles idle cleanup while <code>server_lifetime</code> (20 min) rotates long-lived connections. Note: <code>idle_timeout</code> only applies to connections that have been used at least once — prewarmed/replenished connections that were never checked out by a client are not subject to <code>idle_timeout</code> and will only be closed when <code>server_lifetime</code> expires.</p>
+</li>
+<li>
+<p><strong><code>idle_timeout = 0</code> did not disable idle timeout</strong>: Setting <code>idle_timeout</code> to <code>0</code> was supposed to disable idle connection cleanup (consistent with PgBouncer's <code>server_idle_timeout = 0</code> semantics and our own <code>server_lifetime = 0</code> behavior). Instead, it closed connections after ~1ms of being idle. Fixed by adding an <code>idle_timeout_ms &gt; 0</code> guard before the elapsed time check.</p>
+</li>
+<li>
+<p><strong><code>idle_timeout</code> had no jitter — synchronized mass closures</strong>: Unlike <code>server_lifetime</code> which applies ±20% per-connection jitter to prevent thundering herd, <code>idle_timeout</code> used a single pool-wide value. When many connections became idle simultaneously (e.g., after a traffic burst), they all expired at the exact same moment, causing mass closures in one retain cycle. Now <code>idle_timeout</code> applies the same ±20% per-connection jitter as <code>server_lifetime</code>.</p>
+</li>
+<li>
+<p><strong><code>retain_connections_max</code> unfair quota distribution across pools</strong>: The retain cycle iterated pools via HashMap, whose order is deterministic within a process (fixed RandomState seed). The same pool always got iterated first and consumed the entire <code>retain_connections_max</code> quota, starving other pools. Expired connections in starved pools were never cleaned up by retain — clients had to discover them via failed <code>recycle()</code> checks, adding latency. Fixed by shuffling pool iteration order each cycle.</p>
+</li>
+<li>
+<p><strong>Retain and replenish used separate pool snapshots</strong>: The retain and replenish phases each called <code>get_all_pools()</code> separately. If <code>POOLS</code> was atomically updated between them (config reload, dynamic pool GC), retain operated on one set of pools and replenish on another, potentially missing pools that need replenishment. Fixed by using a single snapshot for both phases.</p>
+</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li><strong>PHP PDO_PGSQL driver added to test infrastructure.</strong> PHP 8.4 with <code>pdo_pgsql</code> extension is now included in the Nix-based Docker test image. Two BDD scenarios verify basic connectivity (SELECT 1) and session mode behavior (SQL error does not change backend PID). Run with <code>make test-php</code> or <code>--tags @php</code>.</li>
+</ul>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong><code>pool_size</code> observability</strong>: New <code>pg_doorman_pool_size</code> Prometheus gauge exposes the configured maximum pool size per user/database. The <code>pool_size</code> column is also added to <code>SHOW POOLS</code> and <code>SHOW POOLS_EXTENDED</code> admin commands (after <code>sv_login</code>), allowing operators to compare current server connections against configured capacity directly from the admin console. Works for both static and dynamic (auth_query) pools.</p>
+</li>
+<li>
+<p><strong>PAUSE, RESUME, RECONNECT admin commands</strong>: New admin console commands for managing connection pools. <code>PAUSE [db]</code> blocks new backend connection acquisition (active transactions continue). <code>RESUME [db]</code> lifts the pause and unblocks waiting clients. <code>RECONNECT [db]</code> forces connection rotation by incrementing the pool epoch — idle connections are immediately closed and active connections are discarded when returned to the pool. Without arguments, all pools are affected; with a database name, only matching pools. Specifying a nonexistent database returns an error. Use <code>SHOW POOLS</code> to see the <code>paused</code> status column.</p>
+</li>
+<li>
+<p><strong><code>min_pool_size</code> for dynamic auth_query passthrough pools</strong>: New <code>auth_query.min_pool_size</code> setting controls the minimum number of backend connections maintained per dynamic user pool in passthrough mode. Connections are prewarmed in the background when the pool is first created and replenished by the retain cycle after <code>server_lifetime</code> expiry. Pools with <code>min_pool_size &gt; 0</code> are never garbage-collected. Default is <code>0</code> (no prewarm — backward compatible). Note: total backend connections scale as <code>active_users × min_pool_size</code>.</p>
+</li>
+</ul>
+<h3 id="331-feb-26-2026"><a class="header" href="#331-feb-26-2026">3.3.1 <small>Feb 26, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>
+<p><strong>Fix Ctrl+C in foreground mode</strong>: Pressing Ctrl+C in foreground mode (with TTY attached) now performs a clean graceful shutdown instead of triggering a binary upgrade. Previously, each Ctrl+C would spawn a new pg_doorman process via <code>--inherit-fd</code>, leaving orphan processes accumulating. SIGINT in daemon mode (no TTY) retains its legacy binary upgrade behavior for backward compatibility with existing <code>systemd</code> units.</p>
+</li>
+<li>
+<p><strong>Minimum pool size enforcement (<code>min_pool_size</code>)</strong>: The <code>min_pool_size</code> user setting is now enforced at runtime. After each connection retain cycle, pg_doorman checks pool sizes and creates new connections to maintain the configured minimum. Previously, <code>min_pool_size</code> was accepted in config but never applied — pools started empty and could drop to 0 connections even with <code>min_pool_size</code> set. Replenishment stops on the first connection failure to avoid hammering an unavailable server.</p>
+</li>
+</ul>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>SIGUSR2 for binary upgrade</strong>: New dedicated signal <code>SIGUSR2</code> triggers binary upgrade + graceful shutdown in all modes (daemon and foreground). This is now the recommended signal for binary upgrades. The <code>systemd</code> service file has been updated to use <code>SIGUSR2</code> for <code>ExecReload</code>.</p>
+</li>
+<li>
+<p><strong><code>UPGRADE</code> admin command</strong>: New admin console command that triggers binary upgrade via SIGUSR2. Use it from <code>psql</code> connected to the admin database: <code>UPGRADE;</code>.</p>
+</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>
+<p><strong>Pool prewarm at startup</strong>: When <code>min_pool_size</code> is configured, pg_doorman now creates the minimum number of connections immediately at startup, before the first retain cycle. Previously, pools started empty and connections were only created lazily on first client request or after the first retain interval (default 60s). This eliminates cold-start latency for the first clients connecting after pg_doorman restart.</p>
+</li>
+<li>
+<p><strong>Configurable connection scaling parameters</strong>: New <code>general</code> settings <code>scaling_warm_pool_ratio</code>, <code>scaling_fast_retries</code>, and <code>scaling_cooldown_sleep</code> allow tuning connection pool scaling behavior. All three can be overridden at the pool level. <code>scaling_cooldown_sleep</code> uses the human-readable <code>Duration</code> type (e.g. <code>"10ms"</code>, <code>"1s"</code>) consistent with other timeout fields.</p>
+</li>
+<li>
+<p><strong><code>max_concurrent_creates</code> setting</strong>: Controls the maximum number of server connections that can be created concurrently per pool. Uses a semaphore instead of a mutex for parallel connection creation.</p>
+</li>
+</ul>
+<h3 id="330-feb-23-2026"><a class="header" href="#330-feb-23-2026">3.3.0 <small>Feb 23, 2026</small></a></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>Dynamic user authentication (<code>auth_query</code>)</strong>: PgDoorman can now authenticate users dynamically by querying PostgreSQL at connection time — no need to list every user in the config. Supports <code>pg_shadow</code>, custom tables, and <code>SECURITY DEFINER</code> functions. The query must return a column named <code>passwd</code> or <code>password</code> (or any single column) containing an MD5 or SCRAM-SHA-256 hash.</p>
+</li>
+<li>
+<p><strong>Passthrough authentication</strong>: Default mode for both static and dynamic users — PgDoorman reuses the client's cryptographic proof (MD5 hash or SCRAM ClientKey) to authenticate to the backend automatically. No plaintext <code>server_password</code> in config needed when the pool user matches the backend PostgreSQL user.</p>
+</li>
+<li>
+<p><strong>Two auth_query modes</strong>:</p>
+<ul>
+<li><em>Passthrough mode</em> (default) — each dynamic user gets their own backend connection pool and authenticates as themselves, preserving per-user identity on the backend.</li>
+<li><em>Dedicated mode</em> (<code>server_user</code> set) — all dynamic users share a single backend pool under one PostgreSQL role.</li>
+</ul>
+</li>
+<li>
+<p><strong>Auth query caching</strong>: DashMap-based cache with configurable TTL, double-checked locking, rate-limited refetch, and request coalescing. Supports separate TTLs for successful and failed lookups.</p>
+</li>
+<li>
+<p><strong><code>SHOW AUTH_QUERY</code> admin command</strong>: Displays per-pool metrics — cache entries/hits/misses, auth success/failure counters, executor stats, and dynamic pool count.</p>
+</li>
+<li>
+<p><strong>Prometheus metrics for auth_query</strong>: New metric families <code>pg_doorman_auth_query_cache</code>, <code>pg_doorman_auth_query_auth</code>, <code>pg_doorman_auth_query_executor</code>, <code>pg_doorman_auth_query_dynamic_pools</code>.</p>
+</li>
+<li>
+<p><strong>Idle dynamic pool garbage collection</strong>: Background task cleans up expired dynamic pools when all connections have been idle beyond <code>server_lifetime</code>. Zero overhead for static-only configs.</p>
+</li>
+<li>
+<p><strong>Smart password column lookup</strong>: Password column resolved by name (<code>passwd</code> → <code>password</code> → single-column fallback), works with <code>pg_shadow</code>, custom tables, and arbitrary single-column queries.</p>
+</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>
+<p><strong><code>server_username</code>/<code>server_password</code> now optional</strong>: Previously documented as required for MD5/SCRAM hash configs. Now only needed when the backend user differs from the pool user (username mapping, JWT auth).</p>
+</li>
+<li>
+<p><strong>Data-driven config &amp; docs generation</strong>: <code>fields.yaml</code> is the single source of truth for all config field descriptions (EN/RU). Reference docs, annotated configs, and inline comments are all generated from it.</p>
+</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li><strong>39 new BDD scenarios</strong> (260+ steps) covering auth_query executor, end-to-end auth, HBA integration, passthrough mode, SCRAM-only auth, RELOAD/GC lifecycle, observability, and static user passthrough.</li>
+</ul>
+<h3 id="324-feb-20-2026"><a class="header" href="#324-feb-20-2026">3.2.4 <small>Feb 20, 2026</small></a></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>Annotated config generation</strong>: The <code>generate</code> command now produces well-documented configuration files with inline comments for every parameter by default. Previously it only did plain serde serialization without any documentation.</p>
+</li>
+<li>
+<p><strong><code>--reference</code> flag</strong>: Generates a complete reference config with example values without requiring a PostgreSQL connection. The root <code>pg_doorman.toml</code> and <code>pg_doorman.yaml</code> are now auto-generated from this flag, ensuring they always stay in sync with the codebase.</p>
+</li>
+<li>
+<p><strong><code>--format</code> (<code>-f</code>) flag</strong>: Explicitly choose output format (<code>yaml</code> or <code>toml</code>). Default output format changed from TOML to YAML. When <code>--output</code> is specified, format is auto-detected from file extension; <code>--format</code> overrides auto-detection.</p>
+</li>
+<li>
+<p><strong><code>--russian-comments</code> (<code>--ru</code>) flag</strong>: Generates comments in Russian for quick start guide. All ~100+ comment strings are translated to clear, simple Russian.</p>
+</li>
+<li>
+<p><strong><code>--no-comments</code> flag</strong>: Disables inline comments for minimal config output (plain serde serialization, the old default behavior).</p>
+</li>
+<li>
+<p><strong>Passthrough authentication documentation</strong>: Documents passthrough auth as the default mode — <code>server_username</code>/<code>server_password</code> are no longer needed when the pool user matches the backend PostgreSQL user. PgDoorman reuses the client's MD5 hash or SCRAM ClientKey to authenticate to the backend automatically.</p>
+</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li>
+<p><strong>Config field coverage guarantee</strong>: New test parses config struct source files (<code>general.rs</code>, <code>pool.rs</code>, <code>user.rs</code>, etc.) at compile time and verifies every <code>pub</code> field appears in annotated output. If someone adds a new config parameter but forgets to add it to <code>annotated.rs</code>, CI will fail with a clear message listing the missing fields.</p>
+</li>
+<li>
+<p><strong>BDD tests for generate command</strong>: End-to-end tests that generate TOML and YAML configs, start pg_doorman with them, and verify client connectivity.</p>
+</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>
+<p><strong>Fixed protocol desynchronization on prepared statement cache eviction in async mode</strong>: When asyncpg/SQLAlchemy uses <code>Flush</code> (instead of <code>Sync</code>) for pipelined <code>Parse+Describe</code> batches and the prepared statement LRU cache is full, eviction sends <code>Close+Sync</code> to the server. In async mode, <code>recv()</code> was exiting immediately when <code>expected_responses==0</code>, leaving <code>CloseComplete</code> and <code>ReadyForQuery</code> unread in the TCP buffer. The next <code>recv()</code> call would then read these stale messages instead of the expected response, causing protocol desynchronization. Fixed by temporarily disabling async mode during eviction so that <code>recv()</code> waits for <code>ReadyForQuery</code> as the natural loop terminator.</p>
+</li>
+<li>
+<p><strong>Fixed generated config startup failure</strong>: <code>syslog_prog_name</code> and <code>daemon_pid_file</code> are now commented out by default in generated configs. Previously they were uncommented, causing pg_doorman to fail when started in foreground mode or when syslog was unavailable.</p>
+</li>
+<li>
+<p><strong>Fixed Go test goroutine leak</strong>: <code>TestLibPQPrepared</code> now uses <code>sync.WaitGroup</code> to wait for all goroutines before test exit, fixing sporadic panics caused by logging after test completion.</p>
+</li>
+<li>
+<p><strong>Fixed protocol violation on flush timeout — client now receives ErrorResponse</strong>: When the 5-second flush timeout fires (server TCP write blocks because the backend is overloaded or unreachable), the <code>FlushTimeout</code> error was propagating via <code>?</code> through <code>handle_sync_flush</code> → transaction loop → <code>handle()</code> without sending any PostgreSQL protocol message to the client. The TCP connection was simply dropped, causing drivers like Npgsql to report "protocol violation" due to unexpected EOF. Now pg_doorman sends a proper <code>ErrorResponse</code> with SQLSTATE <code>58006</code> and message containing "pooler is shut down now" before closing the connection, allowing client drivers to detect the error and reconnect gracefully.</p>
+</li>
+</ul>
+<h3 id="323-feb-10-2026"><a class="header" href="#323-feb-10-2026">3.2.3 <small>Feb 10, 2026</small></a></h3>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li><strong>Jitter for <code>server_lifetime</code> (±20%)</strong>: Connection lifetimes now have a random ±20% jitter applied to prevent mass disconnections from PostgreSQL. When pg_doorman is under heavy load, it creates many connections simultaneously, which previously caused them all to expire at the same time, creating spikes of connection closures. Now each connection gets an individual lifetime calculated as <code>base_lifetime ± random(20%)</code>. For example, with <code>server_lifetime: 300000</code> (5 minutes), actual lifetimes range from 240s to 360s, spreading connection closures evenly over time.</li>
+</ul>
+<h3 id="322-feb-9-2026"><a class="header" href="#322-feb-9-2026">3.2.2 <small>Feb 9, 2026</small></a></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>Configuration test mode (<code>-t</code> / <code>--test-config</code>)</strong>: Added nginx-style configuration validation flag. Running <code>pg_doorman -t</code> or <code>pg_doorman --test-config</code> will parse and validate the configuration file, report success or errors, and exit without starting the server. Useful for CI/CD pipelines and pre-deployment configuration checks.</p>
+</li>
+<li>
+<p><strong>Configuration validation before binary upgrade</strong>: When receiving SIGINT for graceful shutdown/binary upgrade, the server now validates the new binary's configuration using <code>-t</code> flag before proceeding. If the configuration test fails, the shutdown is cancelled and critical error messages are logged to alert the operator. This prevents accidental downtime from deploying a binary with invalid configuration.</p>
+</li>
+<li>
+<p><strong>New <code>retain_connections_max</code> configuration parameter</strong>: Controls the maximum number of idle connections to close per retain cycle. When set to <code>0</code>, all idle connections that exceed <code>idle_timeout</code> or <code>server_lifetime</code> are closed immediately. Default is <code>3</code>, providing controlled cleanup while preventing connection buildup. Previously, only 1 connection was closed per cycle, which could lead to slow connection cleanup when many connections became idle simultaneously. Connection closures are now logged for better observability.</p>
+</li>
+<li>
+<p><strong>Oldest-first connection closure</strong>: When <code>retain_connections_max &gt; 0</code>, connections are now closed in order of age (oldest first) rather than in queue order. This ensures that the oldest connections are always prioritized for closure, providing more predictable connection rotation behavior.</p>
+</li>
+<li>
+<p><strong>New <code>server_idle_check_timeout</code> configuration parameter</strong>: Time after which an idle server connection should be checked before being given to a client (default: 30s). This helps detect dead connections caused by PostgreSQL restart, network issues, or server-side idle timeouts. When a connection has been idle longer than this timeout, pg_doorman sends a minimal query (<code>;</code>) to verify the connection is alive before returning it to the client. Set to <code>0</code> to disable.</p>
+</li>
+<li>
+<p><strong>New <code>tcp_user_timeout</code> configuration parameter</strong>: Sets the <code>TCP_USER_TIMEOUT</code> socket option for client connections (in seconds). This helps detect dead client connections faster than keepalive probes when the connection is actively sending data but the remote end has become unreachable. Prevents 15-16 minute delays caused by TCP retransmission timeout. Only supported on Linux. Default is <code>60</code> seconds. Set to <code>0</code> to disable.</p>
+</li>
+<li>
+<p><strong>Removed <code>wait_rollback</code> mechanism</strong>: The pooler no longer attempts to automatically wait for ROLLBACK from clients when a transaction enters an aborted state. This complex mechanism was causing protocol desynchronization issues with async clients and extended query protocol. Server connections in aborted transactions are now simply returned to the pool and cleaned up normally via ROLLBACK during checkin.</p>
+</li>
+<li>
+<p><strong>Removed savepoint tracking</strong>: Removed the <code>use_savepoint</code> flag and related logic that was tracking SAVEPOINT usage. The pooler now treats savepoints as regular PostgreSQL commands without special handling.</p>
+</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Fixed protocol desynchronization in async mode with simple prepared statements</strong>: When <code>prepared_statements</code> was disabled but clients used extended query protocol (Parse, Bind, Describe, Execute, Flush), the pooler wasn't tracking batch operations, causing <code>expected_responses</code> to be calculated as 0. This led to the pooler exiting the response loop immediately without waiting for server responses (ParseComplete, BindComplete, etc.). Now batch operations are tracked regardless of the <code>prepared_statements</code> setting.</li>
+</ul>
+<p><strong>Performance:</strong></p>
+<ul>
+<li><strong>Removed timeout-based waiting in async protocol</strong>: The pooler now tracks expected responses based on batch operations (Parse, Bind, Execute, etc.) and exits immediately when all responses are received. This eliminates unnecessary latency in pipeline/async workloads.</li>
+</ul>
+<h3 id="318-jan-31-2026"><a class="header" href="#318-jan-31-2026">3.1.8 <small>Jan 31, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>
+<p><strong>Fixed ParseComplete desynchronization in pipeline on errors</strong>: Fixed a protocol desynchronization issue (especially noticeable in .NET Npgsql driver) where synthetic <code>ParseComplete</code> messages were not being inserted if an error occurred during a pipelined batch. When the pooler caches a prepared statement and skips sending <code>Parse</code> to the server, it must still provide a <code>ParseComplete</code> to the client. If an error occurs before subsequent commands are processed, the server skips them, and the pooler now ensures all missing synthetic <code>ParseComplete</code> messages are inserted into the response stream upon receiving an <code>ErrorResponse</code> or <code>ReadyForQuery</code>.</p>
+</li>
+<li>
+<p><strong>Fixed incorrect <code>use_savepoint</code> state persistence</strong>: Fixed a bug where the <code>use_savepoint</code> flag (which disables automatic rollback on connection return if a savepoint was used) was not reset after a transaction ended.</p>
+</li>
+</ul>
+<h3 id="317-jan-28-2026"><a class="header" href="#317-jan-28-2026">3.1.7 <small>Jan 28, 2026</small></a></h3>
+<p><strong>Memory Optimization:</strong></p>
+<ul>
+<li>
+<p><strong>DEALLOCATE now clears client prepared statements cache</strong>: When a client sends <code>DEALLOCATE &lt;name&gt;</code> or <code>DEALLOCATE ALL</code> via simple query protocol, the pooler now properly clears the corresponding entries from the client's internal prepared statements cache. Previously, synthetic OK responses were sent but the client cache was not cleared, causing memory to grow indefinitely for long-running connections using many unique prepared statements. This fix allows memory to be reclaimed when clients properly deallocate their statements.</p>
+</li>
+<li>
+<p><strong>New <code>client_prepared_statements_cache_size</code> configuration parameter</strong>: Added protection against malicious or misbehaving clients that don't call <code>DEALLOCATE</code> and could exhaust server memory by creating unlimited prepared statements. When the per-client cache limit is reached, the oldest entry is evicted automatically. Set to <code>0</code> for unlimited (default, relies on client calling <code>DEALLOCATE</code>). Example: <code>client_prepared_statements_cache_size: 1024</code> limits each client to 1024 cached prepared statements.</p>
+</li>
+</ul>
+<h3 id="316-jan-27-2026"><a class="header" href="#316-jan-27-2026">3.1.6 <small>Jan 27, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>
+<p><strong>Fixed incorrect timing statistics (xact_time, wait_time, percentiles)</strong>: The statistics module was using <code>recent()</code> (cached clock) without proper clock cache updates, causing transaction time, wait time, and their percentiles to show extremely large incorrect values (e.g., 100+ seconds instead of actual milliseconds). The root cause was that the <code>quanta::Upkeep</code> handle was not being stored, causing the upkeep thread to stop immediately after starting. Now the handle is properly retained for the lifetime of the server, ensuring <code>Clock::recent()</code> returns accurate cached time values.</p>
+</li>
+<li>
+<p><strong>Fixed query time accumulation bug in transaction loop</strong>: Query times were incorrectly accumulated when multiple queries were executed within a single transaction. The <code>query_start_at</code> timestamp was only set once at the beginning of the transaction, causing each subsequent query's elapsed time to include all previous queries' durations (e.g., 10 queries of 100ms each would report the last query as ~1 second instead of 100ms). Now <code>query_start_at</code> is updated for each new message in the transaction loop, ensuring accurate per-query timing.</p>
+</li>
+</ul>
+<p><strong>New Features:</strong></p>
+<ul>
+<li>
+<p><strong>New <code>clock_resolution_statistics</code> configuration parameter</strong>: Added <code>general.clock_resolution_statistics</code> parameter (default: <code>0.1ms</code> = 100 microseconds) that controls how often the internal clock cache is updated. Lower values provide more accurate timing measurements for query/transaction percentiles, while higher values reduce CPU overhead. This parameter affects the accuracy of all timing statistics reported in the admin console and Prometheus metrics.</p>
+</li>
+<li>
+<p><strong>Sub-millisecond precision for Duration values</strong>: Duration configuration parameters now support sub-millisecond precision:</p>
+<ul>
+<li>New <code>us</code> suffix for microseconds (e.g., <code>"100us"</code> = 100 microseconds)</li>
+<li>Decimal milliseconds support (e.g., <code>"0.1ms"</code> = 100 microseconds)</li>
+<li>Internal representation changed from milliseconds to microseconds for higher precision</li>
+<li>Full backward compatibility maintained: plain numbers are still interpreted as milliseconds</li>
+</ul>
+</li>
+</ul>
+<h3 id="315-jan-25-2026"><a class="header" href="#315-jan-25-2026">3.1.5 <small>Jan 25, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li><strong>Fixed PROTOCOL VIOLATION with batch PrepareAsync</strong></li>
+<li><strong>Rewritten ParseComplete insertion algorithm</strong></li>
+</ul>
+<p><strong>Performance:</strong></p>
+<ul>
+<li><strong>Deferred connection acquisition for standalone BEGIN</strong>: When a client sends a standalone <code>BEGIN;</code> or <code>begin;</code> query (simple query protocol), the pooler now defers acquiring a server connection until the next message arrives. Since <code>BEGIN</code> itself doesn't perform any actual database operations, this optimization reduces connection pool contention when clients are slow to send their next query after starting a transaction.
+<ul>
+<li>Micro-optimized detection: first checks message size (12 bytes), then content using case-insensitive comparison</li>
+<li>If client sends Terminate (<code>X</code>) after <code>BEGIN</code>, no server connection is acquired at all</li>
+<li>The deferred <code>BEGIN</code> is automatically sent to the server before the actual query</li>
+</ul>
+</li>
+</ul>
+<h3 id="310-jan-18-2026"><a class="header" href="#310-jan-18-2026">3.1.0 <small>Jan 18, 2026</small></a></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li><strong>YAML configuration support</strong>: Added support for YAML configuration files (<code>.yaml</code>, <code>.yml</code>) as the primary and recommended format. The format is automatically detected based on file extension. TOML format remains fully supported for backward compatibility.
+<ul>
+<li>The <code>generate</code> command now outputs YAML or TOML based on the output file extension.</li>
+<li>Include files can mix YAML and TOML formats.</li>
+<li>New array syntax for users in YAML: <code>users: [{ username: "user1", ... }]</code></li>
+</ul>
+</li>
+<li><strong>TOML backward compatibility</strong>: Full backward compatibility with legacy TOML format <code>[pools.*.users.0]</code> is maintained. Both the legacy map format and the new array format <code>[[pools.*.users]]</code> are supported.</li>
+<li><strong>Username uniqueness validation</strong>: Added validation to reject duplicate usernames within a pool, ensuring configuration correctness.</li>
+<li><strong>Human-readable configuration values</strong>: Duration and byte size parameters now support human-readable formats while maintaining backward compatibility with numeric values:
+<ul>
+<li>Duration: <code>"3s"</code>, <code>"5m"</code>, <code>"1h"</code>, <code>"1d"</code> (or milliseconds: <code>3000</code>)</li>
+<li>Byte size: <code>"1MB"</code>, <code>"256M"</code>, <code>"1GB"</code> (or bytes: <code>1048576</code>)</li>
+<li>Example: <code>connect_timeout: "3s"</code> instead of <code>connect_timeout: 3000</code></li>
+</ul>
+</li>
+<li><strong>Foreground mode binary upgrade</strong>: Added support for binary upgrade in foreground mode by passing the listener socket to the new process via <code>--inherit-fd</code> argument. This enables zero-downtime upgrades without requiring daemon mode.</li>
+<li><strong>Optional tokio runtime parameters</strong>: The following tokio runtime parameters are now optional and default to <code>None</code> (using tokio's built-in defaults): <code>tokio_global_queue_interval</code>, <code>tokio_event_interval</code>, <code>worker_stack_size</code>, and the new <code>max_blocking_threads</code>. Modern tokio versions handle these parameters well by default, so explicit configuration is no longer required in most cases.</li>
+<li><strong>Improved graceful shutdown behavior</strong>:
+<ul>
+<li>During graceful shutdown, only clients with active transactions are now counted (instead of all connected clients), allowing faster shutdown when clients are idle.</li>
+<li>After a client completes their transaction during shutdown, they receive a proper PostgreSQL protocol error (<code>58006 - pooler is shut down now</code>) instead of a connection reset.</li>
+<li>Server connections are immediately released (marked as bad) after transaction completion during shutdown to conserve PostgreSQL connections.</li>
+<li>All idle connections are immediately drained from pools when graceful shutdown starts, releasing PostgreSQL connections faster.</li>
+</ul>
+</li>
+</ul>
+<p><strong>Performance:</strong></p>
+<ul>
+<li><strong>Statistics module optimization</strong>: Major refactoring of the <code>src/stats</code> module for improved performance:
+<ul>
+<li>Replaced <code>VecDeque</code> with HDR histograms (<code>hdrhistogram</code> crate) for percentile calculations — O(1) percentile queries instead of O(n log n) sorting, ~95% memory reduction for latency tracking.</li>
+<li>Histograms are now reset after each stats period (15 seconds) to provide accurate rolling window percentiles.</li>
+</ul>
+</li>
+</ul>
+<h3 id="305-jan-16-2026"><a class="header" href="#305-jan-16-2026">3.0.5 <small>Jan 16, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed panic (<code>capacity overflow</code>) in startup message handling when receiving malformed messages with invalid length (less than 8 bytes or exceeding 10MB). Now gracefully rejects such connections with <code>ClientBadStartup</code> error.</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li><strong>Integration fuzz testing framework</strong>: Added comprehensive BDD-based fuzz tests (<code>@fuzz</code> tag) that verify pg_doorman's resilience to malformed PostgreSQL protocol messages.</li>
+<li>All fuzz tests connect and authenticate first, then send malformed data to test post-authentication resilience.</li>
+</ul>
+<p><strong>CI/CD:</strong></p>
+<ul>
+<li>Added dedicated fuzz test job in GitHub Actions workflow (without retries, as fuzz tests should not be flaky).</li>
+</ul>
+<h3 id="304-jan-16-2026"><a class="header" href="#304-jan-16-2026">3.0.4 <small>Jan 16, 2026</small></a></h3>
+<p><strong>New Features:</strong></p>
+<ul>
+<li><strong>Enhanced DEBUG logging for PostgreSQL protocol messages</strong>: Added grouped debug logging that displays message types in a compact format (e.g., <code>[P(stmt1),B,D,E,S]</code> or <code>[3xD,C,Z]</code>). Messages are buffered and flushed every 100ms or 100 messages to reduce log noise.</li>
+<li><strong>Protocol violation detection</strong>: Added real-time protocol state tracking that detects and warns about protocol violations (e.g., receiving ParseComplete when no Parse was pending). Helps diagnose client-server synchronization issues.</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed potential protocol violation when client disconnects during batch operations with cached prepared statements: disabled fast_release optimization when there are pending prepared statement operations.</li>
+<li>Fixed ParseComplete insertion for Describe flow: now correctly inserts one ParseComplete before each ParameterDescription ('t') or NoData ('n') message instead of inserting all at once.</li>
+</ul>
+<h3 id="303-jan-15-2026"><a class="header" href="#303-jan-15-2026">3.0.3 <small>Jan 15, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Improved handling of Describe flow for cached prepared statements: added a separate counter (<code>pending_parse_complete_for_describe</code>) to correctly insert ParseComplete messages before ParameterDescription or NoData responses when Parse was skipped due to caching.</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li>Added comprehensive .NET client tests for Describe flow with cached prepared statements (<code>describe_flow_cached.cs</code>).</li>
+<li>Added aggressive mixed tests combining batch operations, prepared statements, and extended protocol (<code>aggressive_mixed.cs</code>).</li>
+</ul>
+<h3 id="302-jan-14-2026"><a class="header" href="#302-jan-14-2026">3.0.2 <small>Jan 14, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed protocol mismatch for .NET clients (Npgsql) using named prepared statements with <code>Prepare()</code>: ParseComplete messages are now correctly inserted before ParameterDescription and NoData messages in the Describe flow, not just before BindComplete.</li>
+</ul>
+<h3 id="301-jan-14-2026"><a class="header" href="#301-jan-14-2026">3.0.1 <small>Jan 14, 2026</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed protocol mismatch for .NET clients (Npgsql): prevented insertion of ParseComplete messages between DataRow messages when server has more data available.</li>
+</ul>
+<p><strong>Testing:</strong></p>
+<ul>
+<li>Extended Node.js client test coverage with additional scenarios for prepared statements, error handling, transactions, and edge cases.</li>
+</ul>
+<h3 id="300-jan-12-2026"><a class="header" href="#300-jan-12-2026">3.0.0 <small>Jan 12, 2026</small></a></h3>
+<p><strong>Major Release — Complete Architecture Refactoring</strong></p>
+<p>This release represents a significant milestone with a complete codebase refactoring that dramatically improves async protocol support, making PgDoorman the most efficient connection pooler for asynchronous PostgreSQL workloads.</p>
+<p><strong>New Features:</strong></p>
+<ul>
+<li><strong>patroni_proxy</strong> — A new high-performance TCP proxy for Patroni-managed PostgreSQL clusters:
+<ul>
+<li>Zero-downtime connection management — existing connections are preserved during cluster topology changes</li>
+<li>Hot upstream updates — automatic discovery of cluster members via Patroni REST API without connection drops</li>
+<li>Role-based routing — route connections to leader, sync replicas, or async replicas based on configuration</li>
+<li>Replication lag awareness with configurable <code>max_lag_in_bytes</code> per port</li>
+<li>Least connections load balancing strategy</li>
+</ul>
+</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li><strong>Complete codebase refactoring</strong> — modular architecture with better separation of concerns:
+<ul>
+<li>Client handling split into dedicated modules (core, entrypoint, protocol, startup, transaction)</li>
+<li>Configuration system reorganized into focused modules (general, pool, user, tls, prometheus, talos)</li>
+<li>Admin, auth, and prometheus subsystems extracted into separate modules</li>
+<li>Improved code maintainability and testability</li>
+</ul>
+</li>
+<li><strong>Enhanced async protocol support</strong> — significantly improved handling of asynchronous PostgreSQL protocol, providing better performance than other connection poolers for async workloads</li>
+<li><strong>Extended protocol improvements</strong> — better client buffering and message handling for extended query protocol</li>
+<li><strong>xxhash3 for prepared statement hashing</strong> — faster hash computation for prepared statement cache</li>
+<li><strong>Comprehensive BDD testing framework</strong> — multi-language integration tests (Go, Rust, Python, Node.js, .NET) with Docker-based reproducible environment</li>
+</ul>
+<h3 id="250-nov-18-2025"><a class="header" href="#250-nov-18-2025">2.5.0 <small>Nov 18, 2025</small></a></h3>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>Reworked the statistics collection system, yielding up to 20% performance gain on fast queries.</li>
+<li>Improved detection of <code>SAVEPOINT</code> usage, allowing the auto-rollback feature to be applied in more situations.</li>
+</ul>
+<p><strong>Bug Fixes / Behavior:</strong></p>
+<ul>
+<li>Less aggressive behavior on write errors when sending a response to the client: the server connection is no longer immediately marked as "bad" and evicted from the pool. We now read the remaining server response and clean up its state, returning the connection to the pool in a clean state. This improves performance during client reconnections.</li>
+</ul>
+<h3 id="243-nov-15-2025"><a class="header" href="#243-nov-15-2025">2.4.3 <small>Nov 15, 2025</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed handling of nested transactions via <code>SAVEPOINT</code>: auto-rollback now correctly rolls back to the savepoint instead of breaking the outer transaction. This prevents clients from getting stuck in an inconsistent transactional state.</li>
+</ul>
+<h3 id="242-nov-13-2025"><a class="header" href="#242-nov-13-2025">2.4.2 <small>Nov 13, 2025</small></a></h3>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li><code>pg_hba</code> rules now apply to the admin console as well; the <code>trust</code> method can be used for admin connections when a matching rule is present (use with caution; restrict by address/TLS).</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed <code>pg_hba</code> evaluation: <code>local</code> records were mistakenly considered; PgDoorman only handles TCP connections, so <code>local</code> entries are now correctly ignored.</li>
+</ul>
+<h3 id="241-nov-12-2025"><a class="header" href="#241-nov-12-2025">2.4.1 <small>Nov 12, 2025</small></a></h3>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>Performance optimizations in request handling and message processing paths to reduce latency and CPU usage.</li>
+<li><code>pg_hba</code> rules now apply to the admin console as well; the <code>trust</code> method can be used for admin connections when a matching rule is present (use with caution; restrict by address/TLS).</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Corrected logic where <code>COMMIT</code> could be mishandled similarly to <code>ROLLBACK</code> in certain error states; now transactional state handling is aligned with PostgreSQL semantics.</li>
+</ul>
+<h3 id="240-nov-10-2025"><a class="header" href="#240-nov-10-2025">2.4.0 <small>Nov 10, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Added <code>pg_hba</code> support to control client access in PostgreSQL format. New <code>general.pg_hba</code> setting supports inline content or file path.</li>
+<li>Clients that enter the <code>aborted in transaction</code> state are detached from their server backend; the proxy waits for the client to send <code>ROLLBACK</code>.</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>Refined admin and metrics counters: separated <code>cancel</code> connections and corrected calculation of <code>error</code> connections in admin output and Prometheus metrics descriptions.</li>
+<li>Added configuration validation to prevent simultaneous use of legacy <code>general.hba</code> CIDR list with the new <code>general.pg_hba</code> rules.</li>
+<li>Improved validation and error messages for Talos token authentication.</li>
+</ul>
+<h3 id="222-aug-17-2025"><a class="header" href="#222-aug-17-2025">2.2.2 <small>Aug 17, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Added new generate feature functionality</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed deallocate issues with PGX5 compatibility</li>
+</ul>
+<h3 id="221-aug-6-2025"><a class="header" href="#221-aug-6-2025">2.2.1 <small>Aug 6, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Improve Prometheus exporter functionality</li>
+</ul>
+<h3 id="220-aug-5-2025"><a class="header" href="#220-aug-5-2025">2.2.0 <small>Aug 5, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Added Prometheus exporter functionality that provides metrics about connections, memory usage, pools, queries, and transactions</li>
+</ul>
+<h3 id="212-aug-4-2025"><a class="header" href="#212-aug-4-2025">2.1.2 <small>Aug 4, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Added docker image <code>ghcr.io/ozontech/pg_doorman</code></li>
+</ul>
+<h3 id="210-aug-1-2025"><a class="header" href="#210-aug-1-2025">2.1.0 <small>Aug 1, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>The new command <code>generate</code> connects to your PostgreSQL server, automatically detects all databases and users, and creates a complete configuration file with appropriate settings. This is especially useful for quickly setting up PgDoorman in new environments or when you have many databases and users to configure.</li>
+</ul>
+<h3 id="201-july-24-2025"><a class="header" href="#201-july-24-2025">2.0.1 <small>July 24, 2025</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed <code>max_memory_usage</code> counter leak when clients disconnect improperly.</li>
+</ul>
+<h3 id="200-july-22-2025"><a class="header" href="#200-july-22-2025">2.0.0 <small>July 22, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Added <code>tls_mode</code> configuration option to enhance security with flexible TLS connection management and client certificate validation capabilities.</li>
+</ul>
+<h3 id="190-july-20-2025"><a class="header" href="#190-july-20-2025">1.9.0 <small>July 20, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Added PAM authentication support.</li>
+<li>Added <code>talos</code> JWT authentication support.</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>Implemented streaming for COPY protocol with large columns to prevent memory exhaustion.</li>
+<li>Updated Rust and Tokio dependencies.</li>
+</ul>
+<h3 id="183-jun-11-2025"><a class="header" href="#183-jun-11-2025">1.8.3 <small>Jun 11, 2025</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed critical bug where Client's buffer wasn't cleared when no free connections were available in the Server pool (query_wait_timeout), leading to incorrect response errors. <a href="https://github.com/ozontech/pg_doorman/pull/38">#38</a></li>
+<li>Fixed Npgsql-related issue. <a href="https://github.com/npgsql/npgsql/issues/6115">Npgsql#6115</a></li>
+</ul>
+<h3 id="182-may-24-2025"><a class="header" href="#182-may-24-2025">1.8.2 <small>May 24, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Added <code>application_name</code> parameter in pool. <a href="https://github.com/ozontech/pg_doorman/pull/30">#30</a></li>
+<li>Added support for <code>DISCARD ALL</code> and <code>DEALLOCATE ALL</code> client queries.</li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>Implemented link-time optimization. <a href="https://github.com/ozontech/pg_doorman/pull/29">#29</a></li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed panics in admin console.</li>
+<li>Fixed connection leakage on improperly handled errors in client's copy mode.</li>
+</ul>
+<h3 id="181-april-12-2025"><a class="header" href="#181-april-12-2025">1.8.1 <small>April 12, 2025</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed config value of prepared_statements. <a href="https://github.com/ozontech/pg_doorman/pull/21">#21</a></li>
+<li>Fixed handling of declared cursors closure. <a href="https://github.com/ozontech/pg_doorman/pull/23">#23</a></li>
+<li>Fixed proxy server parameters. <a href="https://github.com/ozontech/pg_doorman/pull/25">#25</a></li>
+</ul>
+<h3 id="180-mar-20-2025"><a class="header" href="#180-mar-20-2025">1.8.0 <small>Mar 20, 2025</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed dependencies issue. <a href="https://github.com/ozontech/pg_doorman/pull/15">#15</a></li>
+</ul>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>Added release vendor-licenses.txt file. <a href="https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com">Related thread</a></li>
+</ul>
+<h3 id="179-mar-16-2025"><a class="header" href="#179-mar-16-2025">1.7.9 <small>Mar 16, 2025</small></a></h3>
+<p><strong>Improvements:</strong></p>
+<ul>
+<li>Added release vendor.tar.gz for offline build. <a href="https://www.postgresql.org/message-id/flat/CAMp%2BueYqZNwA5SnZV3-iPOyrmQwnwabyMNMOsu-Rq0sLAa2b0g%40mail.gmail.com">Related thread</a></li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed issues with pqCancel messages over TLS protocol. Drivers should send pqCancel messages exclusively via TLS if the primary connection was established using TLS. <a href="https://github.com/npgsql/npgsql">Npgsql</a> follows this rule, while <a href="https://github.com/jackc/pgx">PGX</a> currently does not. Both behaviors are now supported.</li>
+</ul>
+<h3 id="178-mar-8-2025"><a class="header" href="#178-mar-8-2025">1.7.8 <small>Mar 8, 2025</small></a></h3>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed message ordering issue when using batch processing with the extended protocol.</li>
+<li>Improved error message detail in logs for server-side login attempt failures.</li>
+</ul>
+<h3 id="177-mar-8-2025"><a class="header" href="#177-mar-8-2025">1.7.7 <small>Mar 8, 2025</small></a></h3>
+<p><strong>Features:</strong></p>
+<ul>
+<li>Enhanced <code>show clients</code> command with new fields: <code>state</code> (waiting/idle/active) and <code>wait</code> (read/write/idle).</li>
+<li>Enhanced <code>show servers</code> command with new fields: <code>state</code> (login/idle/active), <code>wait</code> (read/write/idle), and <code>server_process_pid</code>.</li>
+<li>Added 15-second proxy timeout for streaming large <code>message_size_to_be_stream</code> responses.</li>
+</ul>
+<p><strong>Bug Fixes:</strong></p>
+<ul>
+<li>Fixed <code>max_memory_usage</code> counter leak when clients disconnect improperly.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="benchmarks.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="tutorials/contributing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="benchmarks.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="tutorials/contributing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="mermaid-init.js"></script>
+        <script src="mermaid.min.js"></script>
+        <script src="lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Обзор - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/authentication/overview.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="Аутентификация"><a class="header" href="#Аутентификация">Аутентификация</a></h1>
+<p>pg_doorman аутентифицирует клиентов прежде чем перенаправить их к PostgreSQL. Поддерживается шесть методов; они выбираются в порядке приоритета на основании того, что присылает клиент и что задано в конфигурации пула.</p>
+<p>Эта страница объясняет, как pg_doorman выбирает метод аутентификации. Подробности настройки смотрите по ссылкам каждого метода ниже.</p>
+<h2 id="Обзор-методов"><a class="header" href="#Обзор-методов">Обзор методов</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Метод</th><th>Когда использовать</th><th>Хранит ли секрет в конфиге?</th></tr></thead><tbody>
+<tr><td><a href="passthrough.html">Passthrough</a> (MD5 / SCRAM)</td><td>По умолчанию. Имя пользователя пула совпадает с пользователем PostgreSQL.</td><td>Хеш MD5 или SCRAM ClientKey, никогда — открытый пароль</td></tr>
+<tr><td><a href="auth-query.html">auth_query</a></td><td>Много пользователей, динамическое заведение. Учётные данные ищутся в самом PostgreSQL.</td><td>Только секрет одного сервисного пользователя</td></tr>
+<tr><td><a href="pam.html">PAM</a></td><td>Аутентификация на уровне OS (LDAP через <code>pam_ldap</code>, Kerberos, локальные учётки). Только Linux.</td><td>Нет</td></tr>
+<tr><td><a href="jwt.html">JWT</a></td><td>Доступ сервиса к базе по короткоживущим токенам, подписанным внешним IdP.</td><td>Только публичный ключ</td></tr>
+<tr><td><a href="talos.html">Talos</a></td><td>JWT с встроенным извлечением роли. Используется в Ozon.</td><td>Только публичный ключ</td></tr>
+<tr><td><a href="hba.html">pg_hba.conf</a></td><td>Ограничение того, кто откуда может подключаться (сетевой ACL), независимо от метода учётных данных.</td><td>Нет</td></tr>
+</tbody></table>
+</div>
+<p>LDAP, Kerberos GSSAPI, аутентификация по сертификатам и SCRAM channel binding (<code>scram-sha-256-plus</code>) не поддерживаются. Смотрите <a href="../comparison.html#%D0%90%D1%83%D1%82%D0%B5%D0%BD%D1%82%D0%B8%D1%84%D0%B8%D0%BA%D0%B0%D1%86%D0%B8%D1%8F">Сравнение</a>.</p>
+<h2 id="Порядок-выбора-метода"><a class="header" href="#Порядок-выбора-метода">Порядок выбора метода</a></h2>
+<p><code>pg_hba.conf</code> оценивается первым, до любой проверки учётных данных. Правило <code>reject</code> обрывает соединение; правило <code>trust</code> полностью пропускает проверку учётных данных.</p>
+<p>После HBA pg_doorman выбирает метод проверки учётных данных в таком порядке:</p>
+<ol>
+<li><strong>Talos.</strong> Активируется, когда клиент подключается с именем пользователя <code>talos</code>. Пароль клиента разбирается как JWT, из него извлекается роль (<code>owner</code> / <code>read_write</code> / <code>read_only</code>), и соединение продолжается под этой производной идентичностью.</li>
+<li><strong>HBA Trust.</strong> Если <code>pg_hba.conf</code> совпал с правилом <code>trust</code>, проверки учётных данных не происходит.</li>
+<li><strong>PAM.</strong> Если у совпавшего пользователя задан <code>auth_pam_service</code>, учётные данные уходят в PAM (только Linux). PAM приоритетнее статического пароля.</li>
+<li><strong>SCRAM static.</strong> Если <code>password</code> пользователя в конфиге начинается с <code>SCRAM-SHA-256$</code>, pg_doorman запускает SCRAM-аутентификацию.</li>
+<li><strong>MD5 static.</strong> Если <code>password</code> пользователя начинается с <code>md5</code>, pg_doorman запускает MD5-аутентификацию.</li>
+<li><strong>JWT.</strong> Если <code>password</code> пользователя начинается с <code>jwt-pkey-fpath:</code>, пароль клиента проверяется как JWT по публичному ключу с диска.</li>
+</ol>
+<p><code>auth_query</code> не входит в этот список выбора — он выполняется <strong>до</strong> диспетчеризации, чтобы наполнить список пользователей пула хешами, полученными из PostgreSQL. После того как <code>auth_query</code> вернёт значение <code>passwd</code>, выбор метода идёт по префиксу этого значения (<code>SCRAM-SHA-256$</code> или <code>md5</code>).</p>
+<p>Если ни один метод не подошёл к формату пароля, pg_doorman возвращает «Authentication method not supported» и закрывает соединение.</p>
+<h2 id="Аутентификация-на-стороне-postgresql-passthrough-vs-configured"><a class="header" href="#Аутентификация-на-стороне-postgresql-passthrough-vs-configured">Аутентификация на стороне PostgreSQL: passthrough vs configured</a></h2>
+<p>pg_doorman аутентифицируется дважды: один раз как шлюз (клиент → pg_doorman) и один раз как бэкенд (pg_doorman → PostgreSQL). Возможны три варианта:</p>
+<ul>
+<li><strong>Passthrough (по умолчанию).</strong> Хеш MD5 клиента или SCRAM <code>ClientKey</code> переиспользуется для аутентификации на PostgreSQL. В конфиге нет открытого пароля. Требует, чтобы <code>server_username</code> не был задан (или был равен имени клиента).</li>
+<li><strong>Заданный пользователь бэкенда.</strong> Установите <code>server_username</code> и <code>server_password</code> в блоке пользователя. pg_doorman будет аутентифицироваться на PostgreSQL под ними. Используйте, когда имя пользователя пула отвязано от пользователя базы (Talos, JWT, переименование).</li>
+<li><strong>auth_query в выделенном режиме.</strong> Установите <code>server_user</code> внутри блока <code>auth_query</code>. Все динамически найденные пользователи разделят один пул бэкенда, аутентифицированный как <code>server_user</code>. Это размен идентичности бэкенда на пользователя ради эффективности переиспользования пула.</li>
+</ul>
+<p>Подробности смотрите в <a href="passthrough.html">Passthrough</a>, а про выделенный режим — в <a href="auth-query.html">auth_query</a>.</p>
+<h2 id="Ограничение-подключений"><a class="header" href="#Ограничение-подключений">Ограничение подключений</a></h2>
+<p><code>pg_hba.conf</code> применяется до проверки учётных данных. Распространённые шаблоны:</p>
+<ul>
+<li>Отвергнуть всё кроме localhost: <code>host all all 0.0.0.0/0 reject</code>, а перед ним <code>host all all 127.0.0.1/32 trust</code>.</li>
+<li>Требовать TLS для нелокальных соединений: <code>hostssl all all 0.0.0.0/0 scram-sha-256</code> и <code>hostnossl all all 127.0.0.1/32 trust</code>.</li>
+<li>ACL по базам: <code>host mydb appuser 10.0.0.0/8 scram-sha-256</code>.</li>
+</ul>
+<p>Смотрите <a href="hba.html">pg_hba.conf</a>.</p>
+<h2 id="Куда-дальше"><a class="header" href="#Куда-дальше">Куда дальше</a></h2>
+<ul>
+<li>Новая инсталляция? Прочтите <a href="passthrough.html">Passthrough</a> и <a href="../tutorials/basic-usage.html">Basic usage</a>.</li>
+<li>Много пользователей с ротируемыми учётными данными? Используйте <a href="auth-query.html">auth_query</a>.</li>
+<li>Идентичность сервиса по токенам? Используйте <a href="jwt.html">JWT</a>.</li>
+<li>Аутентификация, интегрированная с OS? Используйте <a href="pam.html">PAM</a>.</li>
+<li>Ограничения на сетевом уровне? Настройте <a href="hba.html">pg_hba.conf</a>.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/basic-usage.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../authentication/passthrough.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/basic-usage.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../authentication/passthrough.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

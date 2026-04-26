@@ -1,0 +1,661 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Общие настройки - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/reference/general.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="Настройки"><a class="header" href="#Настройки">Настройки</a></h1>
+<h2 id="Формат-конфигурационного-файла"><a class="header" href="#Формат-конфигурационного-файла">Формат конфигурационного файла</a></h2>
+<p>pg_doorman поддерживает два формата конфигурационного файла:</p>
+<ul>
+<li><strong>YAML</strong> (<code>.yaml</code>, <code>.yml</code>) — основной и рекомендуемый формат для новых конфигураций.</li>
+<li><strong>TOML</strong> (<code>.toml</code>) — поддерживается для обратной совместимости с уже существующими конфигурациями.</li>
+</ul>
+<p>Формат определяется автоматически по расширению файла. Оба формата поддерживают одни и те же опции конфигурации и могут использоваться взаимозаменяемо.</p>
+<h3 id="Пример-конфигурации-yaml-рекомендуется"><a class="header" href="#Пример-конфигурации-yaml-рекомендуется">Пример конфигурации YAML (рекомендуется)</a></h3>
+<pre><code class="language-yaml">general:
+  host: "0.0.0.0"
+  port: 6432
+  admin_username: "admin"
+  admin_password: "admin"
+
+pools:
+  mydb:
+    server_host: "localhost"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "myuser"
+        password: "mypassword"
+        pool_size: 40
+</code></pre>
+<h3 id="Пример-конфигурации-toml-legacy"><a class="header" href="#Пример-конфигурации-toml-legacy">Пример конфигурации TOML (legacy)</a></h3>
+<pre><code class="language-toml">[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin"
+
+[pools.mydb]
+server_host = "localhost"
+server_port = 5432
+pool_mode = "transaction"
+
+[[pools.mydb.users]]
+username = "myuser"
+password = "mypassword"
+pool_size = 40
+</code></pre>
+<h3 id="Команда-generate"><a class="header" href="#Команда-generate">Команда generate</a></h3>
+<p>Команда <code>generate</code> может выводить конфигурацию в любом из форматов. Формат определяется по расширению выходного файла. По умолчанию сгенерированная конфигурация содержит подробные inline-комментарии, поясняющие каждый параметр.</p>
+<pre><code class="language-bash"># Сгенерировать конфигурацию YAML (рекомендуется)
+pg_doorman generate --output config.yaml
+
+# Сгенерировать конфигурацию TOML (для обратной совместимости)
+pg_doorman generate --output config.toml
+
+# Сгенерировать полную справочную конфигурацию без подключения к PG
+pg_doorman generate --reference --output config.yaml
+
+# Сгенерировать справочную конфигурацию с комментариями на русском
+pg_doorman generate --reference --ru --output config.yaml
+
+# Сгенерировать конфигурацию без комментариев (только сериализация)
+pg_doorman generate --no-comments --output config.yaml
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Флаг</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>--no-comments</code></td><td>Отключить inline-комментарии в сгенерированной конфигурации (по умолчанию комментарии включены)</td></tr>
+<tr><td><code>--reference</code></td><td>Сгенерировать полную справочную конфигурацию с примерами значений, без подключения к PostgreSQL</td></tr>
+<tr><td><code>--russian-comments</code>, <code>--ru</code></td><td>Генерировать комментарии на русском языке для быстрого старта</td></tr>
+<tr><td><code>--format</code>, <code>-f</code></td><td>Формат вывода: <code>yaml</code> (по умолчанию) или <code>toml</code>. Если задан <code>--output</code>, формат определяется по расширению файла. Этот флаг переопределяет автоопределение</td></tr>
+</tbody></table>
+</div>
+<h3 id="Подключаемые-файлы"><a class="header" href="#Подключаемые-файлы">Подключаемые файлы</a></h3>
+<p>Подключаемые файлы могут быть в любом из форматов, форматы можно смешивать. Например, основная конфигурация в YAML может подключать TOML-файлы и наоборот:</p>
+<pre><code class="language-yaml">include:
+  files:
+    - "pools.yaml"
+    - "users.toml"
+</code></pre>
+<h2 id="Человекочитаемые-значения"><a class="header" href="#Человекочитаемые-значения">Человекочитаемые значения</a></h2>
+<p>pg_doorman поддерживает человекочитаемые форматы для значений продолжительности и размера в байтах, сохраняя обратную совместимость с числовыми значениями.</p>
+<h3 id="Формат-продолжительности"><a class="header" href="#Формат-продолжительности">Формат продолжительности</a></h3>
+<p>Значения продолжительности можно задавать как:</p>
+<ul>
+<li><strong>Простые числа</strong>: интерпретируются как миллисекунды (например, <code>5000</code> = 5 секунд)</li>
+<li><strong>Строка с суффиксом</strong>:
+<ul>
+<li><code>ms</code> — миллисекунды (например, <code>"100ms"</code>)</li>
+<li><code>s</code> — секунды (например, <code>"5s"</code> = 5000 миллисекунд)</li>
+<li><code>m</code> — минуты (например, <code>"5m"</code> = 300000 миллисекунд)</li>
+<li><code>h</code> — часы (например, <code>"1h"</code> = 3600000 миллисекунд)</li>
+<li><code>d</code> — дни (например, <code>"1d"</code> = 86400000 миллисекунд)</li>
+</ul>
+</li>
+</ul>
+<p><strong>Примеры:</strong></p>
+<pre><code class="language-yaml">general:
+  # Все эти варианты эквивалентны (3 секунды):
+  # connect_timeout: 3000      # обратная совместимость (миллисекунды)
+  # connect_timeout: "3s"      # человекочитаемый формат
+  # connect_timeout: "3000ms"  # явные миллисекунды
+  connect_timeout: "3s"
+  idle_timeout: "10m"        # 10 минут
+  server_lifetime: "1h"      # 1 час
+</code></pre>
+<h3 id="Формат-размера-в-байтах"><a class="header" href="#Формат-размера-в-байтах">Формат размера в байтах</a></h3>
+<p>Значения размера в байтах можно задавать как:</p>
+<ul>
+<li><strong>Простые числа</strong>: интерпретируются как байты (например, <code>1048576</code> = 1 MB)</li>
+<li><strong>Строка с суффиксом</strong> (регистр не важен):
+<ul>
+<li><code>B</code> — байты (например, <code>"1024B"</code>)</li>
+<li><code>K</code> или <code>KB</code> — килобайты (например, <code>"1K"</code> или <code>"1KB"</code> = 1024 байта)</li>
+<li><code>M</code> или <code>MB</code> — мегабайты (например, <code>"1M"</code> или <code>"1MB"</code> = 1048576 байт)</li>
+<li><code>G</code> или <code>GB</code> — гигабайты (например, <code>"1G"</code> или <code>"1GB"</code> = 1073741824 байт)</li>
+</ul>
+</li>
+</ul>
+<p>Примечание: используются двоичные префиксы (1 KB = 1024 байта, не 1000 байт).</p>
+<p><strong>Примеры:</strong></p>
+<pre><code class="language-yaml">general:
+  # Все эти варианты эквивалентны (256 MB):
+  # max_memory_usage: 268435456  # обратная совместимость (байты)
+  # max_memory_usage: "256MB"    # человекочитаемый формат
+  # max_memory_usage: "256M"     # короткая форма
+  max_memory_usage: "256MB"
+  unix_socket_buffer_size: "1MB" # 1 MB
+  worker_stack_size: "8MB"       # 8 MB
+</code></pre>
+<h2 id="Общие-настройки"><a class="header" href="#Общие-настройки">Общие настройки</a></h2>
+<h3 id="host"><a class="header" href="#host">host</a></h3>
+<p>Хост, на котором сервер будет принимать соединения (только TCP v4).</p>
+<p>По умолчанию: <code>"0.0.0.0"</code>.</p>
+<h3 id="port"><a class="header" href="#port">port</a></h3>
+<p>Порт для входящих соединений.</p>
+<p>По умолчанию: <code>5432</code>.</p>
+<h3 id="backlog"><a class="header" href="#backlog">backlog</a></h3>
+<p>TCP backlog для входящих соединений. При значении ноль в качестве TCP backlog используется значение <code>max_connections</code>.</p>
+<p>По умолчанию: <code>0</code>.</p>
+<h3 id="max_connections"><a class="header" href="#max_connections">max_connections</a></h3>
+<p>Максимальное число клиентов, которые могут одновременно подключиться к пулеру. При достижении лимита:</p>
+<ul>
+<li>Клиент, подключающийся без SSL, получит ожидаемую ошибку (код: <code>53300</code>, сообщение: <code>sorry, too many clients already</code>).</li>
+<li>Клиент, подключающийся через SSL, увидит сообщение о том, что сервер не поддерживает протокол SSL.</li>
+</ul>
+<p>По умолчанию: <code>8192</code>.</p>
+<h3 id="max_concurrent_creates"><a class="header" href="#max_concurrent_creates">max_concurrent_creates</a></h3>
+<p>Максимальное число серверных соединений, которые могут создаваться параллельно в одном пуле. Параметр использует семафор для ограничения параллельного создания соединений, что заметно повышает производительность при холодном старте и пиковых сценариях.</p>
+<p>Большие значения ускоряют прогрев пула, но могут увеличить нагрузку на сервер PostgreSQL во время штормов соединений. Меньшие значения дают более плавное создание соединений.</p>
+<p>По умолчанию: <code>4</code>.</p>
+<h3 id="tls_mode"><a class="header" href="#tls_mode">tls_mode</a></h3>
+<p>Режим TLS для входящих соединений. Может принимать одно из следующих значений:</p>
+<ul>
+<li><code>allow</code> — TLS-соединения разрешены, но не обязательны. pg_doorman попытается установить TLS-соединение, если клиент его запросит.</li>
+<li><code>disable</code> — TLS-соединения запрещены. Все соединения устанавливаются без шифрования TLS.</li>
+<li><code>require</code> — TLS-соединения обязательны. pg_doorman принимает только соединения, использующие TLS-шифрование.</li>
+<li><code>verify-full</code> — TLS-соединения обязательны, и pg_doorman проверяет клиентский сертификат. Этот режим обеспечивает максимальный уровень безопасности.</li>
+</ul>
+<p>По умолчанию: <code>"allow"</code>.</p>
+<h3 id="tls_ca_cert"><a class="header" href="#tls_ca_cert">tls_ca_cert</a></h3>
+<p>Файл с CA-сертификатом для проверки клиентского сертификата. Обязателен, когда <code>tls_mode</code> установлен в <code>verify-full</code>.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="tls_private_key"><a class="header" href="#tls_private_key">tls_private_key</a></h3>
+<p>Путь к файлу приватного ключа для TLS-соединений. Требуется для включения TLS для входящих клиентских соединений. Должен использоваться вместе с <code>tls_certificate</code>.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="tls_certificate"><a class="header" href="#tls_certificate">tls_certificate</a></h3>
+<p>Путь к файлу сертификата для TLS-соединений. Требуется для включения TLS для входящих клиентских соединений. Должен использоваться вместе с <code>tls_private_key</code>.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="tls_rate_limit_per_second"><a class="header" href="#tls_rate_limit_per_second">tls_rate_limit_per_second</a></h3>
+<p>Ограничение числа одновременных попыток создания TLS-сессии.
+Любое значение, отличное от нуля, означает, что клиенты должны проходить через очередь для установки TLS-соединения.
+В некоторых случаях это необходимо, чтобы запустить приложение, которое открывает много соединений при старте (так называемый «горячий старт»).</p>
+<p>По умолчанию: <code>0</code>.</p>
+<h3 id="daemon_pid_file"><a class="header" href="#daemon_pid_file">daemon_pid_file</a></h3>
+<p>Включение этого параметра активирует режим демона. Закомментируйте, если хотите запускать pg_doorman в foreground с флагом <code>-d</code>.</p>
+<p>По умолчанию: <code>"/tmp/pg_doorman.pid"</code>.</p>
+<h3 id="syslog_prog_name"><a class="header" href="#syslog_prog_name">syslog_prog_name</a></h3>
+<p>Если задан, pg_doorman начинает отправлять сообщения в syslog (через /dev/log или /var/run/syslog).
+Закомментируйте, если хотите логировать в stdout.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="log_client_connections"><a class="header" href="#log_client_connections">log_client_connections</a></h3>
+<p>Логировать подключения клиентов для мониторинга.</p>
+<p>По умолчанию: <code>true</code>.</p>
+<h3 id="log_client_disconnections"><a class="header" href="#log_client_disconnections">log_client_disconnections</a></h3>
+<p>Логировать отключения клиентов для мониторинга.</p>
+<p>По умолчанию: <code>true</code>.</p>
+<h3 id="worker_threads"><a class="header" href="#worker_threads">worker_threads</a></h3>
+<p>Число worker-потоков Tokio runtime (потоков ОС) для обслуживания клиентских соединений.
+Производительность масштабируется линейно до числа ядер CPU.
+Также определяет число шардов для внутренних concurrent hash maps (<code>worker_threads * 4</code>, округлённо до ближайшей степени двойки, минимум 4).
+В Kubernetes задавайте этот параметр явно — автоматическое определение CPU может вернуть число ядер хоста, а не лимит контейнера.</p>
+<p>По умолчанию: <code>4</code>.</p>
+<h3 id="worker_cpu_affinity_pinning"><a class="header" href="#worker_cpu_affinity_pinning">worker_cpu_affinity_pinning</a></h3>
+<p>Привязывать каждый worker-поток к отдельному ядру CPU (sched_setaffinity). Отключается, если доступно меньше 3 ядер.</p>
+<p>По умолчанию: <code>false</code>.</p>
+<h3 id="tokio_global_queue_interval"><a class="header" href="#tokio_global_queue_interval">tokio_global_queue_interval</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.global_queue_interval">Настройки Tokio runtime</a>.
+Управляет тем, как часто шедулер проверяет глобальную очередь задач.
+Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+<p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="tokio_event_interval"><a class="header" href="#tokio_event_interval">tokio_event_interval</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.event_interval">Настройки Tokio runtime</a>.
+Управляет тем, как часто шедулер проверяет внешние события (I/O, таймеры).
+Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+<p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="worker_stack_size"><a class="header" href="#worker_stack_size">worker_stack_size</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.thread_stack_size">Настройки Tokio runtime</a>.
+Задаёт размер стека для worker-потоков.
+Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+<p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="max_blocking_threads"><a class="header" href="#max_blocking_threads">max_blocking_threads</a></h3>
+<p><a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.max_blocking_threads">Настройки Tokio runtime</a>.
+Задаёт максимальное число потоков для блокирующих операций.
+Современные версии tokio хорошо справляются с этим по умолчанию, поэтому параметр опционален.</p>
+<p>По умолчанию: <code>not set (uses tokio's default)</code>.</p>
+<h3 id="connect_timeout"><a class="header" href="#connect_timeout">connect_timeout</a></h3>
+<p>Максимальное время ожидания при установке нового соединения с сервером PostgreSQL. Если соединение не удаётся установить за это время, попытка прерывается. Аналог <code>server_connect_timeout</code> из PgBouncer.</p>
+<p>По умолчанию: <code>3000 (3 sec)</code>.</p>
+<h3 id="query_wait_timeout"><a class="header" href="#query_wait_timeout">query_wait_timeout</a></h3>
+<p>Максимальное время ожидания клиентом серверного соединения, когда пул полностью занят. Если за это время серверное соединение не освобождается, клиент получает ошибку. Аналог <code>query_wait_timeout</code> из PgBouncer.</p>
+<p>По умолчанию: <code>5000 (5 sec)</code>.</p>
+<h3 id="idle_timeout"><a class="header" href="#idle_timeout">idle_timeout</a></h3>
+<p>Закрывать серверное соединение, которое простаивает (не выдано ни одному клиенту) дольше этого значения.
+Применяется только к соединениям, обслужившим хотя бы один клиентский запрос. Прогретые или дополненные
+соединения, никогда не выдававшиеся клиенту, под действие <code>idle_timeout</code> не попадают — они закрываются
+только по истечении <code>server_lifetime</code>. Каждое соединение получает джиттер ±20%, чтобы избежать
+синхронных массовых закрытий. Установите <code>0</code>, чтобы отключить. Аналог <code>server_idle_timeout</code> из PgBouncer.</p>
+<p>По умолчанию: <code>600000 (10 min)</code>.</p>
+<h3 id="server_lifetime"><a class="header" href="#server_lifetime">server_lifetime</a></h3>
+<p>Максимальный возраст серверного соединения. Когда соединение превышает этот возраст и переходит
+в idle, оно закрывается на ближайшем цикле retain. Активные транзакции не прерываются.
+Применяется ко всем соединениям, включая прогретые, которые никогда не выдавались клиенту.
+Каждое соединение получает джиттер ±20%, чтобы избежать thundering herd. Установите <code>0</code>, чтобы отключить.
+Аналог <code>server_lifetime</code> из PgBouncer.</p>
+<p>По умолчанию: <code>1200000 (20 min)</code>.</p>
+<h3 id="retain_connections_time"><a class="header" href="#retain_connections_time">retain_connections_time</a></h3>
+<p>Интервал проверки и закрытия idle-соединений, превысивших <code>idle_timeout</code> или <code>server_lifetime</code>.
+Задача retain выполняется периодически с этим интервалом и удаляет просроченные соединения.</p>
+<p>По умолчанию: <code>30000 (30 sec)</code>.</p>
+<h3 id="retain_connections_max"><a class="header" href="#retain_connections_max">retain_connections_max</a></h3>
+<p>Максимальное число idle-соединений, закрываемых за один цикл retain.
+При значении <code>0</code> все idle-соединения, превысившие <code>idle_timeout</code> или <code>server_lifetime</code>, закрываются немедленно.
+При положительном значении за цикл по всем пулам закрывается не более указанного числа соединений.</p>
+<p>Этот параметр управляет агрессивностью закрытия idle-соединений в pg_doorman. При значении по умолчанию <code>3</code>
+за цикл retain закрывается до 3 соединений, что обеспечивает контролируемую очистку. Если нужна
+более быстрая очистка просроченных соединений, установите <code>0</code> (без ограничений), чтобы закрывать все
+просроченные соединения за каждый цикл retain.</p>
+<p>По умолчанию: <code>3</code>.</p>
+<h3 id="server_idle_check_timeout"><a class="header" href="#server_idle_check_timeout">server_idle_check_timeout</a></h3>
+<p>Время, после которого idle-серверное соединение должно быть проверено перед выдачей клиенту.
+Это помогает обнаружить мёртвые соединения, возникшие из-за рестарта PostgreSQL, сетевых проблем
+или серверных idle-таймаутов.</p>
+<p>Когда соединение простояло в пуле дольше этого таймаута, pg_doorman отправляет минимальный запрос (<code>;</code>),
+чтобы проверить, что соединение живо, прежде чем выдать его клиенту. Если проверка не проходит,
+соединение отбрасывается и берётся новое.</p>
+<p>Установите <code>0</code>, чтобы отключить проверку (не рекомендуется для production-окружений с возможной
+сетевой нестабильностью или рестартами PostgreSQL).</p>
+<p>По умолчанию: <code>60s (60 seconds)</code>.</p>
+<h3 id="server_round_robin"><a class="header" href="#server_round_robin">server_round_robin</a></h3>
+<p>Управляет тем, какое idle-серверное соединение выбирается для следующей транзакции.
+<code>false</code> (LRU): переиспользует самое недавно возвращённое соединение. Держит горячими меньше соединений, лучше для локальности shared buffer в PostgreSQL.
+<code>true</code> (Round Robin): равномерно ротирует все idle-соединения.
+Аналог <code>server_round_robin</code> из PgBouncer.</p>
+<p>По умолчанию: <code>false</code>.</p>
+<h3 id="sync_server_parameters"><a class="header" href="#sync_server_parameters">sync_server_parameters</a></h3>
+<p>В transaction mode каждая транзакция может попасть на разный бэкенд. При <code>sync_server_parameters = true</code>
+pg_doorman отслеживает изменения фиксированного набора параметров сессии и проигрывает их через SET
+на каждом новом бэкенде перед выполнением транзакции. Отслеживаемые параметры: <code>client_encoding</code>, <code>DateStyle</code>, <code>TimeZone</code>,
+<code>standard_conforming_strings</code>, <code>application_name</code>. Другие команды SET (например, <code>statement_timeout</code>, <code>work_mem</code>)
+НЕ отслеживаются. Каждый checkout стоит дополнительного roundtrip. Если вам нужна только видимость
+<code>application_name</code> в <code>pg_stat_activity</code>, используйте параметр <code>application_name</code> на уровне пула.</p>
+<p>По умолчанию: <code>false</code>.</p>
+<h3 id="tcp_so_linger"><a class="header" href="#tcp_so_linger">tcp_so_linger</a></h3>
+<p>По умолчанию pg_doorman отправляет <code>RST</code> вместо того, чтобы держать соединение открытым долгое время.</p>
+<p>По умолчанию: <code>0</code>.</p>
+<h3 id="tcp_no_delay"><a class="header" href="#tcp_no_delay">tcp_no_delay</a></h3>
+<p>TCP_NODELAY для отключения алгоритма Нэйгла ради более низкой задержки.</p>
+<p>По умолчанию: <code>true</code>.</p>
+<h3 id="tcp_keepalives_count"><a class="header" href="#tcp_keepalives_count">tcp_keepalives_count</a></h3>
+<p>Число неподтверждённых TCP keepalive probes, после которого соединение считается мёртвым и закрывается.</p>
+<p>По умолчанию: <code>5</code>.</p>
+<h3 id="tcp_keepalives_idle"><a class="header" href="#tcp_keepalives_idle">tcp_keepalives_idle</a></h3>
+<p>Keepalive включён по умолчанию и переопределяет дефолты ОС.</p>
+<p>По умолчанию: <code>5</code>.</p>
+<h3 id="tcp_keepalives_interval"><a class="header" href="#tcp_keepalives_interval">tcp_keepalives_interval</a></h3>
+<p>Интервал в секундах между отдельными TCP keepalive probes после прохождения начального периода простоя (<code>tcp_keepalives_idle</code>).</p>
+<p>По умолчанию: <code>5</code>.</p>
+<h3 id="tcp_user_timeout"><a class="header" href="#tcp_user_timeout">tcp_user_timeout</a></h3>
+<p>Задаёт опцию сокета <code>TCP_USER_TIMEOUT</code> для клиентских соединений (в секундах). Эта опция указывает
+максимальное время, в течение которого переданные данные могут оставаться неподтверждёнными,
+прежде чем TCP принудительно закроет соединение. Это помогает быстрее обнаруживать мёртвые
+клиентские соединения, чем keepalive probes, когда соединение активно отправляет данные, но удалённый
+конец стал недоступен (например, сбой сети, падение клиента).</p>
+<p>При ненулевом значении, если данные остаются неподтверждёнными в течение указанного времени,
+соединение будет разорвано. Это особенно полезно, чтобы избежать задержек в 15–16 минут, вызванных
+TCP retransmission timeout, когда keepalive не помогает (например, при активной передаче данных).</p>
+<p><strong>Примечание:</strong> опция поддерживается только в Linux. На других ОС параметр игнорируется.</p>
+<p>Установите <code>0</code>, чтобы отключить (использовать значение по умолчанию ОС).</p>
+<p>По умолчанию: <code>60</code>.</p>
+<h3 id="unix_socket_buffer_size"><a class="header" href="#unix_socket_buffer_size">unix_socket_buffer_size</a></h3>
+<p>Размер буфера для операций чтения и записи при подключении к PostgreSQL через unix-сокет.</p>
+<p>По умолчанию: <code>1048576</code>.</p>
+<h3 id="admin_username"><a class="header" href="#admin_username">admin_username</a></h3>
+<p>Доступ к виртуальной admin-базе осуществляется по имени пользователя и паролю администратора.</p>
+<p>По умолчанию: <code>"admin"</code>.</p>
+<h3 id="admin_password"><a class="header" href="#admin_password">admin_password</a></h3>
+<p>Доступ к виртуальной admin-базе осуществляется по имени пользователя и паролю администратора.
+Замените на ваш секрет.</p>
+<p>По умолчанию: <code>"admin"</code>.</p>
+<h3 id="prepared_statements"><a class="header" href="#prepared_statements">prepared_statements</a></h3>
+<p>Переключатель для включения/отключения кеширования prepared statements.</p>
+<p>По умолчанию: <code>true</code>.</p>
+<h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size">prepared_statements_cache_size</a></h3>
+<p>Размер кеша prepared statements на уровне пула (общий для всех клиентов, подключающихся к одному пулу).
+Кеш хранит соответствие между хешем запроса и переписанным именем prepared statement.</p>
+<p>По умолчанию: <code>8192</code>.</p>
+<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size">client_prepared_statements_cache_size</a></h3>
+<p>Максимальное число prepared statements, кешируемых в одном клиентском соединении. Это механизм защиты
+от вредоносных или некорректно работающих клиентов, которые не вызывают <code>DEALLOCATE</code> и могут вызвать
+исчерпание памяти, создавая неограниченное число prepared statements в долгоживущих соединениях.</p>
+<p>При достижении лимита самая старая запись вытесняется из клиентского кеша. Вытесненный statement
+по-прежнему может быть переиспользован позже, потому что кеш уровня пула (<code>prepared_statements_cache_size</code>)
+сохраняет соответствие запроса и имени на сервере.</p>
+<p>Установите <code>0</code>, чтобы отключить лимит (неограниченный размер кеша, надежда на вызов <code>DEALLOCATE</code> клиентом).</p>
+<p>По умолчанию: <code>0 (unlimited)</code>.</p>
+<h3 id="message_size_to_be_stream"><a class="header" href="#message_size_to_be_stream">message_size_to_be_stream</a></h3>
+<p>Когда сообщение DataRow PostgreSQL превышает этот порог, pg_doorman переключается в потоковый режим:
+данные пересылаются клиенту чанками по 4 KB вместо буферизации всего сообщения целиком.
+Это предотвращает OOM на запросах, возвращающих очень большие строки (например, таблицы с большими
+колонками <code>bytea</code>/<code>text</code>). Сам порог по умолчанию равен 1 MB.</p>
+<p>По умолчанию: <code>1048576 (1 MB)</code>.</p>
+<h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
+<p>Доля прогретого пула в процентах (0–100). Когда размер пула ниже этого порога
+от <code>max_size</code>, новые соединения создаются немедленно. Выше порога пул сначала
+крутится через быстрые ретраи, затем переходит в event-driven цикл упреждающего ожидания,
+который ждёт возврата idle-соединения. Цикл ограничен оставшимся <code>query_wait_timeout</code>
+клиента минус резерв 500 ms на путь создания, поэтому он не может вытолкнуть
+вызывающего за его собственный дедлайн ожидания.</p>
+<p>По умолчанию: <code>20</code>.</p>
+<h3 id="scaling_fast_retries"><a class="header" href="#scaling_fast_retries">scaling_fast_retries</a></h3>
+<p>Число быстрых ретраев через <code>yield_now()</code> для ожидания с низкой задержкой при выдаче
+соединений выше порога прогрева пула. Каждый ретрай занимает примерно 1–5 мкс.
+После исчерпания быстрых ретраев пул переходит в event-driven цикл упреждающего ожидания,
+ограниченный оставшимся <code>query_wait_timeout</code> клиента.</p>
+<p>По умолчанию: <code>10</code>.</p>
+<h3 id="scaling_max_parallel_creates"><a class="header" href="#scaling_max_parallel_creates">scaling_max_parallel_creates</a></h3>
+<p>Ограничитель всплесков для создания соединений. Без этого лимита N параллельных
+вызывающих <code>timeout_get</code>, не нашедших соединения в idle-пуле, независимо инициируют
+backend-connect, создавая всплески thundering-herd под нагрузкой. С лимитом одновременно
+выполняется не больше указанного числа creates на пул; остальные кратко ждут на Notify
+и затем либо подхватывают только что возвращённое idle-соединение, либо занимают следующий
+слот для create. Значение по умолчанию <code>2</code> — компромисс между пропускной способностью
+и сглаживанием всплесков.</p>
+<p>По умолчанию: <code>2</code>.</p>
+<h3 id="max_memory_usage"><a class="header" href="#max_memory_usage">max_memory_usage</a></h3>
+<p>Общий бюджет памяти для внутренних буферов, хранящих данные in-flight запросов по всем клиентским соединениям.
+При достижении лимита pg_doorman отклоняет новые запросы с ошибкой, пока существующие запросы не завершатся
+и не освободят свои буферы. Защищает процесс пулера от OOM при тяжёлой нагрузке или больших результирующих наборах.</p>
+<p>По умолчанию: <code>268435456 (256 MB)</code>.</p>
+<h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout">shutdown_timeout</a></h3>
+<p>При graceful shutdown (SIGTERM) pg_doorman ждёт до этого времени завершения in-flight транзакций перед принудительным закрытием соединений.</p>
+<p>По умолчанию: <code>10000 (10 sec)</code>.</p>
+<h3 id="proxy_copy_data_timeout"><a class="header" href="#proxy_copy_data_timeout">proxy_copy_data_timeout</a></h3>
+<p>Максимальное время ожидания операций копирования данных при проксировании, в миллисекундах.</p>
+<p>По умолчанию: <code>15000 (15 sec)</code>.</p>
+<h3 id="server_tls_mode"><a class="header" href="#server_tls_mode">server_tls_mode</a></h3>
+<p>Режим TLS для исходящих соединений к серверам PostgreSQL.</p>
+<ul>
+<li><code>allow</code> — Сначала пробовать без TLS; если сервер отказывает, повторить с TLS. Соответствует libpq sslmode=allow (по умолчанию).</li>
+<li><code>disable</code> — TLS не используется.</li>
+<li><code>prefer</code> — TLS используется, если сервер его поддерживает; иначе обычное соединение.</li>
+<li><code>require</code> — TLS обязателен, но сертификат сервера не проверяется.</li>
+<li><code>verify-ca</code> — TLS обязателен, и сертификат сервера проверяется по <code>server_tls_ca_cert</code>.</li>
+<li><code>verify-full</code> — TLS обязателен, сертификат проверяется, и hostname сервера должен совпадать с сертификатом.</li>
+</ul>
+<p>По умолчанию: <code>"allow"</code>.</p>
+<h3 id="server_tls_ca_cert"><a class="header" href="#server_tls_ca_cert">server_tls_ca_cert</a></h3>
+<p>CA-сертификат для проверки сертификатов серверов PostgreSQL. Обязателен, когда <code>server_tls_mode</code> равен <code>verify-ca</code> или <code>verify-full</code>.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="server_tls_certificate"><a class="header" href="#server_tls_certificate">server_tls_certificate</a></h3>
+<p>Клиентский сертификат для mTLS с серверами PostgreSQL. Используйте в паре с <code>server_tls_private_key</code>.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="server_tls_private_key"><a class="header" href="#server_tls_private_key">server_tls_private_key</a></h3>
+<p>Приватный ключ для клиентского сертификата mTLS. Используйте в паре с <code>server_tls_certificate</code>.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="hba"><a class="header" href="#hba">hba</a></h3>
+<p>Список IP-адресов, с которых разрешено подключаться к pg-doorman.</p>
+<p>По умолчанию: <code>[]</code>.</p>
+<h3 id="pg_hba"><a class="header" href="#pg_hba">pg_hba</a></h3>
+<p>Новый стиль контроля доступа клиентов в нативном формате <code>pg_hba.conf</code> PostgreSQL. Позволяет задавать тонкие правила доступа аналогично PostgreSQL: per-database, per-user, диапазоны адресов, требования TLS.</p>
+<p>Указать <code>general.pg_hba</code> можно тремя способами:</p>
+<ul>
+<li>Как многострочную строку с содержимым файла <code>pg_hba.conf</code></li>
+<li>Как объект с <code>path</code>, указывающий на файл на диске</li>
+<li>Как объект с <code>content</code>, содержащий правила в виде строки</li>
+</ul>
+<p>Примеры:</p>
+<pre><code class="language-toml">[general]
+# Inline-содержимое (TOML-строка в тройных кавычках)
+pg_hba = """
+# type   database  user   address         method
+host     all       all    10.0.0.0/8      md5
+hostssl  all       all    0.0.0.0/0       scram-sha-256
+hostnossl all      all    192.168.1.0/24  trust
+"""
+
+# Или загрузить из файла
+# pg_hba = { path = "./pg_hba.conf" }
+
+# Или встроить как однострочную строку
+# pg_hba = { content = "host all all 127.0.0.1/32 trust" }
+</code></pre>
+<p>Поддерживаемые поля и методы:</p>
+<ul>
+<li>Типы соединений: <code>local</code>, <code>host</code>, <code>hostssl</code>, <code>hostnossl</code> (TLS-зависимое сопоставление учитывается)</li>
+<li>Сопоставитель базы: имя или <code>all</code></li>
+<li>Сопоставитель пользователя: имя или <code>all</code></li>
+<li>Адрес: CIDR-форма вроде <code>1.2.3.4/32</code> или <code>::1/128</code> (обязателен для правил, отличных от <code>local</code>)</li>
+<li>Методы: <code>trust</code>, <code>md5</code>, <code>scram-sha-256</code> (неизвестные методы парсятся, но трактуются проверяющим как «не разрешено»)</li>
+</ul>
+<p>Приоритет и совместимость:</p>
+<ul>
+<li><code>general.pg_hba</code> имеет приоритет над устаревшим списком <code>general.hba</code>. Нельзя задавать оба одновременно; валидация конфигурации отклонит такую комбинацию.</li>
+<li>Правила вычисляются по порядку; первое совпавшее правило определяет результат.</li>
+</ul>
+<p>Поведение method = trust:</p>
+<ul>
+<li>Когда совпавшее правило имеет <code>trust</code>, PgDoorman принимает соединение без запроса пароля. Это повторяет поведение PostgreSQL.</li>
+<li>В частности, при срабатывании <code>trust</code> PgDoorman пропускает проверку пароля, даже если у пользователя сохранён пароль <code>md5</code> или <code>scram-sha-256</code>. Это распространяется и на MD5, и на SCRAM-потоки.</li>
+<li>TLS-ограничения правила соблюдаются: <code>hostssl</code> требует TLS, <code>hostnossl</code> запрещает TLS.</li>
+</ul>
+<p>Доступ к admin-консоли:</p>
+<ul>
+<li>Правила <code>general.pg_hba</code> применяются и к специальной admin-базе <code>pgdoorman</code>.</li>
+<li>Это означает, что admin-доступ можно разрешить методом <code>trust</code> при наличии совпавшего правила, например:
+<pre><code>host  pgdoorman  admin  127.0.0.1/32  trust
+</code></pre>
+</li>
+</ul>
+<p>Замечания и ограничения:</p>
+<ul>
+<li>Поддерживается только минимальное подмножество <code>pg_hba.conf</code>, достаточное для большинства proxy-сценариев (type, database, user, address, method). Дополнительные опции (вроде <code>clientcert</code>) сейчас игнорируются.</li>
+<li>Для методов аутентификации, отличных от <code>trust</code>, PgDoorman выполняет соответствующий challenge/response с клиентом.</li>
+<li>Для потоков Talos/JWT/PAM, настроенных на уровне пула или пользователя, <code>trust</code> всё равно обходит запрос пароля у клиента; однако эти режимы могут использоваться, если <code>trust</code> не совпал.</li>
+</ul>
+<h3 id="pooler_check_query"><a class="header" href="#pooler_check_query">pooler_check_query</a></h3>
+<p>Когда клиент отправляет ровно этот запрос как SimpleQuery, pg_doorman отвечает немедленно
+без перенаправления его в PostgreSQL. Полезно для health checks от балансировщиков нагрузки (HAProxy, в стиле pgbouncer <code>SELECT 1</code>)
+или keepalive-проб уровня приложения. Значение по умолчанию <code>;</code> (пустой statement) — самая лёгкая возможная проверка.</p>
+<p>По умолчанию: <code>";"</code>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../observability/percentiles.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/pool.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../observability/percentiles.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/pool.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

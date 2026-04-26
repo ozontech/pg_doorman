@@ -264,27 +264,27 @@ Set to <code>0</code> (or omit) for no eviction protection. Only relevant when <
 </div>
 <div>
 <p>The <code>user</code> that runs auth queries needs access to password hashes (e.g. from <code>pg_shadow</code>). <strong>Do not use a superuser</strong> for this purpose. Instead, create a <code>SECURITY DEFINER</code> function owned by a superuser and a dedicated role with minimal privileges:</p>
-<p>```sql
--- Create a dedicated role for auth queries
-CREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';</p>
-<p>-- Create a SECURITY DEFINER function (runs with owner's privileges)
+<pre><code class="language-sql">-- Create a dedicated role for auth queries
+CREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';
+
+-- Create a SECURITY DEFINER function (runs with owner's privileges)
 CREATE OR REPLACE FUNCTION pg_doorman_get_auth(p_usename TEXT)
 RETURNS TABLE (usename name, passwd text)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS
 $$
-SELECT usename, passwd FROM pg_shadow WHERE usename = p_usename;
-$$;</p>
-<p>-- Grant execute only to the dedicated role
+  SELECT usename, passwd FROM pg_shadow WHERE usename = p_usename;
+$$;
+
+-- Grant execute only to the dedicated role
 REVOKE ALL ON FUNCTION pg_doorman_get_auth(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;
-```</p>
-<p>Then use this function in the <code>query</code> parameter:
-```yaml
-auth_query:
-query: "SELECT * FROM pg_doorman_get_auth($1)"
-user: "doorman_auth"
-password: "strong_password"
-```</p>
+</code></pre>
+<p>Then use this function in the <code>query</code> parameter:</p>
+<pre><code class="language-yaml">auth_query:
+  query: "SELECT * FROM pg_doorman_get_auth($1)"
+  user: "doorman_auth"
+  password: "strong_password"
+</code></pre>
 </div>
 </div>
 <h3 id="query"><a class="header" href="#query">query</a></h3>
@@ -436,6 +436,7 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
         <!-- Custom JS scripts -->
         <script src="../mermaid-init.js"></script>
         <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
 
 
     </div>

@@ -1,0 +1,1696 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Пул под нагрузкой (продвинутое) - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/tutorials/pool-pressure.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="Давление-на-пул"><a class="header" href="#Давление-на-пул">Давление на пул</a></h1>
+<p><strong>Pool pressure</strong> (давление на пул) описывает, как pg_doorman ведёт
+себя, когда множество клиентов одновременно запрашивают
+backend-соединение, а в <strong>idle-пуле</strong> (очереди свободных, готовых к
+выдаче серверных соединений; «idle» означает «открыто, но никем не
+используется прямо сейчас») пусто.
+Решение о том, кто получит соединение, кто подождёт, кто инициирует
+свежий <code>connect()</code> к PostgreSQL, а кому будет отказано, принимают
+два механизма. Локально в каждом пуле <code>(database, user)</code> работают
+<strong>упреждающее ожидание (anticipation)</strong> — ожидание возврата соединения
+от соседа прежде чем тратить ресурсы на новый <code>connect()</code> — и
+<strong>ограничитель всплесков (bounded burst gate)</strong> — жёсткий лимит на
+одновременные backend-<code>connect()</code> внутри одного пула. Поверх них при
+необходимости подключается <strong>координатор (coordinator)</strong>,
+общий для всех пулов ограничитель суммарного числа backend-соединений
+к одной базе данных.</p>
+<p>Аудитория: DBA или инженер эксплуатации, который уже знает PgBouncer
+и хочет понять, чем pg_doorman отличается и за чем нужно следить.</p>
+<h2 id="Зачем-нужно-давление-на-пул"><a class="header" href="#Зачем-нужно-давление-на-пул">Зачем нужно давление на пул</a></h2>
+<p>Возьмём пул с <code>pool_size = 40</code> и нагрузкой в 200 коротких транзакций,
+приходящих в одну и ту же миллисекунду. В пуле 4 idle-соединения. В
+наивном пулере первые 4 клиента забирают idle-соединения, а оставшиеся
+196 независимо вызывают <code>connect()</code> к PostgreSQL. PostgreSQL получает
+196 одновременных TCP connect-попыток, на каждую из которых нужно
+выполнить SCRAM-аутентификацию и согласование параметров, только чтобы
+обнаружить, что пул разрешает ещё 36 соединений. Backend-обращения к
+<code>pg_authid</code> взлетают всплеском, потолок <code>max_connections</code> пробивается,
+очередь <code>accept()</code> ядра насыщается, а <strong>tail latency</strong> (задержка в
+хвосте распределения, p99/p99.9, то есть редкие, но самые медленные
+запросы) уже подключённых клиентов растёт, потому что postmaster
+PostgreSQL занят порождением backend'ов вместо выполнения запросов.
+Это <strong>thundering herd</strong> (лавинообразный эффект): ситуация, когда множество
+независимых задач одновременно реагируют на одно состояние и
+устраивают шторм одинаковых запросов к общему ресурсу. В нашем
+сценарии это 196 одновременных <code>connect()</code> к одному PostgreSQL listener'у
+вместо размазанного по времени потока.</p>
+<pre><code>Time:  -----------------------------------------&gt;
+
+Client_1   -[idle hit]--[query]-----[done]
+Client_2   -[idle hit]--[query]-----[done]
+Client_3   -[idle hit]--[query]-----[done]
+Client_4   -[idle hit]--[query]-----[done]
+Client_5   -[connect]-[auth]-[query]-[done]
+Client_6   -[connect]-[auth]-[query]-[done]
+   .             ^
+   .             196 backend connect()s
+   .             fired in the same instant
+Client_200 -[connect]-[auth]-[query]-[done]
+
+PostgreSQL: 196 spawning backends + 4 running queries
+</code></pre>
+<p>Давление на пул подавляет это поведение. pg_doorman заставляет
+большинство из этих 196 вызовов переиспользовать соединение, которое
+другой клиент вот-вот вернёт, либо подождать несколько миллисекунд за
+небольшим числом уже идущих backend-connect-ов. Частота <code>connect()</code> к
+PostgreSQL остаётся ограниченной даже при всплесках клиентов.</p>
+<h2 id="Режим-простого-пула-plain-pool-mode"><a class="header" href="#Режим-простого-пула-plain-pool-mode">Режим простого пула (plain pool mode)</a></h2>
+<p>Этот режим работает, когда <code>max_db_connections</code> не задан. Пулы
+независимы, общей координации между ними нет, давление управляется
+внутри каждого пула <code>(database, user)</code>. Это режим по умолчанию, и
+большинство инсталляций находятся именно в нём.</p>
+<h3 id="Прогрев-пула-с-холодного-старта"><a class="header" href="#Прогрев-пула-с-холодного-старта">Прогрев пула с холодного старта</a></h3>
+<p>Пул с <code>pool_size = 40</code> и <code>min_pool_size = 0</code> стартует с нулём
+соединений. Первый пришедший клиент не ждёт: pg_doorman сразу создаёт
+backend-соединение. Второй делает то же самое, третий тоже,
+пока пул не достигнет <strong>порога прогрева</strong> (warm threshold).</p>
+<p>Порог прогрева равен <code>pool_size × scaling_warm_pool_ratio / 100</code>. При
+дефолтном значении 20% и <code>pool_size = 40</code> порог равен 8 соединениям.
+Ниже этого порога pg_doorman создаёт соединения без раздумий: пул
+холодный, цена ожидания выше цены коннекта, и клиенты не могут
+конкурировать за idle-соединения, которых не существует.</p>
+<p>Выше порога активируется <strong>зона упреждающего ожидания (anticipation zone)</strong>:
+pg_doorman считает, что пул уже разогрет и кто-то
+из параллельных клиентов скоро вернёт занятое соединение, поэтому имеет
+смысл подождать его возврата вместо того, чтобы тратить ресурсы на
+новый <code>connect()</code>. Когда клиент не находит соединения в idle pool,
+pg_doorman сначала пытается перехватить такой возврат.</p>
+<p>Третья зона накладывается поверх обеих: при любом размере пула, если
+число соединений, создаваемых прямо сейчас, достигает
+<code>scaling_max_parallel_creates</code> (по умолчанию 2), пул упирается в
+лимит ограничителя всплесков. Дополнительные вызовы ждут свободный слот независимо
+от того, сколько idle-соединений существует.</p>
+<pre><code>                        Three pressure zones
+                        --------------------
+
+Pool size:  0 ----------- 8 ---------------------------- 40
+            ^             ^                              ^
+            |             |                              |
+            |  WARM ZONE  |  ANTICIPATION ZONE           |
+            |             |                              |
+            |  size &lt;     |  size &gt;= warm_threshold      |
+            |  warm_thr   |                              |
+            |             |                              |
+            |  Пропускает |  Фаза 3: быстрый опрос       |
+            |  фазы 3     |  Фаза 4: прямая передача     |
+            |  и 4.       |   (ожидание возврата от       |
+            |  Сразу к    |    соседа, дедлайн =          |
+            |  фазе 5     |    wait_timeout − 500ms)      |
+            |  (огранич.  |  Затем фаза 5                |
+            |  + connect) |                              |
+
+                  Ограничение параллельных создаваемых соединений
+                  (ортогонально размеру пула)
+                  -----------------------------------------------
+
+Создаваемых сейчас: 0 ---- 1 ---- 2 (= scaling_max_parallel_creates)
+                                   ^
+                                   |  На лимите: новый вызов встаёт
+                                   |  в очередь на получение
+                                   |  возвращённого соединения и ждёт
+                                   |  завершения чужого создания.
+</code></pre>
+<p>Зоны warm и anticipation отслеживают <em>текущий размер пула</em>. Отдельно
+работает <strong>bounded burst gate</strong>: жёсткий лимит на число одновременно
+идущих <code>connect()</code> к PostgreSQL внутри одного пула. Этот лимит
+срабатывает независимо от размера пула: пул может одновременно
+находиться в anticipation zone и иметь все слоты burst gate занятыми
+параллельными <code>connect()</code>-ами, под нагрузкой это типичная ситуация.
+Пул ниже порога прогрева тоже может упереться в этот лимит, если во
+время холодного заполнения одновременно приходит много клиентов.</p>
+<h3 id="Получение-соединения"><a class="header" href="#Получение-соединения">Получение соединения</a></h3>
+<p>Когда клиент запрашивает соединение через <code>pool.get()</code>, pg_doorman
+проходит по следующим фазам. Каждая фаза либо возвращает соединение,
+либо передаёт управление следующей фазе.</p>
+<p><strong>Фаза 1 — горячий путь recycle.</strong> Берём первое соединение из
+<strong>idle-очереди</strong> (двусторонняя очередь свободных серверных соединений
+«голова очереди» — это то соединение, которое было возвращено раньше
+всех). Если оно проходит проверку пригодности (recycle), отдаём его
+клиенту.
+Проверка пригодности откатывает любые открытые транзакции, запускает
+проверку живости (liveness probe) если соединение простояло дольше
+<code>server_idle_check_timeout</code>, и сверяет поколение соединения с текущим
+поколением пула (reconnect-эпоха — счётчик, который увеличивается при
+admin-команде <code>RECONNECT</code> и при обнаруженных сбоях backend-а).
+Соединения, созданные до увеличения счётчика, эту проверку не проходят
+и удаляются вместо возврата клиенту. Здоровый пул в установившемся
+режиме идёт только этим путём.</p>
+<p><strong>Фаза 2 — warm zone gate.</strong> Если размер пула ниже порога прогрева,
+пропускаем anticipation и сразу переходим к созданию нового
+backend-соединения. Холодные пулы заполняются быстро.</p>
+<p><strong>Фаза 3 — anticipation spin.</strong> Выше порога прогрева повторяем
+проверку пригодности до 10 раз в плотном цикле без пауз (контролируется
+параметром <code>scaling_fast_retries</code>). Так перехватывается случай, когда
+другой
+клиент завершил свой запрос в том же микросекундном диапазоне и
+вот-вот вернёт соединение. Полная стоимость порядка 10–50
+микросекунд. Без sleep, без блокирующего I/O.</p>
+<p><strong>Фаза 4 — direct handoff (прямая передача).</strong> Если spin не поймал
+возврат, задача встаёт в очередь ожидающих. Когда любой клиент
+возвращает соединение, оно отправляется напрямую старейшему
+ожидающему, минуя idle-очередь целиком. Получатель забирает соединение
+без конкуренции с другими задачами — соединение никогда не попадает
+в общую idle-очередь и достаётся ровно одному адресату.</p>
+<p>Если передача удалась, соединение проходит проверку пригодности. При
+успехе соединение возвращается вызывающему. При ошибке (устаревший
+backend) пул уменьшает текущий размер, и вызов проваливается в путь
+создания нового соединения.</p>
+<p>Если соединение не пришло до дедлайна, ожидающий снимается с очереди.
+При попытке доставки пул обнаруживает снятого ожидающего, пропускает
+его и пробует следующего. Таким образом устаревшие ожидающие
+вычищаются по мере обработки очереди, без отдельного прохода.</p>
+<p>Дедлайн адаптивный: <code>min(query_wait_timeout - 500 ms, adaptive_cap)</code>,
+где <code>adaptive_cap</code> вычисляется из реальной latency транзакций:</p>
+<div class="table-wrapper"><table><thead><tr><th>Состояние пула</th><th>Бюджет</th><th>Пример</th></tr></thead><tbody>
+<tr><td>Холодный старт (нет данных)</td><td>100ms ± 20% jitter</td><td>80-120ms</td></tr>
+<tr><td>Устойчивый режим (steady state)</td><td>xact_p99 × 2 ± 20% jitter</td><td>p99=0.7ms → 5ms (min); p99=50ms → 100ms</td></tr>
+<tr><td>Высокая latency</td><td>Ограничено 500ms</td><td>p99=300ms → 500ms</td></tr>
+</tbody></table>
+</div>
+<p>Фаза 1/2 ожидания семафора тратит из того же бюджета, поэтому
+суммарное ожидание не может увести клиента за его <code>query_wait_timeout</code>.</p>
+<p>Случайный разброс (jitter) ±20% предотвращает <strong>обрыв таймаутов (timeout cliff)</strong>: без него N клиентов,
+вошедших в Phase 4 одновременно, выходят одновременно и лавиной входят
+в burst gate, создавая N новых backend-соединений для пула, которому
+нужно значительно меньше. С jitter'ом клиенты выходят порциями — первые
+создают соединения, и к моменту выхода последних эти соединения уже
+использованы и возвращены в idle queue для переиспользования.</p>
+<p>Если дедлайн истёк без получения соединения, переходим к фазе 5.</p>
+<p><strong>Фаза 5 — ограничитель всплесков (bounded burst gate).</strong> Перед тем
+как пойти на новый <code>connect()</code>, задача должна получить <em>слот</em> в
+ограничителе — механизме, который параллельно пропускает не больше
+<code>scaling_max_parallel_creates</code> (по умолчанию 2) задач на пул. Если
+слот свободен, задача забирает его и идёт вызывать <code>connect()</code>. Если
+все слоты заняты, задача встаёт в очередь на прямую передачу и
+одновременно ожидает завершения чужого создания. Приоритет отдаётся
+прямой передаче: если соединение вернулось, пока задача ждала
+освобождения слота, оно доставляется напрямую — задача проверяет его
+пригодность и возвращает клиенту. Если передачи не было, задача снова
+пробует проверку пригодности и захват слота. Так лимитируется скорость
+рождения новых backend-соединений в одном пуле, а не размер самого
+пула.</p>
+<p><strong>Адаптивный таймаут ограничителя всплесков (adaptive timeout burst
+gate).</strong> Цикл ограничителя лимитирован адаптивным бюджетом:
+<code>xact_p99 × 2 ± 20%</code> jitter (min 20 ms, max 500 ms). Если задача
+провела в цикле дольше бюджета, она прекращает ожидать прямую
+передачу и переходит к захвату слота ограничителя напрямую. Без этого
+механизма пул мог застрять на пороге прогрева навсегда: клиенты
+бесконечно получали переиспользованные соединения через прямую
+передачу, а до создания нового соединения дело не доходило. Счётчик
+<code>burst_gate_budget_exhausted</code> отслеживает срабатывания.</p>
+<p><strong>Фаза 6 — backend connect.</strong> Запускаем <code>connect()</code>, аутентифицируемся,
+отдаём соединение клиенту. Слот ограничителя освобождается автоматически по
+завершении этой фазы независимо от исхода.</p>
+<pre><code>                  Plain mode acquisition flow
+                  ---------------------------
+
+   pool.get()
+       |
+       v
+   +--------------+
+   |  Phase 1:    |  --- HIT ----&gt; return idle connection
+   |  recycle pop |
+   +------+-------+
+          | MISS
+          v
+   +--------------+
+   |  Phase 2:    |  --- below warm ---&gt; jump to phase 5
+   |  warm gate   |
+   +------+-------+
+          | above warm
+          v
+   +--------------+
+   |  Phase 3:    |  --- HIT ----&gt; return idle connection
+   |  fast spin   |
+   +------+-------+
+          | MISS
+          v
+   +--------------+
+   |  Phase 4:    |  --- handoff  ----&gt; return connection
+   |  anticipate  |  --- timeout  ----&gt; fall through
+   |  direct h/o  |
+   +------+-------+
+          |
+          v
+   +--------------+
+   |  Phase 5:    |  --- slot taken --&gt; proceed to phase 6
+   |  burst gate  |  --- slot full  --&gt; wait, retry recycle
+   +------+-------+
+          |
+          v
+   +--------------+
+   |  Phase 6:    |
+   |  connect()   | ----&gt; return new connection
+   +--------------+
+</code></pre>
+<h3 id="Подавление-всплеска-в-действии"><a class="header" href="#Подавление-всплеска-в-действии">Подавление всплеска в действии</a></h3>
+<p>Тот же сценарий с 200 клиентами в формате thundering herd, но теперь
+в plain mode и с <code>scaling_max_parallel_creates = 2</code>:</p>
+<pre><code>Time:   t=0ms     t=5ms    t=10ms   t=15ms   t=20ms   t=25ms
+
+C_1     [idle]--[query]-[done]
+C_2     [idle]--[query]-[done]
+C_3     [idle]--[query]-[done]
+C_4     [idle]--[query]-[done]
+C_5     [spin/wait]------[recycled C_1]--[query]-[done]
+C_6     [spin/wait]------[recycled C_2]--[query]-[done]
+C_7     [gate=1]-[connect]----[auth]--[query]-[done]
+C_8     [gate=2]-[connect]----[auth]--[query]-[done]
+C_9     [gate full, wait]---[recycled C_3]--[query]
+C_10    [gate full, wait]---[recycled C_4]--[query]
+  .
+  .     [...196 clients use a mix of recycle, anticipation, and at
+  .      most 2 in-flight connects...]
+  .
+C_200   [gate=2]-[connect]--[auth]--[query]--[done]
+
+PostgreSQL: at most 2 spawning backends at any moment
+            + the 4 connections that were already there
+</code></pre>
+<p>Тот же пул обслуживает все 200 клиентов, но PostgreSQL никогда не видит
+больше <code>scaling_max_parallel_creates</code> (по умолчанию 2) одновременных
+запусков backend-процессов из этого пула. Большинство клиентов попадают на
+переиспользованное соединение от соседа, который завершил работу
+мгновением раньше, а не на свежий <code>connect()</code>.</p>
+<h3 id="Получение-соединения-без-ожидания"><a class="header" href="#Получение-соединения-без-ожидания">Получение соединения без ожидания</a></h3>
+<p>Когда клиент устанавливает <code>query_wait_timeout = 0</code>, он просит либо
+сразу попасть на idle-соединение, либо свежий connect, без ожидания.
+Фаза anticipation и ожидание у burst gate пропускаются. pg_doorman
+выполняет recycle на горячем пути, один раз пробует burst gate, затем
+либо создаёт соединение, либо возвращает ошибку wait timeout.</p>
+<p><strong>Ограничение при включённом coordinator.</strong> Режим без ожидания
+пропускает только anticipation и ожидание у burst gate внутри пути в
+рамках одного пула. Если <code>max_db_connections</code> задан и фазы ожидания
+координатора (B–D) занимают время, такой вызов всё равно блокируется
+внутри <code>coordinator.acquire()</code> вплоть до <code>reserve_pool_timeout</code> (по
+умолчанию 3000 ms). Чтобы на базах под координатором соблюсти строгий
+дедлайн без ожидания, поставьте <code>reserve_pool_timeout</code> достаточно
+низким, чтобы он помещался в ваш бюджет.</p>
+<h3 id="Фоновый-replenish"><a class="header" href="#Фоновый-replenish">Фоновый replenish</a></h3>
+<p>Когда задан <code>min_pool_size</code>, фоновая задача периодически дополняет пул
+до его минимума. Она использует тот же burst gate, что и клиентский
+трафик. <strong>Эта задача не встаёт в очередь</strong> за занятым gate: если
+gate занят, она немедленно сдаётся и повторяет попытку
+на следующем retain-цикле (по умолчанию каждые 30 секунд, контролируется
+параметром <code>retain_connections_time</code>).</p>
+<p>Логика такова: во время всплеска нагрузки клиенты уже насыщают gate,
+создавая соединения, которые им нужны <em>прямо сейчас</em>. Если фоновый
+replenish будет конкурировать с ними за слоты, толку не будет: пул всё равно
+поднимется выше <code>min_pool_size</code> за счёт клиентских запросов на создание.
+При каждом таком отступлении фоновой задачи увеличивается счётчик
+<code>replenish_deferred</code>.</p>
+<p>Следствие: под нагрузкой <code>min_pool_size</code> поддерживается в режиме
+<strong>best-effort</strong> (без гарантий: pg_doorman старается, но не обязуется
+держать прогретыми ровно столько соединений, если клиенты съедают весь
+бюджет). Если нужна жёсткая гарантия минимума, см. раздел
+troubleshooting.</p>
+<h3 id="Прямая-передача-при-возврате-direct-handoff"><a class="header" href="#Прямая-передача-при-возврате-direct-handoff">Прямая передача при возврате (direct handoff)</a></h3>
+<p>Когда соединение возвращается, пул первым делом проверяет очередь
+ожидающих (direct-handoff). Если хотя бы один ожидающий
+зарегистрирован, соединение отправляется напрямую старейшему из них,
+минуя idle-очередь. Ожидающие, чей вызывающий уже отвалился по
+таймауту, пропускаются: пул обнаруживает недоступного получателя и
+пробует следующего в очереди.</p>
+<p>Если зарегистрированных ожидающих нет (типичный случай при высоком
+throughput, когда каждый checkout попадает в горячий путь), соединение
+кладётся в idle-очередь и будит ближайшего клиента, ожидающего на
+Фазе 1/2.</p>
+<p>В обоих случаях координатор (если настроен) уведомляется о возврате,
+чтобы ожидающие Фазы C из соседних пулов могли просканировать
+кандидатов для eviction. Ожидающие внутри того же пула получают
+соединения напрямую, а не через общее уведомление.</p>
+<h3 id="fifo-честность-и-распределение-латенси"><a class="header" href="#fifo-честность-и-распределение-латенси">FIFO-честность и распределение латенси</a></h3>
+<p>Очередь ожидающих — двусторонняя очередь (FIFO): новые ожидающие
+добавляются в конец, соединения доставляются из начала. Старейший
+ожидающий всегда получает следующее возвращённое соединение.</p>
+<p>Это даёт измеримо другой профиль латенси по сравнению с пулерами,
+использующими широковещательное пробуждение (broadcast-notify) или
+LIFO-планирование. При 500
+клиентах на пул из 40 соединений (AWS Fargate):</p>
+<div class="table-wrapper"><table><thead><tr><th>Пулер</th><th>p50 (мс)</th><th>p95 (мс)</th><th>p99 (мс)</th><th>p99/p50</th></tr></thead><tbody>
+<tr><td>pg_doorman</td><td>9.93</td><td>10.50</td><td>10.69</td><td>1.08</td></tr>
+<tr><td>pgbouncer</td><td>8.48</td><td>9.62</td><td>10.45</td><td>1.23</td></tr>
+<tr><td>odyssey</td><td>0.88</td><td>12.93</td><td>22.46</td><td>25.5</td></tr>
+</tbody></table>
+</div>
+<p>p50 у Odyssey в 11 раз ниже, чем у pg_doorman — большинство
+транзакций попадают на горячее соединение мгновенно. Но p99 в 2
+раза выше. Одни клиенты ждут больше 22 мс, а другие завершаются
+меньше чем за 1 мс. При FIFO каждый клиент платит примерно
+одинаковую цену за очередь.</p>
+<p>Что это значит для эксплуатации:</p>
+<ul>
+<li>
+<p><strong>SLO compliance.</strong> SLO «p99 &lt; 15 мс» достижим с pg_doorman при
+этой нагрузке. С Odyssey те же настройки пула его нарушают.
+Единственный выход — overprovisioning: увеличивать число
+соединений, пока даже невезучие клиенты укладываются.</p>
+</li>
+<li>
+<p><strong>Отсутствие голодания.</strong> При broadcast-notify клиент может
+проиграть гонку за wake-up многократно. При direct handoff
+соединение идёт ровно одному получателю, протухшие waiter'ы
+пропускаются. Нет thundering herd, нет повторных проигрышей.</p>
+</li>
+<li>
+<p><strong>Предсказуемое capacity planning.</strong> Когда p50 ≈ p99, удвоение
+числа клиентов примерно удваивает латенси. При соотношении
+хвоста 25x изменение нагрузки вызывает непредсказуемые всплески
+p99.</p>
+</li>
+</ul>
+<p>Теория очередей подтверждает: среди non-preemptive дисциплин
+планирования FIFO минимизирует дисперсию времени ожидания при том
+же среднем, что и LIFO. Среднее одинаково — разница только в хвосте.</p>
+<h3 id="Упреждающая-замена-при-истечении-lifetime-pre-replacement"><a class="header" href="#Упреждающая-замена-при-истечении-lifetime-pre-replacement">Упреждающая замена при истечении lifetime (pre-replacement)</a></h3>
+<p>Когда настроен <code>server_lifetime</code>, backend-соединения закрываются по
+достижении индивидуального лимита (базовый ± 20% jitter). Закрытие
+означает, что в пуле на одно idle-соединение меньше — последующие
+checkout'ы могут попасть в зону упреждающего ожидания или путь
+создания нового соединения, добавляя несколько миллисекунд к p99 во
+время кластеров истечения lifetime.</p>
+<p><strong>Упреждающая замена (pre-replacement)</strong> убирает этот всплеск
+задержки. Когда checkout проверяет пригодность соединения и
+обнаруживает, что оно достигло <strong>95%</strong> своего lifetime, фоновая задача
+создаёт замену и помещает её в idle-очередь. Когда старое соединение
+отклоняется при 100% lifetime, следующий checkout находит
+предсозданную замену через горячий путь — ноль ожидания.</p>
+<p>Параллельно может работать до 3 упреждающих замен на пул. Во время
+окна перекрытия пул временно держит <code>max_size + 3</code> соединений. Когда
+старые соединения умирают, текущий размер пула возвращается к
+<code>max_size</code>.</p>
+<p>Условия, предотвращающие неконтролируемый рост:</p>
+<div class="table-wrapper"><table><thead><tr><th>Условие</th><th>Предотвращает</th></tr></thead><tbody>
+<tr><td>Пул не под давлением</td><td>Создание лишних при насыщении пула (старое соединение выживет, пропустив закрытие по lifetime)</td></tr>
+<tr><td>Доля idle-соединений &lt; 25%</td><td>Замену в переразмеренном пуле, который должен сжаться</td></tr>
+<tr><td>Запас координатора &gt;= 2</td><td>Захват последнего слота координатора у соседнего пула</td></tr>
+<tr><td>Lifetime &gt;= 60 s</td><td>Срабатывание на коротких lifetime, где окно перекрытия слишком мало</td></tr>
+<tr><td>Текущий размер &lt;= max_size + cap</td><td>Накопление нескольких параллельных превышений</td></tr>
+<tr><td>Лимит параллельных фоновых создаваемых (cap=3)</td><td>Неограниченное число фоновых создаваемых соединений</td></tr>
+</tbody></table>
+</div>
+<p>Упреждающая замена срабатывает только на пути <strong>checkout</strong> (при
+проверке пригодности), не из фоновой задачи обслуживания.
+Idle-соединения, истекающие без checkout'а, закрываются фоновой
+задачей <strong>без замены</strong> — так пул естественно сжимается при падении
+нагрузки.</p>
+<h2 id="Согласование-лимита-с-postgresql"><a class="header" href="#Согласование-лимита-с-postgresql">Согласование лимита с PostgreSQL</a></h2>
+<p>Перед чтением про координатор проверьте, что число backend-соединений
+в худшем случае умещается в PostgreSQL. Без <code>max_db_connections</code> верхняя
+граница для одной базы:</p>
+<pre><code>N pools (users) × pool_size  =  ceiling on backend connections
+</code></pre>
+<p>Пример с расчётом: три пула, у каждого <code>pool_size = 40</code>, без
+<code>max_db_connections</code>. В худшем случае получится <strong>120 одновременных
+backend-соединений</strong> к этой базе, ограниченных только
+<code>scaling_max_parallel_creates</code> на пул (по умолчанию 2 на каждый, то
+есть до 6 одновременно идущих вызовов <code>connect()</code>). Если в PostgreSQL
+выставлен <code>max_connections = 100</code>, база начнёт отказывать в новых
+соединениях во время общего всплеска нагрузки, и клиенты получат
+<code>FATAL: too many connections</code>.</p>
+<p>Два решения:</p>
+<ul>
+<li>Понизить <code>pool_size</code> так, чтобы <code>N × pool_size</code> укладывалось ниже
+<code>max_connections</code> с запасом на <code>superuser_reserved_connections</code>,
+слоты репликации и любые прямые коннекторы в обход pg_doorman.</li>
+<li>Задать <code>max_db_connections</code> как жёсткий лимит (см. следующий раздел).</li>
+</ul>
+<p>Эмпирическое правило: суммарная потребность pg_doorman не должна
+превышать 80% от <code>PostgreSQL max_connections - superuser_reserved_connections</code>.
+Оставшиеся 20% оставьте под admin-соединения, репликацию и всплески.</p>
+<h2 id="Режим-координатора-coordinator-mode"><a class="header" href="#Режим-координатора-coordinator-mode">Режим координатора (coordinator mode)</a></h2>
+<p>Режим координатора активируется, когда у пула задан <code>max_db_connections</code>.
+Он добавляет второй слой давления <strong>поверх</strong> того, что работает внутри
+каждого пула: общий семафор, который ограничивает суммарное число
+backend-соединений к базе по всем обслуживающим её user-пулам. Без
+него единственным ограничением остаётся потолок <code>N × pool_size</code> из
+предыдущего раздела. С <code>max_db_connections = 80</code> к базе одновременно
+может существовать только 80 соединений независимо от конфигурации
+пулов, и координатор решает, какие пулы могут расти.</p>
+<p>При <code>max_db_connections = 0</code> (по умолчанию) координатор не создаётся.
+Когда параметр задан, все механизмы plain mode, описанные выше,
+продолжают работать; координатор добавляет один шаг получения
+<strong>permit</strong> (разрешения на удержание слота в общем лимите на базу:
+пока permit не получен, backend-соединение создавать нельзя) на
+пути создания нового соединения. Переиспользование idle координатора
+не касается.</p>
+<h3 id="Что-добавляет-координатор"><a class="header" href="#Что-добавляет-координатор">Что добавляет координатор</a></h3>
+<p>Три вещи:</p>
+<ol>
+<li>
+<p><strong>Жёсткий лимит</strong> общего числа соединений к базе. Если 80 уже
+занято, 81-й запрос ждёт или падает независимо от того, какой пул
+его подал.</p>
+</li>
+<li>
+<p><strong>Reserve pool (резервный пул).</strong> Когда общий лимит достигнут и у
+<code>reserve_pool_size</code> есть свободное место, координатор сразу
+выдаёт permit из <strong>резерва</strong> — небольшого дополнительного пула
+поверх <code>max_db_connections</code>, работающего как буфер под всплеск.
+Это Фаза R (reserve-first) в схеме ниже: ни одного соседнего
+backend не закрывается, ни одного ожидания не возникает. Резерв
+ограничен <code>reserve_pool_size</code> (по умолчанию 0, то есть выключен)
+и приоритизирован: голодающие пользователи (те, кто ниже своего
+<strong>эффективного минимума</strong>) и пользователи с большим числом
+ожидающих клиентов обслуживаются первыми через арбитра.</p>
+</li>
+<li>
+<p><strong>Eviction (выселение).</strong> Fallback на случай, когда резерв
+выключен (<code>reserve_pool_size = 0</code>) или уже полностью занят:
+координатор закрывает idle-соединение из пула другого
+пользователя, чтобы освободить main-слот. Кандидаты сортируются
+по <strong>p95 времени транзакции</strong> (по убыванию): медленные пулы
+отдают первыми, потому что лучше переносят стоимость пересоздания
+(1 ms pool wait добавляет 6.7% к 15 ms p95, но 104% к 0.96 ms
+p95). Излишек над эффективным минимумом — tiebreaker среди пулов
+с похожим p95. Только соединения старше <code>min_connection_lifetime</code>
+(по умолчанию 30 000 ms) попадают в список. 30-секундный порог
+подавляет циклический reconnect между соседними пулами, которые
+по очереди воруют слоты друг у друга.</p>
+<p><strong>Эффективный минимум</strong> для user-пула равен
+<code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>. Оба
+параметра защищают соединения от eviction; побеждает больший.
+Если снизить любой из них, эффективный минимум становится меньше
+и пользователь становится более доступен для eviction.</p>
+</li>
+</ol>
+<h3 id="Фазы-получения-permit-в-координаторе"><a class="header" href="#Фазы-получения-permit-в-координаторе">Фазы получения permit в координаторе</a></h3>
+<p>Когда путь внутри пула доходит до шага создания нового соединения,
+координатор проходит шесть фаз. Первая фаза, выдавшая permit,
+завершает последовательность.</p>
+<p><strong>Фаза A — Try-acquire</strong> (неблокирующая попытка: вернуть permit сразу,
+если есть свободный слот, иначе немедленно сообщить об отсутствии).
+Если лимит не достигнут, забираем слот и возвращаемся.</p>
+<p><strong>Фаза R — Reserve-first.</strong> Фаза A установила, что база заполнена. До
+того как закрыть хоть одно соседское backend-соединение, координатор
+проверяет, есть ли место в резервном пуле (<code>reserve_in_use &lt; reserve_pool_size</code>). Если есть — сразу запрашивает permit у reserve
+arbiter. При успехе вызывающий получает reserve-permit без eviction,
+без закрытия соседнего backend и без ожидания на <code>connection_returned</code>.
+В обычных условиях арбитр отвечает за доли миллисекунды.</p>
+<p>Это путь, который держит p99 латенси низкой: reserve-permit стоит
+одного round-trip с арбитром, тогда как старая последовательность
+(Фаза B + Фаза C) могла заблокировать клиента на полный
+<code>reserve_pool_timeout</code>, даже если в резерве было свободно. Фаза R не
+работает при <code>reserve_pool_size = 0</code> и проваливается в Фазу B, если
+арбитр отказывает (все reserve permit-ы уже заняты, либо идёт гонка
+с другим вызывающим).</p>
+<p><strong>Фаза B — Eviction.</strong> Выполняется, когда Фаза R не выдала permit:
+<code>reserve_pool_size = 0</code>, либо резервный семафор был полностью занят
+на момент проверки (<code>reserve_in_use == reserve_pool_size</code>), либо
+арбитр отказал. Обходим все <em>остальные</em> user-пулы той же базы,
+сортируем по <strong>p95 времени транзакции</strong> (по убыванию, медленные
+первые) с излишком (spare) как tiebreaker, и закрываем одно
+idle-соединение старше <code>min_connection_lifetime</code> у верхнего кандидата.
+Permit выселенного соединения освобождается синхронно, слот становится
+доступен сразу. Повторяем захват семафора. Если два вызова конкурируют,
+проигравший переходит к следующей фазе. p95 кешируется каждые 15
+секунд (stats cycle) — сканирование читает одно кешированное значение
+на кандидата без блокировки гистограммы.</p>
+<p><strong>Фаза C — Wait.</strong> Выполняется, когда резерв отключён или полностью
+занят <em>и</em> Фаза B не нашла что выселить. Регистрируется подписка
+на уведомления, которая срабатывает на двух событиях:</p>
+<ol>
+<li>Был освобождён permit координатора соседнего пула — серверное
+соединение физически закрыто (истёк <code>server_lifetime</code>, ошибка
+проверки пригодности, <code>RECONNECT</code>), и слот семафора теперь свободен.</li>
+<li>Соседний пул вернул соединение в свою idle-очередь — слот
+семафора НЕ освободился, но излишек над минимумом этого соседа
+только что вырос.</li>
+</ol>
+<p>На каждое пробуждение Фаза C <strong>сначала</strong> пытается захватить свободный
+слот неблокирующей проверкой, и только если дешёвый путь не
+сработал — пробует выселение. Пробуждение от освобождения permit-а
+оставляет свободный слот в семафоре — дешёвый путь берёт его, и ни
+один соседний backend не закрывается. Пробуждение от idle-return не
+освобождает слот напрямую, но могло вырастить излишек соседа, поэтому
+повторная попытка eviction находит кандидата, которого мгновение назад
+не было, освобождает permit соседа, и следующая неблокирующая проверка
+срабатывает. Этот порядок (дешёвый путь сначала, выселение потом)
+закреплён регрессионным тестом:
+будущий рефакторинг не сможет случайно вернуть закрытия соседних
+backend-ов на пробуждениях от drop permit-а.</p>
+<p>Ждём до <code>reserve_pool_timeout</code> (по умолчанию 3000 ms) либо пробуждения,
+либо дедлайна. <strong>Этот таймаут применяется даже при
+<code>reserve_pool_size = 0</code></strong>: он задаёт бюджет всей фазы wait, а не только
+окно входа в резерв. Если ваш <code>query_wait_timeout</code> короче, чем
+<code>reserve_pool_timeout</code>, клиент сдаётся первым, и вы видите ошибки
+<code>wait timeout</code> вместо более наглядной
+<code>all server connections to database 'X' are in use</code>. Разбор симптома
+есть в разделе troubleshooting.</p>
+<p><strong>Фаза D — Reserve retry.</strong> Фаза R уже пробовала этот путь один раз.
+Фаза D повторяет попытку после того, как Фаза C исчерпала свой
+бюджет ожидания — на случай, если за время ожидания соседний
+reserve-держатель отпустил свой permit. Запросы ранжируются по паре
+<code>(starving, queued_clients)</code>, где <code>starving</code> означает, что пул сейчас
+ниже своего эффективного минимума. Арбитр — это отдельный фоновый
+процесс, который раздаёт permit-ы резервного пула из приоритетной
+очереди.</p>
+<p><strong>Фаза E — Error.</strong> Если Фаза D тоже не выдала permit или резерв не
+настроен, клиент получает ошибку:
+<code>all server connections to database 'X' are in use (max=N, ...)</code>.</p>
+<h3 id="Повышение-из-резерва-в-основной-пул-reserve--main-upgrade-retain-task"><a class="header" href="#Повышение-из-резерва-в-основной-пул-reserve--main-upgrade-retain-task">Повышение из резерва в основной пул (reserve → main upgrade, retain task)</a></h3>
+<p>Reserve-permit — это буфер под всплеск, а не постоянное состояние.
+После того как всплеск прошёл, backend, получивший reserve-permit,
+продолжает жить как обычное idle-соединение, но его
+permit координатора по-прежнему учитывается в <code>reserve_in_use</code> — даже
+когда <code>current &lt; max_db_connections</code> и в main-семафоре есть свободные
+слоты. Без активного обслуживания <code>SHOW POOL_COORDINATOR</code> показывал
+бы занятый резерв при том, что реальная ёмкость для всплеска пустая, и
+следующему всплеску некуда расти.</p>
+<p>Retain task запускается каждые <code>retain_connections_time</code> (по умолчанию
+30 секунд) и делает бухгалтерскую перестановку: для каждого пула,
+который не находится <strong>под давлением</strong> (см. определение ниже), он
+обходит idle-очередь и для каждого backend-а, удерживающего
+reserve-permit, пытается
+забрать permit из main-семафора.</p>
+<p>Пул считается <strong>под давлением</strong>, когда его per-pool семафор имеет
+ноль свободных permit-ов. Одной колонки в <code>SHOW POOLS</code>, которая
+напрямую показывала бы состояние семафора, нет, и наблюдаемые
+колонки отстают от внутреннего состояния:</p>
+<ul>
+<li><strong>Строгий прокси:</strong> <code>sv_active == pool_size</code>. Каждое активное
+серверное соединение держит permit, поэтому когда все серверы в
+пуле активны, все permit-ы заняты. Это направление строгое.</li>
+<li><strong>Слабый прокси:</strong> <code>cl_waiting &gt; 0</code> означает, что как минимум
+один клиент находится внутри <code>timeout_get</code> — это <em>часто</em>
+означает, что семафор пуст, но клиент, который уже взял permit
+и припарковался в Фазе 4 anticipation или Фазе C координатора,
+тоже числится ожидающим. Используйте как индикатор, не как
+доказательство.</li>
+</ul>
+<p>Retain task пропускает пулы под давлением по двум причинам: upgrade
+в такой момент просто отдаёт слот ожидающему клиенту (нет эффекта
+на <code>reserve_used</code>), а закрытие reserve-соединения заставит этого
+клиента делать свежий <code>connect()</code>. Очистка отработает на следующем
+цикле. При успехе
+reserve-permit возвращается в reserve-семафор, <code>reserve_in_use</code>
+уменьшается на единицу, а тип permit у этого backend переключается с
+reserve на main. Никакого переподключения, никакого дёргания соседа.
+Обход прерывается на первом неудачном upgrade
+в пуле: это доказывает, что main-семафор заполнен, и остальные
+reserve-permit-ы этого пула проверять бессмысленно. Тот же retain-цикл
+затем закрывает reserve-backend-ы, которые не удалось повысить до
+основного и которые
+простаивают дольше <code>min_connection_lifetime</code>.</p>
+<p>При такой схеме <code>reserve_in_use &gt; 0</code> означает ровно одно: либо
+всплеск сейчас идёт, либо он закончился не более чем
+<code>retain_connections_time</code> назад. Исторический остаток reserve-ёмкости
+сходится к нулю, как только в main появляется свободное место.</p>
+<h3 id="Получение-permit-координатора-по-требованию-jit-coordinator-permits-burst-gate-первым"><a class="header" href="#Получение-permit-координатора-по-требованию-jit-coordinator-permits-burst-gate-первым">Получение permit координатора по требованию (JIT coordinator permits, burst gate первым)</a></h3>
+<p>Внутри пути получения соединения burst gate работает <strong>до</strong>
+координатора. Это <strong>JIT (just-in-time)</strong> порядок: coordinator-permit
+берётся только когда вызов уже занял burst gate слот и готов вызвать
+<code>connect()</code>.</p>
+<p>Предыдущий порядок (координатор первый, потом gate) вызывал
+<strong>фантомные permit-ы (phantom permits)</strong>: N вызовов захватывали по coordinator-permit и
+вставали в очередь за burst gate (cap=2). Реально создавали соединения
+только 2, но координатор видел N permit'ов в использовании и начинал
+выдавать reserve-permit'ы — хотя БД была далеко от предела.</p>
+<p>С JIT-порядком в каждый момент coordinator-permit'ы держат не более
+<code>max_parallel_creates</code> вызовов.
+Остальные ждут gate слот без расходования бюджета координатора.</p>
+<p><strong>Блокировка головы очереди (head-of-line blocking)</strong> снимается
+разделением координатора на быстрый и медленный путь. Быстрый —
+неблокирующая проверка доступности слота координатора внутри слота
+ограничителя (мгновенно). Если не прошла — вызов <strong>освобождает слот
+ограничителя</strong>, ждёт координатора (eviction / возврат от соседа), и
+затем снова занимает слот ограничителя.</p>
+<pre><code>        Coordinator + plain mode acquisition flow (JIT)
+        -----------------------------------------------
+
+   pool.get()
+       |
+       v
+   Phase 1: hot path recycle   --- HIT ---&gt; return
+       | MISS
+       v
+   Phase 2: warm gate          --- below ---+
+       | above warm                         |
+       v                                    |
+   Phase 3: fast spin          --- HIT ---&gt; return
+       | MISS                               |
+       v                                    |
+   Phase 4: direct handoff     --- HIT ---&gt; return
+       | deadline                           |
+       v                                    |
+       | &lt;----------------------------------+
+       v
+   Phase 5: bounded burst gate (scaling_max_parallel_creates)
+              | slot acquired
+              v
+   +---------------------------+
+   | JIT coordinator acquire   |  only when max_db_connections &gt; 0
+   |  fast: неблокир. проверка  |  мгновенный ответ
+   |  slow: release gate slot  |  ожидание координатора (evict/return)
+   |        → re-acquire slot  |  затем продолжить create
+   +------------+--------------+
+                | permit granted
+                v
+   Phase 6: server_pool.create()
+                |
+                v
+                return new connection
+</code></pre>
+<p>Фазы пронумерованы так же, как в plain mode. Coordinator acquire
+работает <strong>внутри</strong> burst gate слота, когда <code>max_db_connections &gt; 0</code>.
+В plain mode он не работает.</p>
+<h3 id="Когда-координатор-настроен-но-лимит-не-достигнут"><a class="header" href="#Когда-координатор-настроен-но-лимит-не-достигнут">Когда координатор настроен, но лимит не достигнут</a></h3>
+<p>Если <code>max_db_connections = 80</code>, а текущее использование 30, фаза A
+координатора всегда успешна. Фазы B–E никогда не запускаются. Поведение
+идентично plain mode плюс одна атомарная инкрементация семафора на
+каждое новое соединение. Горячий путь (повторное использование idle)
+координатора вообще не касается, поэтому там у него нет измеримой
+стоимости. Платят только <em>новые</em> создания соединений, и платят ровно
+одной атомарной операцией.</p>
+<p>По устройству координатор работает как <em>лимит</em>, а не <em>очередь</em>: он
+стоит ресурсов только когда вы упираетесь в потолок.</p>
+<h3 id="Фоновый-replenish-под-координатором"><a class="header" href="#Фоновый-replenish-под-координатором">Фоновый replenish под координатором</a></h3>
+<p><code>replenish</code> берёт permit координатора через неблокирующую проверку
+доступности. Если база уже на лимите, replenish сдаётся и
+повторяет попытку на следующем retain-цикле. Та же логика, что и у
+burst gate: фоновая задача не должна бороться с клиентским трафиком
+за скудные permit-ы.</p>
+<h2 id="Параметры-тюнинга"><a class="header" href="#Параметры-тюнинга">Параметры тюнинга</a></h2>
+<p>Scaling-параметры по умолчанию глобальные. Для
+<code>scaling_warm_pool_ratio</code> и <code>scaling_fast_retries</code> можно задать
+переопределение в каждом пуле. <code>scaling_max_parallel_creates</code>
+настраивается только глобально, переопределений на уровне пула для
+него нет.</p>
+<div class="table-wrapper"><table><thead><tr><th>Параметр</th><th>По умолчанию</th><th>Где</th><th>Что делает</th></tr></thead><tbody>
+<tr><td><code>scaling_warm_pool_ratio</code></td><td><code>20</code> (процент)</td><td><code>general</code>, per-pool</td><td>Порог, ниже которого соединения создаются без anticipation. Ниже <code>pool_size × ratio / 100</code> каждый запрос нового соединения идёт сразу к <code>connect()</code>.</td></tr>
+<tr><td><code>scaling_fast_retries</code></td><td><code>10</code></td><td><code>general</code>, per-pool</td><td>Число быстрых повторных проверок пригодности в фазе anticipation перед переходом к прямой передаче (ожиданию возврата от соседа).</td></tr>
+<tr><td><code>scaling_max_parallel_creates</code></td><td><code>2</code></td><td><code>general</code></td><td>Жёсткий лимит одновременно идущих backend-<code>connect()</code> на пул. Задачи сверх лимита ждут возврата idle-соединения или завершения чужого создания. Должен быть <code>&gt;= 1</code>.</td></tr>
+<tr><td><code>max_db_connections</code></td><td>не задан (выключено)</td><td>per-pool</td><td>Лимит суммарного числа backend-соединений к базе по всем user-пулам. Когда не задан, координатор не создаётся.</td></tr>
+<tr><td><code>min_connection_lifetime</code></td><td><code>30000</code> (ms)</td><td>per-pool</td><td>Минимальный возраст idle-соединения, после которого координатор может выселить его в пользу другого пула. 30-секундный порог подавляет циклический reconnect между соседними пулами.</td></tr>
+<tr><td><code>reserve_pool_size</code></td><td><code>0</code> (выключено)</td><td>per-pool</td><td>Дополнительные permit-ы координатора поверх <code>max_db_connections</code>, выдаваемые по приоритету при исчерпании основного пула.</td></tr>
+<tr><td><code>reserve_pool_timeout</code></td><td><code>3000</code> (ms)</td><td>per-pool</td><td>Максимальное время ожидания координатора перед переходом к reserve pool.</td></tr>
+<tr><td><code>min_guaranteed_pool_size</code></td><td><code>0</code></td><td>per-pool</td><td>Минимум на пользователя, защищённый от eviction координатором. Соединения пользователя, у которого <code>current_size &lt;= min_guaranteed_pool_size</code>, не могут быть выселены другими пользователями.</td></tr>
+</tbody></table>
+</div>
+<h3 id="Когда-повышать-scaling_max_parallel_creates"><a class="header" href="#Когда-повышать-scaling_max_parallel_creates">Когда повышать <code>scaling_max_parallel_creates</code></a></h3>
+<p>Повышайте, если:</p>
+<ul>
+<li><code>burst_gate_waits</code> устойчиво растёт между скрейпами, и
+<code>replenish_deferred</code> тоже ненулевой: клиентский трафик и фоновая
+задача оба борются за слоты, которых нет;</li>
+<li><code>connect()</code> к бэкенду быстрый (&lt; 50 ms), и у PostgreSQL есть запас
+по <code>max_connections</code>;</li>
+<li>скачки задержки соединения совпадают с ростом частоты
+<code>burst_gate_waits</code>.</li>
+</ul>
+<p><strong>Жёсткий потолок.</strong> Не поднимайте <code>scaling_max_parallel_creates</code> выше
+ни одного из этих лимитов:</p>
+<ul>
+<li><code>pool_size / 4</code> для самого маленького пула, в котором используется
+этот параметр. Выше этого значения лимит теряет смысл: одновременно
+создаётся половина пула, и сглаживание всплеска ломается.</li>
+<li><code>(PostgreSQL max_connections - superuser_reserved_connections) / (10 × N pools)</code>,
+где <code>N pools</code> обозначает все пулы, делящие этот инстанс PostgreSQL.
+Выше этого значения суммарная частота одновременных коннектов
+превышает то, что бэкенд успевает обрабатывать, не переполняя
+очередь <code>accept()</code>.</li>
+</ul>
+<p>Понижайте, если:</p>
+<ul>
+<li><code>connect()</code> к PostgreSQL дорогой (&gt; 200 ms, например, SSL с
+проверкой сертификата или медленный lookup <code>pg_authid</code>);</li>
+<li>в логах PostgreSQL появляется конкуренция за <code>pg_authid</code>;</li>
+<li>бэкенд жалуется на переполнение очереди <code>accept()</code>.</li>
+</ul>
+<p>Симптом слишком низкого значения: частота <code>burst_gate_waits</code> растёт
+быстрее, чем частота прихода клиентов. Симптом слишком высокого:
+задержка <code>connect()</code> к PostgreSQL растёт, и <strong>connection storm</strong>
+(шторм одновременных <code>connect()</code> к бэкенду, последствие thundering
+herd) возвращается.</p>
+<p><strong>Размер при множестве пулов.</strong> Суммарный потолок одновременных
+коннектов равен <code>N pools × scaling_max_parallel_creates</code>. Если за
+одним PostgreSQL стоит 10 пулов и в любой момент суммарно по ним всем
+вам нужно не более 8 одновременных backend-коннектов, поставьте
+<code>scaling_max_parallel_creates</code> около <code>desired_aggregate / N pools</code>,
+округляя вниз. Ниже 1 нельзя; если арифметика даёт меньше единицы,
+уменьшайте <code>N pools</code>, объединяя пользователей.</p>
+<h3 id="Когда-повышать-scaling_warm_pool_ratio"><a class="header" href="#Когда-повышать-scaling_warm_pool_ratio">Когда повышать <code>scaling_warm_pool_ratio</code></a></h3>
+<p>Повышайте, если:</p>
+<ul>
+<li>пулы медленно прогреваются на старте, и <code>min_pool_size</code> не
+используется;</li>
+<li>клиенты ждут anticipation в момент, когда пул в основном пуст
+(anticipation активируется только выше порога прогрева, поэтому
+такого быть не должно, но более высокий ratio дополнительно сужает
+окно, в котором это может случиться).</li>
+</ul>
+<p>Понижайте, если:</p>
+<ul>
+<li>пулы избыточны по размеру, и вы хотите, чтобы anticipation начинала
+подавлять создания на меньших значениях текущего размера.</li>
+</ul>
+<p>Этот параметр редко требует вмешательства. Значение по умолчанию 20%
+подходит большинству нагрузок.</p>
+<h3 id="Когда-задавать-max_db_connections"><a class="header" href="#Когда-задавать-max_db_connections">Когда задавать <code>max_db_connections</code></a></h3>
+<p>Задавайте, если:</p>
+<ul>
+<li>один хост PostgreSQL обслуживает несколько пулов
+<code>(database, user)</code>, и сумма <code>pool_size</code> по всем пулам превышает
+<code>max_connections</code> базы;</li>
+<li>нужен жёсткий потолок, который сохранится даже при неправильной
+конфигурации какого-то отдельного пула;</li>
+<li>нужна общая честность между пулами через eviction.</li>
+</ul>
+<p>Оставляйте незаданным, если:</p>
+<ul>
+<li>один пул обслуживает одну базу, и <code>pool_size</code> остаётся единственным
+ограничением;</li>
+<li>вам не нужна никакая eviction между пулами (некоторые нагрузки
+предпочитают жёсткую изоляцию между пользователями).</li>
+</ul>
+<h3 id="reserve_pool_size-и-reserve_pool_timeout"><a class="header" href="#reserve_pool_size-и-reserve_pool_timeout"><code>reserve_pool_size</code> и <code>reserve_pool_timeout</code></a></h3>
+<p>Резерв работает как <em>временный клапан переполнения</em>, а не как
+дополнительная постоянная ёмкость. Он предотвращает видимые клиенту
+ошибки исчерпания во время коротких всплесков. В нормальном режиме
+<code>reserve_in_use</code> большую часть времени должен быть равен нулю.</p>
+<p>Эмпирическое правило размера: <code>reserve_pool_size ≤ 0.25 × max_db_connections</code>.
+За этим порогом резерв перестаёт вести себя как буфер. Если половина
+нагрузки постоянно лежит в резерве, поднимайте <code>max_db_connections</code>,
+а не расширяйте клапан переполнения.</p>
+<p><code>reserve_pool_timeout</code> задаёт, сколько клиент ждёт в фазе C координатора
+перед обращением к резерву. Значение 3000 ms по умолчанию консервативное.
+Понижайте его, если ваш <code>query_wait_timeout</code> короткий и вам выгоднее
+быстро переходить к резерву, чем блокировать клиентов на coordinator wait.</p>
+<h4 id="Рецепт-тюнинга-снизить-p99-checkout-на-базе-под-координатором"><a class="header" href="#Рецепт-тюнинга-снизить-p99-checkout-на-базе-под-координатором">Рецепт тюнинга: снизить p99 checkout на базе под координатором</a></h4>
+<p>Профиль нагрузки: PostgreSQL отвечает за ~1 ms (низкий p99 длительности
+запроса), но клиенты видят p99 checkout latency 100–500 ms на базе под
+координатором. Задержка идёт от координатора, а не от PostgreSQL.</p>
+<ol>
+<li>Подтвердите фазу. Запустите <code>SHOW POOL_COORDINATOR</code> в момент
+всплеска latency. Вычислите <code>main_used = current - reserve_used</code>:
+<code>current</code> включает reserve-permit-ы, а рецепт зависит от того,
+заполнен ли именно <strong>main</strong> семафор.
+<ul>
+<li><code>main_used == max_db_conn</code> <strong>и</strong> <code>exhaustions</code> не растёт →
+доминирует wait-фаза. Клиент тратит свой бюджет в Фазе C
+перед тем, как провалиться в Фазу D. Переходите к шагу 2.</li>
+<li><code>main_used &lt; max_db_conn</code> без exhaustions → задержка идёт не
+от координатора. Смотрите <code>SHOW POOL_SCALING</code> <code>create_fallback</code>
+и troubleshooting plain-режима.</li>
+</ul>
+</li>
+<li>Включите reserve-first, если он ещё не включён. Задайте
+<code>reserve_pool_size</code> как минимум <code>max(2, 0.1 × max_db_connections)</code>.
+Reserve-first выдаёт permit за sub-ms, когда в резерве есть
+место, так что клиент, раньше сидевший в Фазе C, платит только
+один round-trip к арбитру.</li>
+<li>Уменьшите <code>reserve_pool_timeout</code> до <code>2 × p99 query latency</code>, но
+не ниже. Для запроса в 1 ms нижняя граница обычно 20 ms; начните
+с 50 ms и неделю наблюдайте <code>reserve_acq</code> и <code>evictions</code>.</li>
+<li>Оставьте <code>min_connection_lifetime</code> на дефолте 30 000 ms, если у
+вас нет явной цели ускорить кросс-пуловую ребалансировку;
+понижение увеличивает частоту eviction и churn соединений.</li>
+</ol>
+<p>За чем следить после каждого изменения (все в <code>SHOW POOL_COORDINATOR</code>):</p>
+<div class="table-wrapper"><table><thead><tr><th>До</th><th>После</th><th>Вердикт</th></tr></thead><tbody>
+<tr><td><code>reserve_acq</code> не растёт</td><td><code>reserve_acq</code> растёт</td><td>Reserve-first подхватил — checkout latency должен упасть; ожидаемо</td></tr>
+<tr><td><code>evictions</code> стабилен</td><td><code>evictions</code> падает</td><td>Фаза B перестала срабатывать, потому что Фаза R ловит вызывающего раньше; ожидаемо</td></tr>
+<tr><td><code>exhaustions</code> 0</td><td><code>exhaustions</code> &gt; 0</td><td>Перетянули: <code>reserve_pool_timeout</code> ниже реального времени возврата от соседа</td></tr>
+<tr><td><code>reserve_used</code> колеблется &gt; 0</td><td><code>reserve_used</code> возвращается к 0 за 30 с</td><td>Retain upgrade-путь работает; делать ничего не надо</td></tr>
+</tbody></table>
+</div>
+<p>Если p99 checkout не упал после шагов 2–3, путь не ограничен
+координатором. Перечитайте <code>SHOW POOL_SCALING</code> по пострадавшему пулу:
+<code>create_fallback</code> &gt; 0 означает, что сам пул не может обслужить нагрузку
+из возвратов, и лечить нужно <code>pool_size</code>, а не <code>reserve_pool_size</code>.</p>
+<p><strong>Нижняя граница.</strong> Не опускайте <code>reserve_pool_timeout</code> ниже
+<code>2 × ваш p99 query latency</code>. Ниже этого порога фаза wait всегда
+истекает раньше, чем соседний пул вернёт соединение, и резерв
+превращается из клапана переполнения в обязательный permit для
+каждого нового соединения. Reserve-permit-ов по замыслу мало, и
+использовать их как постоянный источник означает сломать их
+назначение.</p>
+<p><strong>Ловушка: <code>query_wait_timeout &lt; reserve_pool_timeout</code>.</strong> Когда дедлайн
+клиента короче фазы ожидания координатора, клиент сдаётся первым, и вы
+видите ошибки <code>wait timeout</code> вместо более наглядной
+<code>all server connections to database 'X' are in use</code>. Фазы wait и
+reserve координатора отрабатывают полностью, но к этому моменту
+клиента, которому нужен результат, уже нет. На старте валидатор
+конфига pg_doorman выдаёт предупреждение; реагируйте на него.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p>pg_doorman экспортирует состояние давления на пул через admin-консоль и
+через Prometheus. Оба показывают одни и те же счётчики; выбирайте то,
+что подходит вашему стеку мониторинга.</p>
+<h3 id="admin-show-pool_scaling"><a class="header" href="#admin-show-pool_scaling">Admin: <code>SHOW POOL_SCALING</code></a></h3>
+<p>Счётчики пути anticipation + bounded burst в разрезе каждого пула.
+Подключитесь к admin-базе <code>pgdoorman</code> и выполните:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW POOL_SCALING;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Колонка</th><th>Тип</th><th>Значение</th></tr></thead><tbody>
+<tr><td><code>user</code></td><td>text</td><td>Пользователь пула</td></tr>
+<tr><td><code>database</code></td><td>text</td><td>База пула</td></tr>
+<tr><td><code>inflight</code></td><td>gauge</td><td>Вызовы <code>connect()</code> к бэкенду, выполняемые в этом пуле прямо сейчас. Ограничено <code>scaling_max_parallel_creates</code>.</td></tr>
+<tr><td><code>creates</code></td><td>counter</td><td>Сколько всего backend-соединений пул начинал создавать с момента старта. В паре с <code>gate_waits</code> используется для расчёта частоты попаданий на gate.</td></tr>
+<tr><td><code>gate_waits</code></td><td>counter</td><td>Сколько раз вызов наткнулся на заполненный burst gate и был вынужден ждать слот. Высокие значения говорят, что <code>scaling_max_parallel_creates</code> слишком низкий.</td></tr>
+<tr><td><code>antic_notify</code></td><td>counter</td><td>Попытки anticipation в Фазе 4, где прямая передача удалась. Инкрементируется один раз на успешное получение, до проверки пригодности. Высокий <code>antic_notify</code> при низком <code>create_fallback</code> — хороший признак: прямая передача ловит возвраты, клиенты не платят за <code>connect()</code>.</td></tr>
+<tr><td><code>antic_timeout</code></td><td>counter</td><td>Попытки anticipation в Фазе 4, где ожидание истекло без получения соединения, либо бюджет был нулевой. Инкрементируется ровно один раз при каждом провале Фазы 4 в путь создания. Высокий <code>antic_timeout</code> означает, что клиенты упираются в <code>query_wait_timeout</code>, не успев получить соединение через прямую передачу.</td></tr>
+<tr><td><code>create_fallback</code></td><td>counter</td><td>Фаза 4 не получила соединение через прямую передачу: дедлайн исчерпан или бюджет был нулевой. Именно эти ожидания превращаются в новый <code>connect()</code>. Стабильно ненулевой <code>create_fallback</code> значит, что клиентского бюджета не хватает на перехват возвратов: пул либо мал, либо запросы длиннее <code>query_wait_timeout</code>.</td></tr>
+<tr><td><code>replenish_def</code></td><td>counter</td><td>Запуски фонового replenish, упёршиеся в лимит burst gate и отложенные до следующего retain-цикла. Устойчиво ненулевые значения означают, что <code>min_pool_size</code> нельзя поддержать при текущей нагрузке.</td></tr>
+</tbody></table>
+</div>
+<p>Все счётчики монотонные с момента старта. Считайте дельты между
+скрейпами; абсолютные значения полезны только для расчёта соотношений.</p>
+<h3 id="admin-show-pool_coordinator"><a class="header" href="#admin-show-pool_coordinator">Admin: <code>SHOW POOL_COORDINATOR</code></a></h3>
+<p>Состояние координатора в разрезе каждой базы. Присутствует только
+для баз с <code>max_db_connections &gt; 0</code>.</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW POOL_COORDINATOR;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Колонка</th><th>Тип</th><th>Значение</th></tr></thead><tbody>
+<tr><td><code>database</code></td><td>text</td><td>Имя базы</td></tr>
+<tr><td><code>max_db_conn</code></td><td>gauge</td><td>Сконфигурированное <code>max_db_connections</code></td></tr>
+<tr><td><code>current</code></td><td>gauge</td><td>Сколько всего backend-соединений сейчас удерживается под этим координатором (по всем user-пулам)</td></tr>
+<tr><td><code>reserve_size</code></td><td>gauge</td><td>Сконфигурированное <code>reserve_pool_size</code></td></tr>
+<tr><td><code>reserve_used</code></td><td>gauge</td><td>Сколько reserve-permit-ов используется прямо сейчас. Сходится обратно к 0, когда в main есть свободное место — retain task каждые <code>retain_connections_time</code> апгрейдит idle reserve-permit-ы в main. Устойчивое ненулевое значение означает либо активный всплеск, либо базу, постоянно упёртую в <code>max_db_connections</code>.</td></tr>
+<tr><td><code>evictions</code></td><td>counter</td><td>Сколько раз координатор выселил idle-соединение соседнего пула, чтобы освободить слот. С включённым reserve-first этот счётчик растёт только при реальном кросс-пуловом давлении — когда резерв заполнен <em>и</em> у соседа есть что выселить.</td></tr>
+<tr><td><code>reserve_acq</code></td><td>counter</td><td>Сколько всего reserve-permit-ов выдал arbiter (Фаза R быстрый путь плюс Фаза D fallback суммарно)</td></tr>
+<tr><td><code>exhaustions</code></td><td>counter</td><td>Сколько раз координатор вернул клиенту ошибку исчерпания. <strong>Это главный сигнал на пейджер.</strong></td></tr>
+</tbody></table>
+</div>
+<h4 id="Чтение-вывода-show-pool_coordinator"><a class="header" href="#Чтение-вывода-show-pool_coordinator">Чтение вывода <code>SHOW POOL_COORDINATOR</code></a></h4>
+<p>Три снапшота и что каждый означает для оператора:</p>
+<p><strong>Здоровая спокойная база:</strong></p>
+<pre><code> database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+----------+-------------+---------+--------------+--------------+-----------+-------------+-------------
+ mydb     |          80 |      24 |           10 |            0 |         0 |           0 |           0
+</code></pre>
+<p>Нормальное устойчивое состояние. Запас большой, резерв спит,
+evictions нет, exhaustions нет. Алерты здесь должны молчать.</p>
+<p><strong>После всплеска, upgrade в процессе:</strong></p>
+<pre><code> database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+----------+-------------+---------+--------------+--------------+-----------+-------------+-------------
+ mydb     |          80 |      65 |           10 |            3 |         0 |          12 |           0
+</code></pre>
+<p>Всплеск занял большую часть <code>max_db_connections</code> и три соединения
+перелились в резерв. <code>current &lt; max_db_conn</code> означает, что в main
+есть место, поэтому retain task повысит эти три permit-а до main
+на следующем цикле; <code>reserve_used</code> должен упасть до 0 в течение
+<code>retain_connections_time</code> (по умолчанию 30 секунд). Если не падает,
+смотрите раздел troubleshooting ниже. <code>evictions = 0</code> и
+<code>reserve_acq &gt; 0</code> вместе подтверждают, что reserve-first поглотил
+всплеск без закрытия соседских backend-ов.</p>
+<p><strong>Устойчивая перегрузка:</strong></p>
+<pre><code> database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+----------+-------------+---------+--------------+--------------+-----------+-------------+-------------
+ mydb     |          80 |      95 |           20 |           15 |       300 |         500 |           0
+</code></pre>
+<p>Main полностью занят (<code>main_used = current - reserve_used = 80</code>,
+равно <code>max_db_conn</code>), резерв использован на 75%, много eviction-ов,
+много reserve-грантов. База не просто иногда под давлением — она
+постоянно недоразмерена и выживает только за счёт того, что
+eviction ротирует соединения между пользователями, а reserve-first
+поглощает каждого нового вызывающего. <code>exhaustions = 0</code> означает,
+что арбитр пока успевает, но любой переходный пик опрокинет
+ситуацию. <strong>Действие:</strong> поднимите <code>max_db_connections</code> (сначала
+проверьте запас PostgreSQL) или найдите жадный пул через
+<code>SHOW POOLS</code> и уменьшите его <code>pool_size</code>.</p>
+<h3 id="Метрики-prometheus"><a class="header" href="#Метрики-prometheus">Метрики Prometheus</a></h3>
+<p>Два семейства метрик в разрезе пула и два в разрезе координатора. Все
+четыре живут в namespace <code>pg_doorman_pool_scaling*</code> и
+<code>pg_doorman_pool_coordinator*</code>.</p>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Тип</th><th>Лейблы</th><th>Источник</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_pool_scaling{type="inflight_creates"}</code></td><td>gauge</td><td><code>user</code>, <code>database</code></td><td><code>inflight</code> из <code>SHOW POOL_SCALING</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="creates_started"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>creates</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="burst_gate_waits"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>gate_waits</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="burst_gate_budget_exhausted"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>gate_budget_ex</code> — adaptive timeout сработал, клиент перешёл к созданию</td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="anticipation_wakes_notify"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>antic_notify</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="anticipation_wakes_timeout"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>antic_timeout</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="create_fallback"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>create_fallback</code></td></tr>
+<tr><td><code>pg_doorman_pool_scaling_total{type="replenish_deferred"}</code></td><td>counter</td><td><code>user</code>, <code>database</code></td><td><code>replenish_def</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="connections"}</code></td><td>gauge</td><td><code>database</code></td><td><code>current</code> из <code>SHOW POOL_COORDINATOR</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="reserve_in_use"}</code></td><td>gauge</td><td><code>database</code></td><td><code>reserve_used</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="max_connections"}</code></td><td>gauge</td><td><code>database</code></td><td><code>max_db_conn</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator{type="reserve_pool_size"}</code></td><td>gauge</td><td><code>database</code></td><td><code>reserve_size</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator_total{type="evictions"}</code></td><td>counter</td><td><code>database</code></td><td><code>evictions</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator_total{type="reserve_acquisitions"}</code></td><td>counter</td><td><code>database</code></td><td><code>reserve_acq</code></td></tr>
+<tr><td><code>pg_doorman_pool_coordinator_total{type="exhaustions"}</code></td><td>counter</td><td><code>database</code></td><td><code>exhaustions</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="Алерты-для-настройки"><a class="header" href="#Алерты-для-настройки">Алерты для настройки</a></h3>
+<p>Алерты ниже покрывают режимы отказа, на которые стоит реагировать
+пейджером или варнингом. Они написаны на синтаксисе Prometheus;
+адаптируйте под свой стек. Все используют окна устойчивого условия,
+чтобы короткие всплески не будили дежурного.</p>
+<p>Если вы часто перезагружаете pg_doorman, и пулы появляются и исчезают,
+ограничьте алерты недавно активными пулами (например, добавьте фильтр
+<code>pg_doorman_pool_scaling_total{type="creates_started"} &gt; 0</code>).</p>
+<p>Каждый алерт ниже содержит блок <strong>Runbook</strong> с одной диагностической
+командой и двумя-тремя ветвями, привязанными к конкретным значениям
+счётчиков.</p>
+<p><strong>Coordinator exhaustion (page).</strong> Клиент получил ошибку "database
+exhausted". Жёсткий отказ — резерв и eviction оба не сработали.</p>
+<pre><code class="language-promql">rate(pg_doorman_pool_coordinator_total{type="exhaustions"}[5m]) &gt; 0
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<p><code>current</code> — это суммарное число соединений main + reserve
+(<code>current == max_db_conn + reserve_size</code> означает, что оба семафора
+пусты).</p>
+<ul>
+<li><code>current == max_db_conn + reserve_size</code> → оба семафора полностью
+пусты. Поднимите <code>max_db_connections</code> (сначала проверьте, что у
+PostgreSQL есть запас <code>max_connections</code>) или увеличьте резерв.</li>
+<li><code>reserve_size == 0</code> и <code>current == max_db_conn</code> → резерв выключен,
+main полностью занят. Задайте <code>reserve_pool_size</code>, чтобы
+поглощать всплески, и, если <code>exhaustions</code> продолжит расти,
+поднимайте <code>max_db_connections</code>.</li>
+<li><code>current &lt; max_db_conn + reserve_size</code>, но <code>exhaustions</code> растёт
+→ гонка в Фазе R/D, такого не должно быть устойчиво; заведите
+баг со снапшотом <code>SHOW POOL_COORDINATOR</code>.</li>
+<li>В <code>SHOW POOLS</code> у одного пользователя <code>sv_idle</code> сильно больше,
+чем у остальных → один пул захватывает соединения. Уменьшите
+его <code>pool_size</code> или задайте <code>min_guaranteed_pool_size</code>, чтобы
+защитить соседей.</li>
+</ul>
+<p><strong>Burst gate saturated (warn).</strong> Burst gate ждёт чужие create
+чаще, чем проходит напрямую. Короткие всплески выше порога при
+failover или рестарте нормальны. Устойчивые значения означают,
+что <code>scaling_max_parallel_creates</code> слишком низкий.</p>
+<pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="burst_gate_waits"}[5m])
+  &gt; 0.5 * rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m])
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_SCALING'
+</code></pre>
+<ul>
+<li><code>inflight_creates</code> сидит на лимите И в <code>SHOW POOLS</code> видны
+клиенты в <code>cl_waiting</code> → <code>connect()</code> медленный со стороны
+бэкенда. Смотрите troubleshooting "Burst gate как узкое место
+даже при низком трафике" перед тем, как поднимать лимит.</li>
+<li><code>inflight_creates</code> ходит ниже лимита, но <code>gate_waits</code> растёт →
+много коротких всплесков. Поднимайте
+<code>scaling_max_parallel_creates</code>, оставаясь в пределах потолка
+из раздела тюнинга.</li>
+<li>Горит только один пул → рассмотрите <code>min_guaranteed_pool_size</code>
+для соседей или уменьшите <code>pool_size</code> у горячего.</li>
+</ul>
+<p><strong>Anticipation create fallback rate (warn).</strong> Фаза 4 anticipation
+сдаётся, не поймав возврат, и проваливается в свежий <code>connect()</code>.
+В устойчивом состоянии должно быть близко к нулю.</p>
+<pre><code class="language-promql">rate(pg_doorman_pool_scaling_total{type="create_fallback"}[5m]) &gt; 0.1
+  and
+  rate(pg_doorman_pool_scaling_total{type="creates_started"}[5m]) &gt; 0.1
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_SCALING'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+    -c 'SHOW STATS' | grep -E 'database|avg_xact_time|avg_query_time'
+</code></pre>
+<ul>
+<li><code>create_fallback</code> высокий на одном пуле И <code>avg_xact_time</code> этой
+базы растёт → долгие запросы держат соединения вне ротации.
+Сначала лечите долгий запрос; пул рассчитан на обычную
+длительность, а не на эту транзакцию.</li>
+<li><code>create_fallback</code> высокий у всех пулов И <code>creates_started</code>
+тоже растёт → нагрузка превышает то, что возвраты могут
+обслужить в пределах дедлайна. Поднимайте <code>pool_size</code>.</li>
+<li><code>create_fallback</code> высокий, но <code>query_wait_timeout</code> короткий
+(&lt; 1 секунды) → дедлайн anticipation (<code>query_wait_timeout − 500 ms</code>
+с верхней границей 500 ms) слишком короткий даже для нормальных
+возвратов. Поднимайте <code>query_wait_timeout</code> минимум до
+<code>2 × p99 длительности запроса</code>.</li>
+</ul>
+<p><strong>Replenish deferred persistently (warn).</strong> Фоновая задача не
+может поддерживать <code>min_pool_size</code>, потому что burst gate занят
+клиентским трафиком.</p>
+<pre><code class="language-promql">increase(pg_doorman_pool_scaling_total{type="replenish_deferred"}[1h]) &gt; 60
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_SCALING'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<ul>
+<li>Пострадавший пул показывает <code>sv_idle + sv_active &lt; min_pool_size</code>
+одновременно с растущим <code>gate_waits</code> → replenish проигрывает
+клиентскому трафику. Поднимайте <code>scaling_max_parallel_creates</code>,
+чтобы у фоновой задачи был запас, или принимайте defer как
+косметическую проблему (под нагрузкой клиенты сами поднимут
+пул выше <code>min_pool_size</code>).</li>
+<li><code>inflight_creates</code> стабильно стоит на лимите → gate полон по
+другой причине (медленный <code>connect()</code>); сначала это.</li>
+</ul>
+<p><strong>Reserve pool continuously in use (warn).</strong> Gauge reserve-permit
+не возвращался к нулю в течение 15 минут. Retain task апгрейдит
+idle reserve-permit-ы обратно в main каждые <code>retain_connections_time</code>
+(по умолчанию 30 секунд), поэтому алерт означает, что upgrade-путь
+<em>не в состоянии</em> отработать или получить успех, а не что он забыл
+запуститься.</p>
+<pre><code class="language-promql">min_over_time(pg_doorman_pool_coordinator{type="reserve_in_use"}[15m]) &gt; 0
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<p>Вычислите <code>main_used = current - reserve_used</code> из строки — <code>current</code>
+это суммарное число permit-ов main и reserve, а не только main.</p>
+<ul>
+<li><code>main_used == max_db_conn</code> → main полностью занят, upgrade-у
+негде забрать слот. База недоразмерена; поднимайте
+<code>max_db_connections</code>.</li>
+<li><code>main_used &lt; max_db_conn</code> И каждый пул в <code>SHOW POOLS</code> имеет
+<code>sv_active == pool_size</code> (или <code>cl_waiting &gt; 0</code> как индикатор)
+→ все пулы под давлением, retain task пропускает upgrade.
+Поднимайте <code>pool_size</code> у того пула, у которого самый высокий
+<code>cl_waiting</code> или самое плотное соотношение <code>sv_active / pool_size</code>.</li>
+<li><code>main_used &lt; max_db_conn</code> И ни у одного пула нет ни того, ни
+другого признака, а gauge всё равно ненулевой → заведите баг со
+снапшотами <code>SHOW POOL_COORDINATOR</code> и <code>SHOW POOLS</code>; этого не
+должно быть.</li>
+</ul>
+<p><strong>Coordinator approaching cap (warn).</strong> Ранний сигнал: координатор
+подходит к потолку.</p>
+<pre><code class="language-promql">pg_doorman_pool_coordinator{type="max_connections"} &gt; 0
+  and
+  pg_doorman_pool_coordinator{type="connections"}
+    / pg_doorman_pool_coordinator{type="max_connections"} &gt; 0.85
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOLS'
+</code></pre>
+<ul>
+<li><code>current</code> монотонно растёт часами → проблема планирования
+ёмкости. Поднимайте <code>max_db_connections</code> (сначала проверьте
+запас PostgreSQL) до следующего всплеска.</li>
+<li><code>current</code> колеблется рядом с лимитом → burst-driven. Поднимайте
+<code>reserve_pool_size</code>, чтобы всплески поглощались без касания
+<code>max_db_connections</code>, потом следите за <code>reserve_acq</code>.</li>
+<li>Один пул доминирует в <code>SHOW POOLS</code> (<code>sv_active + sv_idle</code>
+сильно больше, чем у соседей) → один пул захватывает
+соединения; уменьшите его <code>pool_size</code> или задайте
+<code>min_guaranteed_pool_size</code> соседям.</li>
+</ul>
+<p><strong>Inflight stuck at cap (warn).</strong> <code>inflight_creates</code>, сидящий на
+сконфигурированном лимите больше 5 минут, означает, что вызовы
+<code>connect()</code> не завершаются.</p>
+<pre><code class="language-promql">min_over_time(pg_doorman_pool_scaling{type="inflight_creates"}[5m])
+  &gt;= 2  # adjust to your scaling_max_parallel_creates value
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">time psql -h $PG_HOST -p $PG_PORT -U $PG_USER -d $PG_DB -c 'SELECT 1'
+psql -h $PG_HOST -p $PG_PORT -c \
+    "SELECT state, count(*) FROM pg_stat_activity GROUP BY state"
+</code></pre>
+<ul>
+<li><code>time psql</code> показывает <code>connect()</code> &gt; 500 ms → backend-connect
+медленный. Проверьте <code>pg_stat_ssl</code> на стоимость SSL-handshake,
+<code>pg_authid</code> на конкуренцию за поиск роли и время DNS-резолва с
+хоста pg_doorman.</li>
+<li><code>pg_stat_activity</code> показывает много сессий в <code>startup</code> или
+<code>authenticating</code> → бэкенд спавнит процессы, но не разгружает
+очередь handshake. Вероятно, упёрлись в <code>max_connections</code> на
+стороне базы — выполните <code>SELECT setting FROM pg_settings WHERE name = 'max_connections'</code> и сравните с активными сессиями.</li>
+<li><code>pg_stat_activity</code> по пользователю pg_doorman пустой →
+сетевая проблема или firewall между pg_doorman и PostgreSQL.</li>
+</ul>
+<p><strong>Coordinator thrashing (warn).</strong> Лимит исчерпан <em>и</em> идут
+eviction-ы: координатор постоянно закрывает соседние соединения,
+чтобы освободить место. Недоразмеренный пул, а не
+"иногда под давлением".</p>
+<pre><code class="language-promql">pg_doorman_pool_coordinator{type="connections"}
+    / pg_doorman_pool_coordinator{type="max_connections"} &gt; 0.95
+  and
+  rate(pg_doorman_pool_coordinator_total{type="evictions"}[5m]) &gt; 0
+</code></pre>
+<p><strong>Runbook:</strong></p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c 'SHOW POOL_COORDINATOR'
+</code></pre>
+<ul>
+<li><code>evictions</code> растёт И <code>reserve_used == 0</code> → резерв выключен или
+исчерпан, eviction — единственный клапан сброса. Включите /
+поднимите <code>reserve_pool_size</code>, чтобы всплеск поглощался без
+закрытия соседних backend-ов.</li>
+<li><code>evictions</code> И <code>reserve_acq</code> растут одновременно → резерва
+тоже не хватает. Поднимайте <code>max_db_connections</code> или
+<code>reserve_pool_size</code>; сначала проверьте <code>max_connections</code>
+у PostgreSQL.</li>
+</ul>
+<h3 id="Чтение-admin-вывода-во-время-инцидента"><a class="header" href="#Чтение-admin-вывода-во-время-инцидента">Чтение admin-вывода во время инцидента</a></h3>
+<p>Admin-консоль принимает только <code>SHOW &lt;subcommand&gt;</code>, <code>SET</code>, <code>RELOAD</code>,
+<code>SHUTDOWN</code>, <code>UPGRADE</code>, <code>PAUSE</code>, <code>RESUME</code> и <code>RECONNECT</code>. <code>SHOW</code> это не
+виртуальная таблица, поэтому к admin-базе нельзя выполнить <code>SELECT</code>.
+Чтобы запрашивать счётчики в shell-пайплайнах, запускайте <code>SHOW</code> из
+<code>psql</code> и обрабатывайте вывод.</p>
+<p>Шаблоны ниже используют <code>psql</code> к admin-листенеру (по умолчанию
+учётные данные <code>admin/admin</code>):</p>
+<pre><code class="language-bash"># Highest burst-gate-wait ratio first (the hot pool).
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+     -c 'SHOW POOL_SCALING' --no-align --field-separator='|' \
+  | awk -F'|' 'NR&gt;1 &amp;&amp; $4&gt;0 { printf "%-20s %-20s %.3f  inflight=%d  defer=%d\n", $1, $2, $5/$4, $3, $9 }' \
+  | sort -k3 -nr | head
+
+# Highest create fallback ratio (cycle gave up on deadline and paid connect()).
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+     -c 'SHOW POOL_SCALING' --no-align --field-separator='|' \
+  | awk -F'|' 'NR&gt;1 &amp;&amp; $4&gt;0 { printf "%-20s %-20s %.3f  creates=%d  fallback=%d\n", $1, $2, $8/$4, $4, $8 }' \
+  | sort -k3 -nr | head
+
+# Coordinator: closest databases to exhaustion.
+psql -h 127.0.0.1 -p 6432 -U admin pgdoorman \
+     -c 'SHOW POOL_COORDINATOR' --no-align --field-separator='|' \
+  | awk -F'|' 'NR&gt;1 &amp;&amp; $2&gt;0 { printf "%-30s %.3f  used=%d/%d  reserve=%d  exhaustions=%d\n", $1, $3/$2, $3, $2, $5, $8 }' \
+  | sort -k2 -nr
+</code></pre>
+<p>Позиции полей в <code>awk</code> соответствуют порядку колонок, описанному выше:
+для <code>POOL_SCALING</code> это <code>user|database|inflight|creates|gate_waits|gate_budget_ex|antic_notify|antic_timeout|create_fallback|replenish_def</code>,
+для <code>POOL_COORDINATOR</code> это <code>database|max_db_conn|current|reserve_size|reserve_used|evictions|reserve_acq|exhaustions</code>.</p>
+<h2 id="Сравнение-с-pgbouncer"><a class="header" href="#Сравнение-с-pgbouncer">Сравнение с PgBouncer</a></h2>
+<p>PgBouncer и pg_doorman оба пулят соединения, но давление обрабатывают
+по-разному.</p>
+<div class="table-wrapper"><table><thead><tr><th>Аспект</th><th>PgBouncer</th><th>pg_doorman</th></tr></thead><tbody>
+<tr><td>Лимит размера в каждом пуле</td><td><code>pool_size</code></td><td><code>pool_size</code></td></tr>
+<tr><td>Лимит на уровне БД, общий для пулов</td><td><code>max_db_connections</code> (жёсткий лимит, без eviction; для изоляции есть переопределения <code>pool_size</code> на базу или на пользователя)</td><td><code>max_db_connections</code> (жёсткий лимит плюс eviction между пулами и reserve pool)</td></tr>
+<tr><td>Reserve pool</td><td><code>reserve_pool_size</code>, <code>reserve_pool_timeout</code></td><td><code>reserve_pool_size</code>, <code>reserve_pool_timeout</code> (плюс приоритизация в arbiter по starving/queued)</td></tr>
+<tr><td>Eviction между пользователями</td><td>Не поддерживается. Пользователь, удерживающий idle-соединения, морит голодом соседа, которому они нужны.</td><td>Координатор выселяет idle-соединения у пользователя с наибольшим излишком над <strong>эффективным минимумом</strong> (<code>max(user.min_pool_size, min_guaranteed_pool_size)</code>).</td></tr>
+<tr><td>Одновременные <code>connect()</code> к бэкенду в одном пуле</td><td>Однопоточный, обрабатывает события последовательно в пределах пула, вызовы <code>connect()</code> выпускаются по одному.</td><td>Ограничено <code>scaling_max_parallel_creates</code> (по умолчанию 2 на пул): не больше N одновременных backend-коннектов в пуле, лишние задачи ждут на burst gate.</td></tr>
+<tr><td>Anticipation возвратов</td><td>Нет. Клиенты ждут следующего доступного соединения в порядке прихода, в пределах <code>wait_timeout</code>.</td><td>Event-driven anticipation: возвращающееся соединение будит ровно одного из ожидающих в очереди, часто ещё до того, как будет выпущен хоть один новый <code>connect()</code>.</td></tr>
+<tr><td>Прогрев <code>min_pool_size</code></td><td>Поддерживается на каждом такте event loop (без отдельной задачи replenish).</td><td>Периодический фоновый replenish (<code>retain_connections_time</code>, по умолчанию 30 s), который отступает, когда burst gate занят.</td></tr>
+<tr><td>Повторный логин после ошибки</td><td><code>server_login_retry</code> (по умолчанию 15 s) блокирует новые попытки логина после отказа бэкенда.</td><td>Аналога нет. Ошибки логина бэкенда пробрасываются клиенту на каждую попытку.</td></tr>
+<tr><td>Jitter на lifetime</td><td>Нет. <code>server_lifetime</code> точный.</td><td>±20% jitter на <code>server_lifetime</code> и <code>idle_timeout</code>, чтобы избежать одновременного массового закрытия.</td></tr>
+<tr><td>Ключ поиска пула</td><td><code>(database, user, auth_type)</code></td><td><code>(database, user)</code></td></tr>
+<tr><td>Честность между пользователями на общем лимите</td><td>First come first served на <code>max_db_connections</code>.</td><td>Reserve arbiter оценивает запросы по <code>(starving, queued_clients)</code>.</td></tr>
+<tr><td>Observability давления на новые соединения</td><td><code>SHOW POOLS</code>, <code>SHOW STATS</code>. Текущие inflight-коннекты и результаты anticipation не видны вовсе.</td><td><code>SHOW POOL_SCALING</code> и <code>SHOW POOL_COORDINATOR</code> показывают каждый счётчик нового кодового пути.</td></tr>
+</tbody></table>
+</div>
+<p>В production важнее всего два различия:</p>
+<ol>
+<li>
+<p><strong>Bounded burst gate.</strong> Размер пула в PgBouncer ограничивает,
+сколько <em>соединений</em> у вас есть, но не ограничивает, сколько вызовов
+<code>connect()</code> выпускается одновременно, когда в один момент приходит
+много клиентов. pg_doorman ограничивает частоту одновременных
+<code>connect()</code> к бэкенду независимо от размера пула, поэтому внезапный
+всплеск трафика не превращается в connection storm к PostgreSQL.</p>
+</li>
+<li>
+<p><strong>Cross-pool eviction.</strong> <code>max_db_connections</code> в PgBouncer задаёт
+жёсткий потолок и не умеет перераспределять. Если пользователь A
+держит 80 idle-соединений, а пользователю B нужно одно, но лимит
+уже выбран, пользователь B ждёт или падает. Координатор pg_doorman
+может закрыть одно из соединений A (если оно старше
+<code>min_connection_lifetime</code>) и отдать слот B.</p>
+</li>
+<li>
+<p><strong>FIFO direct handoff.</strong> PgBouncer ставит клиентов в порядке прихода
+и отдаёт следующее свободное соединение, но PgBouncer обрабатывает
+события на одном потоке — под нагрузкой порядок зависит от
+callback'ов libevent. pg_doorman отправляет возвращённые соединения
+напрямую каждому ожидающему в строгом FIFO-порядке. Результат —
+p99/p50 в пределах 1.1x при любом числе клиентов, тогда как пулеры
+без строгого FIFO показывают 10-25x раздувание хвоста при той же
+нагрузке.</p>
+</li>
+</ol>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="В-логах-одновременно-несколько-backend-connect"><a class="header" href="#В-логах-одновременно-несколько-backend-connect">В логах одновременно несколько backend connect</a></h3>
+<p><strong>Симптом.</strong> В логах сервера (или в debug-логах pg_doorman) видно
+5 или больше событий <code>connect()</code> к бэкенду в одну и ту же миллисекунду.
+Кажется, что burst gate не работает.</p>
+<p><strong>Причина.</strong> Либо <code>scaling_max_parallel_creates</code> выставлен слишком
+высоко (проверьте <code>SHOW CONFIG</code> или ваш <code>pg_doorman.yaml</code>), либо
+существует 5 или больше пулов, каждый из которых независимо
+открывает одновременные коннекты (gate работает в пределах одного
+пула, а не глобально).</p>
+<p><strong>Исправление.</strong> Понизьте <code>scaling_max_parallel_creates</code>. Значение по
+умолчанию 2 подходит большинству нагрузок. Когда пулов много,
+<em>суммарная</em> частота одновременных коннектов равна
+<code>pools × scaling_max_parallel_creates</code>, и это ожидаемо. Чтобы
+ограничить и сумму, задайте <code>max_db_connections</code> на базу; тогда
+координатор поставит в очередь создания сверх лимита.</p>
+<h3 id="min_pool_size-не-поддерживается"><a class="header" href="#min_pool_size-не-поддерживается"><code>min_pool_size</code> не поддерживается</a></h3>
+<p><strong>Симптом.</strong> Пул с <code>min_pool_size = 10</code> показывает <code>sv_idle = 4</code> в
+<code>SHOW POOLS</code> и держится так минутами.</p>
+<p><strong>Причина.</strong> Фоновый replenish откладывается, потому что burst gate
+занят клиентским трафиком. Проверьте <code>replenish_def</code> в
+<code>SHOW POOL_SCALING</code>. Если он продолжает расти, replenish пропускает
+каждый retain-цикл.</p>
+<p><strong>Исправление.</strong> Так задумано: под нагрузкой gate отдан клиентским
+запросам на создание. Пул дойдёт до <code>min_pool_size</code>, когда клиентский
+трафик ослабнет. Если нужна жёсткая гарантия минимума, поднимайте
+<code>scaling_max_parallel_creates</code>, чтобы у replenish была свободная
+ёмкость, либо сократите <code>retain_connections_time</code>, чтобы replenish
+запускался чаще.</p>
+<p>Для <strong>transaction pooling</strong> (<code>pool_mode = transaction</code>) значение
+<code>min_pool_size</code> выше, чем <code>pool_size / 2</code>, обычно указывает на то,
+что пул мал: большинство соединений должно быть доступно для выдачи
+клиентам, а не пришпилено к минимуму. Для <strong>session pooling</strong>
+эвристика не работает: <code>min_pool_size = pool_size</code> это нормальная
+настройка, чтобы держать всё состояние сессий в горячем виде.</p>
+<h3 id="p99-latency-растёт-без-видимой-причины"><a class="header" href="#p99-latency-растёт-без-видимой-причины">p99 latency растёт без видимой причины</a></h3>
+<p><strong>Симптом.</strong> p99 клиентской задержки растёт, p50 остаётся ровным.
+Размер пула выглядит нормально, в логах нет ошибок.</p>
+<p><strong>Причина.</strong> Фаза 4 anticipation (direct handoff) держит клиентов
+в ожидании возврата до <code>query_wait_timeout - 500 ms</code>, но возвраты
+приходят медленнее, чем клиент готов ждать. Ожидающие либо получают
+соединение через прямую передачу, либо проваливаются в путь создания
+по истечении бюджета. Проверьте <code>create_fallback</code> в
+<code>SHOW POOL_SCALING</code>: если он ненулевой и растёт, клиенты уходят
+по таймауту.</p>
+<p><strong>Исправление.</strong> Сверьте <code>query_wait_timeout</code> с p95 длительности
+запросов, обслуживаемых этим пулом. Два случая.</p>
+<ul>
+<li><code>query_wait_timeout</code> сопоставим или короче p95: клиент не
+успевает дождаться освобождения соединения, каждый такой клиент
+платит полный бюджет ожидания. Либо поднимайте <code>query_wait_timeout</code>,
+либо увеличивайте <code>pool_size</code>, чтобы освобождения приходили чаще.</li>
+<li><code>query_wait_timeout</code> заметно длиннее p95, но <code>create_fallback</code> всё
+равно растёт: пул слишком мал для своей нагрузки, все соединения
+заняты дольше p95 из-за конкуренции. Поднимайте <code>pool_size</code> (и
+<code>max_db_connections</code>, если задан координатор).</li>
+<li><code>create_fallback</code> нулевой, а <code>antic_notify</code> растёт пропорционально
+обороту пула: direct handoff работает, возвраты перехватываются,
+лишних <code>connect()</code> нет. Задержка приходит откуда-то ещё: PostgreSQL,
+сеть, клиентская сторона. Проверьте <code>SHOW STATS avg_wait_time</code>.</li>
+</ul>
+<h3 id="max_db_connections-исчерпан-клиенты-получают-ошибки"><a class="header" href="#max_db_connections-исчерпан-клиенты-получают-ошибки"><code>max_db_connections</code> исчерпан, клиенты получают ошибки</a></h3>
+<p><strong>Симптом.</strong> Клиенты видят ошибки вида <code>all server connections to database 'X' are in use (max=80, ...)</code>.
+<code>pg_doorman_pool_coordinator_total{type="exhaustions"}</code> растёт.</p>
+<p><strong>Причина.</strong> Все пять фаз координатора провалились: try-acquire не
+взял слот, выселять нечего, ожидание истекло, а резерв либо исчерпан,
+либо <code>reserve_pool_size = 0</code>.</p>
+<p><strong>Исправление.</strong> Пройдите по фазам по порядку.</p>
+<ol>
+<li>Сравните <code>current</code> и <code>max_db_conn</code> в <code>SHOW POOL_COORDINATOR</code>. Если
+<code>current</code> стабильно стоит на лимите, ваша нагрузка его превышает.
+Либо поднимайте <code>max_db_connections</code>, либо ищите разогнавшийся пул.</li>
+<li>Посмотрите на частоту <code>evictions</code>. Если она нулевая или близка к
+нулю, eviction не помогает: либо idle-соединения каждого пула
+моложе <code>min_connection_lifetime</code> (по умолчанию 30 000 ms), либо
+все остальные пулы стоят на своём <code>min_guaranteed_pool_size</code>.
+Понизьте <code>min_connection_lifetime</code>, если у вас очень короткие
+запросы и вы явно хотите более быстрый cross-pool rebalance, или
+увеличьте <code>max_db_connections</code>.</li>
+<li>Сравните <code>reserve_used</code> и <code>reserve_size</code>. Если резерв занят
+полностью, поднимите <code>reserve_pool_size</code>. Если резерв пустой, а
+<code>exhaustions</code> всё равно происходят, значит резерв не настроен
+(<code>reserve_pool_size = 0</code>). Задайте его, чтобы поглощать всплески.</li>
+<li>Посмотрите <code>SHOW POOLS</code> для базы. Если у одного пользователя
+<code>sv_idle</code> намного больше, чем у остальных, этот пользователь копит
+соединения; задайте <code>min_guaranteed_pool_size</code>, чтобы защитить
+мелких пользователей от вытеснения, либо понизьте <code>pool_size</code>
+накопителю.</li>
+</ol>
+<h3 id="Фаза-ожидания-координатора-как-узкое-место"><a class="header" href="#Фаза-ожидания-координатора-как-узкое-место">Фаза ожидания координатора как узкое место</a></h3>
+<p><strong>Симптом.</strong> Клиенты в среднем платят 3 секунды задержки, ровно
+совпадающие с <code>reserve_pool_timeout</code>.</p>
+<p><strong>Причина.</strong> Фаза C wait стабильно истекает по таймауту. Попадание в
+Фазу C при включённом reserve-first означает, что на момент прихода
+вызывающего резерв уже был полностью занят, — единственный путь вперёд
+это возврат от соседа. Либо база действительно стоит на лимите, и
+соединения не возвращаются; либо <code>reserve_pool_size = 0</code>, и wait
+отрабатывает до конца, прежде чем клиент получит хоть какой-то ответ.</p>
+<p><strong>Исправление.</strong> Понизьте <code>reserve_pool_timeout</code>, чтобы получать
+быстрый отказ, либо задайте <code>reserve_pool_size &gt; 0</code>, чтобы Фаза R /
+Фаза D обрабатывала переполнение в рамках того же пути получения
+соединения, вообще не заходя в Фазу C.</p>
+<h3 id="reserve_used-остаётся-ненулевым-а-пул-выглядит-пустым"><a class="header" href="#reserve_used-остаётся-ненулевым-а-пул-выглядит-пустым"><code>reserve_used</code> остаётся ненулевым, а пул выглядит пустым</a></h3>
+<p><strong>Симптом.</strong> <code>SHOW POOL_COORDINATOR</code> показывает <code>reserve_used = 4</code>
+(или любое ненулевое значение) при том, что <code>SHOW POOLS</code> показывает
+<code>cl_waiting = 0</code>, низкий <code>cl_active</code> и <code>current &lt; max_db_conn</code>.
+Резервный пул выглядит занятым «призраками».</p>
+<p><strong>Причина.</strong> В сборках до reserve→main upgrade reserve-permit
+держался за своим backend, пока тот не доживёт до
+<code>min_connection_lifetime</code> <em>и</em> retain-цикл не поймает его idle. При
+устойчивом клиентском трафике <code>last_used()</code> на backend обновлялся
+быстрее, чем <code>min_connection_lifetime</code>, и permit никогда не
+отпускался.</p>
+<p><strong>Исправление.</strong> В текущих сборках это решается автоматически: retain
+task каждые <code>retain_connections_time</code> (по умолчанию 30 секунд)
+запускает повышение reserve-permit-ов до main. Для каждого
+reserve-backend в пуле без давления permit меняется с reserve на main,
+если в основном семафоре есть свободное место. Gauge <code>reserve_used</code> должен
+упасть до нуля в течение одного retain-цикла.</p>
+<p>Если <code>reserve_used</code> всё равно не уходит, значит пул либо под
+устойчивым давлением (повышение пропускается, когда пул под давлением —
+и это правильно, иначе ожидающий клиент тут же заберёт освободившийся
+слот), либо <code>current == max_db_connections</code> (нет main-слота, который
+можно забрать). Оба случая означают, что база честно исчерпана;
+лечение — больше ёмкости, а не обход.</p>
+<h3 id="burst-gate-как-узкое-место-даже-при-низком-трафике"><a class="header" href="#burst-gate-как-узкое-место-даже-при-низком-трафике">Burst gate как узкое место даже при низком трафике</a></h3>
+<p><strong>Симптом.</strong> Частота <code>gate_waits</code> заметная, но частота <code>creates</code>
+низкая, а <code>inflight_creates</code> всё время стоит на лимите.</p>
+<p><strong>Причина.</strong> <code>connect()</code> к бэкенду медленный. Каждый create держит
+слот по нескольку секунд; даже с двумя слотами вы создадите всего
+около <code>2 / connect_seconds</code> соединений в секунду.</p>
+<p><strong>Исправление.</strong> Разберитесь, почему <code>connect()</code> медленный со стороны
+PostgreSQL (слишком много SCRAM-итераций, конкуренция за блокировки
+<code>pg_authid</code>, медленный DNS, SSL handshake). Когда <code>connect()</code> станет
+быстрым, gate перестанет быть узким местом. Поднятие
+<code>scaling_max_parallel_creates</code> лишь маскирует проблему и перенесёт
+storm на PostgreSQL. Сначала разбирайтесь, потом поднимайте лимит.</p>
+<h3 id="Один-пользователь-забирает-весь-резерв"><a class="header" href="#Один-пользователь-забирает-весь-резерв">Один пользователь забирает весь резерв</a></h3>
+<p><strong>Симптом.</strong> <code>reserve_acquisitions_total</code> продолжает расти. Большую
+часть резервов забирает один и тот же небольшой пользователь.</p>
+<p><strong>Причина.</strong> Пользователь ниже своего <strong>эффективного минимума</strong>
+(<code>max(user.min_pool_size, min_guaranteed_pool_size)</code>), и координатор
+не может удовлетворить этот минимум, не выселяя соединения у соседей.
+Каждый клиентский запрос от этого пользователя попадает в Фазу R
+(reserve-first), как только база заполнена, и захватывает
+reserve-permit — арбитр даёт starving-пользователям наивысший балл,
+поэтому они выигрывают грант. <strong>Более глубокий вопрос: почему
+пользователю постоянно нужны свежие соединения</strong>? Либо его <code>pool_size</code>
+слишком мал, чтобы поглотить собственную нагрузку, либо его трафик
+всплесковый, и резерв делает ровно то, для чего нужен.</p>
+<p><strong>Исправление.</strong> Три варианта, выбор зависит от настоящей причины:</p>
+<ul>
+<li>Если <code>pool_size</code> пользователя действительно мал для постоянной
+нагрузки, поднимите <code>pool_size</code> и (если нужно) <code>max_db_connections</code>,
+чтобы увеличенный пул туда поместился.</li>
+<li>Если у пользователя высокий эффективный минимум, который координатор
+не может удовлетворить, понизьте <strong>тот параметр, который реально
+задаёт границу</strong> (проверьте оба: <code>user.min_pool_size</code> и
+<code>min_guaranteed_pool_size</code>).</li>
+<li>Если трафик действительно всплесковый, а резервы ловят всплески,
+оставьте как есть. Кратковременное использование резерва это и есть
+его назначение.</li>
+</ul>
+<h3 id="Клиенты-получают-wait-timeout-а-не-database-exhausted"><a class="header" href="#Клиенты-получают-wait-timeout-а-не-database-exhausted">Клиенты получают <code>wait timeout</code>, а не <code>database exhausted</code></a></h3>
+<p><strong>Симптом.</strong> Под давлением координатора клиенты видят ошибку
+<code>wait timeout</code> (во внутренних логах pg_doorman она записана как
+<code>PoolError::Timeout(Wait)</code>), но
+<code>pg_doorman_pool_coordinator_total{type="exhaustions"}</code> стоит на нуле.
+Координатор так и не объявил исчерпание, при этом каждый клиент уходит
+по таймауту.</p>
+<p><strong>Причина.</strong> <code>query_wait_timeout</code> короче, чем <code>reserve_pool_timeout</code>.
+Клиент сдаётся раньше, чем фаза ожидания координатора успевает
+завершиться. Счётчик <code>exhaustions</code> никогда не увеличивается, потому
+что координатор в итоге получает permit для запроса, у которого
+ожидающего клиента больше нет.</p>
+<p><strong>Исправление.</strong> Либо поднимите <code>query_wait_timeout</code> выше
+<code>reserve_pool_timeout</code> плюс типичное время <code>connect()</code>, либо понизьте
+<code>reserve_pool_timeout</code> (в пределах нижней границы из раздела тюнинга).
+На старте валидатор конфига выдаёт предупреждение для такой
+конфигурации; реагируйте на него.</p>
+<h3 id="Восстановление-пула-после-рестарта-postgresql"><a class="header" href="#Восстановление-пула-после-рестарта-postgresql">Восстановление пула после рестарта PostgreSQL</a></h3>
+<p><strong>Симптом.</strong> Мастер PostgreSQL перезапустился (failover, краш,
+плановое окно). Видна толпа клиентов, бьющих в burst gate,
+<code>inflight_creates</code> стоит на лимите, частота <code>creates_started</code> резко
+растёт.</p>
+<p><strong>Причина.</strong> Когда pg_doorman замечает непригодный бэкенд (через
+<code>server_idle_check_timeout</code> или упавший запрос), он повышает
+reconnect-эпоху пула и сразу сливает все idle-соединения. Горячий
+путь recycle становится пустым, и каждый пришедший после слива
+клиент идёт по маршруту anticipation, burst gate, connect. При
+<code>scaling_max_parallel_creates = 2</code> каждый пул прирастает максимум
+двумя соединениями за раз, и скорость ограничена задержкой
+<code>connect()</code> к PostgreSQL.</p>
+<p><strong>Как выглядит здоровое восстановление.</strong> В первые несколько секунд
+<code>inflight_creates = 2</code> непрерывно, <code>creates_started</code> быстро растёт,
+<code>burst_gate_waits</code> растёт вместе с ней. По мере того как новые
+соединения начинают циркулировать, <code>anticipation_wakes_notify</code>
+разгоняется, а <code>create_fallback</code> перестаёт расти: direct handoff
+ловит возвраты внутри клиентского <code>query_wait_timeout</code> и новые
+<code>connect()</code> уже не нужны. За время <code>pool_size / 2</code> × <code>connect()</code>
+секунд пул возвращается в норму.</p>
+<p><strong>Исправление.</strong> Обычно никакого. Bounded burst gate делает свою
+работу: гасит connection storm к восстанавливающемуся primary, чтобы
+тот не получил сотню одновременных коннектов на и без того перегруженный
+postmaster. Если <code>connect()</code> действительно быстрый (&lt; 50 ms), и у
+вашего <code>max_connections</code> есть запас, поднимите
+<code>scaling_max_parallel_creates</code> до 4 или 8, чтобы сократить
+восстановление, но оставайтесь в пределах жёсткого потолка из раздела
+тюнинга.</p>
+<h2 id="Глоссарий"><a class="header" href="#Глоссарий">Глоссарий</a></h2>
+<ul>
+<li><strong>ограничитель всплесков (bounded burst gate)</strong> — ограничитель
+на уровне пула, пропускающий не более
+<code>scaling_max_parallel_creates</code> одновременных вызовов <code>connect()</code> к
+бэкенду. Задачи сверх лимита встают в очередь на прямую передачу
+и ожидают завершения чужого создания, пока слот не освободится.</li>
+<li><strong>permit координатора (coordinator permit)</strong> — разрешение на
+удержание одного слота в общем лимите координатора. Может быть
+основным (main) или резервным (reserve). Освобождается, когда
+backend-соединение физически уничтожается (а не когда оно
+возвращается в idle-очередь); при освобождении слот возвращается
+либо в основной, либо в резервный семафор.</li>
+<li><strong>эффективный минимум</strong> — пол для eviction у user-пула,
+равный <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>.
+Координатор защищает именно столько соединений на пользователя от
+выселения соседями.</li>
+<li><strong>прямая передача (direct handoff)</strong> — механизм доставки в Фазе 4.
+При возврате соединение отправляется напрямую старейшему
+зарегистрированному ожидающему, минуя idle-очередь. Соединение
+достаётся ровно одному адресату, конкуренции нет.</li>
+<li><strong>Фаза R (reserve-first)</strong> — короткое замыкание координатора,
+вставленное между Фазой A и Фазой B. Когда база заполнена, а в
+резерве есть место, Фаза R выдаёт reserve-permit напрямую через
+арбитра, вместо того чтобы закрывать соседний backend или парковать
+клиента в Фазе C.</li>
+<li><strong>жёсткий потолок Фазы 4</strong> — каждый checkout выбирает случайный
+потолок в диапазоне 300–500 ms. Верхняя граница времени ожидания
+Фазы 4 anticipation, независимо от <code>query_wait_timeout</code>. Не
+настраивается. Случайный разброс предотвращает синхронные
+таймауты, вызывающие лавину запросов в ограничитель всплесков.</li>
+<li><strong>арбитр резерва (reserve arbiter)</strong> — отдельный фоновый процесс,
+владеющий reserve-permit-ами. Запросы на reserve ранжируются по
+паре <code>(starving, queued_clients)</code> и разгружаются из приоритетной
+очереди так, чтобы самые нуждающиеся пользователи получали permit
+первыми.</li>
+<li><strong>повышение из резерва в основной (reserve → main upgrade)</strong> —
+периодическая бухгалтерская перестановка. Когда idle-backend
+удерживает reserve-permit, а в основном семафоре есть запас, retain
+task забирает основной permit, возвращает резервный слот и
+переключает тип permit. Без переподключения.</li>
+<li><strong>излишек над минимумом (spare_above_min)</strong> — текущий размер пула
+минус эффективный минимум, где текущий размер — это количество
+всех соединений пула (активные + idle вместе, а не только idle).
+Координатор использует это значение, чтобы выбрать жертву eviction:
+пул с самым большим излишком теряет соединение первым. Само
+соединение, чтобы его можно было выселить, всё равно должно быть
+свободным — излишек выбирает пул, а не конкретное соединение.</li>
+<li><strong>голодающий пользователь (starving)</strong> — user-пул, у которого текущее число
+соединений ниже эффективного минимума. Арбитр резерва даёт
+starving-пользователям абсолютный приоритет перед обычными.</li>
+<li><strong>пул под давлением (under pressure)</strong> — состояние, при котором
+все permit-ы пула заняты, то есть каждый слот сейчас используется.
+Retain task пропускает повышение/закрытие на таких пулах, потому
+что иначе слот просто перейдёт ожидающему клиенту.</li>
+<li><strong>порог прогрева (warm threshold)</strong> —
+<code>pool_size × scaling_warm_pool_ratio / 100</code>. Ниже этого размера
+пул пропускает упреждающее ожидание и идёт сразу в <code>connect()</code>.
+Выше — упреждающее ожидание активно, и пул пытается ловить
+возвраты, прежде чем создавать новые backend-ы.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../concepts/pool-coordinator.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/patroni-assisted-fallback.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../concepts/pool-coordinator.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/patroni-assisted-fallback.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

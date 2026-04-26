@@ -1,0 +1,281 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Passthrough-аутентификация (по умолчанию) - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/authentication/passthrough.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="passthrough-аутентификация-по-умолчанию"><a class="header" href="#passthrough-аутентификация-по-умолчанию">Passthrough-аутентификация (по умолчанию)</a></h1>
+<p>pg_doorman переиспользует криптографическое доказательство клиента — хеш MD5 или SCRAM <code>ClientKey</code> — чтобы аутентифицироваться на PostgreSQL. Открытый пароль никогда не покидает клиента и никогда не хранится в конфигурации пула.</p>
+<p>Это рекомендуемая настройка, когда имя пользователя пула совпадает с пользователем PostgreSQL.</p>
+<h2 id="Как-это-работает"><a class="header" href="#Как-это-работает">Как это работает</a></h2>
+<h3 id="md5"><a class="header" href="#md5">MD5</a></h3>
+<p>Протокол MD5-пароля PostgreSQL хранит на сервере <code>md5(password + username)</code>. Клиент хеширует пароль тем же способом и присылает <code>md5(stored_hash + salt)</code>. pg_doorman:</p>
+<ol>
+<li>Получает хешированный ответ клиента.</li>
+<li>Ищет сохранённый хеш MD5 в своём конфиге (или через <code>auth_query</code>).</li>
+<li>Проверяет, что ответ клиента совпадает.</li>
+<li>Передаёт <strong>сохранённый хеш</strong> в PostgreSQL как пароль во время аутентификации бэкенда. PostgreSQL принимает его, потому что именно этот хеш и хранится в <code>pg_authid</code>.</li>
+</ol>
+<p>Поле <code>password</code> в конфиге пула содержит сохранённый хеш в формате <code>md5XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</code> (32-символьный MD5 от <code>password + username</code> с буквальным префиксом <code>md5</code>).</p>
+<h3 id="scram-sha-256"><a class="header" href="#scram-sha-256">SCRAM-SHA-256</a></h3>
+<p>SCRAM проверяет клиента, не пересылая ничего эквивалентного паролю. pg_doorman:</p>
+<ol>
+<li>Выполняет SCRAM handshake с клиентом, проверяя <code>ClientProof</code>.</li>
+<li>Извлекает <code>ClientKey</code> из успешного обмена.</li>
+<li>Выполняет SCRAM handshake с PostgreSQL, переиспользуя тот же <code>ClientKey</code> для вычисления свежего <code>ClientProof</code> под nonce бэкенда.</li>
+</ol>
+<p>Поле <code>password</code> в конфиге пула содержит SCRAM-верификатор из <code>pg_authid.rolpassword</code> в формате <code>SCRAM-SHA-256$&lt;iterations&gt;:&lt;salt&gt;$&lt;StoredKey&gt;:&lt;ServerKey&gt;</code>.</p>
+<p>pg_doorman не поддерживает SCRAM channel binding (<code>scram-sha-256-plus</code>).</p>
+<h2 id="Конфигурация"><a class="header" href="#Конфигурация">Конфигурация</a></h2>
+<pre><code class="language-yaml">pools:
+  mydb:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+    users:
+      - username: "app"
+        password: "md5d41d8cd98f00b204e9800998ecf8427e"
+        pool_size: 40
+</code></pre>
+<p>Обратите внимание, чего здесь <strong>нет</strong>: ни <code>server_username</code>, ни <code>server_password</code>. pg_doorman распознаёт passthrough-режим по отсутствию этих полей.</p>
+<p>Для SCRAM поле password выглядит так:</p>
+<pre><code class="language-yaml">password: "SCRAM-SHA-256$4096:random_salt$stored_key:server_key"
+</code></pre>
+<h2 id="Получение-хеша"><a class="header" href="#Получение-хеша">Получение хеша</a></h2>
+<p>Подключитесь как суперпользователь к PostgreSQL и прочитайте <code>pg_shadow</code> (или <code>pg_authid</code>):</p>
+<pre><code class="language-sql">SELECT usename, passwd FROM pg_shadow WHERE usename = 'app';
+</code></pre>
+<p>Колонка <code>passwd</code> содержит либо хеш MD5 (<code>md5...</code>), либо SCRAM-верификатор (<code>SCRAM-SHA-256$...</code>) — в зависимости от значения <code>password_encryption</code> в момент установки пароля.</p>
+<p>Чтобы принудительно сохранить MD5: <code>SET password_encryption = 'md5'; ALTER ROLE app PASSWORD 'plaintext';</code>
+Чтобы принудительно SCRAM: <code>SET password_encryption = 'scram-sha-256'; ALTER ROLE app PASSWORD 'plaintext';</code></p>
+<h2 id="Когда-passthrough-режима-недостаточно"><a class="header" href="#Когда-passthrough-режима-недостаточно">Когда passthrough-режима недостаточно</a></h2>
+<p>Задавайте <code>server_username</code> и <code>server_password</code> явно, когда:</p>
+<ul>
+<li>Пользователь пула отличается от пользователя бэкенда (переименование).</li>
+<li>Клиент аутентифицируется через <a href="jwt.html">JWT</a> — у него нет ни хеша MD5, ни ключа SCRAM, чтобы пробросить.</li>
+<li>Клиент аутентифицируется через <a href="talos.html">Talos</a>, и вы хотите фиксированную идентичность бэкенда на роль.</li>
+<li>Вы используете <a href="auth-query.html">auth_query</a> в выделенном режиме.</li>
+</ul>
+<pre><code class="language-yaml">users:
+  - username: "external_app"
+    password: "jwt-pkey-fpath:/etc/pg_doorman/jwt.pub"
+    server_username: "app"
+    server_password: "md5..."
+    pool_size: 40
+</code></pre>
+<h2 id="Автоматически-сгенерированный-конфиг"><a class="header" href="#Автоматически-сгенерированный-конфиг">Автоматически сгенерированный конфиг</a></h2>
+<p><code>pg_doorman generate --host your-pg-host --user your-admin-user</code> интроспектирует PostgreSQL и собирает конфиг с автоматически подставленными хешами из <code>pg_shadow</code>. Используйте это для новых инсталляций, чтобы избежать ошибок копирования.</p>
+<pre><code class="language-bash">pg_doorman generate --host db.example.com --user postgres --output pg_doorman.yaml
+</code></pre>
+<p>Подробнее про команду <code>generate</code> смотрите в <a href="../tutorials/basic-usage.html">Basic Usage</a>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../authentication/overview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../authentication/auth-query.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../authentication/overview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../authentication/auth-query.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

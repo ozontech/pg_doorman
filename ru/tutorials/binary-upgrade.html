@@ -1,0 +1,610 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Graceful Binary Upgrade - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/tutorials/binary-upgrade.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="binary-upgrade"><a class="header" href="#binary-upgrade">Binary upgrade</a></h1>
+<p>Обновление pg_doorman без разрыва клиентских соединений. Старый
+процесс передаёт idle-клиентов новому через Unix socket -- клиенты
+продолжают работу на том же TCP-соединении без reconnect.</p>
+<h2 id="Быстрый-старт"><a class="header" href="#Быстрый-старт">Быстрый старт</a></h2>
+<pre><code class="language-bash"># 1. Заменить бинарник на диске
+cp pg_doorman_new /usr/bin/pg_doorman
+
+# 2. Запустить upgrade
+kill -USR2 $(pgrep pg_doorman)
+
+# 3. Проверить: старый PID исчез, клиенты на месте
+pgrep pg_doorman   # новый PID
+</code></pre>
+<p>Или через admin-консоль:</p>
+<pre><code class="language-sql">UPGRADE;
+</code></pre>
+<h2 id="Как-работает-upgrade"><a class="header" href="#Как-работает-upgrade">Как работает upgrade</a></h2>
+<pre><code>                        SIGUSR2
+                           |
+                           v
+               +-----------------------+
+               | 1. Валидация конфига  |
+               |    (pg_doorman -t)    |   -- fail --&gt; отмена, продолжаем
+               +-----------+-----------+
+                           |
+                           v
+               +-----------------------+
+               | 2. Запуск нового      |
+               |    socketpair()       |
+               |    inherit-fd         |
+               |    readiness pipe     |   -- ожидание до 10с
+               +-----------+-----------+
+                           |
+             +-------------+-------------+
+             |                           |
+             v                           v
+  +---------------------+    +---------------------+
+  | СТАРЫЙ процесс      |    | НОВЫЙ процесс       |
+  |                     |    |                     |
+  | 3. Idle-клиенты     |    | migration_receiver  |
+  |    сериализация     +---&gt;+    восстановление   |
+  |    dup() + SCM_RIGHTS    |    запуск client    |
+  |                     |    |    handle()         |
+  | 4. Клиенты в tx     |    |                     |
+  |    дождаться COMMIT +---&gt;+ Принимает новые     |
+  |    мигрировать      |    | соединения          |
+  |                     |    |                     |
+  | 5. Shutdown timer   |    +---------------------+
+  |    опрос 250мс      |
+  |    выход при 0      |
+  +---------------------+
+</code></pre>
+<h3 id="Фаза-1-Валидация-конфига"><a class="header" href="#Фаза-1-Валидация-конфига">Фаза 1: Валидация конфига</a></h3>
+<p>Текущий бинарник перезапускается с флагом <code>-t</code> и конфигом.
+Если валидация проваливается -- upgrade отменяется, старый процесс
+продолжает обслуживать трафик. В логах баннер:</p>
+<pre><code>!!!  BINARY UPGRADE ABORTED - SHUTDOWN CANCELLED  !!!
+!!!  FIX THE CONFIGURATION BEFORE ATTEMPTING BINARY UPGRADE AGAIN  !!!
+!!!  THE SERVER WILL CONTINUE RUNNING WITH THE CURRENT BINARY  !!!
+</code></pre>
+<h3 id="Фаза-2-Запуск-нового-процесса"><a class="header" href="#Фаза-2-Запуск-нового-процесса">Фаза 2: Запуск нового процесса</a></h3>
+<p><strong>Foreground mode:</strong></p>
+<ol>
+<li>Создаётся Unix <code>socketpair()</code> для миграции клиентов.</li>
+<li>Listener fd передаётся дочернему процессу через <code>--inherit-fd</code>.</li>
+<li>Readiness pipe: родитель ждёт до 10 секунд байт от дочернего
+процесса. Дочерний пишет в pipe, когда начинает принимать
+соединения.</li>
+<li>Родитель закрывает свой listener -- новые соединения идут
+в дочерний процесс.</li>
+</ol>
+<p><strong>Daemon mode:</strong></p>
+<p>Запускается новый daemon-процесс. Старый закрывает listener.
+Миграция клиентов через socketpair не используется -- клиенты
+дренируются (получают error 58006 при истечении <code>shutdown_timeout</code>).</p>
+<h3 id="Фаза-3-Миграция-idle-клиентов-foreground"><a class="header" href="#Фаза-3-Миграция-idle-клиентов-foreground">Фаза 3: Миграция idle-клиентов (foreground)</a></h3>
+<p>Когда установлен флаг <code>MIGRATION_IN_PROGRESS</code>, каждый idle-клиент
+(нет активной транзакции, нет pending deferred <code>BEGIN</code>, нет
+буферизованных данных на чтение) мигрирует:</p>
+<ol>
+<li><strong>Сериализация</strong>: connection_id, secret_key, имя пула, username,
+server parameters, полный кэш prepared statements.</li>
+<li><strong>dup() + SCM_RIGHTS</strong>: TCP socket fd дублируется и передаётся
+новому процессу через Unix socketpair.</li>
+<li><strong>Восстановление</strong>: новый процесс пересоздаёт Client struct,
+подключает к нужному пулу и запускает <code>handle()</code>.</li>
+</ol>
+<p>Клиент не замечает миграции. Никакого reconnect, никакого error,
+никакой повторной аутентификации. TCP-соединение -- тот же
+физический socket.</p>
+<h3 id="Фаза-4-Дренирование-in-transaction-клиентов"><a class="header" href="#Фаза-4-Дренирование-in-transaction-клиентов">Фаза 4: Дренирование in-transaction клиентов</a></h3>
+<p>Клиент внутри <code>BEGIN ... COMMIT</code> продолжает работать на старом
+процессе. Его серверное соединение остаётся живым. После завершения
+транзакции (COMMIT или ROLLBACK) клиент становится idle и мигрирует
+на следующей итерации цикла.</p>
+<p>Deferred <code>BEGIN</code> (сервер ещё не выделен) тоже блокирует миграцию.
+Клиент должен отправить запрос (сбросив deferred BEGIN), затем
+COMMIT, и только потом мигрирует.</p>
+<h3 id="Фаза-5-shutdown-timer"><a class="header" href="#Фаза-5-shutdown-timer">Фаза 5: Shutdown timer</a></h3>
+<p>Shutdown timer опрашивает <code>CURRENT_CLIENT_COUNT</code> каждые 250 мс.
+Когда все клиенты мигрировали или отключились -- старый процесс
+вызывает <code>process::exit(0)</code>.</p>
+<p>Если <code>shutdown_timeout</code> истекает раньше -- принудительный выход,
+оставшиеся соединения закрываются.</p>
+<p>Во время миграции <code>drain_all_pools()</code> откладывается: in-transaction
+клиентам нужны их серверные соединения. Дренирование пулов начинается
+только после завершения миграции или сброса <code>MIGRATION_IN_PROGRESS</code>.</p>
+<h2 id="prepared-statements"><a class="header" href="#prepared-statements">Prepared statements</a></h2>
+<p>Кэш prepared statements каждого клиента сериализуется при миграции:</p>
+<ul>
+<li>Ключ statement (именованный или anonymous hash)</li>
+<li>Hash запроса</li>
+<li>Полный текст запроса</li>
+<li>OID типов параметров</li>
+</ul>
+<p>В новом процессе:</p>
+<ol>
+<li>Каждая запись регистрируется в pool-level shared cache (DashMap).</li>
+<li>Серверные бэкенды свежие -- на них нет prepared statements.</li>
+<li>При первом <code>Bind</code> к мигрированному statement pg_doorman прозрачно
+отправляет <code>Parse</code> на новый бэкенд. Клиент не видит дополнительного
+round-trip.</li>
+</ol>
+<p><strong>Ограничения:</strong></p>
+<ul>
+<li>Если <code>client_prepared_statements_cache_size</code> нового конфига меньше,
+чем количество entries у клиента -- лишние вытесняются (LRU).
+Оставшиеся работают нормально.</li>
+<li>Anonymous prepared statements (<code>Parse</code> с пустым именем) переживают
+миграцию, но требуют повторного <code>Parse</code> перед <code>Bind</code> в новом процессе.</li>
+<li><code>DEALLOCATE ALL</code> после миграции очищает переданный кэш. Повторный
+<code>Parse</code> с тем же именем использует новый текст запроса.</li>
+</ul>
+<h2 id="tls-migration"><a class="header" href="#tls-migration">TLS migration</a></h2>
+<p>По умолчанию TLS-клиенты не мигрируют -- зашифрованная сессия
+требует ключевой материал, который живёт внутри OpenSSL state machine.
+Такие клиенты дренируются при upgrade: соединение закрывается при
+истечении <code>shutdown_timeout</code>, клиент переподключается к новому процессу.</p>
+<p>Opt-in фича <code>tls-migration</code> решает эту проблему. Патченный OpenSSL
+экспортирует symmetric cipher state, передаёт его вместе с fd через
+Unix socket, а новый процесс импортирует состояние и продолжает
+шифрование. Клиент не делает повторный TLS handshake.</p>
+<h3 id="Что-экспортируется"><a class="header" href="#Что-экспортируется">Что экспортируется</a></h3>
+<p>Патч добавляет <code>SSL_export_migration_state()</code> и
+<code>SSL_import_migration_state()</code> в OpenSSL 3.5.5. Экспортируемые данные:</p>
+<ul>
+<li>Версия TLS-протокола</li>
+<li>ID cipher suite и tag length</li>
+<li>Symmetric keys для чтения/записи (входные данные для AES key
+schedule, не развёрнутые)</li>
+<li>IV (nonce) для чтения/записи</li>
+<li>Sequence numbers для чтения/записи (по 8 байт)</li>
+<li>Для TLS 1.3: server и client application traffic secrets</li>
+</ul>
+<p>Этого достаточно для восстановления record layer в новом процессе
+и продолжения шифрования/дешифрования на том же TCP-соединении.</p>
+<h3 id="Сборка-с-tls-migration"><a class="header" href="#Сборка-с-tls-migration">Сборка с TLS migration</a></h3>
+<pre><code class="language-bash">cargo build --release --features tls-migration
+</code></pre>
+<p>Требует <code>perl</code> и <code>patch</code> в build-окружении. Vendored OpenSSL 3.5.5
+собирается из исходников с наложенным патчем.</p>
+<h3 id="offline-сборка-без-доступа-к-интернету"><a class="header" href="#offline-сборка-без-доступа-к-интернету">Offline-сборка (без доступа к интернету)</a></h3>
+<pre><code class="language-bash"># Скачать tarball заранее
+curl -fLO https://github.com/openssl/openssl/releases/download/openssl-3.5.5/openssl-3.5.5.tar.gz
+
+# Собрать с указанием пути
+OPENSSL_SOURCE_TARBALL=./openssl-3.5.5.tar.gz \
+  cargo build --release --features tls-migration
+</code></pre>
+<p>SHA-256 tarball'а проверяется автоматически.</p>
+<h3 id="Ограничения"><a class="header" href="#Ограничения">Ограничения</a></h3>
+<ul>
+<li><strong>Linux only.</strong> На macOS/Windows TLS migration не поддерживается
+(native-tls использует Security.framework / SChannel, не OpenSSL).</li>
+<li><strong>Одинаковые сертификаты.</strong> Старый и новый процесс должны
+использовать одни и те же <code>tls_private_key</code> и <code>tls_certificate</code>.
+Cipher state привязан к SSL_CTX, созданному из сертификата.
+Изменённые сертификаты приводят к ошибке импорта и отключению
+клиента.</li>
+<li><strong>FIPS несовместимо.</strong> Vendored OpenSSL не проходит FIPS-валидацию.
+Для FIPS используйте сборку без <code>tls-migration</code> (TLS-клиенты
+будут дренироваться вместо миграции).</li>
+<li><strong>Нет HSM/PKCS#11.</strong> Vendored OpenSSL собирается с <code>no-engine</code>.</li>
+</ul>
+<h3 id="Известные-ограничения"><a class="header" href="#Известные-ограничения">Известные ограничения</a></h3>
+<ul>
+<li>
+<p><strong>TLS 1.3 KeyUpdate меняет ключи шифрования.</strong> Если любая сторона
+отправит KeyUpdate после экспорта cipher state, импортированные
+ключи станут невалидными — соединение упадёт с ошибкой AEAD.</p>
+<p>Поведение драйверов (проверено апрель 2026):</p>
+<div class="table-wrapper"><table><thead><tr><th>Драйвер</th><th>Auto KeyUpdate?</th><th>Риск</th></tr></thead><tbody>
+<tr><td>libpq (psql, pgbench)</td><td>Нет — OpenSSL не отправляет</td><td>Нет</td></tr>
+<tr><td>asyncpg (Python)</td><td>Нет — Python ssl = OpenSSL</td><td>Нет</td></tr>
+<tr><td>node-postgres</td><td>Нет — Node.js tls = OpenSSL</td><td>Нет</td></tr>
+<tr><td>Npgsql (.NET)</td><td>Нет — SslStream без KeyUpdate API</td><td>Нет</td></tr>
+<tr><td><strong>pgjdbc (Java)</strong></td><td><strong>Да — JSSE после ~128 GB</strong> (<code>jdk.tls.keyLimits</code>)</td><td><strong>Высокий</strong></td></tr>
+<tr><td><strong>tokio-postgres (rustls)</strong></td><td><strong>Да — rustls при AEAD limit</strong></td><td><strong>Средний</strong></td></tr>
+<tr><td>PostgreSQL server</td><td>Нет — renegotiation отключён, KeyUpdate не вызывается</td><td>Нет</td></tr>
+</tbody></table>
+</div>
+<p><strong>Java-клиенты</strong>: JSSE автоматически отправляет KeyUpdate после
+~128 GB зашифрованных данных. Баг
+<a href="https://bugs.openjdk.org/browse/JDK-8329548">JDK-8329548</a> может
+вызвать шторм KeyUpdate сообщений. Для Java с долгоживущими
+high-throughput соединениями TLS migration может потерять
+соединения. Обходной путь: увеличить порог через
+<code>jdk.tls.keyLimits</code> в <code>java.security</code>, или отключить TLS между
+Java-клиентом и pg_doorman.</p>
+<p><strong>Rust-клиенты с rustls</strong>: rustls ротирует ключи при лимитах AEAD
+(очень высокий порог, ~2^36 records для AES-GCM). Для PostgreSQL
+workloads практически недостижимо. Использование <code>native-tls</code>
+(OpenSSL) вместо rustls устраняет риск.</p>
+<p><strong>Все OpenSSL-драйверы безопасны.</strong> OpenSSL явно не выполняет
+автоматический key update
+(<a href="https://github.com/openssl/openssl/issues/23566">openssl#23566</a>).</p>
+</li>
+<li>
+<p><strong>SSL_pending данные не проверяются.</strong> Миграция происходит в idle
+point, где нет буферизованных данных приложения. Инвариант idle
+point это гарантирует, но явная проверка <code>SSL_pending()</code> не
+выполняется.</p>
+</li>
+<li>
+<p><strong>Привязка к OpenSSL 3.5.5.</strong> Патч модифицирует внутренние
+структуры OpenSSL (<code>ssl_local.h</code>, <code>rec_layer_s3.c</code>, <code>ssl_lib.c</code>).
+При обновлении OpenSSL нужно проверить и переложить патч на новую
+версию.</p>
+</li>
+</ul>
+<h2 id="Сигналы"><a class="header" href="#Сигналы">Сигналы</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Поведение</th></tr></thead><tbody>
+<tr><td><code>SIGUSR2</code></td><td>Binary upgrade + graceful shutdown. <strong>Рекомендуемый для всех режимов.</strong></td></tr>
+<tr><td><code>SIGINT</code></td><td>В foreground + TTY (Ctrl+C): только shutdown, без upgrade. В daemon / non-TTY: binary upgrade (legacy-совместимость).</td></tr>
+<tr><td><code>SIGTERM</code></td><td>Немедленный выход. Транзакции обрываются. Все клиенты отключаются.</td></tr>
+<tr><td><code>SIGHUP</code></td><td>Перечитать конфигурацию без перезапуска. Без простоя.</td></tr>
+<tr><td><code>UPGRADE</code> (admin)</td><td>Отправляет SIGUSR2 текущему процессу. Тот же эффект.</td></tr>
+</tbody></table>
+</div>
+<blockquote>
+<p><strong>Legacy-поведение SIGINT:</strong>
+SIGINT запускает binary upgrade в daemon mode или без TTY (например, под systemd). В интерактивном терминале Ctrl+C останавливает процесс без запуска нового. Используйте <code>kill -USR2</code> или <code>UPGRADE</code> в admin-консоли для binary upgrade в foreground mode.</p>
+</blockquote>
+<h2 id="daemon-vs-foreground"><a class="header" href="#daemon-vs-foreground">Daemon vs foreground</a></h2>
+<div class="table-wrapper"><table><thead><tr><th></th><th>Foreground</th><th>Daemon</th></tr></thead><tbody>
+<tr><td>Миграция клиентов через fd passing</td><td>Да (socketpair)</td><td>Нет</td></tr>
+<tr><td>Idle-клиенты сохраняются</td><td>Да</td><td>Нет (drain с 58006)</td></tr>
+<tr><td>In-tx клиенты</td><td>Завершают tx, затем мигрируют</td><td>Завершают tx, затем 58006</td></tr>
+<tr><td>Запуск нового процесса</td><td>Наследует listener fd</td><td>Запускается независимо</td></tr>
+<tr><td>Рекомендуется для</td><td>systemd, контейнеры, k8s</td><td>Legacy-установки</td></tr>
+</tbody></table>
+</div>
+<p>Для zero-downtime upgrade с миграцией клиентов запускайте в foreground
+mode. systemd управляет жизненным циклом процесса:</p>
+<pre><code class="language-ini">[Service]
+Type=simple
+ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
+ExecReload=/bin/kill -SIGUSR2 $MAINPID
+</code></pre>
+<h2 id="Конфигурация"><a class="header" href="#Конфигурация">Конфигурация</a></h2>
+<h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout"><code>shutdown_timeout</code></a></h3>
+<p>Максимальное время ожидания завершения транзакций перед принудительным
+закрытием соединений. Старый процесс завершается по истечении этого
+таймаута вне зависимости от оставшихся клиентов.</p>
+<p>По умолчанию: 10 секунд.</p>
+<p>Рекомендация для production с длинными аналитическими запросами:
+30-60 секунд.</p>
+<pre><code class="language-toml">[general]
+shutdown_timeout = 60000  # миллисекунды
+</code></pre>
+<p>Слишком маленькое значение -- риск убить активные транзакции. Слишком
+большое -- задержка выхода старого процесса при зависшем клиенте
+(например, idle-in-transaction). Выбирайте значение, покрывающее
+самую длинную ожидаемую транзакцию, с запасом.</p>
+<h3 id="tls_private_key--tls_certificate"><a class="header" href="#tls_private_key--tls_certificate"><code>tls_private_key</code> / <code>tls_certificate</code></a></h3>
+<p>Для TLS migration оба процесса (старый и новый) загружают одни и
+те же файлы. Если сертификат поменялся между версиями бинарника --
+TLS-клиенты получат ошибку при импорте cipher state и будут
+отключены.</p>
+<p>Ротацию сертификатов делайте через <code>SIGHUP</code> (reload конфига) до
+binary upgrade.</p>
+<h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size"><code>prepared_statements_cache_size</code></a></h3>
+<p>Pool-level кэш prepared statements. Напрямую на миграцию не
+влияет, но pool cache в новом процессе должен быть достаточного
+размера для entries от мигрированных клиентов.</p>
+<h3 id="client_prepared_statements_cache_size"><a class="header" href="#client_prepared_statements_cache_size"><code>client_prepared_statements_cache_size</code></a></h3>
+<p>Per-client кэш prepared statements. Клиентский кэш сериализуется
+полностью при миграции. Если новый конфиг имеет меньшее значение --
+LRU вытесняет лишние записи.</p>
+<h2 id="Мониторинг"><a class="header" href="#Мониторинг">Мониторинг</a></h2>
+<h3 id="Логи"><a class="header" href="#Логи">Логи</a></h3>
+<p>Ключевые строки в логах при миграции:</p>
+<pre><code>INFO  Got SIGUSR2, starting binary upgrade and graceful shutdown
+INFO  Validating configuration with: /usr/bin/pg_doorman -t pg_doorman.yaml
+INFO  Configuration validation successful
+INFO  Starting new process with inherited listener fd=5
+INFO  New process signaled readiness
+INFO  Client migration enabled
+INFO  [user@pool #c42] client 10.0.0.1:51234 migrated to new process
+INFO  waiting for 3 clients in transactions
+INFO  All clients disconnected, shutting down
+INFO  Migration sender finished
+</code></pre>
+<p>В новом процессе:</p>
+<pre><code>INFO  migration receiver: listening for migrated clients
+INFO  [user@pool #c42] migrated client accepted from 10.0.0.1:51234
+INFO  migration receiver done: migration socket closed
+INFO  migration receiver: stopped
+</code></pre>
+<h3 id="prometheus-метрики"><a class="header" href="#prometheus-метрики">Prometheus-метрики</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Значение при upgrade</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_pools_clients{status="active"}</code></td><td>Должна упасть до 0 на старом процессе</td></tr>
+<tr><td><code>pg_doorman_pools_clients{status="idle"}</code></td><td>Падает по мере миграции клиентов</td></tr>
+<tr><td><code>pg_doorman_connection_count{type="total"}</code></td><td>Старый: убывает, новый: растёт</td></tr>
+<tr><td><code>pg_doorman_clients_prepared_cache_entries</code></td><td>Подтверждает перенос кэша</td></tr>
+</tbody></table>
+</div>
+<h3 id="admin-консоль"><a class="header" href="#admin-консоль">Admin-консоль</a></h3>
+<pre><code class="language-sql">-- На новом процессе (старый отклоняет не-admin соединения)
+SHOW POOLS;
+SHOW CLIENTS;
+</code></pre>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="Клиент-получил-pooler-is-shut-down-now-58006-вместо-миграции"><a class="header" href="#Клиент-получил-pooler-is-shut-down-now-58006-вместо-миграции">Клиент получил "pooler is shut down now" (58006) вместо миграции</a></h3>
+<p><strong>Ctrl+C в foreground mode.</strong> SIGINT в TTY = shutdown без upgrade.
+Используйте <code>kill -USR2</code> или <code>UPGRADE</code> в admin-консоли.</p>
+<p><strong>Daemon mode.</strong> Daemon mode не использует fd-based миграцию.
+Клиенты дренируются. Переключитесь на foreground mode.</p>
+<p><strong><code>PG_DOORMAN_CI_SHUTDOWN_ONLY=1</code> установлен.</strong> Эта переменная
+окружения принудительно включает shutdown-only mode (используется
+в CI-тестах). Уберите её.</p>
+<h3 id="Старый-процесс-не-завершается"><a class="header" href="#Старый-процесс-не-завершается">Старый процесс не завершается</a></h3>
+<p><strong>Длинная транзакция.</strong> Клиент застрял в <code>BEGIN</code> без <code>COMMIT</code>.
+Дождитесь <code>shutdown_timeout</code> или завершите транзакцию вручную.</p>
+<p><strong>Admin-соединения.</strong> Admin-соединения не мигрируются. Закройте
+admin-сессию на старом процессе.</p>
+<p><strong>Принудительный выход:</strong> <code>kill -TERM &lt;old_pid&gt;</code> отправляет SIGTERM.</p>
+<h3 id="tls-соединение-оборвалось-после-upgrade"><a class="header" href="#tls-соединение-оборвалось-после-upgrade">TLS-соединение оборвалось после upgrade</a></h3>
+<p><strong>Бинарник собран без <code>--features tls-migration</code>.</strong> TLS-клиенты
+дренируются вместо миграции. Пересоберите с feature flag.</p>
+<p><strong>Запуск не на Linux.</strong> TLS migration работает только на Linux.</p>
+<p><strong>Сертификат/ключ изменились.</strong> Старый процесс экспортировал cipher
+state, привязанный к старому сертификату. Используйте те же файлы
+для обоих процессов. Ротацию сертификатов делайте через SIGHUP
+до binary upgrade.</p>
+<h3 id="tls-migration-not-available-в-логах"><a class="header" href="#tls-migration-not-available-в-логах">"TLS migration not available" в логах</a></h3>
+<p>Новый процесс получил миграционный payload с TLS-данными, но собран
+без <code>--features tls-migration</code> или запущен не на Linux. Клиент
+отключается. Пересоберите новый бинарник с feature flag.</p>
+<h3 id="migration-channel-not-ready-в-логах"><a class="header" href="#migration-channel-not-ready-в-логах">"migration channel not ready" в логах</a></h3>
+<p>Канал <code>MIGRATION_TX</code> ещё не инициализирован. Новый процесс не
+завершил запуск, когда клиент попытался мигрировать. Клиент
+повторит попытку на следующей idle-итерации (через миллисекунды).</p>
+<h3 id="migration-channel-send-failed-в-логах"><a class="header" href="#migration-channel-send-failed-в-логах">"migration channel send failed" в логах</a></h3>
+<p>Канал миграции переполнен (capacity: 4096). Возможно при одновременной
+миграции тысяч клиентов. Клиент повторит попытку на следующей
+idle-итерации.</p>
+<h3 id="prepare_migration-failed-в-логах"><a class="header" href="#prepare_migration-failed-в-логах">"prepare_migration failed" в логах</a></h3>
+<p>Raw fd клиента недоступен или <code>dup()</code> не удался. Возможные причины:
+исчерпание файловых дескрипторов, или клиент подключился через
+code path, который не сохраняет raw fd. Проверьте <code>ulimit -n</code>.</p>
+<blockquote>
+<p><strong>Совместимость с клиентскими библиотеками:</strong>
+Библиотеки вроде <code>github.com/lib/pq</code> или Go <code>database/sql</code> могут
+потребовать настройки для обработки reconnect при получении error
+58006 (для клиентов в daemon mode или застрявших дольше
+<code>shutdown_timeout</code>). См. <a href="https://github.com/lib/pq/issues/939">issue</a>.</p>
+</blockquote>
+<h2 id="Чек-лист-перед-production"><a class="header" href="#Чек-лист-перед-production">Чек-лист перед production</a></h2>
+<p>Перед выкатом binary upgrade в production:</p>
+<ul>
+<li><input disabled="" type="checkbox"/>
+Запуск в <strong>foreground mode</strong> (не daemon) для fd-based миграции</li>
+<li><input disabled="" type="checkbox"/>
+<code>shutdown_timeout</code> покрывает самую длинную ожидаемую транзакцию
+(рекомендация: 30-60 секунд для OLTP, больше для аналитики)</li>
+<li><input disabled="" type="checkbox"/>
+Если используете TLS: сборка с <code>--features tls-migration</code>,
+оба процесса используют одинаковые файлы сертификата и ключа</li>
+<li><input disabled="" type="checkbox"/>
+Протестировать upgrade в staging: открыть сессию, отправить
+SIGUSR2, убедиться что сессия продолжает работать</li>
+<li><input disabled="" type="checkbox"/>
+В systemd unit есть <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code></li>
+<li><input disabled="" type="checkbox"/>
+Мониторинг логов на ошибки миграции после первого production
+upgrade</li>
+<li><input disabled="" type="checkbox"/>
+Подтвердить что старый процесс завершился (PID file или <code>pgrep</code>)</li>
+<li><input disabled="" type="checkbox"/>
+Проверить Prometheus-метрики: клиенты на новом процессе</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/patroni-proxy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../operations/signals.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/patroni-proxy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../operations/signals.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

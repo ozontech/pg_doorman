@@ -1,0 +1,330 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Prometheus - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/reference/prometheus.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="Настройки-prometheus"><a class="header" href="#Настройки-prometheus">Настройки Prometheus</a></h1>
+<p>pg_doorman содержит экспортёр метрик Prometheus, который даёт детальное представление о производительности и поведении ваших пулов соединений. В этом документе описано, как включить и использовать экспортёр метрик Prometheus, а также какие метрики доступны.</p>
+<h2 id="Включение-метрик-prometheus"><a class="header" href="#Включение-метрик-prometheus">Включение метрик Prometheus</a></h2>
+<p>Чтобы включить экспортёр метрик Prometheus, добавьте в конфигурационный файл следующее:</p>
+<pre><code class="language-yaml">prometheus:
+  enabled: true
+  host: "0.0.0.0"  # Хост, на котором сервер метрик будет принимать соединения
+  port: 9127       # Порт, на котором сервер метрик будет принимать соединения
+</code></pre>
+<h3 id="Опции-конфигурации"><a class="header" href="#Опции-конфигурации">Опции конфигурации</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Опция</th><th>Описание</th><th>По умолчанию</th></tr></thead><tbody>
+<tr><td><code>enabled</code></td><td>Включить или отключить экспортёр метрик Prometheus.</td><td><code>false</code></td></tr>
+<tr><td><code>host</code></td><td>Хост, на котором экспортёр метрик Prometheus будет принимать соединения.</td><td><code>"0.0.0.0"</code></td></tr>
+<tr><td><code>port</code></td><td>Порт, на котором экспортёр метрик Prometheus будет принимать соединения.</td><td><code>9127</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="Настройка-prometheus"><a class="header" href="#Настройка-prometheus">Настройка Prometheus</a></h2>
+<p>Добавьте следующий job в конфигурацию Prometheus, чтобы собирать метрики с pg_doorman:</p>
+<pre><code class="language-yaml">scrape_configs:
+  - job_name: 'pg_doorman'
+    static_configs:
+      - targets: ['&lt;pg_doorman_host&gt;:9127']
+</code></pre>
+<p>Замените <code>&lt;pg_doorman_host&gt;</code> на имя хоста или IP-адрес вашего инстанса pg_doorman.</p>
+<h2 id="Доступные-метрики"><a class="header" href="#Доступные-метрики">Доступные метрики</a></h2>
+<p>pg_doorman экспортирует следующие метрики:</p>
+<h3 id="Системные-метрики"><a class="header" href="#Системные-метрики">Системные метрики</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_total_memory</code></td><td>Общий объём памяти, выделенный процессу pg_doorman, в байтах. Позволяет отслеживать потребление памяти приложением.</td></tr>
+</tbody></table>
+</div>
+<h3 id="Метрики-соединений"><a class="header" href="#Метрики-соединений">Метрики соединений</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_connection_count</code></td><td>Счётчик новых соединений по типу, обработанных pg_doorman. Типы: 'plain' (нешифрованные соединения), 'tls' (шифрованные соединения), 'cancel' (запросы на отмену соединения), 'total' (сумма всех соединений).</td></tr>
+</tbody></table>
+</div>
+<h3 id="Метрики-сокетов-только-linux"><a class="header" href="#Метрики-сокетов-только-linux">Метрики сокетов (только Linux)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_sockets</code></td><td>Счётчик сокетов, используемых pg_doorman, по типу сокета. Типы: 'tcp' (IPv4 TCP-сокеты), 'tcp6' (IPv6 TCP-сокеты), 'unix' (Unix domain sockets), 'unknown' (сокеты нераспознанного типа). Доступно только в Linux.</td></tr>
+</tbody></table>
+</div>
+<h3 id="Метрики-пула"><a class="header" href="#Метрики-пула">Метрики пула</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_pools_clients</code></td><td>Число клиентов в пулах соединений по статусу, пользователю и базе. Значения статуса: 'idle' (подключён, но не выполняет запросы), 'waiting' (ждёт серверного соединения), 'active' (выполняет запросы). Помогает мониторить загрузку пулов и распределение клиентов.</td></tr>
+<tr><td><code>pg_doorman_pools_servers</code></td><td>Число серверов в пулах соединений по статусу, пользователю и базе. Значения статуса: 'active' (активно обслуживает клиентов) и 'idle' (доступен для новых соединений). Помогает мониторить доступность серверов и распределение нагрузки.</td></tr>
+<tr><td><code>pg_doorman_pools_bytes</code></td><td>Общее число байт, переданных через пулы соединений, по направлению, пользователю и базе. Значения направления: 'received' (байты, полученные от клиентов) и 'sent' (байты, отправленные клиентам). Полезно для мониторинга сетевого трафика и выявления соединений с большим объёмом данных.</td></tr>
+</tbody></table>
+</div>
+<p>| <code>pg_doorman_pool_size</code> | Сконфигурированный максимальный размер пула на пользователя и базу. Полезен для расчёта оставшейся ёмкости пула вместе с pg_doorman_pools_servers. |</p>
+<h3 id="Метрики-запросов-и-транзакций"><a class="header" href="#Метрики-запросов-и-транзакций">Метрики запросов и транзакций</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_pools_queries_percentile</code></td><td>Перцентили времени выполнения запросов по пользователю и базе. Значения перцентилей: '99', '95', '90', '50' (медиана). Значения в миллисекундах. Помогает выявлять медленные запросы и тренды производительности по разным пользователям и базам.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_percentile</code></td><td>Перцентили времени выполнения транзакций по пользователю и базе. Значения перцентилей: '99', '95', '90', '50' (медиана). Значения в миллисекундах. Помогает мониторить производительность транзакций и выявлять долгие транзакции, которые могут влиять на производительность базы.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_count</code></td><td>Счётчик транзакций, выполненных в пулах соединений, по пользователю и базе. Помогает отслеживать объём транзакций и выявлять пользователей или базы с высоким темпом транзакций.</td></tr>
+<tr><td><code>pg_doorman_pools_transactions_total_time</code></td><td>Общее время, потраченное на выполнение транзакций в пулах соединений, по пользователю и базе. Значения в миллисекундах. Помогает мониторить общую производительность транзакций и выявлять пользователей или базы с большим временем выполнения транзакций.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_count</code></td><td>Счётчик запросов, выполненных в пулах соединений, по пользователю и базе. Помогает отслеживать объём запросов и выявлять пользователей или базы с высоким темпом запросов.</td></tr>
+<tr><td><code>pg_doorman_pools_queries_total_time</code></td><td>Общее время, потраченное на выполнение запросов в пулах соединений, по пользователю и базе. Значения в миллисекундах. Помогает мониторить общую производительность запросов и выявлять пользователей или базы с большим временем выполнения запросов.</td></tr>
+<tr><td><code>pg_doorman_pools_avg_wait_time</code></td><td>Среднее время ожидания клиентов в пулах соединений, по пользователю и базе. Значения в миллисекундах. Помогает мониторить время ожидания клиентов и выявлять потенциальные узкие места.</td></tr>
+</tbody></table>
+</div>
+<h3 id="Метрики-auth_query"><a class="header" href="#Метрики-auth_query">Метрики auth_query</a></h3>
+<p>Эти метрики доступны только когда <code>auth_query</code> сконфигурирован для одного или нескольких пулов.</p>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_auth_query_cache</code></td><td>Метрики кеша auth_query по типу и базе. Типы: <code>entries</code> (текущее число закешированных учётных данных), <code>hits</code> (попадания в кеш с найденной валидной записью), <code>misses</code> (промахи в кеше, потребовавшие запроса к PostgreSQL), <code>refetches</code> (повторные запросы, вызванные ошибкой аутентификации с устаревшими учётными данными), <code>rate_limited</code> (попытки повторного запроса, ограниченные <code>min_interval</code>).</td></tr>
+<tr><td><code>pg_doorman_auth_query_auth</code></td><td>Результаты аутентификации auth_query по результату и базе. Результаты: <code>success</code> (успешная аутентификация) и <code>failure</code> (неверный пароль или несовпадение учётных данных).</td></tr>
+<tr><td><code>pg_doorman_auth_query_executor</code></td><td>Метрики executor auth_query по типу и базе. Типы: <code>queries</code> (всего запросов, выполненных к PostgreSQL для получения учётных данных) и <code>errors</code> (запросы, завершившиеся ошибкой подключения или выполнения).</td></tr>
+<tr><td><code>pg_doorman_auth_query_dynamic_pools</code></td><td>Метрики жизненного цикла динамических пулов auth_query по типу и базе. Типы: <code>current</code> (сейчас активные динамические пулы), <code>created</code> (всего пулов создано с момента старта), <code>destroyed</code> (всего пулов, собранных garbage collection или удалённых на RELOAD). Имеет смысл только в passthrough mode.</td></tr>
+</tbody></table>
+</div>
+<h3 id="Метрики-серверов"><a class="header" href="#Метрики-серверов">Метрики серверов</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_servers_prepared_hits</code></td><td>Счётчик попаданий prepared statements в бэкендах баз по пользователю и базе. Помогает оценить эффективность prepared statements в снижении накладных расходов на парсинг запросов.</td></tr>
+<tr><td><code>pg_doorman_servers_prepared_misses</code></td><td>Счётчик промахов prepared statements в бэкендах баз по пользователю и базе. Помогает выявить запросы, которые могли бы выиграть от подготовки в prepared statements.</td></tr>
+</tbody></table>
+</div>
+<h3 id="Метрики-серверного-tls"><a class="header" href="#Метрики-серверного-tls">Метрики серверного TLS</a></h3>
+<p>Активны, если включён TLS к PostgreSQL (<code>server_tls_mode != "disable"</code>).</p>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Тип</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>pg_doorman_server_tls_connections</code></td><td>gauge per pool</td><td>Число активных TLS-соединений к PostgreSQL.</td></tr>
+<tr><td><code>pg_doorman_server_tls_handshake_duration_seconds</code></td><td>histogram per pool</td><td>Распределение длительности TLS handshake.</td></tr>
+<tr><td><code>pg_doorman_server_tls_handshake_errors_total</code></td><td>counter per pool</td><td>Счётчик неуспешных handshake. Алертить при ненулевой скорости.</td></tr>
+</tbody></table>
+</div>
+<p>Подробнее — см. <a href="../guides/tls.html#Observability">Клиентский и серверный TLS</a>.</p>
+<h2 id="Дашборд-grafana"><a class="header" href="#Дашборд-grafana">Дашборд Grafana</a></h2>
+<p>Вы можете создать дашборд Grafana для визуализации этих метрик. Вот простой пример панелей, которые имеет смысл добавить:</p>
+<ol>
+<li>Число соединений по типу</li>
+<li>Использование памяти со временем</li>
+<li>Число клиентов и серверов по пулам</li>
+<li>Перцентили производительности запросов и транзакций</li>
+<li>Сетевой трафик по пулам</li>
+</ol>
+<h2 id="Примеры-запросов"><a class="header" href="#Примеры-запросов">Примеры запросов</a></h2>
+<p>Несколько примеров запросов Prometheus, которые могут быть полезны:</p>
+<h3 id="Темп-подключений"><a class="header" href="#Темп-подключений">Темп подключений</a></h3>
+<pre><code>rate(pg_doorman_connection_count{type="total"}[5m])
+</code></pre>
+<h3 id="Загрузка-пула"><a class="header" href="#Загрузка-пула">Загрузка пула</a></h3>
+<pre><code>sum by (database) (pg_doorman_pools_clients{status="active"}) / sum by (database) (pg_doorman_pools_servers{status="active"} + pg_doorman_pools_servers{status="idle"})
+</code></pre>
+<h3 id="Медленные-запросы"><a class="header" href="#Медленные-запросы">Медленные запросы</a></h3>
+<pre><code>pg_doorman_pools_queries_percentile{percentile="99"}
+</code></pre>
+<h3 id="Время-ожидания-клиентов"><a class="header" href="#Время-ожидания-клиентов">Время ожидания клиентов</a></h3>
+<pre><code>pg_doorman_pools_avg_wait_time
+</code></pre>
+<h3 id="hit-rate-кеша-auth_query"><a class="header" href="#hit-rate-кеша-auth_query">Hit rate кеша auth_query</a></h3>
+<pre><code>pg_doorman_auth_query_cache{type="hits"} / (pg_doorman_auth_query_cache{type="hits"} + pg_doorman_auth_query_cache{type="misses"})
+</code></pre>
+<h3 id="Темп-ошибок-auth_query"><a class="header" href="#Темп-ошибок-auth_query">Темп ошибок auth_query</a></h3>
+<pre><code>rate(pg_doorman_auth_query_auth{result="failure"}[5m])
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/pool.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../benchmarks.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/pool.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../benchmarks.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

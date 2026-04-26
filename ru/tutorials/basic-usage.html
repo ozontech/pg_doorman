@@ -1,0 +1,832 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Базовое использование - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/tutorials/basic-usage.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="Базовое-использование-pgdoorman"><a class="header" href="#Базовое-использование-pgdoorman">Базовое использование PgDoorman</a></h1>
+<p>PgDoorman -- пулер соединений PostgreSQL, основанный на PgCat. В этом руководстве описаны конфигурация, эксплуатация и администрирование.</p>
+<h2 id="Параметры-командной-строки"><a class="header" href="#Параметры-командной-строки">Параметры командной строки</a></h2>
+<p>PgDoorman поддерживает несколько параметров командной строки для настройки поведения при запуске:</p>
+<pre><code class="language-bash">$ pg_doorman --help
+
+PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
+
+Usage: pg_doorman [OPTIONS] [CONFIG_FILE] [COMMAND]
+
+Commands:
+  generate  Generate configuration for pg_doorman by connecting to PostgreSQL and auto-detecting databases and users
+  help      Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [CONFIG_FILE]  [env: CONFIG_FILE=] [default: pg_doorman.toml]
+
+Options:
+  -l, --log-level &lt;LOG_LEVEL&gt;    [env: LOG_LEVEL=] [default: INFO]
+  -F, --log-format &lt;LOG_FORMAT&gt;  [env: LOG_FORMAT=] [default: text] [possible values: text, structured, debug]
+  -n, --no-color                 disable colors in the log output [env: NO_COLOR=]
+  -d, --daemon                   run as daemon [env: DAEMON=]
+  -h, --help                     Print help
+  -V, --version                  Print version
+</code></pre>
+<h3 id="Доступные-параметры"><a class="header" href="#Доступные-параметры">Доступные параметры</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Параметр</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>-d</code>, <code>--daemon</code></td><td>Запуск в фоне. Без этого параметра процесс работает на переднем плане.<br><br>В daemon-режиме обязательны <code>daemon_pid_file</code> и <code>syslog_prog_name</code>. После ухода в фон сообщения в stderr больше не пишутся.</td></tr>
+<tr><td><code>-l</code>, <code>--log-level</code></td><td>Уровень логирования: <code>INFO</code>, <code>DEBUG</code> или <code>WARN</code>.</td></tr>
+<tr><td><code>-F</code>, <code>--log-format</code></td><td>Формат логов. Возможные значения: <code>text</code>, <code>structured</code>, <code>debug</code>.</td></tr>
+<tr><td><code>-n</code>, <code>--no-color</code></td><td>Отключить цвета в выводе логов.</td></tr>
+<tr><td><code>-V</code>, <code>--version</code></td><td>Показать информацию о версии.</td></tr>
+<tr><td><code>-h</code>, <code>--help</code></td><td>Показать справку.</td></tr>
+</tbody></table>
+</div>
+<h2 id="Установка-и-настройка"><a class="header" href="#Установка-и-настройка">Установка и настройка</a></h2>
+<h3 id="Структура-файла-конфигурации"><a class="header" href="#Структура-файла-конфигурации">Структура файла конфигурации</a></h3>
+<p>PgDoorman поддерживает форматы <a href="https://yaml.org/">YAML</a> и <a href="https://toml.io/">TOML</a>. Для новых установок рекомендуется YAML. Конфигурация разбита на несколько секций:</p>
+<pre><code class="language-yaml">general:        # Глобальные настройки сервиса PgDoorman
+pools:
+  &lt;name&gt;:       # Настройки конкретного пула базы данных
+    users:
+      - ...     # Настройки пользователя для этого пула
+</code></pre>
+<div id="admonition-important" class="admonition admonish-tip" role="note" aria-labelledby="admonition-important-title">
+<div class="admonition-title">
+<div id="admonition-important-title">
+<p>Important</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-important"></a>
+</div>
+<div>
+<p>Некоторые параметры <strong>обязательно</strong> должны быть указаны в файле конфигурации, чтобы PgDoorman запустился, даже если у них есть значения по умолчанию. Например, для доступа к admin-консоли нужно указать admin username и password.</p>
+</div>
+</div>
+<h3 id="Минимальный-пример-конфигурации"><a class="header" href="#Минимальный-пример-конфигурации">Минимальный пример конфигурации</a></h3>
+<p>Минимальный пример конфигурации для старта:</p>
+<h4 id="yaml-рекомендуется"><a class="header" href="#yaml-рекомендуется">YAML (рекомендуется)</a></h4>
+<pre><code class="language-yaml">general:
+  host: "0.0.0.0"         # Слушать на всех интерфейсах
+  port: 6432               # Порт для клиентских соединений
+  admin_username: "admin"
+  admin_password: "admin"  # Поменяйте это в production!
+
+pools:
+  exampledb:
+    server_host: "127.0.0.1"  # Адрес сервера PostgreSQL
+    server_port: 5432          # Порт сервера PostgreSQL
+    pool_mode: "transaction"   # Режим пулинга
+    users:
+      - pool_size: 40
+        username: "doorman"
+        password: "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+</code></pre>
+<h4 id="toml"><a class="header" href="#toml">TOML</a></h4>
+<pre><code class="language-toml">[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin"
+
+[pools.exampledb]
+server_host = "127.0.0.1"
+server_port = 5432
+pool_mode = "transaction"
+
+[pools.exampledb.users.0]
+pool_size = 40
+username = "doorman"
+password = "SCRAM-SHA-256$4096:6nD+Ppi9rgaNyP7...MBiTld7xJipwG/X4="
+</code></pre>
+<p>Полный список параметров конфигурации можно получить командой <code>pg_doorman generate --reference --output ref.yaml</code> -- она генерирует аннотированный конфиг со всеми параметрами и значениями по умолчанию.</p>
+<h3 id="Автоматическая-генерация-конфигурации"><a class="header" href="#Автоматическая-генерация-конфигурации">Автоматическая генерация конфигурации</a></h3>
+<p>Команда <code>generate</code> создаёт файл конфигурации, подключаясь к серверу PostgreSQL и определяя базы данных и пользователей. По умолчанию сгенерированный конфиг содержит inline-комментарии, объясняющие каждый параметр.</p>
+<pre><code class="language-bash"># Посмотреть все доступные опции
+pg_doorman generate --help
+
+# Сгенерировать YAML-конфиг (рекомендуется)
+pg_doorman generate --output pg_doorman.yaml
+
+# Сгенерировать TOML-конфиг (для обратной совместимости)
+pg_doorman generate --output pg_doorman.toml
+
+# Сгенерировать reference-конфиг со всеми настройками (без подключения к PG)
+pg_doorman generate --reference --output pg_doorman.yaml
+
+# Сгенерировать reference-конфиг с русскими комментариями для быстрого старта
+pg_doorman generate --reference --ru --output pg_doorman.yaml
+
+# Сгенерировать конфиг без комментариев (plain serialization)
+pg_doorman generate --no-comments --output pg_doorman.yaml
+</code></pre>
+<p>Команда <code>generate</code> поддерживает несколько опций:</p>
+<div class="table-wrapper"><table><thead><tr><th>Опция</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>--host</code></td><td>Хост PostgreSQL для подключения (если не указано, используется localhost)</td></tr>
+<tr><td><code>--port</code>, <code>-p</code></td><td>Порт PostgreSQL для подключения (по умолчанию: 5432)</td></tr>
+<tr><td><code>--user</code>, <code>-u</code></td><td>Пользователь PostgreSQL для подключения (нужны привилегии superuser, чтобы читать pg_shadow)</td></tr>
+<tr><td><code>--password</code></td><td>Пароль PostgreSQL для подключения</td></tr>
+<tr><td><code>--database</code>, <code>-d</code></td><td>База данных PostgreSQL для подключения (если не указано, используется имя пользователя)</td></tr>
+<tr><td><code>--ssl</code></td><td>Подключение к серверу PostgreSQL по SSL/TLS</td></tr>
+<tr><td><code>--pool-size</code></td><td>Размер пула в сгенерированной конфигурации (по умолчанию: 40)</td></tr>
+<tr><td><code>--session-pool-mode</code>, <code>-s</code></td><td>Сессионный режим пулинга в сгенерированной конфигурации</td></tr>
+<tr><td><code>--output</code>, <code>-o</code></td><td>Файл для сгенерированной конфигурации (если не указан, используется stdout)</td></tr>
+<tr><td><code>--server-host</code></td><td>Переопределить <code>server_host</code> в конфиге (если не указано, используется значение <code>--host</code>)</td></tr>
+<tr><td><code>--no-comments</code></td><td>Отключить inline-комментарии в сгенерированной конфигурации (по умолчанию они включены)</td></tr>
+<tr><td><code>--reference</code></td><td>Сгенерировать полный reference-конфиг с примерами значений, без подключения к PG</td></tr>
+<tr><td><code>--russian-comments</code>, <code>--ru</code></td><td>Сгенерировать комментарии на русском для быстрого старта</td></tr>
+<tr><td><code>--format</code>, <code>-f</code></td><td>Формат вывода: <code>yaml</code> (по умолчанию) или <code>toml</code>. Если задан <code>--output</code>, формат определяется по расширению файла. Этот флаг переопределяет автоопределение</td></tr>
+</tbody></table>
+</div>
+<p>Команда подключается к PostgreSQL, обнаруживает базы данных и пользователей, затем создаёт документированный файл конфигурации.</p>
+<div id="admonition-Переменные-окружения-postgresql" class="admonition admonish-note" role="note" aria-labelledby="admonition-Переменные-окружения-postgresql-title">
+<div class="admonition-title">
+<div id="admonition-Переменные-окружения-postgresql-title">
+<p>Переменные окружения PostgreSQL</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Переменные-окружения-postgresql"></a>
+</div>
+<div>
+<p>Команда <code>generate</code> также учитывает стандартные переменные окружения PostgreSQL: <code>PGHOST</code>, <code>PGPORT</code>, <code>PGUSER</code>, <code>PGPASSWORD</code> и <code>PGDATABASE</code>.</p>
+</div>
+</div>
+<div id="admonition-passthrough-authentication-по-умолчанию" class="admonition admonish-info" role="note" aria-labelledby="admonition-passthrough-authentication-по-умолчанию-title">
+<div class="admonition-title">
+<div id="admonition-passthrough-authentication-по-умолчанию-title">
+<p>Passthrough Authentication (по умолчанию)</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-passthrough-authentication-по-умолчанию"></a>
+</div>
+<div>
+<p>PgDoorman по умолчанию использует <strong>passthrough authentication</strong>: криптографическое доказательство клиента (MD5-хэш или SCRAM ClientKey) автоматически переиспользуется для аутентификации в backend-сервере PostgreSQL. Plaintext-пароли в конфиге не нужны -- достаточно записать в <code>password</code> хэш из <code>pg_shadow</code> / <code>pg_authid</code>.</p>
+<p>Указывайте <code>server_username</code> и <code>server_password</code> <strong>только</strong> тогда, когда backend-пользователь отличается от username пула (например, маппинг username или JWT-аутентификация):</p>
+<pre><code class="language-yaml">users:
+  - username: "app_user"              # имя для клиента
+    password: "md5..."                # хэш для аутентификации клиента
+    server_username: "pg_app_user"    # другой backend-пользователь PostgreSQL
+    server_password: "real_password"  # plaintext-пароль для этого пользователя
+</code></pre>
+<p>Подробнее см. описания полей <code>server_username</code> и <code>server_password</code> в сгенерированном reference-конфиге.</p>
+</div>
+</div>
+<div id="admonition-Привилегии-superuser" class="admonition admonish-warning" role="note" aria-labelledby="admonition-Привилегии-superuser-title">
+<div class="admonition-title">
+<div id="admonition-Привилегии-superuser-title">
+<p>Привилегии superuser</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Привилегии-superuser"></a>
+</div>
+<div>
+<p>Чтение информации о пользователях из PostgreSQL требует привилегий superuser, чтобы получить доступ к таблице <code>pg_shadow</code>.</p>
+</div>
+</div>
+<h3 id="Контроль-доступа-клиентов-pg_hba"><a class="header" href="#Контроль-доступа-клиентов-pg_hba">Контроль доступа клиентов (pg_hba)</a></h3>
+<p>PgDoorman может применять правила доступа клиентов в стиле PostgreSQL <code>pg_hba.conf</code> через параметр <code>general.pg_hba</code>.
+Правила можно встроить прямо в конфиг или сослаться на путь к файлу. Полные примеры -- в <a href="../reference/general.html#pg_hba">reference-разделе</a>.</p>
+<p>Trust-режим: когда правило использует <code>trust</code>, PgDoorman принимает соединения без запроса пароля у клиента -- зеркально поведению PostgreSQL. Учитываются TLS-зависимые типы правил: <code>hostssl</code> требует TLS, <code>hostnossl</code> его запрещает.</p>
+<h3 id="Запуск-pgdoorman"><a class="header" href="#Запуск-pgdoorman">Запуск PgDoorman</a></h3>
+<p>После создания файла конфигурации запустите PgDoorman из командной строки:</p>
+<pre><code class="language-bash">$ pg_doorman pg_doorman.toml
+</code></pre>
+<p>Если файл конфигурации не указан, PgDoorman будет искать <code>pg_doorman.toml</code> в текущей директории.</p>
+<h3 id="Подключение-к-postgresql-через-pgdoorman"><a class="header" href="#Подключение-к-postgresql-через-pgdoorman">Подключение к PostgreSQL через PgDoorman</a></h3>
+<p>После запуска PgDoorman подключайтесь к нему вместо прямого подключения к PostgreSQL:</p>
+<pre><code class="language-bash">$ psql -h localhost -p 6432 -U doorman exampledb
+</code></pre>
+<p>Строку подключения вашего приложения нужно изменить так, чтобы она указывала на PgDoorman, а не напрямую на PostgreSQL:</p>
+<pre><code>postgresql://doorman:password@localhost:6432/exampledb
+</code></pre>
+<p>PgDoorman прозрачно обработает пулинг соединений, поэтому приложению не нужно знать, что оно подключается через пулер.</p>
+<h2 id="Администрирование"><a class="header" href="#Администрирование">Администрирование</a></h2>
+<h3 id="admin-консоль"><a class="header" href="#admin-консоль">Admin-консоль</a></h3>
+<p>PgDoorman предоставляет административный интерфейс через специальную базу данных <strong>pgdoorman</strong> (или <strong>pgbouncer</strong> для обратной совместимости):</p>
+<pre><code class="language-bash">$ psql -h localhost -p 6432 -U admin pgdoorman
+</code></pre>
+<p>После подключения можно посмотреть доступные команды:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW HELP;
+NOTICE:  Console usage
+DETAIL:
+	SHOW HELP|CONFIG|DATABASES|POOLS|POOLS_EXTENDED|POOLS_MEMORY|POOL_COORDINATOR|POOL_SCALING
+	SHOW CLIENTS|SERVERS|USERS|CONNECTIONS|STATS|PREPARED_STATEMENTS|AUTH_QUERY
+	SHOW LISTS|SOCKETS|LOG_LEVEL|VERSION
+	SET log_level = '&lt;filter&gt;'
+	RELOAD
+	SHUTDOWN
+	UPGRADE
+	PAUSE [db]
+	RESUME [db]
+	RECONNECT [db]
+</code></pre>
+<div id="admonition-Совместимость-протокола" class="admonition admonish-note" role="note" aria-labelledby="admonition-Совместимость-протокола-title">
+<div class="admonition-title">
+<div id="admonition-Совместимость-протокола-title">
+<p>Совместимость протокола</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Совместимость-протокола"></a>
+</div>
+<div>
+<p>Admin-консоль на данный момент поддерживает только simple query protocol.
+Некоторые драйверы баз данных используют extended query protocol для всех команд, что делает их непригодными для работы с admin-консолью. В таких случаях используйте клиент <code>psql</code> для администрирования.</p>
+</div>
+</div>
+<div id="admonition-Безопасность" class="admonition admonish-warning" role="note" aria-labelledby="admonition-Безопасность-title">
+<div class="admonition-title">
+<div id="admonition-Безопасность-title">
+<p>Безопасность</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Безопасность"></a>
+</div>
+<div>
+<p>Войти в admin-консоль может только пользователь, указанный в <code>admin_username</code> файла конфигурации.
+Если это разрешено правилами <code>general.pg_hba</code>, в admin-консоль можно входить методом <code>trust</code> (без запроса пароля), например:</p>
+<pre><code># Разрешить только локальному admin доступ к admin-БД без пароля
+host  pgdoorman  admin  127.0.0.1/32  trust
+</code></pre>
+<p>Используйте <code>trust</code> с предельной осторожностью. Всегда ограничивайте по адресу и, по возможности, требуйте TLS через <code>hostssl</code>. В production предпочитайте методы с паролями, если только не понимаете последствия полностью.</p>
+</div>
+</div>
+<h3 id="Мониторинг-pgdoorman"><a class="header" href="#Мониторинг-pgdoorman">Мониторинг PgDoorman</a></h3>
+<p>Admin-консоль предоставляет несколько команд для мониторинга текущего состояния PgDoorman:</p>
+<ul>
+<li><code>SHOW STATS</code> -- посмотреть статистику производительности.</li>
+<li><code>SHOW CLIENTS</code> -- список текущих клиентских соединений.</li>
+<li><code>SHOW SERVERS</code> -- список текущих серверных соединений.</li>
+<li><code>SHOW POOLS</code> -- состояние пулов соединений.</li>
+<li><code>SHOW DATABASES</code> -- список настроенных баз данных.</li>
+<li><code>SHOW USERS</code> -- список настроенных пользователей.</li>
+</ul>
+<p>Эти команды подробно описаны в разделе <a href="#%D0%BA%D0%BE%D0%BC%D0%B0%D0%BD%D0%B4%D1%8B-admin-%D0%BA%D0%BE%D0%BD%D1%81%D0%BE%D0%BB%D0%B8">Команды admin-консоли</a> ниже.</p>
+<h3 id="Перечитывание-конфигурации"><a class="header" href="#Перечитывание-конфигурации">Перечитывание конфигурации</a></h3>
+<p>Если вы изменили <code>pg_doorman.toml</code>, изменения можно применить без перезапуска сервиса:</p>
+<pre><code class="language-sql">pgdoorman=# RELOAD;
+</code></pre>
+<p>При перечитывании конфигурации:</p>
+<ol>
+<li>PgDoorman читает обновлённый файл конфигурации.</li>
+<li>Обнаруживаются изменения параметров подключения к базам.</li>
+<li>Существующие серверные соединения закрываются при следующем возврате в пул (в соответствии с режимом пулинга).</li>
+<li>Новые серверные соединения сразу используют обновлённые параметры.</li>
+</ol>
+<p>Это позволяет вносить изменения в конфигурацию с минимальным влиянием на приложения.</p>
+<h2 id="Команды-admin-консоли"><a class="header" href="#Команды-admin-консоли">Команды admin-консоли</a></h2>
+<p>Admin-консоль предоставляет набор команд для мониторинга и управления PgDoorman. Команды используют SQL-подобный синтаксис и могут выполняться из любого PostgreSQL-клиента, подключённого к admin-консоли.</p>
+<h3 id="show-команды"><a class="header" href="#show-команды">SHOW-команды</a></h3>
+<p><code>SHOW</code>-команды отображают информацию о работе PgDoorman. Каждая команда даёт свой срез данных о производительности и текущем состоянии пулера.</p>
+<h4 id="show-stats"><a class="header" href="#show-stats">SHOW STATS</a></h4>
+<p><code>SHOW STATS</code> показывает развёрнутую статистику работы PgDoorman:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW STATS;
+</code></pre>
+<p>Статистика приводится для каждой пары (database, user):</p>
+<div class="table-wrapper"><table><thead><tr><th>Метрика</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>database</code></td><td>Имя базы данных</td></tr>
+<tr><td><code>user</code></td><td>Имя пользователя</td></tr>
+<tr><td><code>total_xact_count</code></td><td>Всего SQL-транзакций с момента запуска</td></tr>
+<tr><td><code>total_query_count</code></td><td>Всего SQL-команд с момента запуска</td></tr>
+<tr><td><code>total_received</code></td><td>Всего байт получено от клиентов</td></tr>
+<tr><td><code>total_sent</code></td><td>Всего байт отправлено клиентам</td></tr>
+<tr><td><code>total_xact_time</code></td><td>Всего микросекунд в транзакциях (включая idle in transaction)</td></tr>
+<tr><td><code>total_query_time</code></td><td>Всего микросекунд на выполнение запросов</td></tr>
+<tr><td><code>total_wait_time</code></td><td>Всего микросекунд клиенты ждали серверного соединения</td></tr>
+<tr><td><code>total_errors</code></td><td>Всего ошибок с момента запуска</td></tr>
+<tr><td><code>avg_xact_count</code></td><td>Среднее число транзакций в секунду за последние 15 секунд</td></tr>
+<tr><td><code>avg_query_count</code></td><td>Среднее число запросов в секунду за последние 15 секунд</td></tr>
+<tr><td><code>avg_recv</code></td><td>Среднее число байт в секунду, получаемых от клиентов</td></tr>
+<tr><td><code>avg_sent</code></td><td>Среднее число байт в секунду, отправляемых клиентам</td></tr>
+<tr><td><code>avg_errors</code></td><td>Среднее число ошибок в секунду за последние 15 секунд</td></tr>
+<tr><td><code>avg_xact_time</code></td><td>Средняя длительность транзакции в микросекундах</td></tr>
+<tr><td><code>avg_query_time</code></td><td>Средняя длительность запроса в микросекундах</td></tr>
+<tr><td><code>avg_wait_time</code></td><td>Среднее время ожидания сервера в микросекундах</td></tr>
+</tbody></table>
+</div><div id="admonition-Мониторинг-производительности" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Мониторинг-производительности-title">
+<div class="admonition-title">
+<div id="admonition-Мониторинг-производительности-title">
+<p>Мониторинг производительности</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Мониторинг-производительности"></a>
+</div>
+<div>
+<p>Особое внимание обращайте на метрику <code>avg_wait_time</code>. Если её значение стабильно высокое, это может означать, что размер пула слишком мал для вашей нагрузки.</p>
+</div>
+</div>
+<h4 id="show-servers"><a class="header" href="#show-servers">SHOW SERVERS</a></h4>
+<p><code>SHOW SERVERS</code> показывает детальную информацию обо всех серверных соединениях:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW SERVERS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Колонка</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>server_id</code></td><td>Уникальный идентификатор серверного соединения</td></tr>
+<tr><td><code>server_process_id</code></td><td>PID backend-процесса PostgreSQL (если доступен)</td></tr>
+<tr><td><code>database_name</code></td><td>Имя базы данных, к которой подключено соединение</td></tr>
+<tr><td><code>user</code></td><td>Username, под которым PgDoorman подключается к серверу PostgreSQL</td></tr>
+<tr><td><code>application_name</code></td><td>Значение параметра <code>application_name</code>, выставленное на серверном соединении</td></tr>
+<tr><td><code>state</code></td><td>Текущее состояние соединения: <strong>active</strong>, <strong>idle</strong> или <strong>used</strong></td></tr>
+<tr><td><code>wait</code></td><td>Состояние ожидания соединения: <strong>idle</strong>, <strong>read</strong> или <strong>write</strong></td></tr>
+<tr><td><code>transaction_count</code></td><td>Сколько транзакций обработало это соединение</td></tr>
+<tr><td><code>query_count</code></td><td>Сколько запросов обработало это соединение</td></tr>
+<tr><td><code>bytes_sent</code></td><td>Всего байт отправлено серверу PostgreSQL</td></tr>
+<tr><td><code>bytes_received</code></td><td>Всего байт получено от сервера PostgreSQL</td></tr>
+<tr><td><code>age_seconds</code></td><td>Время жизни текущего серверного соединения в секундах</td></tr>
+<tr><td><code>prepare_cache_hit</code></td><td>Число попаданий в кэш prepared statements</td></tr>
+<tr><td><code>prepare_cache_miss</code></td><td>Число промахов кэша prepared statements</td></tr>
+<tr><td><code>prepare_cache_size</code></td><td>Число уникальных prepared statements в кэше</td></tr>
+</tbody></table>
+</div><div id="admonition-Состояния-соединений" class="admonition admonish-info" role="note" aria-labelledby="admonition-Состояния-соединений-title">
+<div class="admonition-title">
+<div id="admonition-Состояния-соединений-title">
+<p>Состояния соединений</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Состояния-соединений"></a>
+</div>
+<div>
+<ul>
+<li><strong>active</strong>: соединение прямо сейчас выполняет запрос.</li>
+<li><strong>idle</strong>: соединение свободно для использования.</li>
+<li><strong>used</strong>: соединение выделено клиенту, но прямо сейчас не выполняет запрос.</li>
+</ul>
+</div>
+</div>
+<h4 id="show-clients"><a class="header" href="#show-clients">SHOW CLIENTS</a></h4>
+<p><code>SHOW CLIENTS</code> показывает информацию обо всех клиентских соединениях к PgDoorman:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW CLIENTS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Колонка</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>client_id</code></td><td>Уникальный идентификатор клиентского соединения</td></tr>
+<tr><td><code>database</code></td><td>Имя базы данных (пула), к которой подключён клиент</td></tr>
+<tr><td><code>user</code></td><td>Username, с которым клиент подключился</td></tr>
+<tr><td><code>application_name</code></td><td>Имя приложения, заявленное клиентом</td></tr>
+<tr><td><code>addr</code></td><td>IP-адрес и порт клиента (IP:port)</td></tr>
+<tr><td><code>tls</code></td><td>Использует ли соединение TLS-шифрование (<strong>true</strong> или <strong>false</strong>)</td></tr>
+<tr><td><code>state</code></td><td>Текущее состояние клиентского соединения: <strong>active</strong>, <strong>idle</strong> или <strong>waiting</strong></td></tr>
+<tr><td><code>wait</code></td><td>Состояние ожидания клиентского соединения: <strong>idle</strong>, <strong>read</strong> или <strong>write</strong></td></tr>
+<tr><td><code>transaction_count</code></td><td>Сколько транзакций обработано для этого клиента</td></tr>
+<tr><td><code>query_count</code></td><td>Сколько запросов обработано для этого клиента</td></tr>
+<tr><td><code>error_count</code></td><td>Сколько ошибок было у этого клиента</td></tr>
+<tr><td><code>age_seconds</code></td><td>Время жизни клиентского соединения в секундах</td></tr>
+</tbody></table>
+</div><div id="admonition-Мониторинг-долгоживущих-соединений" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Мониторинг-долгоживущих-соединений-title">
+<div class="admonition-title">
+<div id="admonition-Мониторинг-долгоживущих-соединений-title">
+<p>Мониторинг долгоживущих соединений</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Мониторинг-долгоживущих-соединений"></a>
+</div>
+<div>
+<p>Колонка <code>age_seconds</code> помогает находить долгоживущие соединения, которые могут зря держать ресурсы. Подумайте о настройке таймаутов на idle-соединения в приложении.</p>
+</div>
+</div>
+<h4 id="show-pools"><a class="header" href="#show-pools">SHOW POOLS</a></h4>
+<p><code>SHOW POOLS</code> показывает информацию о пулах соединений. Для каждой пары (database, user) создаётся отдельная запись пула:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW POOLS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Колонка</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>database</code></td><td>Имя базы данных</td></tr>
+<tr><td><code>user</code></td><td>Username, ассоциированный с пулом</td></tr>
+<tr><td><code>pool_mode</code></td><td>Используемый режим пулинга: <strong>session</strong> или <strong>transaction</strong></td></tr>
+<tr><td><code>cl_idle</code></td><td>Число idle-клиентов (вне транзакции)</td></tr>
+<tr><td><code>cl_active</code></td><td>Число активных клиентских соединений (привязаны к серверу или idle)</td></tr>
+<tr><td><code>cl_waiting</code></td><td>Число клиентских соединений, ожидающих серверного соединения</td></tr>
+<tr><td><code>cl_cancel_req</code></td><td>Число cancel-запросов от клиентов</td></tr>
+<tr><td><code>sv_active</code></td><td>Число серверных соединений, привязанных к клиентам</td></tr>
+<tr><td><code>sv_idle</code></td><td>Число idle-серверных соединений, доступных для немедленного использования</td></tr>
+<tr><td><code>sv_used</code></td><td>Число серверных соединений, недавно использованных, но ещё не ставших idle</td></tr>
+<tr><td><code>sv_login</code></td><td>Число серверных соединений, которые сейчас в процессе логина</td></tr>
+<tr><td><code>pool_size</code></td><td>Настроенный максимальный размер пула для этой пары (database, user)</td></tr>
+<tr><td><code>maxwait</code></td><td>Максимальное время ожидания в секундах для самого старого клиента в очереди</td></tr>
+<tr><td><code>maxwait_us</code></td><td>Микросекундная часть максимального времени ожидания</td></tr>
+<tr><td><code>avg_xact_time</code></td><td>Средняя длительность транзакции в микросекундах</td></tr>
+<tr><td><code>paused</code></td><td>На паузе ли пул: <strong>1</strong> (paused) или <strong>0</strong> (active)</td></tr>
+</tbody></table>
+</div><div id="admonition-Сигнал-о-производительности" class="admonition admonish-warning" role="note" aria-labelledby="admonition-Сигнал-о-производительности-title">
+<div class="admonition-title">
+<div id="admonition-Сигнал-о-производительности-title">
+<p>Сигнал о производительности</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Сигнал-о-производительности"></a>
+</div>
+<div>
+<p>Если значение <code>maxwait</code> начинает расти, серверный пул может не справляться с обработкой запросов. Это может быть вызвано перегруженным сервером PostgreSQL или недостаточным <code>pool_size</code>.</p>
+</div>
+</div>
+<h4 id="show-users"><a class="header" href="#show-users">SHOW USERS</a></h4>
+<p><code>SHOW USERS</code> показывает информацию обо всех настроенных пользователях:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW USERS;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Колонка</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>name</code></td><td>Username, как настроен в PgDoorman</td></tr>
+<tr><td><code>pool_mode</code></td><td>Режим пулинга, назначенный пользователю: <strong>session</strong> или <strong>transaction</strong></td></tr>
+</tbody></table>
+</div>
+<h4 id="show-databases"><a class="header" href="#show-databases">SHOW DATABASES</a></h4>
+<p><code>SHOW DATABASES</code> показывает информацию обо всех настроенных пулах баз данных:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW DATABASES;
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Колонка</th><th>Описание</th></tr></thead><tbody>
+<tr><td><code>name</code></td><td>Имя настроенного пула</td></tr>
+<tr><td><code>host</code></td><td>Hostname сервера PostgreSQL</td></tr>
+<tr><td><code>port</code></td><td>Номер порта сервера PostgreSQL</td></tr>
+<tr><td><code>database</code></td><td>Реальное имя базы на бэкенде (может отличаться от имени пула, если задан <code>server_database</code>)</td></tr>
+<tr><td><code>force_user</code></td><td>Пользователь, форсированный для этого пула (если настроено)</td></tr>
+<tr><td><code>pool_size</code></td><td>Максимальное число серверных соединений для этого пула</td></tr>
+<tr><td><code>min_pool_size</code></td><td>Минимальное число серверных соединений, которое поддерживается</td></tr>
+<tr><td><code>reserve_pool</code></td><td>Максимальное число дополнительных reserve-соединений</td></tr>
+<tr><td><code>pool_mode</code></td><td>Режим пулинга по умолчанию для этого пула</td></tr>
+<tr><td><code>max_connections</code></td><td>Максимально разрешённое число серверных соединений (из <code>max_db_connections</code>)</td></tr>
+<tr><td><code>current_connections</code></td><td>Текущее число серверных соединений для этого пула</td></tr>
+</tbody></table>
+</div><div id="admonition-Управление-соединениями" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Управление-соединениями-title">
+<div class="admonition-title">
+<div id="admonition-Управление-соединениями-title">
+<p>Управление соединениями</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Управление-соединениями"></a>
+</div>
+<div>
+<p>Следите за соотношением <code>current_connections</code> и <code>pool_size</code>, чтобы убедиться, что пул адекватно размерен. Если <code>current_connections</code> часто доходит до <code>pool_size</code>, увеличьте размер пула.</p>
+</div>
+</div>
+<h4 id="show-sockets"><a class="header" href="#show-sockets">SHOW SOCKETS</a></h4>
+<p><code>SHOW SOCKETS</code> показывает количество сокетов в разных состояниях для TCP/TCP6/Unix (только Linux):</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW SOCKETS;
+</code></pre>
+<p>Показывает агрегированные счётчики состояний сокетов (ESTABLISHED, SYN_SENT и т.д.), полученные из <code>/proc/net/tcp</code>, <code>/proc/net/tcp6</code> и <code>/proc/net/unix</code>.</p>
+<h4 id="show-version"><a class="header" href="#show-version">SHOW VERSION</a></h4>
+<p><code>SHOW VERSION</code> показывает информацию о версии PgDoorman:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHOW VERSION;
+</code></pre>
+<p>Полезно, чтобы проверить, какая версия запущена, особенно после обновлений.</p>
+<h3 id="Управляющие-команды"><a class="header" href="#Управляющие-команды">Управляющие команды</a></h3>
+<p>PgDoorman предоставляет управляющие команды, позволяющие управлять работой сервиса прямо из admin-консоли.</p>
+<h4 id="shutdown"><a class="header" href="#shutdown">SHUTDOWN</a></h4>
+<p>Команда <code>SHUTDOWN</code> корректно завершает процесс PgDoorman:</p>
+<pre><code class="language-sql">pgdoorman=&gt; SHUTDOWN;
+</code></pre>
+<p>При выполнении:</p>
+<ol>
+<li>PgDoorman перестаёт принимать новые клиентские соединения.</li>
+<li>Существующим транзакциям даётся время завершиться (в пределах настроенного таймаута).</li>
+<li>Все соединения закрываются.</li>
+<li>Процесс завершается.</li>
+</ol>
+<div id="admonition-Прерывание-сервиса" class="admonition admonish-warning" role="note" aria-labelledby="admonition-Прерывание-сервиса-title">
+<div class="admonition-title">
+<div id="admonition-Прерывание-сервиса-title">
+<p>Прерывание сервиса</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Прерывание-сервиса"></a>
+</div>
+<div>
+<p>Команда <code>SHUTDOWN</code> останавливает сервис PgDoorman, отключая всех клиентов. В production используйте её с осторожностью.</p>
+</div>
+</div>
+<h4 id="set-log_level"><a class="header" href="#set-log_level">SET log_level</a></h4>
+<p>Изменить уровень логирования на лету, не перезапуская пулер:</p>
+<pre><code class="language-sql">-- Глобальный уровень
+pgdoorman=&gt; SET log_level = 'debug';
+
+-- На модуль (синтаксис RUST_LOG)
+pgdoorman=&gt; SET log_level = 'warn,pg_doorman::pool::pool_coordinator=debug';
+
+-- Посмотреть текущий уровень
+pgdoorman=&gt; SHOW LOG_LEVEL;
+
+-- Сбросить на стартовое значение
+pgdoorman=&gt; SET log_level = 'default';
+</code></pre>
+<p>Изменения временные -- теряются при перезапуске. Допустимые уровни: <code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>, <code>off</code>.</p>
+<h4 id="reload"><a class="header" href="#reload">RELOAD</a></h4>
+<p>Команда <code>RELOAD</code> обновляет конфигурацию PgDoorman без перезапуска сервиса:</p>
+<pre><code class="language-sql">pgdoorman=&gt; RELOAD;
+</code></pre>
+<p>Эта команда:</p>
+<ol>
+<li>Перечитывает файл конфигурации.</li>
+<li>Обновляет все изменяемые настройки.</li>
+<li>Применяет изменения параметров соединений для новых соединений.</li>
+<li>Сохраняет существующие соединения, пока они не вернутся в пул.</li>
+</ol>
+<div id="admonition-Изменение-конфигурации-без-простоя" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Изменение-конфигурации-без-простоя-title">
+<div class="admonition-title">
+<div id="admonition-Изменение-конфигурации-без-простоя-title">
+<p>Изменение конфигурации без простоя</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Изменение-конфигурации-без-простоя"></a>
+</div>
+<div>
+<p><code>RELOAD</code> применяет большинство параметров конфигурации без разрыва существующих соединений — то, что нужно в production, где простой недопустим.</p>
+</div>
+</div>
+<h4 id="pause"><a class="header" href="#pause">PAUSE</a></h4>
+<p>Команда <code>PAUSE [db]</code> блокирует получение новых backend-соединений для указанной базы (или всех баз, если аргумент не задан). Активные транзакции продолжают работать -- блокируются только запросы на новые соединения.</p>
+<pre><code class="language-sql">-- Поставить на паузу все пулы
+pgdoorman=&gt; PAUSE;
+
+-- Поставить на паузу только пулы конкретной базы
+pgdoorman=&gt; PAUSE mydb;
+</code></pre>
+<p>Клиенты, которые запросят новое backend-соединение во время паузы, будут ждать <code>RESUME</code> или истечения <code>query_wait_timeout</code> -- что наступит раньше. Если истечёт таймаут, клиент получит ошибку timeout.</p>
+<p>Используйте <code>SHOW POOLS</code> для проверки состояния паузы -- колонка <code>paused</code> покажет <code>1</code> для приостановленных пулов.</p>
+<div id="admonition-Когда-использовать-pause" class="admonition admonish-info" role="note" aria-labelledby="admonition-Когда-использовать-pause-title">
+<div class="admonition-title">
+<div id="admonition-Когда-использовать-pause-title">
+<p>Когда использовать PAUSE</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Когда-использовать-pause"></a>
+</div>
+<div>
+<p>PAUSE полезен во время операций обслуживания, когда нужно не пускать новые запросы на бэкенд:</p>
+<ul>
+<li><strong>Failover базы</strong>: PAUSE → переключить бэкенд → RECONNECT → RESUME.</li>
+<li><strong>Полная ротация соединений</strong>: PAUSE → RECONNECT → RESUME гарантирует, что все соединения будут пересозданы.</li>
+<li><strong>Обслуживание бэкенда</strong>: PAUSE на время изменений схемы, затем RESUME.</li>
+</ul>
+</div>
+</div>
+<h4 id="resume"><a class="header" href="#resume">RESUME</a></h4>
+<p>Команда <code>RESUME [db]</code> снимает PAUSE и немедленно разблокирует всех ожидающих клиентов:</p>
+<pre><code class="language-sql">-- Снять паузу со всех пулов
+pgdoorman=&gt; RESUME;
+
+-- Снять паузу только с пулов конкретной базы
+pgdoorman=&gt; RESUME mydb;
+</code></pre>
+<p>Клиенты, которые ждали из-за PAUSE, немедленно продолжат получать backend-соединения.</p>
+<h4 id="reconnect"><a class="header" href="#reconnect">RECONNECT</a></h4>
+<p>Команда <code>RECONNECT [db]</code> форсирует пересоздание всех backend-соединений:</p>
+<pre><code class="language-sql">-- Reconnect для всех пулов
+pgdoorman=&gt; RECONNECT;
+
+-- Reconnect только для пулов конкретной базы
+pgdoorman=&gt; RECONNECT mydb;
+</code></pre>
+<p>При выполнении:</p>
+<ol>
+<li>Внутренний epoch-счётчик пула увеличивается.</li>
+<li>Все idle-соединения сразу закрываются.</li>
+<li>Активные соединения (которые сейчас обслуживают транзакцию) продолжают работать, но утилизируются при возврате в пул -- они не будут переиспользованы.</li>
+</ol>
+<p>То есть RECONNECT <strong>не</strong> прерывает активные транзакции. Новые соединения создаются по запросу с текущим epoch, поэтому они будут приняты <code>recycle()</code>.</p>
+<div id="admonition-Шаблоны-ротации-соединений" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Шаблоны-ротации-соединений-title">
+<div class="admonition-title">
+<div id="admonition-Шаблоны-ротации-соединений-title">
+<p>Шаблоны ротации соединений</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Шаблоны-ротации-соединений"></a>
+</div>
+<div>
+<p><strong>Постепенная ротация</strong> (минимум воздействия):
+Один RECONNECT -- idle-соединения сбрасываются сразу, активные -- по завершении текущей транзакции. Новые соединения создаются по мере необходимости.</p>
+<p><strong>Полная ротация</strong> (гарантированно все новые соединения):
+PAUSE → RECONNECT → RESUME -- сначала пауза не даёт стартовать новым транзакциям, потом RECONNECT помечает всё на утилизацию. После RESUME все последующие запросы получают свежие соединения.</p>
+</div>
+</div>
+<div id="admonition-reconnect-и-min_pool_size" class="admonition admonish-warning" role="note" aria-labelledby="admonition-reconnect-и-min_pool_size-title">
+<div class="admonition-title">
+<div id="admonition-reconnect-и-min_pool_size-title">
+<p>RECONNECT и min_pool_size</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-reconnect-и-min_pool_size"></a>
+</div>
+<div>
+<p>После RECONNECT пулы с настроенным <code>min_pool_size</code> будут автоматически дозаполнены до минимума на следующем retain-цикле. У новых соединений будет текущий epoch.</p>
+</div>
+</div>
+<h3 id="Граничные-случаи-и-поведение"><a class="header" href="#Граничные-случаи-и-поведение">Граничные случаи и поведение</a></h3>
+<p>В таблице ниже описано поведение PAUSE, RESUME и RECONNECT в граничных случаях:</p>
+<div class="table-wrapper"><table><thead><tr><th>Сценарий</th><th>Поведение</th></tr></thead><tbody>
+<tr><td><strong>PAUSE для уже приостановленного пула</strong></td><td>No-op (идемпотентно). Ошибка не возвращается.</td></tr>
+<tr><td><strong>RESUME для не приостановленного пула</strong></td><td>No-op (идемпотентно). Ошибка не возвращается.</td></tr>
+<tr><td><strong>RECONNECT для приостановленного пула</strong></td><td>Работает: idle-соединения дренируются, epoch инкрементируется. После RESUME новые соединения создаются с новым epoch.</td></tr>
+<tr><td><strong>PAUSE/RESUME/RECONNECT для несуществующей базы</strong></td><td>Возвращает ошибку: <code>No pool for database "xxx"</code>. Без аргумента-базы команда применяется ко всем пулам (ошибки нет, даже если пулов нет).</td></tr>
+<tr><td><strong><code>query_wait_timeout</code> во время PAUSE</strong></td><td>Клиенты, ожидающие соединение, ожидаемо получают ошибку timeout. Пул остаётся на паузе.</td></tr>
+<tr><td><strong>RELOAD во время PAUSE</strong></td><td>RELOAD пересоздаёт пулы из конфигурации, поэтому состояние паузы теряется. Это ожидаемое поведение -- новая конфигурация означает новые пулы.</td></tr>
+<tr><td><strong>GC приостановленных динамических пулов</strong></td><td>Приостановленные динамические пулы защищены от garbage collection даже при 0 соединений.</td></tr>
+<tr><td><strong>Replenish во время PAUSE</strong></td><td>Пулы с <code>min_pool_size</code> не дозаполняются, пока на паузе -- новые соединения не создаются. Дозаполнение возобновляется после RESUME.</td></tr>
+<tr><td><strong>Время жизни соединений во время PAUSE</strong></td><td>Retain-задача продолжает закрывать просроченные соединения (idle timeout, server lifetime). Соединения по-прежнему стареют.</td></tr>
+<tr><td><strong>Несколько вызовов RECONNECT</strong></td><td>Каждый вызов увеличивает epoch ещё. Только соединения, созданные после последнего RECONNECT, считаются валидными.</td></tr>
+</tbody></table>
+</div>
+<h2 id="Обработка-сигналов"><a class="header" href="#Обработка-сигналов">Обработка сигналов</a></h2>
+<p>PgDoorman реагирует на стандартные Unix-сигналы для управления и контроля. Сигналы посылаются через <code>kill</code> (например, <code>kill -HUP &lt;pid&gt;</code>).</p>
+<div class="table-wrapper"><table><thead><tr><th>Сигнал</th><th>Эффект</th></tr></thead><tbody>
+<tr><td><strong>SIGHUP</strong></td><td>Перечитывание конфигурации -- эквивалент admin-команды <code>RELOAD</code>.</td></tr>
+<tr><td><strong>SIGUSR2</strong></td><td>Binary upgrade и graceful shutdown. Валидирует новый бинарник флагом <code>-t</code>, запускает новый процесс, затем завершается. <strong>Рекомендуется для обновлений.</strong> См. <a href="binary-upgrade.html">Binary upgrade</a>.</td></tr>
+<tr><td><strong>SIGINT</strong></td><td><strong>Foreground + TTY</strong> (Ctrl+C): только graceful shutdown (без binary upgrade). <strong>Daemon / без TTY</strong>: binary upgrade и graceful shutdown (legacy-поведение).</td></tr>
+<tr><td><strong>SIGTERM</strong></td><td>Немедленное завершение. Активные соединения обрываются.</td></tr>
+</tbody></table>
+</div><div id="admonition-Управление-процессом" class="admonition admonish-note" role="note" aria-labelledby="admonition-Управление-процессом-title">
+<div class="admonition-title">
+<div id="admonition-Управление-процессом-title">
+<p>Управление процессом</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Управление-процессом"></a>
+</div>
+<div>
+<p>В окружениях на базе systemd unit-файл по умолчанию использует <code>ExecReload=/bin/kill -SIGUSR2 $MAINPID</code>, чтобы запускать binary upgrade при <code>systemctl reload</code>.</p>
+</div>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/installation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../authentication/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/installation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../authentication/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

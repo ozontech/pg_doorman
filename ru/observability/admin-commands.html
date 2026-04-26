@@ -1,0 +1,307 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Admin-команды - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/observability/admin-commands.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="admin-команды"><a class="header" href="#admin-команды">Admin-команды</a></h1>
+<p>pg_doorman предоставляет admin-базу, совместимую с протоколом Postgres. Подключайтесь к тому же порту, что и обычные клиенты, но с <code>dbname=pgdoorman</code> и admin-учёткой из конфига:</p>
+<pre><code class="language-bash">psql -h 127.0.0.1 -p 6432 -U admin pgdoorman
+</code></pre>
+<p>Или через connection string <code>psql</code>:</p>
+<pre><code class="language-bash">psql "host=127.0.0.1 port=6432 user=admin dbname=pgdoorman"
+</code></pre>
+<p>Admin-команды читаются через <code>SHOW &lt;subcommand&gt;</code> или выполняются голыми глаголами (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>, <code>SHUTDOWN</code>, <code>SET &lt;param&gt; = &lt;value&gt;</code>).</p>
+<h2 id="Команды-show"><a class="header" href="#Команды-show">Команды SHOW</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Команда</th><th>Назначение</th></tr></thead><tbody>
+<tr><td><code>SHOW HELP</code></td><td>Список доступных команд.</td></tr>
+<tr><td><code>SHOW CONFIG</code></td><td>Текущая активная конфигурация. Только для чтения.</td></tr>
+<tr><td><code>SHOW DATABASES</code></td><td>По одной строке на пул: host, port, database, размер пула, режим.</td></tr>
+<tr><td><code>SHOW POOLS</code></td><td>Снимок утилизации пула на пару user×database: idle/active/waiting клиенты, idle/active серверы.</td></tr>
+<tr><td><code>SHOW POOLS_EXTENDED</code></td><td><code>SHOW POOLS</code> плюс полученные/отправленные байты и среднее время ожидания.</td></tr>
+<tr><td><code>SHOW POOLS_MEMORY</code></td><td>Учёт памяти на пул для кэша prepared statements (клиентский и серверный).</td></tr>
+<tr><td><code>SHOW POOL_COORDINATOR</code></td><td>Состояние Pool Coordinator на базу: текущие соединения, использование резерва, число вытеснений. См. <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</td></tr>
+<tr><td><code>SHOW POOL_SCALING</code></td><td>Метрики anticipation/burst: in-flight create-операции, ожидания на воротах, anticipation notifies/timeouts.</td></tr>
+<tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td>Закэшированные prepared statements на пул: hash, имя, текст запроса, число попаданий.</td></tr>
+<tr><td><code>SHOW CLIENTS</code></td><td>Активные клиенты: ID, database, user, имя приложения, адрес, состояние TLS, счётчики transaction/query/error, возраст.</td></tr>
+<tr><td><code>SHOW SERVERS</code></td><td>Активные соединения с бэкендом: ID сервера, PID бэкенда, database, user, TLS, состояние, счётчики transaction/query, попадания/промахи кэша prepare, байты.</td></tr>
+<tr><td><code>SHOW CONNECTIONS</code></td><td>Число соединений по типу: total, errors, TLS, plain, cancel.</td></tr>
+<tr><td><code>SHOW STATS</code></td><td>Агрегированная статистика на пару user×database: всего транзакций, запросов, времени, байт, средние.</td></tr>
+<tr><td><code>SHOW LISTS</code></td><td>Счётчики по категориям (databases, users, pools, clients, servers).</td></tr>
+<tr><td><code>SHOW USERS</code></td><td>Список пользователей и их режимы пула.</td></tr>
+<tr><td><code>SHOW AUTH_QUERY</code></td><td>Кэш <code>auth_query</code>: попадания/промахи/перезапросы, успехи/отказы аутентификации, ошибки исполнителя, счётчики динамических пулов.</td></tr>
+<tr><td><code>SHOW SOCKETS</code></td><td>Счётчики TCP- и Unix-сокетов по состоянию (только Linux — читает <code>/proc/net/</code>).</td></tr>
+<tr><td><code>SHOW LOG_LEVEL</code></td><td>Текущий уровень логирования.</td></tr>
+<tr><td><code>SHOW VERSION</code></td><td>Версия pg_doorman.</td></tr>
+</tbody></table>
+</div>
+<p><code>SHOW POOL_COORDINATOR</code> и <code>SHOW POOL_SCALING</code> не имеют аналогов в PgBouncer или Odyssey — они показывают внутренние механизмы pg_doorman.</p>
+<h2 id="Управляющие-команды"><a class="header" href="#Управляющие-команды">Управляющие команды</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Команда</th><th>Эффект</th></tr></thead><tbody>
+<tr><td><code>PAUSE</code></td><td>Прекратить принимать новые клиентские запросы. Существующие клиенты завершают свои транзакции.</td></tr>
+<tr><td><code>PAUSE &lt;database&gt;</code></td><td>Поставить на паузу один пул.</td></tr>
+<tr><td><code>RESUME</code> / <code>RESUME &lt;database&gt;</code></td><td>Возобновить после <code>PAUSE</code>.</td></tr>
+<tr><td><code>RECONNECT</code> / <code>RECONNECT &lt;database&gt;</code></td><td>Принудительно пересоздать соединения с бэкендом (закрыть простаивающие, дренировать активные). Новые соединения берутся из PostgreSQL.</td></tr>
+<tr><td><code>RELOAD</code></td><td>То же, что и <code>SIGHUP</code> — перезагрузить конфиг с диска.</td></tr>
+<tr><td><code>SHUTDOWN</code></td><td>То же, что и <code>SIGTERM</code> — плавное завершение работы.</td></tr>
+<tr><td><code>KILL &lt;database&gt;</code></td><td>Сбросить всех клиентов, подключённых к конкретному пулу.</td></tr>
+<tr><td><code>SET log_level = '&lt;level&gt;'</code></td><td>Изменить уровень логирования в рантайме (<code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>).</td></tr>
+</tbody></table>
+</div>
+<p><code>PAUSE</code>/<code>RESUME</code> полезны при failover или окнах обслуживания. <code>RECONNECT</code> после ротации учётных данных в <code>pg_authid</code> гарантирует, что бэкенды используют новый пароль.</p>
+<h2 id="Чтение-типового-вывода"><a class="header" href="#Чтение-типового-вывода">Чтение типового вывода</a></h2>
+<h3 id="show-pools"><a class="header" href="#show-pools"><code>SHOW POOLS</code></a></h3>
+<pre><code>database | user | cl_idle | cl_active | cl_waiting | sv_active | sv_idle | sv_used | maxwait
+mydb     | app  | 12      | 4         | 0          | 4         | 36      | 0       | 0.0
+</code></pre>
+<ul>
+<li><code>cl_waiting &gt; 0</code> означает, что клиенты застряли в ожидании бэкенда. Либо поднимите <code>pool_size</code>, либо проверьте медленные запросы.</li>
+<li><code>sv_idle</code> соответствует свободным бэкендам; <code>sv_active</code> — занятым; <code>sv_used</code> — зарезервированным координатором (см. ниже).</li>
+<li><code>maxwait</code> — самое долгое текущее ожидание в секундах. Если оно вырастает за <code>query_wait_timeout</code>, клиенты получают ошибки.</li>
+</ul>
+<h3 id="show-pool_coordinator"><a class="header" href="#show-pool_coordinator"><code>SHOW POOL_COORDINATOR</code></a></h3>
+<pre><code>database | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+mydb     | 80          | 78      | 16           | 2            | 142       | 18          | 0
+</code></pre>
+<ul>
+<li><code>evictions</code> быстро растут: какой-то пользователь голодает раз за разом. Задайте или поднимите <code>min_guaranteed_pool_size</code> для этого пользователя.</li>
+<li><code>reserve_acq</code> высокий: всплески — норма, но возможно вы недооценили размер. Подумайте о повышении <code>max_db_connections</code>, а не о ставке на резерв.</li>
+<li><code>exhaustions</code> ненулевые: даже резерв был полным. Клиенты упёрлись в <code>query_wait_timeout</code>. Поднимите потолок.</li>
+</ul>
+<p>Тонкости настройки см. в <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</p>
+<h3 id="show-pool_scaling"><a class="header" href="#show-pool_scaling"><code>SHOW POOL_SCALING</code></a></h3>
+<pre><code>user | database | inflight | creates | gate_waits | burst_gate_budget_ex | antic_notify | antic_timeout | create_fallback | replenish_def
+app  | mydb     | 1        | 12345   | 87         | 3                    | 142          | 8             | 22              | 0
+</code></pre>
+<ul>
+<li><code>inflight</code> — текущие создания соединений с бэкендом в процессе.</li>
+<li><code>gate_waits</code> растут: <code>scaling_max_parallel_creates</code> придушивает вас. Допустимо, если PostgreSQL под нагрузкой; поднимите, если PG может обработать больше параллельных вызовов <code>connect()</code>.</li>
+<li>Соотношение <code>antic_notify</code> и <code>antic_timeout</code>: высокий счётчик timeout означает, что упреждающее ожидание не успевает поймать возвращающееся соединение. Поднимите <code>scaling_warm_pool_ratio</code>, чтобы пул рос с опережением спроса.</li>
+<li><code>create_fallback</code> растёт — срабатывает предзамена: соединения истекают раньше, чем естественным образом возвращаются.</li>
+</ul>
+<p>См. <a href="../tutorials/pool-pressure.html#%D0%9F%D0%B0%D1%80%D0%B0%D0%BC%D0%B5%D1%82%D1%80%D1%8B-%D1%82%D1%8E%D0%BD%D0%B8%D0%BD%D0%B3%D0%B0">Пул под нагрузкой → Параметры тюнинга</a>.</p>
+<h2 id="Аутентификация"><a class="header" href="#Аутентификация">Аутентификация</a></h2>
+<p>Admin-база использует учётку из <code>general.admin_username</code> и <code>general.admin_password</code>:</p>
+<pre><code class="language-yaml">general:
+  admin_username: "admin"
+  admin_password: "change_me"
+</code></pre>
+<p>Admin-соединения не проходят через правила <code>pg_hba.conf</code> — они идут напрямую в admin-обработчик. Ограничивайте admin-доступ на сетевом уровне (<code>listen_addresses</code>, фаервол) или используйте Unix-сокеты.</p>
+<h2 id="Куда-дальше"><a class="header" href="#Куда-дальше">Куда дальше</a></h2>
+<ul>
+<li><a href="../reference/prometheus.html">Prometheus reference</a> — те же данные в машинно-читаемом виде.</li>
+<li><a href="../concepts/pool-coordinator.html">Pool Coordinator</a> — что говорит вам <code>SHOW POOL_COORDINATOR</code>.</li>
+<li><a href="../tutorials/pool-pressure.html">Pool Pressure</a> — что говорит вам <code>SHOW POOL_SCALING</code>.</li>
+<li><a href="../tutorials/troubleshooting.html">Troubleshooting</a> — типичные сбои и их вывод в <code>SHOW</code>.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../tutorials/troubleshooting.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../observability/json-logging.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../tutorials/troubleshooting.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../observability/json-logging.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

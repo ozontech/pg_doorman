@@ -1,0 +1,311 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Pool Coordinator - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/concepts/pool-coordinator.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="pool-coordinator"><a class="header" href="#pool-coordinator">Pool Coordinator</a></h1>
+<p>Pool Coordinator ограничивает суммарное число backend-соединений к одной базе по всем пользователям пула, а при достижении лимита применяет приоритетное вытеснение. Это то, чем должен был стать <code>max_db_connections</code> в PgBouncer: справедливое применение лимита, резерв на короткие всплески и минимум на пользователя, защищающий критичные нагрузки.</p>
+<p>Эта страница объясняет концепцию и сценарии применения. Рецепты тюнинга и разбор вывода <code>SHOW POOL_COORDINATOR</code> смотрите в <a href="../tutorials/pool-pressure.html#%D0%A0%D0%B5%D0%B6%D0%B8%D0%BC-%D0%BA%D0%BE%D0%BE%D1%80%D0%B4%D0%B8%D0%BD%D0%B0%D1%82%D0%BE%D1%80%D0%B0-coordinator-mode">Пул под нагрузкой</a>.</p>
+<h2 id="Какую-задачу-решает"><a class="header" href="#Какую-задачу-решает">Какую задачу решает</a></h2>
+<p>Без координатора каждый user-пул независим. <code>pool_size</code> равный 40 у пяти пользователей означает до 200 backend-соединений — и PostgreSQL приходится бороться за свои собственные лимиты.</p>
+<p><code>max_db_connections</code> в PgBouncer ограничивает общую сумму, но блокирует новые запросы, как только лимит достигнут. Кто первым занял слоты, тот и удерживает их независимо от интенсивности использования, а медленные нагрузки никогда не уступают быстрым.</p>
+<p>Pool Coordinator в pg_doorman ограничивает сумму <strong>и</strong>:</p>
+<ul>
+<li><strong>Вытесняет</strong> idle-соединения у пользователей с переизбытком, когда другому пользователю нужно вырасти.</li>
+<li><strong>Ранжирует</strong> пользователей по p95 времени транзакции, чтобы медленные пулы отдавали слоты первыми. Пользователи с быстрыми запросами сохраняют преимущество переиспользования; пользователи с длинными транзакциями отдают первыми, потому что их соединения и так дольше простаивали.</li>
+<li><strong>Резервирует</strong> небольшое переполнение для коротких всплесков. Настраивается отдельно от основного лимита.</li>
+<li><strong>Гарантирует</strong> минимум на пользователя, который никогда не вытесняется. Критичные нагрузки сохраняют опору при конкуренции.</li>
+</ul>
+<h2 id="Когда-использовать"><a class="header" href="#Когда-использовать">Когда использовать</a></h2>
+<p>Включайте координатор, когда:</p>
+<ul>
+<li>На одной базе сосуществуют разные нагрузки, и нужен верхний предел числа backend-соединений (<code>max_connections</code> PostgreSQL, RAM, файловые дескрипторы).</li>
+<li>Одна нагрузка имеет всплеск нагрузки, и вы хотите, чтобы она забирала простаивающие слоты у других, не вытесняя их навсегда.</li>
+<li>Вы работаете рядом с потолком соединений PostgreSQL и нуждаетесь в справедливой деградации, а не в обслуживании по принципу «кто первый встал, того и тапки».</li>
+</ul>
+<p>Координатор <strong>не нужен</strong>, когда:</p>
+<ul>
+<li><code>pool_size</code> каждого пользователя достаточно мал, чтобы их сумма комфортно укладывалась в <code>max_connections</code> PostgreSQL.</li>
+<li>Нагрузки предсказуемы и заранее размечены.</li>
+<li>Вы хотите простоту уровня PgBouncer. <code>max_db_connections</code> без вытеснения поддерживается, но не рекомендуется для общих баз.</li>
+</ul>
+<h2 id="Конфигурация"><a class="header" href="#Конфигурация">Конфигурация</a></h2>
+<pre><code class="language-yaml">pools:
+  shared_db:
+    server_host: "127.0.0.1"
+    server_port: 5432
+    pool_mode: "transaction"
+
+    # Общий лимит на всех пользователей этого пула.
+    max_db_connections: 80
+
+    # Резерв сверх max_db_connections для коротких всплесков.
+    # Захватывается, только если в течение reserve_pool_timeout не нашлось idle-соединения.
+    reserve_pool_size: 16
+    reserve_pool_timeout: "3s"
+
+    # Страховка для пользователя: соединения никогда не вытесняются у него, даже под давлением.
+    # Сумма по пользователям должна быть &lt;= max_db_connections.
+    min_guaranteed_pool_size: 5
+
+    # Льготный период для вытеснения: соединения младше этого возраста не вытесняются.
+    # Защищает от колебания, когда нагрузка кратковременно простаивает.
+    min_connection_lifetime: "30s"
+
+    users:
+      - username: "fast_app"
+        password: "md5..."
+        pool_size: 40
+
+      - username: "batch_job"
+        password: "md5..."
+        pool_size: 60
+</code></pre>
+<p>Эффективный потолок: <code>max_db_connections + reserve_pool_size = 96</code>. Резерв поглощает доли секундные пики; если пик затягивается, включается вытеснение.</p>
+<h2 id="Как-выбирается-донор"><a class="header" href="#Как-выбирается-донор">Как выбирается донор</a></h2>
+<p>Когда пользователь запрашивает новый бэкенд, а лимит уже достигнут:</p>
+<ol>
+<li><strong>Найти кандидатов с idle-соединениями.</strong> Пользователь, у которого все соединения активны, не может стать донором — его работа в полёте.</li>
+<li><strong>Пропустить защищённых.</strong> Пользователь ниже <code>min_guaranteed_pool_size</code> исключается.</li>
+<li><strong>Пропустить недавно созданные соединения.</strong> Соединения младше <code>min_connection_lifetime</code> не вытесняются (это снижает колебание при коротких idle-промежутках).</li>
+<li><strong>Ранжировать по излишку.</strong> Пользователи с наибольшим числом idle-соединений сверх <code>min_guaranteed_pool_size</code> получают высший ранг.</li>
+<li><strong>Tiebreaker — p95 времени транзакции.</strong> Среди пулов с одинаковым излишком первым отдаёт медленный. Их соединения, скорее всего, простаивали потому, что следующий запрос ещё готовится на стороне приложения.</li>
+</ol>
+<p>Выбранное idle-соединение закрывается; запрашивающий пользователь получает свежее соединение из PostgreSQL.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p><code>SHOW POOL_COORDINATOR</code> показывает текущее состояние по каждой базе:</p>
+<pre><code>database    | max_db_conn | current | reserve_size | reserve_used | evictions | reserve_acq | exhaustions
+shared_db   | 80          | 78      | 16           | 2            | 142       | 18          | 0
+</code></pre>
+<ul>
+<li><code>evictions</code> быстро растёт — один пользователь голодает раз за разом. Поднимите <code>max_db_connections</code> или задайте этому пользователю <code>min_guaranteed_pool_size</code>.</li>
+<li><code>reserve_acq</code> высокий — всплески нормальны, но размер занижен; рассмотрите повышение <code>max_db_connections</code> вместо опоры на резерв.</li>
+<li><code>exhaustions</code> ненулевой — резерв тоже был полным. Клиенты упёрлись в <code>query_wait_timeout</code>, ожидая бэкенд. Поднимите лимит.</li>
+</ul>
+<p>Prometheus: <code>pg_doorman_pool_coordinator{type="..."}</code> (gauge) и <code>pg_doorman_pool_coordinator_total{type="evictions|reserve_acquisitions|exhaustions"}</code> (counter). Смотрите <a href="../observability/admin-commands.html">Команды администратора</a> и <a href="../reference/prometheus.html">Справочник Prometheus</a>.</p>
+<h2 id="Оговорки"><a class="header" href="#Оговорки">Оговорки</a></h2>
+<ul>
+<li>Координатор работает только внутри одного пула (одной базы). Кросс-пуловые / кросс-баз ограничения не поддерживаются.</li>
+<li>Вытеснение выбирает idle-соединения; пользователь, удерживающий все соединения в длинных транзакциях, не может стать донором, и другие пользователи могут голодать. Если ваша форма нагрузки именно такая — поднимите <code>max_db_connections</code> или разделите нагрузки.</li>
+<li><code>min_guaranteed_pool_size</code> — это нижняя граница для вытеснения, а не <code>min_pool_size</code> для прогрева. Эти соединения пул всё равно создаёт по требованию.</li>
+<li>Задавать <code>max_db_connections</code> без <code>min_guaranteed_pool_size</code> — это режим PgBouncer: работает, но мелкие пользователи голодают под давлением. Для общих баз всегда задавайте оба.</li>
+</ul>
+<h2 id="Куда-дальше"><a class="header" href="#Куда-дальше">Куда дальше</a></h2>
+<ul>
+<li>Как подобрать размер пула с разобранными примерами: <a href="../tutorials/pool-pressure.html#%D0%A1%D0%BE%D0%B3%D0%BB%D0%B0%D1%81%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5-%D0%BB%D0%B8%D0%BC%D0%B8%D1%82%D0%B0-%D1%81-postgresql">Пул под нагрузкой → Согласование лимита с PostgreSQL</a>.</li>
+<li>Тюнинг под нагрузкой: <a href="../tutorials/pool-pressure.html#%D0%9F%D0%B0%D1%80%D0%B0%D0%BC%D0%B5%D1%82%D1%80%D1%8B-%D1%82%D1%8E%D0%BD%D0%B8%D0%BD%D0%B3%D0%B0">Пул под нагрузкой → Параметры тюнинга</a>.</li>
+<li>Чтение вывода администратора: <a href="../observability/admin-commands.html">Команды администратора → SHOW POOL_COORDINATOR</a>.</li>
+<li>Режимы пула (транзакционный против сессионного): <a href="pool-modes.html">Режимы пула</a>.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../concepts/pool-modes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../concepts/pool-modes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>

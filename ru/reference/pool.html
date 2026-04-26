@@ -1,0 +1,446 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Настройки пула - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/reference/pool.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h2 id="Настройки-пула"><a class="header" href="#Настройки-пула">Настройки пула</a></h2>
+<p>Каждая запись в pool — это имя виртуальной базы данных, к которой может подключиться клиент pg-doorman.</p>
+<pre><code class="language-toml">[pools.exampledb] # Объявление базы данных 'exampledb'
+</code></pre>
+<h3 id="server_host"><a class="header" href="#server_host">server_host</a></h3>
+<p>Каталог с unix-сокетами или IPv4-адрес сервера PostgreSQL, обслуживающего этот пул.</p>
+<p>Пример: <code>"/var/run/postgresql"</code> или <code>"127.0.0.1"</code>.</p>
+<p>По умолчанию: <code>"127.0.0.1"</code>.</p>
+<h3 id="server_port"><a class="header" href="#server_port">server_port</a></h3>
+<p>Порт, через который сервер PostgreSQL принимает входящие соединения.</p>
+<p>По умолчанию: <code>5432</code>.</p>
+<h3 id="server_database"><a class="header" href="#server_database">server_database</a></h3>
+<p>Опциональный параметр, определяющий, к какой базе нужно подключаться на сервере PostgreSQL.</p>
+<h3 id="application_name"><a class="header" href="#application_name">application_name</a></h3>
+<p>Параметр application_name, отправляемый серверу при открытии соединения с PostgreSQL. Может быть полезен при настройке sync_server_parameters = false.</p>
+<h3 id="connect_timeout"><a class="header" href="#connect_timeout">connect_timeout</a></h3>
+<p>Максимальное время на установку нового серверного соединения для этого пула, в миллисекундах. Если не задано, используется глобальная настройка connect_timeout.</p>
+<p>По умолчанию: <code>None (uses global setting)</code>.</p>
+<h3 id="idle_timeout"><a class="header" href="#idle_timeout">idle_timeout</a></h3>
+<p>Закрывать idle-соединения в этом пуле, открытые дольше указанного значения, в миллисекундах. Если не задано, используется глобальная настройка idle_timeout.</p>
+<p>По умолчанию: <code>None (uses global setting)</code>.</p>
+<h3 id="server_lifetime"><a class="header" href="#server_lifetime">server_lifetime</a></h3>
+<p>Закрывать серверные соединения в этом пуле, открытые дольше указанного значения, в миллисекундах. Применяется только к idle-соединениям. Если не задано, используется глобальная настройка server_lifetime.</p>
+<p>По умолчанию: <code>None (uses global setting)</code>.</p>
+<h3 id="pool_mode"><a class="header" href="#pool_mode">pool_mode</a></h3>
+<p>Когда бэкенд-соединение возвращается в пул.
+<code>transaction</code>: освобождается после каждой транзакции. <code>session</code>: удерживается до отключения клиента.
+То же, что <code>pool_mode</code> в PgBouncer.</p>
+<p>По умолчанию: <code>"transaction"</code>.</p>
+<h3 id="log_client_parameter_status_changes"><a class="header" href="#log_client_parameter_status_changes">log_client_parameter_status_changes</a></h3>
+<p>Логировать информацию о любой команде SET в лог.</p>
+<p>По умолчанию: <code>false</code>.</p>
+<h3 id="cleanup_server_connections"><a class="header" href="#cleanup_server_connections">cleanup_server_connections</a></h3>
+<p>Управляет тем, сбрасывает ли pg_doorman состояние сессии при возврате соединения в пул.
+Когда параметр включён и сессия была изменена, pg_doorman отправляет: <code>RESET ROLE</code>, плюс при необходимости
+<code>RESET ALL</code> (если использовался SET), <code>DEALLOCATE ALL</code> (если использовался PREPARE), <code>CLOSE ALL</code>
+(если открывались курсоры). Замечание: <code>ROLLBACK</code> для открытых транзакций выполняется всегда, независимо
+от этой настройки. Отключайте только если ваше приложение никогда не использует SET, prepared statements
+или курсоры и вы хотите сэкономить roundtrip на очистке.</p>
+<p>По умолчанию: <code>true</code>.</p>
+<h3 id="scaling_warm_pool_ratio"><a class="header" href="#scaling_warm_pool_ratio">scaling_warm_pool_ratio</a></h3>
+<p>Переопределяет глобальный scaling_warm_pool_ratio для этого пула. Если не задано, используется глобальная настройка.</p>
+<h3 id="scaling_fast_retries"><a class="header" href="#scaling_fast_retries">scaling_fast_retries</a></h3>
+<p>Переопределяет глобальный scaling_fast_retries для этого пула. Если не задано, используется глобальная настройка.</p>
+<h3 id="max_db_connections"><a class="header" href="#max_db_connections">max_db_connections</a></h3>
+<p>Жёсткий потолок суммарного числа серверных соединений к этой базе, разделяемый между всеми
+пользовательскими пулами. При достижении лимита и запросе нового соединения координатор сначала
+пытается вытеснить idle-соединения у других пользователей (учитывая их <code>min_pool_size</code>), затем ждёт
+возврата соединения и наконец откатывается к резервному пулу. Установите <code>0</code> (или опустите), чтобы
+отключить координацию — каждый пользовательский пул работает независимо, ограниченный только своим
+<code>pool_size</code>. Аналог <code>max_db_connections</code> из PgBouncer.</p>
+<p>По умолчанию: <code>0 (disabled)</code>.</p>
+<h3 id="min_connection_lifetime"><a class="header" href="#min_connection_lifetime">min_connection_lifetime</a></h3>
+<p>Минимальный возраст (в миллисекундах), которого должно достичь соединение, прежде чем оно сможет быть
+вытеснено координатором пула. Предотвращает циклическое переподключение между пользовательскими пулами,
+разделяющими одну базу: без этого порога idle-слот одного пользователя становится доступен для вытеснения
+сразу же, как только сосед запрашивает разрешение, и под устойчивой многопользовательской нагрузкой
+каждый пул отбирает слот у соседа каждые несколько секунд. Имеет значение только при <code>max_db_connections &gt; 0</code>.</p>
+<p>По умолчанию: <code>30000 (30 seconds)</code>.</p>
+<h3 id="reserve_pool_size"><a class="header" href="#reserve_pool_size">reserve_pool_size</a></h3>
+<p>Число дополнительных соединений, разрешённых сверх <code>max_db_connections</code> в качестве крайней меры.
+Когда вытеснение не удаётся и соединения не возвращаются за <code>reserve_pool_timeout</code>, резервное
+соединение выдаётся запрашивающему с наивысшим приоритетом. Пользователи ниже своего <code>min_pool_size</code>
+получают абсолютный приоритет. Имеет значение только при <code>max_db_connections &gt; 0</code>.</p>
+<p>По умолчанию: <code>0</code>.</p>
+<h3 id="reserve_pool_timeout"><a class="header" href="#reserve_pool_timeout">reserve_pool_timeout</a></h3>
+<p>Сколько времени (в миллисекундах) ждать освобождения обычного соединения, прежде чем
+обратиться к резервному пулу. В этом окне координатор слушает возвраты соединений.
+Имеет значение только при <code>max_db_connections &gt; 0</code> и <code>reserve_pool_size &gt; 0</code>.</p>
+<p>По умолчанию: <code>3000 (3 seconds)</code>.</p>
+<h3 id="min_guaranteed_pool_size"><a class="header" href="#min_guaranteed_pool_size">min_guaranteed_pool_size</a></h3>
+<p>Дефолт уровня пула для минимального числа соединений на пользователя, защищённых от вытеснения
+координатором. Когда координатору нужно освободить слот соединения для другого пользователя,
+он не будет вытеснять соединения у пользователя, у которого их количество меньше или равно этому значению.</p>
+<p>Это отличается от <code>min_pool_size</code> (уровня пользователя): <code>min_pool_size</code> управляет прогревом
+и пополнением (проактивное создание соединений), тогда как <code>min_guaranteed_pool_size</code> влияет
+только на решения о вытеснении (никогда не создаёт соединения).</p>
+<p>Эффективная защита для пользователя — <code>max(user.min_pool_size, pool.min_guaranteed_pool_size)</code>.
+Установите <code>0</code> (или опустите), чтобы отключить защиту от вытеснения. Имеет значение только при <code>max_db_connections &gt; 0</code>.</p>
+<p>По умолчанию: <code>0 (no protection)</code>.</p>
+<h2 id="Настройки-auth_query"><a class="header" href="#Настройки-auth_query">Настройки auth_query</a></h2>
+<p>Секция <code>auth_query</code> включает динамическую аутентификацию пользователей через запрос учётных данных
+у базы PostgreSQL во время подключения. Это позволяет pg_doorman аутентифицировать пользователей
+без статического перечисления их в конфигурационном файле.</p>
+<pre><code class="language-yaml">pools:
+  mydb:
+    auth_query:
+      query: "SELECT passwd FROM pg_shadow WHERE usename = $1"
+      user: "doorman_auth"
+      password: "auth_password"
+</code></pre>
+<p>Существуют два режима работы:</p>
+<ul>
+<li><strong>Dedicated mode</strong> (задан <code>server_user</code>): все динамически аутентифицированные пользователи разделяют один пул соединений, который подключается к PostgreSQL как <code>server_user</code>. Это самая простая настройка, хорошо подходящая, когда всем пользователям нужен одинаковый бэкенд-доступ.</li>
+<li><strong>Passthrough mode</strong> (<code>server_user</code> не задан): каждый динамически аутентифицированный пользователь получает собственный пул соединений, подключающийся к PostgreSQL по его собственным учётным данным (MD5 pass-the-hash или SCRAM ClientKey passthrough). Это сохраняет идентичность каждого пользователя на бэкенде.</li>
+</ul>
+<p>Статические пользователи (определённые в секции <code>users</code>) всегда проверяются первыми. auth_query используется только когда имя пользователя не найдено среди статических.</p>
+<div id="admonition-Рекомендация-по-безопасности" class="admonition admonish-warning" role="note" aria-labelledby="admonition-Рекомендация-по-безопасности-title">
+<div class="admonition-title">
+<div id="admonition-Рекомендация-по-безопасности-title">
+<p>Рекомендация по безопасности</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Рекомендация-по-безопасности"></a>
+</div>
+<div>
+<p><code>user</code>, выполняющий auth-запросы, должен иметь доступ к хешам паролей (например, из <code>pg_shadow</code>). <strong>Не используйте суперпользователя</strong> для этой цели. Вместо этого создайте функцию <code>SECURITY DEFINER</code>, принадлежащую суперпользователю, и выделенную роль с минимальными привилегиями:</p>
+<pre><code class="language-sql">-- Создаём выделенную роль для auth-запросов
+CREATE ROLE doorman_auth LOGIN PASSWORD 'strong_password';
+
+-- Создаём функцию SECURITY DEFINER (выполняется с привилегиями владельца)
+CREATE OR REPLACE FUNCTION pg_doorman_get_auth(p_usename TEXT)
+RETURNS TABLE (usename name, passwd text)
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS
+$$
+  SELECT usename, passwd FROM pg_shadow WHERE usename = p_usename;
+$$;
+
+-- Выдаём execute только выделенной роли
+REVOKE ALL ON FUNCTION pg_doorman_get_auth(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pg_doorman_get_auth(TEXT) TO doorman_auth;
+</code></pre>
+<p>Затем используйте эту функцию в параметре <code>query</code>:</p>
+<pre><code class="language-yaml">auth_query:
+  query: "SELECT * FROM pg_doorman_get_auth($1)"
+  user: "doorman_auth"
+  password: "strong_password"
+</code></pre>
+</div>
+</div>
+<h3 id="query"><a class="header" href="#query">query</a></h3>
+<p>SQL-запрос для получения учётных данных. Должен возвращать колонку с именем <code>passwd</code> или <code>password</code>, содержащую MD5- или SCRAM-хеш. Если запрос возвращает ровно одну колонку, она используется независимо от имени. Любые лишние колонки игнорируются. В качестве плейсхолдера для имени пользователя используйте <code>$1</code>.</p>
+<p>Пример: <code>"SELECT passwd FROM pg_shadow WHERE usename = $1"</code></p>
+<h3 id="user"><a class="header" href="#user">user</a></h3>
+<p>Имя пользователя PostgreSQL для executor-соединения, выполняющего auth-запросы.</p>
+<h3 id="password"><a class="header" href="#password">password</a></h3>
+<p>Пароль executor-пользователя (открытым текстом). Может быть пустым, если сервер PostgreSQL использует аутентификацию <code>trust</code> для этого пользователя.</p>
+<p>По умолчанию: <code>""</code>.</p>
+<h3 id="database"><a class="header" href="#database">database</a></h3>
+<p>База для executor-соединений. Если не задана, используется имя пула.</p>
+<p>По умолчанию: <code>None (uses pool name)</code>.</p>
+<h3 id="workers"><a class="header" href="#workers">workers</a></h3>
+<p>Число постоянных соединений с PostgreSQL, выделенных под выполнение SQL <code>auth_query</code>.
+Эти соединения открываются при старте и поддерживаются живыми. Они обрабатывают только поиск
+учётных данных — клиентский трафик данных идёт через отдельные соединения пула данных (<code>pool_size</code>).
+Увеличьте, если видите всплески задержки auth при высокой частоте подключений.</p>
+<p>По умолчанию: <code>2</code>.</p>
+<h3 id="server_user"><a class="header" href="#server_user">server_user</a></h3>
+<p>Бэкенд-пользователь PostgreSQL для соединений с данными в dedicated mode. Когда задан, все динамически аутентифицированные пользователи разделяют один пул соединений, подключающийся под этим пользователем. Когда не задан, используется passthrough mode.</p>
+<p>По умолчанию: <code>None (passthrough mode)</code>.</p>
+<h3 id="server_password"><a class="header" href="#server_password">server_password</a></h3>
+<p>Пароль <code>server_user</code> открытым текстом. Имеет смысл только когда задан <code>server_user</code>.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="pool_size"><a class="header" href="#pool_size">pool_size</a></h3>
+<p>Максимальное число бэкенд-соединений на каждый пул данных, создаваемый auth_query.
+Та же концепция, что и <code>users[].pool_size</code> для статически заданных пользователей.
+Сколько пулов будет создано, зависит от режима: <code>server_user</code> определяет, разделяют ли
+все динамические пользователи один пул или у каждого свой.</p>
+<p>По умолчанию: <code>40</code>.</p>
+<h3 id="min_pool_size"><a class="header" href="#min_pool_size">min_pool_size</a></h3>
+<p>Минимальное число бэкенд-соединений, поддерживаемое в каждом пуле динамического пользователя в passthrough mode. Соединения прогреваются при первом создании пула и пополняются циклом retain. Установите <code>0</code>, чтобы отключить (по умолчанию). Замечание: пулы с <code>min_pool_size &gt; 0</code> никогда не подвергаются garbage collection, и общее число бэкенд-соединений масштабируется как <code>active_users × min_pool_size</code>.</p>
+<p>По умолчанию: <code>0</code>.</p>
+<h3 id="cache_ttl"><a class="header" href="#cache_ttl">cache_ttl</a></h3>
+<p>Максимальное время жизни кеша для успешно полученных учётных данных. Принимает строки продолжительности вроде <code>"1h"</code>, <code>"30m"</code>, <code>"300s"</code>.</p>
+<p>По умолчанию: <code>"1h"</code>.</p>
+<h3 id="cache_failure_ttl"><a class="header" href="#cache_failure_ttl">cache_failure_ttl</a></h3>
+<p>TTL кеша для записей «пользователь не найден» (negative cache). Предотвращает повторные запросы для несуществующих пользователей.</p>
+<p>По умолчанию: <code>"30s"</code>.</p>
+<h3 id="min_interval"><a class="header" href="#min_interval">min_interval</a></h3>
+<p>Минимальный интервал между повторными запросами для одного и того же имени пользователя после неудачной аутентификации. Защищает бэкенд от избыточных запросов при попытках перебора.</p>
+<p>По умолчанию: <code>"1s"</code>.</p>
+<h2 id="Настройки-пользователей-пула"><a class="header" href="#Настройки-пользователей-пула">Настройки пользователей пула</a></h2>
+<pre><code class="language-toml">[pools.exampledb.users.0]
+username = "exampledb-user-0" # Виртуальный пользователь, который может подключаться к этой виртуальной базе.
+</code></pre>
+<h3 id="username"><a class="header" href="#username">username</a></h3>
+<p>Имя пользователя, под которым клиенты подключаются к этому пулу. Должно быть уникальным в рамках пула.</p>
+<h3 id="password-1"><a class="header" href="#password-1">password</a></h3>
+<p>Верификатор пароля для аутентификации клиента. Поддерживает форматы MD5, SCRAM-SHA-256 и JWT.
+Хеши паролей можно скопировать напрямую из PostgreSQL: <code>SELECT usename, passwd FROM pg_shadow</code>.</p>
+<h3 id="auth_pam_service"><a class="header" href="#auth_pam_service">auth_pam_service</a></h3>
+<p>PAM-сервис, отвечающий за авторизацию клиента. В этом случае pg_doorman игнорирует значение <code>password</code>.</p>
+<h3 id="server_username"><a class="header" href="#server_username">server_username</a></h3>
+<p>Реальное имя пользователя PostgreSQL, используемое для подключения к серверу базы.</p>
+<p>По умолчанию PgDoorman использует одно и то же <code>username</code> и для аутентификации клиента, и для серверных соединений, применяя <strong>passthrough authentication</strong>: криптографический материал из аутентификации клиента (MD5-хеш или SCRAM ClientKey) переиспользуется для аутентификации на бэкенде. Это устраняет потребность в <code>server_password</code> открытым текстом.</p>
+<p><strong>Passthrough mode</strong> (рекомендуется для пользователей с совпадающей идентичностью):</p>
+<ul>
+<li>Опустите и <code>server_username</code>, и <code>server_password</code></li>
+<li>pg_doorman переиспользует доказательство аутентификации клиента для подключения к PostgreSQL</li>
+<li>Для MD5: хеш из <code>password</code> используется напрямую</li>
+<li>Для SCRAM: ClientKey извлекается из первой SCRAM-аутентификации клиента и кешируется</li>
+<li>Требование: верификатор <code>password</code> должен совпадать с <code>pg_authid</code> на бэкенде (та же соль/итерации для SCRAM, тот же хеш для MD5)</li>
+</ul>
+<p><strong>Explicit credentials mode</strong> (когда идентичности различаются):</p>
+<ul>
+<li>Установите <code>server_username</code> и <code>server_password</code> в реальные учётные данные PostgreSQL</li>
+<li><code>server_password</code> требует, чтобы <code>server_username</code> был задан</li>
+<li><code>server_username</code> без <code>server_password</code> допустим для аутентификации trust</li>
+</ul>
+<h3 id="server_password-1"><a class="header" href="#server_password-1">server_password</a></h3>
+<p>Пароль открытым текстом для серверного пользователя PostgreSQL, указанного в <code>server_username</code>.</p>
+<p>Когда <code>server_password</code> не задан и пользователь имеет право на passthrough (нет <code>server_username</code> или <code>server_username</code> равен <code>username</code>), PgDoorman использует passthrough authentication: криптографический материал из аутентификации клиента переиспользуется для бэкенд-соединения. Это убирает пароли открытым текстом из конфигурационных файлов.</p>
+<p><code>server_password</code> требует, чтобы <code>server_username</code> был задан.</p>
+<h3 id="pool_size-1"><a class="header" href="#pool_size-1">pool_size</a></h3>
+<p>Максимальное число бэкенд-соединений с PostgreSQL для этого пользователя. В transaction mode соединения разделяются между клиентами, поэтому это значение обычно намного меньше числа клиентов. Аналог <code>default_pool_size</code> из PgBouncer, но настраивается per-user, а не глобально.</p>
+<p>По умолчанию: <code>40</code>.</p>
+<h3 id="min_pool_size-1"><a class="header" href="#min_pool_size-1">min_pool_size</a></h3>
+<p>Минимальное число соединений, поддерживаемое в пуле для этого пользователя. Соединения прогреваются при старте (до первого цикла retain) и затем поддерживаются периодическим пополнением. Если задано, должно быть меньше или равно pool_size.</p>
+<p>По умолчанию: <code>None</code>.</p>
+<h3 id="server_lifetime-1"><a class="header" href="#server_lifetime-1">server_lifetime</a></h3>
+<p>Закрывать серверные соединения для этого пользователя, открытые дольше указанного значения, в миллисекундах. Применяется только к idle-соединениям. Если не задано, используется настройка server_lifetime пула.</p>
+<p>По умолчанию: <code>None (uses pool setting)</code>.</p>
+<div id="admonition-passthrough-authentication" class="admonition admonish-info" role="note" aria-labelledby="admonition-passthrough-authentication-title">
+<div class="admonition-title">
+<div id="admonition-passthrough-authentication-title">
+<p>Passthrough Authentication</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-passthrough-authentication"></a>
+</div>
+<div>
+<p>По умолчанию PgDoorman использует <strong>passthrough authentication</strong>: криптографическое доказательство клиента (MD5-хеш или SCRAM ClientKey) автоматически переиспользуется для аутентификации в PostgreSQL. Пароли открытым текстом в конфиге не нужны.</p>
+<p>Задавайте <code>server_username</code> и <code>server_password</code> <strong>только</strong> когда бэкенд-пользователь PostgreSQL отличается от имени пользователя пула (например, переопределение имени пользователя или JWT-аутентификация):</p>
+<pre><code class="language-yaml">users:
+  - username: "app_user"              # имя для клиента
+    password: "md5..."                # хеш для аутентификации клиента
+    server_username: "pg_app_user"    # другой бэкенд-пользователь PostgreSQL
+    server_password: "plaintext_pwd"  # пароль открытым текстом для этого пользователя
+</code></pre>
+</div>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/general.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/prometheus.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/general.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/prometheus.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>
