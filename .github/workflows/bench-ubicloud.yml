@@ -17,13 +17,6 @@ on:
           - standard-16
           - standard-30
           - standard-60
-      vm_location:
-        description: 'Ubicloud location'
-        required: false
-        default: 'eu-central-h1'
-        type: choice
-        options:
-          - eu-central-h1
       bench_duration:
         description: 'Seconds per pgbench run'
         required: false
@@ -36,10 +29,6 @@ on:
         description: 'pgbench -j for c40/c120/c500/c10000 (c1 stays at 1)'
         required: false
         default: '4'
-      storage_gib:
-        description: 'VM storage size (GiB)'
-        required: false
-        default: '80'
       create_pr:
         description: 'Open a PR with the new benchmarks.md (uncheck for smoke runs)'
         required: false
@@ -73,23 +62,28 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           SIZE: ${{ inputs.vm_size }}
-          STORAGE: ${{ inputs.storage_gib }}
         run: |
           set -euo pipefail
           VM_NAME="bench-${{ github.run_id }}-${{ github.run_attempt }}"
           BODY=$(jq -n \
             --arg pk "$PUBKEY" \
             --arg size "$SIZE" \
-            --argjson storage "$STORAGE" \
-            '{public_key:$pk, size:$size, unix_user:"ubuntu", enable_ip4:true, storage_size_gib:$storage}')
-          RESP=$(curl -fsS -X POST \
+            '{public_key:$pk, size:$size, unix_user:"ubuntu", enable_ip4:true}')
+          # Capture body and HTTP code so a failure surfaces the API's
+          # validation message instead of a bare curl exit code.
+          CODE=$(curl -sS -o /tmp/vm-create.json -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "$BODY" \
             "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$VM_NAME")
-          VM_ID=$(echo "$RESP" | jq -r '.id')
+          if [[ "$CODE" != "200" && "$CODE" != "201" ]]; then
+            echo "VM create failed: HTTP $CODE"
+            cat /tmp/vm-create.json
+            exit 1
+          fi
+          VM_ID=$(jq -r '.id' /tmp/vm-create.json)
           echo "VM created: id=$VM_ID name=$VM_NAME"
           echo "vm_name=$VM_NAME" >> "$GITHUB_OUTPUT"
           echo "vm_id=$VM_ID" >> "$GITHUB_OUTPUT"
@@ -99,7 +93,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
         run: |
           set -euo pipefail
@@ -258,7 +252,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
           PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: ${{ inputs.vm_location }}
+          LOCATION: eu-central-h1
           VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
         run: |
           curl -sS -w 'HTTP:%{http_code}\n' -X DELETE \
@@ -300,6 +294,6 @@ jobs:
           # Create Pull Request to master
           gh pr create \
             --title "Update Ubicloud benchmark results" \
-            --body "Automated benchmark results from Ubicloud (${{ inputs.vm_size }}, ${{ inputs.vm_location }}). This PR updates the benchmark comparison table in documentation/en/src/benchmarks.md." \
+            --body "Automated benchmark results from Ubicloud (${{ inputs.vm_size }}, eu-central-h1). This PR updates the benchmark comparison table in documentation/en/src/benchmarks.md." \
             --base "master" \
             --head "$BRANCH_NAME"
