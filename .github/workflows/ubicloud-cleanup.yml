@@ -1,0 +1,94 @@
+name: Ubicloud Cleanup
+
+permissions:
+  contents: read
+
+# Manual emergency cleanup. Lists every VM in the project whose name starts
+# with the given prefix and deletes them when confirm_delete=true. Useful when
+# a benchmark run leaves a VM behind (runner crash, cancelled job, etc.) so
+# nothing keeps billing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      vm_location:
+        description: 'Ubicloud location to scan'
+        required: false
+        default: 'eu-central-h1'
+        type: choice
+        options:
+          - eu-central-h1
+      name_prefix:
+        description: 'Only touch VMs whose name starts with this'
+        required: false
+        default: 'bench-'
+      confirm_delete:
+        description: 'Actually delete (false = dry-run, only list)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  UBICLOUD_API: https://api.ubicloud.com
+
+jobs:
+  cleanup:
+    name: Cleanup Ubicloud VMs (${{ inputs.name_prefix }}*)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: List matching VMs
+        id: list
+        env:
+          TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
+          PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
+          LOCATION: ${{ inputs.vm_location }}
+          PREFIX: ${{ inputs.name_prefix }}
+        run: |
+          set -euo pipefail
+          RESP=$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+            "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm")
+          echo "All VMs in $LOCATION:"
+          echo "$RESP" | jq -r '.items[] | "  \(.name)\t\(.state)\t\(.size)\tip4=\(.ip4 // "-")"'
+          echo
+          NAMES=$(echo "$RESP" | jq -r --arg p "$PREFIX" '.items[] | select(.name | startswith($p)) | .name')
+          if [ -z "$NAMES" ]; then
+            echo "No VMs match prefix '$PREFIX'."
+          else
+            echo "Matched (prefix '$PREFIX'):"
+            echo "$NAMES" | sed 's/^/  /'
+          fi
+          {
+            echo "names<<EOF"
+            echo "$NAMES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Delete matching VMs
+        if: inputs.confirm_delete == true && steps.list.outputs.names != ''
+        env:
+          TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
+          PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
+          LOCATION: ${{ inputs.vm_location }}
+          NAMES: ${{ steps.list.outputs.names }}
+        run: |
+          set -uo pipefail
+          fail=0
+          while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            CODE=$(curl -sS -o /tmp/del.body -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer $TOKEN" \
+              "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$name" || echo curl_err)
+            if [[ "$CODE" =~ ^2 ]]; then
+              echo "deleted: $name (HTTP $CODE)"
+            else
+              echo "FAILED: $name (HTTP $CODE) :: $(cat /tmp/del.body)"
+              fail=1
+            fi
+          done <<< "$NAMES"
+          exit "$fail"
+
+      - name: Dry-run notice
+        if: inputs.confirm_delete == false
+        run: |
+          echo "DRY-RUN — set 'confirm_delete' to true and re-run to actually delete."
