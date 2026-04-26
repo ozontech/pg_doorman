@@ -40,6 +40,11 @@ on:
         description: 'VM storage size (GiB)'
         required: false
         default: '80'
+      create_pr:
+        description: 'Open a PR with the new benchmarks.md (uncheck for smoke runs)'
+        required: false
+        default: true
+        type: boolean
 
 env:
   UBICLOUD_API: https://api.ubicloud.com
@@ -145,7 +150,7 @@ jobs:
             ubuntu@"$IP" \
             'sudo mkdir -p /workspace && sudo chown "$USER" /workspace && tar -C /workspace -xf /tmp/source.tar'
 
-      - name: Run setup-and-run-bench.sh on VM
+      - name: Launch benchmark on VM (detached)
         env:
           IP: ${{ steps.wait_vm.outputs.ip }}
           BENCH_DURATION: ${{ inputs.bench_duration }}
@@ -153,20 +158,65 @@ jobs:
           PGBENCH_JOBS: ${{ inputs.pgbench_jobs }}
         run: |
           set -euo pipefail
-          # The script requires root (apt, initdb, runuser).
+          # The bench can run for hours, so we don't keep ssh open. The wrapper
+          # records its own exit code into /tmp/bench.rc and the next step polls
+          # for that file. If the runner crashes, the VM keeps going.
           ssh -i /tmp/bench_key \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=60 -o ServerAliveCountMax=30 \
-            ubuntu@"$IP" \
-            "sudo WORKSPACE=/workspace \
-                 BENCH_DURATION=$BENCH_DURATION \
-                 BENCH_DOORMAN_WORKERS=$WORKERS \
-                 BENCH_ODYSSEY_WORKERS=$WORKERS \
-                 BENCH_PGBENCH_JOBS_C40=$PGBENCH_JOBS \
-                 BENCH_PGBENCH_JOBS_C120=$PGBENCH_JOBS \
-                 BENCH_PGBENCH_JOBS_C500=$PGBENCH_JOBS \
-                 BENCH_PGBENCH_JOBS_C10000=$PGBENCH_JOBS \
-                 bash /workspace/benches/setup-and-run-bench.sh"
+            -o ConnectTimeout=10 \
+            ubuntu@"$IP" "bash -s" <<EOF
+          set -euo pipefail
+          cat > /tmp/bench-wrap.sh <<'WRAP'
+          #!/bin/bash
+          sudo WORKSPACE=/workspace \\
+               BENCH_DURATION=$BENCH_DURATION \\
+               BENCH_DOORMAN_WORKERS=$WORKERS \\
+               BENCH_ODYSSEY_WORKERS=$WORKERS \\
+               BENCH_PGBENCH_JOBS_C40=$PGBENCH_JOBS \\
+               BENCH_PGBENCH_JOBS_C120=$PGBENCH_JOBS \\
+               BENCH_PGBENCH_JOBS_C500=$PGBENCH_JOBS \\
+               BENCH_PGBENCH_JOBS_C10000=$PGBENCH_JOBS \\
+               bash /workspace/benches/setup-and-run-bench.sh > /tmp/bench.out 2>&1
+          echo \$? > /tmp/bench.rc
+          WRAP
+          chmod +x /tmp/bench-wrap.sh
+          rm -f /tmp/bench.rc /tmp/bench.out
+          nohup /tmp/bench-wrap.sh < /dev/null > /tmp/bench-wrap.log 2>&1 &
+          disown
+          echo "launched bench-wrap.sh on \$(hostname), pid \$!"
+          EOF
+
+      - name: Wait for benchmark to finish
+        env:
+          IP: ${{ steps.wait_vm.outputs.ip }}
+        run: |
+          set -uo pipefail
+          # Poll once a minute for up to 5 hours. Each cycle prints the tail
+          # of bench.out so progress is visible in the Actions UI.
+          MAX_CYCLES=300
+          for i in $(seq 1 $MAX_CYCLES); do
+            echo "==== poll #$i (elapsed $((i-1)) min) ===="
+            OUT=$(ssh -i /tmp/bench_key \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=10 -o LogLevel=ERROR \
+              ubuntu@"$IP" "
+                if [ -f /tmp/bench.rc ]; then
+                  echo BENCH_DONE_RC=\$(cat /tmp/bench.rc)
+                fi
+                echo '--- tail bench.out ---'
+                tail -n 20 /tmp/bench.out 2>/dev/null || echo '(no bench.out yet)'
+              " 2>&1) || { echo "ssh poll failed; retrying"; sleep 60; continue; }
+            echo "$OUT"
+            if echo "$OUT" | grep -q '^BENCH_DONE_RC='; then
+              RC=$(echo "$OUT" | sed -nE 's/BENCH_DONE_RC=([0-9]+).*/\1/p' | head -1)
+              echo "benchmark finished with rc=$RC after $((i-1)) min"
+              [[ "$RC" == "0" ]] || exit 1
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "benchmark did not finish in $MAX_CYCLES minutes"
+          exit 1
 
       - name: Download bench-results.tar.gz
         id: download
@@ -216,7 +266,7 @@ jobs:
             "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$VM_NAME" || true
 
       - name: Create PR with benchmarks.md
-        if: steps.download.outputs.got_tarball == 'true'
+        if: steps.download.outputs.got_tarball == 'true' && inputs.create_pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
