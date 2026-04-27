@@ -1,6 +1,6 @@
 # JSON Structured Logging
 
-PgDoorman emits structured JSON logs when run with `--log-format Structured`. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.
+PgDoorman emits structured JSON logs when run with `--log-format structured`. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.
 
 ## Enabling
 
@@ -8,16 +8,16 @@ Three equivalent ways:
 
 ```bash
 # Command line flag
-pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
 
 # Long form
-pg_doorman --log-format Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman --log-format structured /etc/pg_doorman/pg_doorman.yaml
 
 # Environment variable
-LOG_FORMAT=Structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
+LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
-The default is `Text` (human-readable). The `--log-format` flag accepts `Text`, `Structured`, or `Debug`; the last is currently an alias for `Text`.
+The default is `text` (human-readable). The `--log-format` flag accepts `text`, `structured`, or `debug`; the last is currently an alias for `text`.
 
 ## Output
 

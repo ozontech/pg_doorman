@@ -1,6 +1,6 @@
 # Структурированное JSON-логирование
 
-pg_doorman пишет структурированные JSON-логи при запуске с `--log-format Structured`. Каждая строка — самодостаточный JSON-объект с timestamp, уровнем, местом в исходниках и сообщением, готовый к приёму в Loki, Elasticsearch, Datadog или любой пайплайн логов, ожидающий JSON.
+pg_doorman пишет структурированные JSON-логи при запуске с `--log-format structured`. Каждая строка — самодостаточный JSON-объект с timestamp, уровнем, местом в исходниках и сообщением, готовый к приёму в Loki, Elasticsearch, Datadog или любой пайплайн логов, ожидающий JSON.
 
 ## Включение
 
@@ -8,16 +8,16 @@ pg_doorman пишет структурированные JSON-логи при з
 
 ```bash
 # Флаг командной строки
-pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
 
 # Длинная форма
-pg_doorman --log-format Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman --log-format structured /etc/pg_doorman/pg_doorman.yaml
 
 # Переменная окружения
-LOG_FORMAT=Structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
+LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
-По умолчанию — `Text` (человекочитаемый). Флаг `--log-format` принимает значения `Text`, `Structured` или `Debug`; последнее на данный момент является алиасом для `Text`.
+По умолчанию — `text` (человекочитаемый). Флаг `--log-format` принимает значения `text`, `structured` или `debug`; последнее на данный момент является алиасом для `text`.
 
 ## Формат вывода
 
