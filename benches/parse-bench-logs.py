@@ -271,6 +271,14 @@ def compute_tldr(groups: dict[tuple, dict[str, dict]]) -> list[str]:
 
 def parse_test(name: str, src: Path) -> dict:
     rec = parse_pgbench_stdout((src / f"{name}.log").read_text(errors="replace"))
+    # Prefer the JSON summary written by compute_percentiles.py on the bench
+    # host — it lets the workflow ship a tiny tarball instead of gigabytes of
+    # raw pgbench --log ASCII. Fall back to scanning the raw files so older
+    # tarballs (or runs where compute_percentiles.py failed) still parse.
+    pct_file = src / f"{name}_percentiles.json"
+    if pct_file.exists():
+        rec.update(json.loads(pct_file.read_text()))
+        return rec
     latencies_us: list[float] = []
     for f in src.glob(f"{name}_pgbenchlog.*"):
         for line in f.read_text(errors="replace").splitlines():
