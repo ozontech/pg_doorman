@@ -129,6 +129,21 @@ def format_latency_triplet(rec: dict | None) -> str:
     return f"{p50:.2f} / {p95:.2f} / {p99:.2f}"
 
 
+def format_p99_ms(rec: dict | None) -> str:
+    """Single p99 value with adaptive precision: <10ms gets 2 decimals,
+    larger gets 1 decimal (numbers stay readable across 0.04 → 1500 range)."""
+    if not rec:
+        return "-"
+    p99 = rec.get("p99_ms")
+    if p99 is None:
+        return "-"
+    if p99 < 10:
+        return f"{p99:.2f}"
+    if p99 < 100:
+        return f"{p99:.1f}"
+    return f"{p99:.0f}"
+
+
 def parse_iso8601_z(value: str | None) -> datetime | None:
     """Accept '2026-04-27T05:14:44Z' or with offset; return tz-aware datetime."""
     if not value:
@@ -323,9 +338,9 @@ LEGEND = [
     "| N/A | Competitor was not measured for this row |",
     "| - | Not measured for either pooler |",
     "",
-    "**Latency** — per-transaction in ms, `p50 / p95 / p99` per cell. Lower is",
-    "better. Compare the same column across rows for one pooler, or across",
-    "columns at one row for head-to-head.",
+    "**Latency** — per-transaction p99 in ms, one number per pooler. Lower is",
+    "better. Full p50/p95/p99 series live in the raw `pgbench --log` files",
+    "shipped alongside this report.",
     "",
 ]
 
@@ -374,11 +389,14 @@ def _emit_throughput_table(proto_groups: dict[tuple, dict]) -> list[str]:
 
 
 def _emit_latency_table(proto_groups: dict[tuple, dict]) -> list[str]:
+    """Headline p99 latency in ms, one number per pooler. The full p50/p95/p99
+    breakdown lives in the raw tarball — three numbers per cell made the
+    side-by-side comparison unreadable."""
     out = [
-        "### Latency — p50 / p95 / p99 (ms)",
+        "### p99 latency (ms, lower is better)",
         "",
-        "| Test | pg_doorman (ms) | pgbouncer (ms) | odyssey (ms) |",
-        "|------|----------------|----------------|--------------|",
+        "| Test | pg_doorman | pgbouncer | odyssey |",
+        "|------|---:|---:|---:|",
     ]
     for ssl, conn in MODE_ORDER:
         for c in CLIENT_ORDER:
@@ -389,9 +407,9 @@ def _emit_latency_table(proto_groups: dict[tuple, dict]) -> list[str]:
             label = row_label(c, mode_label(ssl, conn))
             out.append(
                 f"| {label} | "
-                f"{format_latency_triplet(row.get('pg_doorman'))} | "
-                f"{format_latency_triplet(row.get('pgbouncer'))} | "
-                f"{format_latency_triplet(row.get('odyssey'))} |"
+                f"{format_p99_ms(row.get('pg_doorman'))} | "
+                f"{format_p99_ms(row.get('pgbouncer'))} | "
+                f"{format_p99_ms(row.get('odyssey'))} |"
             )
     return out
 

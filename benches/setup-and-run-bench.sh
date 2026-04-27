@@ -464,6 +464,10 @@ write_metadata() {
 main() {
   trap cleanup EXIT
 
+  # Capture start before any work so write_metadata's wall-clock is real;
+  # write_metadata stamps finished_at minutes-to-hours later.
+  SCRIPT_STARTED_AT=$(date -u +%FT%TZ)
+
   # The pgbench/parent shell only needs enough FDs to open log files and
   # spawn timeout/pgbench; per-service limits are set by chpst -o in the run
   # scripts.

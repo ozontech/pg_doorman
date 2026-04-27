@@ -161,6 +161,27 @@ class FormatLatencyTriplet(unittest.TestCase):
         self.assertEqual(P.format_latency_triplet(None), "-")
 
 
+class FormatP99Ms(unittest.TestCase):
+    def test_sub_10_two_decimals(self):
+        self.assertEqual(P.format_p99_ms({"p99_ms": 0.08}), "0.08")
+        self.assertEqual(P.format_p99_ms({"p99_ms": 9.99}), "9.99")
+
+    def test_under_100_one_decimal(self):
+        self.assertEqual(P.format_p99_ms({"p99_ms": 44.3}), "44.3")
+        # Python's banker's rounding pushes 99.95 to 100.0; pick 99.4 to test
+        # the <100 branch unambiguously.
+        self.assertEqual(P.format_p99_ms({"p99_ms": 99.4}), "99.4")
+
+    def test_over_100_no_decimals(self):
+        self.assertEqual(P.format_p99_ms({"p99_ms": 286.4}), "286")
+        self.assertEqual(P.format_p99_ms({"p99_ms": 1500.7}), "1501")
+
+    def test_missing(self):
+        self.assertEqual(P.format_p99_ms(None), "-")
+        self.assertEqual(P.format_p99_ms({}), "-")
+        self.assertEqual(P.format_p99_ms({"p99_ms": None}), "-")
+
+
 class ModeAndRowLabels(unittest.TestCase):
     def test_mode_label(self):
         self.assertEqual(P.mode_label(False, False), "")
