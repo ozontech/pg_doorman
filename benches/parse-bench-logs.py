@@ -129,19 +129,50 @@ def format_latency_triplet(rec: dict | None) -> str:
     return f"{p50:.2f} / {p95:.2f} / {p99:.2f}"
 
 
-def format_p99_ms(rec: dict | None) -> str:
-    """Single p99 value with adaptive precision: <10ms gets 2 decimals,
-    larger gets 1 decimal (numbers stay readable across 0.04 → 1500 range)."""
+def _ms_str(value: float | None) -> str:
+    """Adaptive precision for ms values: <10ms → 2 decimals, <100 → 1, else 0.
+    Keeps a column aligned over the 0.04 → 1500 range."""
+    if value is None:
+        return "-"
+    if value < 10:
+        return f"{value:.2f}"
+    if value < 100:
+        return f"{value:.1f}"
+    return f"{value:.0f}"
+
+
+def format_ms(rec: dict | None, key: str) -> str:
     if not rec:
         return "-"
-    p99 = rec.get("p99_ms")
-    if p99 is None:
+    return _ms_str(rec.get(key))
+
+
+def format_p50_p99(rec: dict | None) -> str:
+    """`<p50> / <p99>` ms for one pooler in one row. Lets the reader see the
+    median next to the tail without three separate tables."""
+    if not rec:
         return "-"
-    if p99 < 10:
-        return f"{p99:.2f}"
-    if p99 < 100:
-        return f"{p99:.1f}"
-    return f"{p99:.0f}"
+    p50 = rec.get("p50_ms")
+    p99 = rec.get("p99_ms")
+    if p50 is None or p99 is None:
+        return "-"
+    return f"{_ms_str(p50)} / {_ms_str(p99)}"
+
+
+def format_spread(rec: dict | None) -> str:
+    """`p99 / p50` as a multiplier — how far the slowest 1% drifts from
+    typical. 1.0× = no tail; 100× = the tail dwarfs the median (the
+    'Tail at Scale' regime where fanout latency hits users)."""
+    if not rec:
+        return "-"
+    p50 = rec.get("p50_ms")
+    p99 = rec.get("p99_ms")
+    if p50 is None or p99 is None or p50 <= 0:
+        return "-"
+    ratio = p99 / p50
+    if ratio < 10:
+        return f"{ratio:.1f}×"
+    return f"{ratio:.0f}×"
 
 
 def parse_iso8601_z(value: str | None) -> datetime | None:
@@ -210,22 +241,26 @@ def compute_tldr(groups: dict[tuple, dict[str, dict]]) -> list[str]:
                 f"- **vs {other}** — within ±3% on steady-state simple/extended/prepared workloads."
             )
 
-    # Latency under load: simple protocol, 10k clients, no SSL/Reconnect.
+    # Tail spread under load: simple protocol, 10k clients, no SSL/Reconnect.
+    # This is pg_doorman's headline: tight p99/p50 ratio while competitors'
+    # tails drift orders of magnitude above their median.
     key = ("simple", False, False, 10000)
     if key in groups:
         row = groups[key]
-        rows = []
+        spreads = []
         for pooler in ("pg_doorman", "pgbouncer", "odyssey"):
-            p99 = (row.get(pooler) or {}).get("p99_ms")
-            if p99 is not None:
-                rows.append((pooler, p99))
-        if rows:
-            rows.sort(key=lambda x: x[1])
-            best_pooler, best_p99 = rows[0]
-            tail = ", ".join(f"{name} {p99:.0f}ms" for name, p99 in rows[1:])
+            r = row.get(pooler) or {}
+            p50, p99 = r.get("p50_ms"), r.get("p99_ms")
+            if p50 and p99 and p50 > 0:
+                spreads.append((pooler, p99 / p50, p50, p99))
+        if spreads:
+            parts = []
+            for name, ratio, p50, p99 in spreads:
+                ratio_str = f"{ratio:.1f}×" if ratio < 10 else f"{ratio:.0f}×"
+                parts.append(f"{name} {ratio_str} ({_ms_str(p50)}→{_ms_str(p99)}ms)")
             bullets.append(
-                f"- **Tail latency at 10 000 simple-protocol clients** — "
-                f"{best_pooler} **p99 {best_p99:.0f}ms** (others: {tail})."
+                "- **Tail spread at 10 000 simple-protocol clients** "
+                "(`p99/p50`, lower = more predictable) — " + ", ".join(parts) + "."
             )
 
     return bullets
@@ -338,9 +373,15 @@ LEGEND = [
     "| N/A | Competitor was not measured for this row |",
     "| - | Not measured for either pooler |",
     "",
-    "**Latency** — per-transaction p99 in ms, one number per pooler. Lower is",
-    "better. Full p50/p95/p99 series live in the raw `pgbench --log` files",
-    "shipped alongside this report.",
+    "**Latency** — per-transaction in ms. Each row shows `p50 / p99` for",
+    "every pooler plus the **spread** (`p99 / p50`): how far the slowest 1%",
+    "drifts from the median. `1.0×` means the tail equals the median;",
+    "`100×` means the worst 1% takes two orders of magnitude longer than a",
+    "typical request — the regime where fanout latency starts hitting users",
+    "([Dean & Barroso, 2013](https://www.barroso.org/publications/TheTailAtScale.pdf)).",
+    "Watch the spread column to see whether tail latency stays bounded as",
+    "the client count grows. Full p95 series ships in the raw",
+    "`pgbench --log` files in the artifact tarball.",
     "",
 ]
 
@@ -389,14 +430,16 @@ def _emit_throughput_table(proto_groups: dict[tuple, dict]) -> list[str]:
 
 
 def _emit_latency_table(proto_groups: dict[tuple, dict]) -> list[str]:
-    """Headline p99 latency in ms, one number per pooler. The full p50/p95/p99
-    breakdown lives in the raw tarball — three numbers per cell made the
-    side-by-side comparison unreadable."""
+    """Single table with `p50 / p99` and `p99/p50` spread per pooler.
+
+    The spread column is the headline — it shows how far the tail drifts
+    from the median. p95 lives in the raw `pgbench --log` files.
+    """
     out = [
-        "### p99 latency (ms, lower is better)",
+        "### Latency (ms; spread = p99 / p50)",
         "",
-        "| Test | pg_doorman | pgbouncer | odyssey |",
-        "|------|---:|---:|---:|",
+        "| Test | pg_doorman p50/p99 | spread | pgbouncer p50/p99 | spread | odyssey p50/p99 | spread |",
+        "|------|-------------------:|-------:|------------------:|-------:|----------------:|-------:|",
     ]
     for ssl, conn in MODE_ORDER:
         for c in CLIENT_ORDER:
@@ -405,11 +448,14 @@ def _emit_latency_table(proto_groups: dict[tuple, dict]) -> list[str]:
                 continue
             row = proto_groups[key]
             label = row_label(c, mode_label(ssl, conn))
+            d = row.get("pg_doorman")
+            b = row.get("pgbouncer")
+            o = row.get("odyssey")
             out.append(
                 f"| {label} | "
-                f"{format_p99_ms(row.get('pg_doorman'))} | "
-                f"{format_p99_ms(row.get('pgbouncer'))} | "
-                f"{format_p99_ms(row.get('odyssey'))} |"
+                f"{format_p50_p99(d)} | {format_spread(d)} | "
+                f"{format_p50_p99(b)} | {format_spread(b)} | "
+                f"{format_p50_p99(o)} | {format_spread(o)} |"
             )
     return out
 
