@@ -4,34 +4,66 @@ title: Benchmarks
 
 # Benchmarks
 
-pg_doorman vs pgbouncer vs odyssey. Each test runs `pgbench` for 30 seconds through a 40-connection pool.
+Three connection poolers — pg_doorman, pgbouncer, odyssey — driven
+by `pgbench` against the same PostgreSQL backend on identical
+hardware. Numbers below are relative throughput against each
+competitor and absolute per-transaction latency.
 
-Last updated: 2026-04-21 18:54 UTC
+_Last updated: 2026-04-27 07:07 UTC._
+
+## TL;DR
+
+- **vs pgbouncer** — pg_doorman peaks at **x10.9** TPS on prepared protocol, 120 clients.
+- **vs odyssey** — pg_doorman peaks at **x1.8** TPS on extended protocol, 10,000 clients.
+- **Tail latency at 10 000 simple-protocol clients** — pg_doorman **p99 44ms** (others: odyssey 286ms, pgbouncer 461ms).
 
 ### Environment
 
-- **Instance**: AWS Fargate (16 vCPU, 32 GB RAM)
+- **Provider**: Ubicloud `standard-60` (eu-central-h1)
+- **Resources**: 60 vCPU / 235.9 GB
+- **Kernel**: `Linux 5.15.0-139-generic x86_64`
+- **Versions**: PostgreSQL 14.22, pg_doorman 3.6.1, pgbouncer 1.25.1, odyssey 1.4.1
 - **Workers**: pg_doorman: 12, odyssey: 12
-- **pgbench jobs**: 4 (global override)
-- **Started**: 2026-04-21 17:31:01 UTC
-- **Finished**: 2026-04-21 18:54:11 UTC
-- **Total duration**: 1h 23m 9s
+- **Duration per pgbench run**: 5s
+- **Started**: 2026-04-27 07:02 UTC
+- **Finished**: 2026-04-27 07:02 UTC
+- **Total wall-clock**: 0s
+- **Commit**: [`086778e5`](https://github.com/ozontech/pg_doorman/commit/086778e51c5c89e8e4e4ea6efb8906bb3a83045f)
+
+### Methodology
+
+Each scenario runs `pgbench -T <duration>` against a 40-connection
+server-side pool (`pool_mode = transaction`). The workload is a single
+`SELECT :aid` (`\set aid random(1, 100000)`) — pure pooler overhead, no
+real working set. Three poolers, one PostgreSQL backend, identical
+hardware.
+
+- **Reconnect** rows use `pgbench --connect`: a fresh TCP+startup per
+  transaction (worst case for login latency).
+- **SSL** rows set `PGSSLMODE=require` and a self-signed cert.
+- Latency is collected with `pgbench --log` (per-transaction file);
+  percentiles come from those samples, not from `pgbench` summary stats.
+- Scenarios run sequentially with the same data dir and warm OS caches.
+
+Source: [`tests/bdd/features/bench.feature`](https://github.com/ozontech/pg_doorman/blob/master/tests/bdd/features/bench.feature),
+driver: [`benches/setup-and-run-bench.sh`](https://github.com/ozontech/pg_doorman/blob/master/benches/setup-and-run-bench.sh).
 
 ### Reading the tables
 
-**Throughput** — pg_doorman TPS relative to each competitor:
+**Throughput** — `pg_doorman_TPS / competitor_TPS`, rendered:
 
 | Value | Meaning |
 |-------|---------|
-| +N% | Faster by N% |
-| -N% | Slower by N% |
-| ≈0% | Within 3% |
-| xN | N times faster or slower |
-| ∞ | Competitor got 0 TPS |
-| N/A | Unsupported |
-| - | Not tested |
+| +N% / -N% | Faster / slower by N percent |
+| ≈0% | Within 3% — call it a tie |
+| xN.N | N times faster (when ratio ≥ 1.5) |
+| ∞ | Competitor returned 0 TPS |
+| N/A | Competitor was not measured for this row |
+| - | Not measured for either pooler |
 
-**Latency** — per-transaction latency in ms. Each cell: `p50 / p95 / p99`. Lower is better.
+**Latency** — per-transaction in ms, `p50 / p95 / p99` per cell. Lower is
+better. Compare the same column across rows for one pooler, or across
+columns at one row for head-to-head.
 
 ---
 
@@ -41,41 +73,51 @@ Last updated: 2026-04-21 18:54 UTC
 
 | Test | vs pgbouncer | vs odyssey |
 |------|--------------|------------|
-| 1 client | -3% | -9% |
-| 40 clients | +82% | -5% |
-| 120 clients | x2.6 | ≈0% |
-| 500 clients | x2.5 | +6% |
-| 10,000 clients | x2.7 | +18% |
-| 1 client + Reconnect | -6% | x9.0 |
-| 40 clients + Reconnect | +21% | x2.1 |
-| 120 clients + Reconnect | +19% | +98% |
-| 500 clients + Reconnect | +20% | +97% |
-| 10,000 clients + Reconnect | +63% | x2.1 |
-| 1 client + SSL | -8% | -8% |
-| 40 clients + SSL | x2.1 | ≈0% |
-| 120 clients + SSL | x3.1 | +6% |
-| 500 clients + SSL | x3.0 | +11% |
-| 10,000 clients + SSL | x3.2 | +17% |
+| 1 client | -5% | ≈0% |
+| 40 clients | x3.3 | -39% |
+| 120 clients | x8.8 | ≈0% |
+| 500 clients | x8.3 | ≈0% |
+| 10,000 clients | x7.9 | +31% |
+| 1 client + Reconnect | -24% | x1.6 |
+| 40 clients + Reconnect | x1.7 | x1.7 |
+| 120 clients + Reconnect | x1.5 | x1.6 |
+| 500 clients + Reconnect | x1.7 | x1.6 |
+| 10,000 clients + Reconnect | +45% | x2.5 |
+| 1 client + SSL | -9% | ≈0% |
+| 40 clients + SSL | x3.8 | ≈0% |
+| 120 clients + SSL | x9.9 | ≈0% |
+| 500 clients + SSL | x9.8 | ≈0% |
+| 10,000 clients + SSL | - | - |
+| 1 client + SSL + Reconnect | x1.9 | x1.8 |
+| 40 clients + SSL + Reconnect | -5% | -20% |
+| 120 clients + SSL + Reconnect | ≈0% | -31% |
+| 500 clients + SSL + Reconnect | +13% | -7% |
+| 10,000 clients + SSL + Reconnect | -19% | -7% |
 
 ### Latency — p50 / p95 / p99 (ms)
 
 | Test | pg_doorman (ms) | pgbouncer (ms) | odyssey (ms) |
 |------|----------------|----------------|--------------|
-| 1 client | 0.07 / 0.07 / 0.08 | 0.07 / 0.08 / 0.08 | 0.06 / 0.07 / 0.07 |
-| 40 clients | 0.26 / 0.36 / 0.44 | 0.46 / 0.67 / 0.71 | 0.22 / 0.42 / 0.57 |
-| 120 clients | 0.49 / 1.86 / 3.03 | 1.81 / 2.12 / 2.24 | 0.54 / 1.33 / 1.84 |
-| 500 clients | 3.54 / 5.64 / 6.46 | 7.59 / 8.71 / 9.33 | 0.99 / 13.19 / 22.41 |
-| 10,000 clients | 69.42 / 71.72 / 75.83 | 184.39 / 202.56 / 213.44 | 2.70 / 326.10 / 570.34 |
-| 1 client + Reconnect | 0.06 / 0.08 / 0.09 | 0.06 / 0.06 / 0.07 | 0.07 / 0.09 / 0.10 |
-| 40 clients + Reconnect | 1.07 / 2.19 / 2.52 | 1.02 / 2.34 / 11.93 | 1.00 / 2.74 / 3.35 |
-| 120 clients + Reconnect | 3.36 / 6.33 / 7.62 | 3.37 / 7.10 / 31.61 | 4.67 / 9.45 / 11.54 |
-| 500 clients + Reconnect | 13.77 / 25.15 / 28.86 | 13.61 / 30.11 / 125.79 | 22.99 / 41.95 / 48.02 |
-| 10,000 clients + Reconnect | 295.83 / 515.96 / 559.54 | 562.42 / 926.93 / 972.88 | 597.47 / 1078.06 / 1365.21 |
-| 1 client + SSL | 0.08 / 0.09 / 0.10 | 0.08 / 0.08 / 0.09 | 0.07 / 0.09 / 0.09 |
-| 40 clients + SSL | 0.29 / 0.44 / 0.56 | 0.64 / 0.93 / 1.00 | 0.27 / 0.51 / 0.67 |
-| 120 clients + SSL | 0.59 / 2.32 / 3.93 | 2.56 / 2.93 / 3.14 | 0.67 / 1.65 / 2.30 |
-| 500 clients + SSL | 4.16 / 6.85 / 7.84 | 10.89 / 12.64 / 13.55 | 1.23 / 16.20 / 27.94 |
-| 10,000 clients + SSL | 82.15 / 86.57 / 91.75 | 262.65 / 289.09 / 367.39 | 4.24 / 387.21 / 753.84 |
+| 1 client | 0.08 / 0.09 / 0.12 | 0.07 / 0.09 / 0.12 | 0.07 / 0.11 / 0.13 |
+| 40 clients | 0.25 / 0.38 / 0.47 | 0.81 / 1.32 / 1.77 | 0.12 / 0.25 / 0.42 |
+| 120 clients | 0.29 / 0.82 / 1.07 | 2.75 / 6.22 / 6.71 | 0.33 / 0.70 / 0.97 |
+| 500 clients | 1.72 / 2.36 / 2.73 | 11.97 / 24.70 / 26.19 | 0.55 / 6.06 / 10.15 |
+| 10,000 clients | 34.39 / 37.38 / 43.96 | 266.75 / 335.75 / 461.25 | 3.72 / 167.47 / 285.52 |
+| 1 client + Reconnect | 0.17 / 0.21 / 0.25 | 0.11 / 0.15 / 0.19 | 0.16 / 0.23 / 0.27 |
+| 40 clients + Reconnect | 1.28 / 2.79 / 4.00 | 2.11 / 5.23 / 6.53 | 2.07 / 4.92 / 6.43 |
+| 120 clients + Reconnect | 3.84 / 8.51 / 11.38 | 5.50 / 13.94 / 17.97 | 6.24 / 14.34 / 18.60 |
+| 500 clients + Reconnect | 16.93 / 36.62 / 46.22 | 26.40 / 61.90 / 74.98 | 27.06 / 59.03 / 74.45 |
+| 10,000 clients + Reconnect | 357.16 / 647.26 / 783.49 | 500.35 / 1051.47 / 1234.50 | 839.81 / 1795.49 / 1992.58 |
+| 1 client + SSL | 0.08 / 0.10 / 0.13 | 0.07 / 0.08 / 0.09 | 0.08 / 0.11 / 0.13 |
+| 40 clients + SSL | 0.23 / 0.35 / 0.42 | 0.86 / 1.61 / 2.13 | 0.18 / 0.36 / 0.67 |
+| 120 clients + SSL | 0.35 / 0.90 / 1.20 | 3.61 / 7.90 / 8.63 | 0.34 / 0.56 / 0.72 |
+| 500 clients + SSL | 1.93 / 2.96 / 3.49 | 15.39 / 31.05 / 33.41 | 0.97 / 5.78 / 9.91 |
+| 10,000 clients + SSL | - | - | - |
+| 1 client + SSL + Reconnect | 0.16 / 0.29 / 0.33 | 0.32 / 0.37 / 0.42 | 0.29 / 0.38 / 0.43 |
+| 40 clients + SSL + Reconnect | 18.39 / 37.81 / 41.91 | 15.59 / 42.33 / 57.12 | 14.30 / 31.65 / 38.41 |
+| 120 clients + SSL + Reconnect | 61.02 / 121.70 / 137.25 | 59.44 / 135.81 / 161.10 | 41.65 / 92.30 / 112.88 |
+| 500 clients + SSL + Reconnect | 214.90 / 433.34 / 486.40 | 226.69 / 526.96 / 633.07 | 194.41 / 402.90 / 535.25 |
+| 10,000 clients + SSL + Reconnect | 2552.14 / 4745.67 / 4956.08 | 2516.67 / 4638.25 / 4906.60 | 2439.61 / 4666.80 / 4943.76 |
 
 ---
 
@@ -85,51 +127,41 @@ Last updated: 2026-04-21 18:54 UTC
 
 | Test | vs pgbouncer | vs odyssey |
 |------|--------------|------------|
-| 1 client | +5% | +40% |
-| 40 clients | +98% | +43% |
-| 120 clients | x2.8 | +60% |
-| 500 clients | x2.7 | +64% |
-| 10,000 clients | x2.8 | +74% |
-| 1 client + Reconnect | -4% | x3.0 |
-| 40 clients + Reconnect | +20% | x2.2 |
-| 120 clients + Reconnect | +21% | +88% |
-| 500 clients + Reconnect | +21% | +100% |
-| 10,000 clients + Reconnect | +61% | +27% |
-| 1 client + SSL | +4% | +36% |
-| 40 clients + SSL | x2.3 | +48% |
-| 120 clients + SSL | x3.2 | +65% |
-| 500 clients + SSL | x3.4 | +69% |
-| 10,000 clients + SSL | x3.4 | +73% |
-| 1 client + SSL + Reconnect | +9% | +13% |
-| 40 clients + SSL + Reconnect | +96% | +5% |
-| 120 clients + SSL + Reconnect | +99% | +5% |
-| 500 clients + SSL + Reconnect | x2.0 | +5% |
-| 10,000 clients + SSL + Reconnect | +93% | +5% |
+| 1 client | -4% | x1.6 |
+| 40 clients | x3.1 | -13% |
+| 120 clients | x8.8 | x1.6 |
+| 500 clients | x8.5 | x1.5 |
+| 10,000 clients | x7.4 | x1.8 |
+| 1 client + Reconnect | -18% | x1.7 |
+| 40 clients + Reconnect | x1.7 | +48% |
+| 120 clients + Reconnect | x1.7 | x1.7 |
+| 500 clients + Reconnect | x1.8 | x2.2 |
+| 10,000 clients + Reconnect | +47% | x2.6 |
+| 1 client + SSL | +9% | x1.5 |
+| 40 clients + SSL | x4.5 | +45% |
+| 120 clients + SSL | x9.3 | +46% |
+| 500 clients + SSL | x8.4 | +46% |
+| 10,000 clients + SSL | - | - |
 
 ### Latency — p50 / p95 / p99 (ms)
 
 | Test | pg_doorman (ms) | pgbouncer (ms) | odyssey (ms) |
 |------|----------------|----------------|--------------|
-| 1 client | 0.07 / 0.07 / 0.08 | 0.07 / 0.08 / 0.08 | 0.09 / 0.10 / 0.11 |
-| 40 clients | 0.25 / 0.35 / 0.43 | 0.48 / 0.72 / 0.76 | 0.32 / 0.62 / 0.84 |
-| 120 clients | 0.47 / 1.82 / 2.99 | 1.87 / 2.27 / 2.39 | 0.83 / 2.33 / 3.48 |
-| 500 clients | 3.45 / 5.48 / 6.26 | 7.77 / 9.35 / 9.69 | 1.31 / 18.35 / 31.99 |
-| 10,000 clients | 67.94 / 70.05 / 72.43 | 188.62 / 206.44 / 218.36 | 3.74 / 468.64 / 810.47 |
-| 1 client + Reconnect | 0.07 / 0.08 / 0.08 | 0.06 / 0.08 / 0.09 | 0.10 / 0.12 / 0.13 |
-| 40 clients + Reconnect | 1.08 / 2.21 / 2.55 | 1.03 / 2.40 / 11.13 | 0.92 / 2.77 / 3.66 |
-| 120 clients + Reconnect | 3.27 / 6.20 / 7.44 | 3.23 / 7.11 / 33.54 | 4.61 / 9.52 / 11.37 |
-| 500 clients + Reconnect | 13.83 / 25.40 / 29.12 | 13.80 / 30.20 / 118.88 | 23.89 / 43.77 / 67.05 |
-| 10,000 clients + Reconnect | 298.47 / 519.98 / 573.71 | 569.79 / 921.35 / 966.33 | 549.71 / 1052.37 / 1402.38 |
-| 1 client + SSL | 0.08 / 0.09 / 0.09 | 0.08 / 0.10 / 0.10 | 0.11 / 0.12 / 0.13 |
-| 40 clients + SSL | 0.29 / 0.44 / 0.59 | 0.67 / 0.99 / 1.07 | 0.39 / 0.80 / 1.08 |
-| 120 clients + SSL | 0.56 / 2.31 / 3.90 | 2.62 / 3.06 / 3.24 | 1.07 / 2.90 / 4.35 |
-| 500 clients + SSL | 4.16 / 6.87 / 7.88 | 12.30 / 14.21 / 15.64 | 1.71 / 22.66 / 38.83 |
-| 10,000 clients + SSL | 81.93 / 86.01 / 89.18 | 280.73 / 308.19 / 385.99 | 139.94 / 557.71 / 844.51 |
-| 1 client + SSL + Reconnect | 0.10 / 0.12 / 0.13 | 0.08 / 0.10 / 0.11 | 0.09 / 0.12 / 0.12 |
-| 40 clients + SSL + Reconnect | 12.31 / 23.03 / 25.02 | 24.07 / 44.29 / 46.70 | 12.99 / 24.30 / 26.07 |
-| 120 clients + SSL + Reconnect | 37.28 / 69.57 / 76.18 | 73.98 / 137.78 / 147.32 | 39.21 / 72.80 / 79.97 |
-| 500 clients + SSL + Reconnect | 157.07 / 292.82 / 319.41 | 311.77 / 593.21 / 673.84 | 165.06 / 306.22 / 336.63 |
-| 10,000 clients + SSL + Reconnect | 2954.51 / 5951.58 / 6556.46 | 5078.21 / 11531.36 / 12358.70 | 3096.16 / 6192.08 / 6844.73 |
+| 1 client | 0.08 / 0.09 / 0.12 | 0.07 / 0.09 / 0.11 | 0.12 / 0.17 / 0.19 |
+| 40 clients | 0.24 / 0.37 / 0.46 | 0.73 / 1.11 / 1.68 | 0.19 / 0.33 / 0.49 |
+| 120 clients | 0.28 / 0.89 / 1.26 | 2.84 / 6.13 / 6.54 | 0.50 / 1.43 / 2.11 |
+| 500 clients | 1.94 / 2.78 / 3.23 | 13.43 / 25.58 / 27.58 | 0.75 / 10.02 / 16.94 |
+| 10,000 clients | 37.05 / 40.05 / 48.59 | 270.11 / 329.47 / 458.87 | 60.78 / 242.69 / 367.83 |
+| 1 client + Reconnect | 0.13 / 0.19 / 0.23 | 0.12 / 0.15 / 0.19 | 0.22 / 0.30 / 0.33 |
+| 40 clients + Reconnect | 1.25 / 2.72 / 3.95 | 2.05 / 5.08 / 6.45 | 1.84 / 3.95 / 5.49 |
+| 120 clients + Reconnect | 3.78 / 8.43 / 11.60 | 6.16 / 14.88 / 18.56 | 6.14 / 13.74 / 18.04 |
+| 500 clients + Reconnect | 15.68 / 31.32 / 42.44 | 26.42 / 61.79 / 73.90 | 33.71 / 71.47 / 89.37 |
+| 10,000 clients + Reconnect | 344.61 / 645.56 / 877.14 | 490.07 / 1017.51 / 1177.67 | 805.60 / 1742.91 / 1975.98 |
+| 1 client + SSL | 0.08 / 0.09 / 0.12 | 0.09 / 0.10 / 0.11 | 0.13 / 0.15 / 0.20 |
+| 40 clients + SSL | 0.23 / 0.33 / 0.40 | 1.05 / 1.50 / 1.57 | 0.28 / 0.55 / 0.98 |
+| 120 clients + SSL | 0.35 / 0.92 / 1.33 | 3.46 / 7.65 / 8.11 | 0.56 / 1.13 / 1.78 |
+| 500 clients + SSL | 2.20 / 3.33 / 3.91 | 15.00 / 29.81 / 33.26 | 1.64 / 9.93 / 16.35 |
+| 10,000 clients + SSL | - | - | - |
 
 ---
 
@@ -139,46 +171,55 @@ Last updated: 2026-04-21 18:54 UTC
 
 | Test | vs pgbouncer | vs odyssey |
 |------|--------------|------------|
-| 1 client | -4% | -8% |
-| 40 clients | x2.4 | -7% |
-| 120 clients | x3.5 | ≈0% |
-| 500 clients | x3.3 | +8% |
-| 10,000 clients | x3.1 | +16% |
-| 1 client + Reconnect | ≈0% | ∞ |
-| 40 clients + Reconnect | ≈0% | ∞ |
-| 120 clients + Reconnect | ≈0% | ∞ |
-| 500 clients + Reconnect | +4% | ∞ |
-| 10,000 clients + Reconnect | +25% | ∞ |
-| 1 client + SSL | -4% | -5% |
-| 40 clients + SSL | x2.7 | ≈0% |
-| 120 clients + SSL | x3.8 | +6% |
-| 500 clients + SSL | x3.7 | +11% |
-| 10,000 clients + SSL | x3.9 | +15% |
+| 1 client | ≈0% | -8% |
+| 40 clients | x3.9 | -38% |
+| 120 clients | x10.9 | ≈0% |
+| 500 clients | x10.2 | +6% |
+| 10,000 clients | x8.7 | +35% |
+| 1 client + Reconnect | -23% | +37% |
+| 40 clients + Reconnect | x1.6 | x1.7 |
+| 120 clients + Reconnect | x1.6 | +49% |
+| 500 clients + Reconnect | x1.9 | N/A |
+| 10,000 clients + Reconnect | +24% | x2.2 |
+| 1 client + SSL | ≈0% | -5% |
+| 40 clients + SSL | x4.4 | -4% |
+| 120 clients + SSL | x11.8 | ≈0% |
+| 500 clients + SSL | x10.1 | ≈0% |
+| 10,000 clients + SSL | - | - |
 
 ### Latency — p50 / p95 / p99 (ms)
 
 | Test | pg_doorman (ms) | pgbouncer (ms) | odyssey (ms) |
 |------|----------------|----------------|--------------|
-| 1 client | 0.06 / 0.07 / 0.07 | 0.06 / 0.07 / 0.07 | 0.06 / 0.07 / 0.07 |
-| 40 clients | 0.24 / 0.34 / 0.42 | 0.60 / 0.88 / 0.91 | 0.20 / 0.40 / 0.53 |
-| 120 clients | 0.47 / 1.72 / 2.79 | 2.25 / 2.60 / 2.69 | 0.51 / 1.27 / 1.79 |
-| 500 clients | 3.31 / 5.28 / 6.04 | 9.35 / 10.58 / 11.20 | 0.90 / 12.75 / 21.56 |
-| 10,000 clients | 66.31 / 69.32 / 72.46 | 205.26 / 221.39 / 243.49 | 2.76 / 306.09 / 534.07 |
-| 1 client + Reconnect | 0.11 / 0.13 / 0.14 | 0.10 / 0.12 / 0.13 | 0.15 / 0.18 / 0.19 |
-| 40 clients + Reconnect | 1.56 / 3.01 / 3.33 | 1.59 / 2.95 / 3.31 | 1.86 / 3.56 / 4.61 |
-| 120 clients + Reconnect | 4.49 / 8.39 / 9.73 | 4.60 / 8.55 / 9.72 | 6.76 / 83.39 / 88.89 |
-| 500 clients + Reconnect | 18.64 / 34.07 / 37.72 | 19.43 / 35.46 / 39.86 | 24.27 / 197.01 / 297.22 |
-| 10,000 clients + Reconnect | 396.39 / 710.66 / 769.05 | 483.59 / 927.03 / 1000.58 | 483.21 / 1256.91 / 1563.08 |
-| 1 client + SSL | 0.08 / 0.09 / 0.09 | 0.07 / 0.08 / 0.09 | 0.07 / 0.08 / 0.09 |
-| 40 clients + SSL | 0.28 / 0.42 / 0.57 | 0.80 / 1.15 / 1.24 | 0.24 / 0.48 / 0.65 |
-| 120 clients + SSL | 0.56 / 2.19 / 3.67 | 3.00 / 3.27 / 3.49 | 0.63 / 1.60 / 2.27 |
-| 500 clients + SSL | 3.95 / 6.56 / 7.51 | 12.70 / 13.91 / 15.23 | 1.10 / 15.54 / 26.49 |
-| 10,000 clients + SSL | 79.24 / 84.27 / 88.85 | 308.74 / 326.58 / 488.80 | 5.17 / 364.12 / 633.46 |
+| 1 client | 0.08 / 0.09 / 0.11 | 0.08 / 0.09 / 0.10 | 0.07 / 0.09 / 0.10 |
+| 40 clients | 0.23 / 0.35 / 0.45 | 0.90 / 1.37 / 2.08 | 0.12 / 0.22 / 0.35 |
+| 120 clients | 0.29 / 0.91 / 1.20 | 3.40 / 7.39 / 7.83 | 0.33 / 0.69 / 0.97 |
+| 500 clients | 1.82 / 2.58 / 2.99 | 15.05 / 29.21 / 30.77 | 0.57 / 6.67 / 11.18 |
+| 10,000 clients | 35.90 / 38.84 / 64.12 | 298.33 / 518.10 / 580.55 | 3.29 / 199.39 / 333.57 |
+| 1 client + Reconnect | 0.26 / 0.33 / 0.38 | 0.19 / 0.27 / 0.32 | 0.28 / 0.38 / 0.43 |
+| 40 clients + Reconnect | 1.86 / 3.80 / 5.29 | 2.74 / 6.71 / 8.42 | 3.03 / 6.57 / 8.31 |
+| 120 clients + Reconnect | 5.53 / 12.19 / 16.88 | 8.23 / 20.16 / 25.05 | 8.37 / 17.45 / 23.11 |
+| 500 clients + Reconnect | 21.96 / 46.93 / 61.67 | 40.38 / 88.81 / 104.99 | 37.74 / 82.80 / 103.77 |
+| 10,000 clients + Reconnect | 494.09 / 1006.16 / 1228.71 | 582.47 / 1230.63 / 1457.87 | 1211.17 / 2143.45 / 2340.72 |
+| 1 client + SSL | 0.08 / 0.09 / 0.11 | 0.08 / 0.09 / 0.13 | 0.08 / 0.10 / 0.13 |
+| 40 clients + SSL | 0.23 / 0.35 / 0.43 | 1.03 / 1.61 / 2.56 | 0.17 / 0.36 / 0.71 |
+| 120 clients + SSL | 0.36 / 0.95 / 1.30 | 4.48 / 9.28 / 9.85 | 0.35 / 0.55 / 0.73 |
+| 500 clients + SSL | 2.10 / 3.21 / 3.77 | 17.50 / 34.87 / 37.96 | 1.07 / 6.13 / 10.81 |
+| 10,000 clients + SSL | - | - | - |
 
 ---
 
-### Notes
+### Caveats
 
-- Odyssey performs poorly with extended query protocol in transaction pooling mode
-- Throughput values are relative ratios — comparable across runs on identical hardware
-- Latency values are absolute, measured per-transaction
+- 30 s per run is short by `pgbench` standards (the docs recommend
+  minutes); expect ±5% variance between runs. Re-run for production
+  decisions.
+- Single PostgreSQL backend, no replicas, no real working set — these
+  numbers measure pooler overhead, not full-system throughput.
+- All three poolers use vendor defaults plus `pool_size = 40`.
+  Tuning specific knobs (`pgbouncer so_reuseport`, `odyssey workers`)
+  will move the curves.
+- `Reconnect` is the worst-case login-latency scenario; the headline
+  numbers in production rarely look like the Reconnect rows.
+- Workload is a 1-row `SELECT`. Read-heavy OLTP, OLAP, or `LISTEN`/
+  `NOTIFY` paths are not represented.
