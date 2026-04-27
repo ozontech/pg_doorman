@@ -71,7 +71,8 @@ jobs:
           fail=0
           while IFS= read -r name; do
             [[ -z "$name" ]] && continue
-            if ubi vm "$UBI_LOCATION/$name" destroy; then
+            # `ubi vm destroy` reads the VM name from stdin as a confirmation.
+            if echo "$name" | ubi vm "$UBI_LOCATION/$name" destroy; then
               echo "deleted: $name"
             else
               echo "FAILED: $name"

@@ -240,7 +240,10 @@ jobs:
         env:
           VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
         run: |
-          ubi vm "$UBI_LOCATION/$VM_NAME" destroy || true
+          # `ubi vm destroy` reads the VM name from stdin as a confirmation.
+          # No --yes flag exists (1.1.0); piping the name in is the official
+          # non-interactive form.
+          echo "$VM_NAME" | ubi vm "$UBI_LOCATION/$VM_NAME" destroy || true
 
       - name: Create Pull Request with results
         if: steps.download.outputs.got_tarball == 'true' && inputs.create_pr
