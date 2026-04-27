@@ -426,7 +426,7 @@ write_metadata() {
     --arg kernel "$(uname -srm)" \
     --argjson vcpus "$(nproc)" \
     --argjson memory_kb "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" \
-    --arg started_at "$(date -u +%FT%TZ)" \
+    --arg started_at "${SCRIPT_STARTED_AT:-$(date -u +%FT%TZ)}" \
     --argjson doorman_workers "$DOORMAN_WORKERS" \
     --argjson odyssey_workers "$ODYSSEY_WORKERS" \
     --argjson duration "$BENCH_DURATION" \
