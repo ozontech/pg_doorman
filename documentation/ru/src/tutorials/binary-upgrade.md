@@ -1,27 +1,51 @@
 # Binary upgrade
 
-Обновление pg_doorman без разрыва клиентских соединений. Старый
-процесс передаёт idle-клиентов новому через Unix socket -- клиенты
-продолжают работу на том же TCP-соединении без reconnect.
+Замена бинарника pg_doorman на работающем сервере. Idle-клиенты передаются
+новому процессу через Unix-сокет вместе с cancel keys и кешем prepared
+statements — клиенты продолжают работать по тому же TCP-соединению без
+переподключения. Клиенты внутри транзакции дорабатывают её на старом
+процессе и мигрируют, как только становятся idle. Оператор получает
+`kill -USR2` и exit status; приложения — ни лавины reconnect-ов, ни
+лавины `auth`/SCRAM handshake-ов в адрес PostgreSQL.
+
+```admonish info title="Чем это отличается от PgBouncer / Odyssey"
+Online restart в PgBouncer (`-R`, deprecated с 1.20; либо rolling restart
+через `so_reuseport`) и в Odyssey (`SIGUSR2` + `bindwith_reuseport`)
+устроены одинаково: новый процесс принимает новые соединения, старый
+дорабатывает до тех пор, пока его клиенты сами не отключатся. Сессии,
+prepared statements и TLS-состояние между процессами не переезжают.
+pg_doorman передаёт живой сокет через `SCM_RIGHTS`, а со сборкой
+`tls-migration` (Linux, opt-in) — и cipher state.
+```
 
 ## Быстрый старт
 
 ```bash
-# 1. Заменить бинарник на диске
+# 1. Положите новый бинарник на место.
 cp pg_doorman_new /usr/bin/pg_doorman
 
-# 2. Запустить upgrade
-kill -USR2 $(pgrep pg_doorman)
+# 2. Проверьте, что новый бинарник принимает текущий конфиг, до того
+#    как запускать upgrade. SIGUSR2 тоже прогоняет `-t` и отменяет
+#    upgrade при ошибке, но проверка здесь даёт шанс починить конфиг,
+#    не трогая работающий сервер.
+/usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Проверить: старый PID исчез, клиенты на месте
-pgrep pg_doorman   # новый PID
+# 3. Запустите upgrade.
+kill -USR2 $(pgrep -f /usr/bin/pg_doorman)
+
+# 4. Убедитесь: запущен новый PID, клиенты на месте.
+pgrep -f /usr/bin/pg_doorman      # новый PID
+psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'   # отвечает уже новый процесс
 ```
 
-Или через admin-консоль:
+Тот же upgrade можно запустить из admin-консоли:
 
 ```sql
 UPGRADE;
 ```
+
+`UPGRADE` шлёт `SIGUSR2` запущенному процессу — тот же путь, что и
+`kill -USR2`.
 
 ## Как работает upgrade
 
@@ -89,8 +113,10 @@ UPGRADE;
 **Daemon mode:**
 
 Запускается новый daemon-процесс. Старый закрывает listener.
-Миграция клиентов через socketpair не используется -- клиенты
-дренируются (получают error 58006 при истечении `shutdown_timeout`).
+Миграция клиентов через socketpair не используется — клиенты
+дренируются на месте. По истечении `shutdown_timeout` все, кто ещё
+держал соединение, получают SQLSTATE `58006` (`pooler is shut down
+now`), и старый процесс выходит.
 
 ### Фаза 3: Миграция idle-клиентов (foreground)
 
@@ -327,13 +353,19 @@ shutdown_timeout = 60000  # миллисекунды
 
 ### `tls_private_key` / `tls_certificate`
 
-Для TLS migration оба процесса (старый и новый) загружают одни и
-те же файлы. Если сертификат поменялся между версиями бинарника --
-TLS-клиенты получат ошибку при импорте cipher state и будут
-отключены.
+Чтобы фича `tls-migration` отработала, оба процесса (старый и новый)
+должны загрузить один и тот же client-facing сертификат и приватный
+ключ. Cipher state привязан к `SSL_CTX`, созданному из этих файлов;
+при несовпадении импорт падает, и затронутые клиенты отключаются и
+переподключаются.
 
-Ротацию сертификатов делайте через `SIGHUP` (reload конфига) до
-binary upgrade.
+Client-facing TLS-материал **не** перезагружается по `SIGHUP` (это
+делает только server-facing TLS, см. [Hot reload server TLS](../guides/tls.md)).
+Поэтому ротация client-facing сертификата требует либо restart, либо
+binary upgrade с подложенными новыми файлами — и в этом upgrade
+TLS-клиенты со старым сертификатом всё равно отключатся, даже с
+включённым `tls-migration`. Планируйте ротацию на окно, когда
+переподключения допустимы.
 
 ### `prepared_statements_cache_size`
 
