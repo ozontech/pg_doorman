@@ -160,7 +160,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multithreaded PostgreSQL connection pooler written in Rust. Drop-in alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, and <a href="https://github.com/postgresml/pgcat">PgCat</a>. In production at Ozon for over three years across Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.6.0</a> · <a href="comparison.html">Compare</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.6.1</a> · <a href="comparison.html">Compare</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="what-makes-pgdoorman-different"><a class="header" href="#what-makes-pgdoorman-different">What makes PgDoorman different</a></h2>
 <p>Three things you will not find in PgBouncer or Odyssey.</p>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
@@ -5334,6 +5334,9 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <li>Latency values are absolute, measured per-transaction</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="361-apr-27-2026"><a class="header" href="#361-apr-27-2026">3.6.1 <small>Apr 27, 2026</small></a></h3>
+<h4 id="openssl-01078-cve-2026-41678-cve-2026-41681"><a class="header" href="#openssl-01078-cve-2026-41678-cve-2026-41681">openssl 0.10.78 (CVE-2026-41678, CVE-2026-41681)</a></h4>
+<p><code>openssl</code> 0.10.72 is affected by CVE-2026-41678 and CVE-2026-41681; some registry mirrors refuse downloads on that basis. pg_doorman now depends on <code>openssl</code> 0.10.78 and <code>openssl-sys</code> 0.9.114. API-compatible — no source changes.</p>
 <h3 id="360-apr-24-2026"><a class="header" href="#360-apr-24-2026">3.6.0 <small>Apr 24, 2026</small></a></h3>
 <h4 id="patroni-assisted-fallback-1"><a class="header" href="#patroni-assisted-fallback-1">Patroni-assisted fallback</a></h4>
 <p>When pg_doorman runs next to PostgreSQL on the same machine and connects via unix socket, a Patroni switchover or PostgreSQL crash leaves the pooler without a backend. With <code>patroni_api_urls</code> configured, pg_doorman queries the Patroni REST API <code>/cluster</code> endpoint, picks a live cluster member, and routes new connections there.</p>
