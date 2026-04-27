@@ -1,5 +1,11 @@
 # Changelog
 
+### 3.6.1 <small>Apr 27, 2026</small>
+
+#### openssl 0.10.78 (CVE-2026-41678, CVE-2026-41681)
+
+`openssl` 0.10.72 is affected by CVE-2026-41678 and CVE-2026-41681; some registry mirrors refuse downloads on that basis. pg_doorman now depends on `openssl` 0.10.78 and `openssl-sys` 0.9.114. API-compatible — no source changes.
+
 ### 3.6.0 <small>Apr 24, 2026</small>
 
 #### Patroni-assisted fallback
