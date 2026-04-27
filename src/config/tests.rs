@@ -1661,3 +1661,109 @@ async fn test_validate_reserve_pool_timeout_skipped_when_coordinator_disabled() 
     // Coordinator disabled → no cross-config check
     assert!(config.validate().await.is_ok());
 }
+
+// ---- check_hba_with_general: legacy general.hba + Unix socket semantics ----
+
+fn tcp_transport(ip: &str) -> ClientTransport {
+    let peer = std::net::SocketAddr::new(ip.parse().unwrap(), 12345);
+    ClientTransport::Tcp { peer, ssl: false }
+}
+
+#[test]
+fn check_hba_legacy_empty_allows_unix() {
+    // Legacy branch, nothing configured: any transport is allowed. Kept as a
+    // baseline so the next two tests document what changes once Unix
+    // enters the picture.
+    let general = General::default();
+    assert_eq!(
+        check_hba_with_general(&general, &ClientTransport::Unix, "md5", "alice", "app"),
+        CheckResult::Allow
+    );
+    assert_eq!(
+        check_hba_with_general(&general, &tcp_transport("10.0.0.5"), "md5", "alice", "app"),
+        CheckResult::Allow
+    );
+}
+
+#[test]
+fn check_hba_legacy_list_bypassed_for_unix() {
+    // Reproduces the "silent privilege expansion" case from review: the
+    // operator restricts TCP access with a CIDR whitelist, but Unix clients
+    // must still be allowed because the legacy list has no transport concept.
+    let mut general = General::default();
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+
+    // Unix: Allow regardless of source IP
+    assert_eq!(
+        check_hba_with_general(&general, &ClientTransport::Unix, "md5", "alice", "app"),
+        CheckResult::Allow
+    );
+    // TCP from an IP outside the whitelist: NotMatched
+    assert_eq!(
+        check_hba_with_general(
+            &general,
+            &tcp_transport("192.168.1.10"),
+            "md5",
+            "alice",
+            "app"
+        ),
+        CheckResult::NotMatched
+    );
+    // TCP from an IP inside the whitelist: Allow
+    assert_eq!(
+        check_hba_with_general(&general, &tcp_transport("10.1.2.3"), "md5", "alice", "app"),
+        CheckResult::Allow
+    );
+}
+
+#[test]
+fn check_hba_pg_hba_takes_precedence_over_legacy_for_unix() {
+    // When pg_hba is configured the legacy list must be ignored entirely;
+    // `local` rules drive the decision for Unix clients.
+    use crate::auth::hba::PgHba;
+    let mut general = General::default();
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+    general.pg_hba = Some(PgHba::from_content("local all all reject"));
+
+    assert_eq!(
+        check_hba_with_general(&general, &ClientTransport::Unix, "md5", "alice", "app"),
+        CheckResult::Deny
+    );
+}
+
+// ---- legacy_hba_bypassed_by_unix_socket: silent privilege expansion detector ----
+
+#[test]
+fn legacy_hba_bypass_detected_when_unix_dir_set_and_legacy_hba_present() {
+    let mut general = General::default();
+    general.unix_socket_dir = Some("/tmp".to_string());
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+    assert!(legacy_hba_bypassed_by_unix_socket(&general));
+}
+
+#[test]
+fn legacy_hba_bypass_quiet_without_unix_socket_dir() {
+    let mut general = General::default();
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+    // No unix listener → operator's CIDR whitelist applies to every client.
+    assert!(!legacy_hba_bypassed_by_unix_socket(&general));
+}
+
+#[test]
+fn legacy_hba_bypass_quiet_without_legacy_entries() {
+    let mut general = General::default();
+    general.unix_socket_dir = Some("/tmp".to_string());
+    // Empty legacy hba means there is no rule to bypass in the first place.
+    assert!(!legacy_hba_bypassed_by_unix_socket(&general));
+}
+
+#[test]
+fn legacy_hba_bypass_quiet_when_pg_hba_present() {
+    use crate::auth::hba::PgHba;
+    let mut general = General::default();
+    general.unix_socket_dir = Some("/tmp".to_string());
+    general.hba = vec!["10.0.0.0/8".parse().unwrap()];
+    general.pg_hba = Some(PgHba::from_content("local all all trust"));
+    // pg_hba takes precedence and has explicit local rules — no silent bypass.
+    assert!(!legacy_hba_bypassed_by_unix_socket(&general));
+}

@@ -39,14 +39,11 @@ pub fn allocate_port() -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::allocate_port;
-    use std::net::{SocketAddr, TcpListener};
-
     #[test]
     fn test_allocate_port_returns_different_ports() {
-        let port1 = allocate_port();
-        let port2 = allocate_port();
-        let port3 = allocate_port();
+        let port1 = super::allocate_port();
+        let port2 = super::allocate_port();
+        let port3 = super::allocate_port();
 
         assert_ne!(port1, port2);
         assert_ne!(port2, port3);
@@ -55,11 +52,11 @@ mod tests {
 
     #[test]
     fn test_allocated_port_is_bindable() {
-        let port = allocate_port();
-        let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+        let port = super::allocate_port();
+        let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
 
         // Should be able to bind to the allocated port
-        let listener = TcpListener::bind(addr);
+        let listener = std::net::TcpListener::bind(addr);
         assert!(listener.is_ok());
     }
 }

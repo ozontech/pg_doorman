@@ -131,7 +131,7 @@ pub(crate) fn find_column_index(header_line: &str, column_name: &str) -> (usize,
 }
 
 /// Split a table row using the detected separator.
-pub(crate) fn split_row<'a>(line: &'a str, use_pipe: bool) -> Vec<&'a str> {
+pub(crate) fn split_row(line: &str, use_pipe: bool) -> Vec<&str> {
     if use_pipe {
         line.split('|').map(|s| s.trim()).collect()
     } else {

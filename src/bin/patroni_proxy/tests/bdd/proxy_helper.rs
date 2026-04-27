@@ -48,7 +48,7 @@ pub async fn start_proxy_with_config(world: &mut PatroniProxyWorld, step: &Step)
     if let Some(ref api_addr) = world.api_listen_address {
         let port = api_addr
             .split(':')
-            .last()
+            .next_back()
             .and_then(|p| p.parse::<u16>().ok())
             .expect("Invalid API listen address");
         wait_for_proxy_ready(port, world.proxy_process.as_mut().unwrap()).await;

@@ -20,6 +20,7 @@ use crate::messages::{
 use crate::pool::ClientServerMap;
 use crate::server::ServerParameters;
 use crate::stats::{ClientStats, CANCEL_CONNECTION_COUNTER};
+use crate::transport::ClientTransport;
 
 use super::buffer_pool::PooledBuffer;
 use super::core::{Client, PreparedStatementState};
@@ -145,11 +146,13 @@ pub async fn startup_tls(
             Client::startup(
                 read,
                 write,
-                addr,
+                ClientTransport::Tcp {
+                    peer: addr,
+                    ssl: true,
+                },
                 bytes,
                 client_server_map,
                 admin_only,
-                true,
                 connection_id,
                 #[cfg(unix)]
                 raw_fd,
@@ -185,15 +188,25 @@ where
     pub async fn startup(
         mut read: S,
         mut write: T,
-        addr: std::net::SocketAddr,
+        transport: ClientTransport,
         bytes: BytesMut, // The rest of the startup message.
         client_server_map: ClientServerMap,
         admin_only: bool,
-        use_tls: bool,
         connection_id: u64,
         #[cfg(unix)] raw_fd: Option<std::os::unix::io::RawFd>,
         #[cfg(all(unix, feature = "tls-migration"))] ssl_ptr: Option<super::core::SslRawPtr>,
     ) -> Result<Client<S, T>, Error> {
+        // Unix sockets have no peer address; we pin a sentinel loopback
+        // value into the Client struct so the many transaction-level log
+        // lines that interpolate `self.addr` keep compiling. A follow-up
+        // refactor should replace this with a typed PeerAddress field.
+        let addr = match transport {
+            ClientTransport::Tcp { peer, .. } => peer,
+            ClientTransport::Unix => {
+                std::net::SocketAddr::from((std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0))
+            }
+        };
+        let use_tls = transport.is_tls();
         let parameters = parse_startup(bytes)?;
 
         // This parameter is mandatory by the protocol.
@@ -220,18 +233,12 @@ where
             application_name,
             username_from_parameters,
             &pool_name,
-            addr.to_string().as_str(),
+            transport.peer_display().as_str(),
         );
-        client_identifier.hba_md5 = check_hba(
-            addr.ip(),
-            use_tls,
-            "md5",
-            username_from_parameters,
-            &pool_name,
-        );
+        client_identifier.hba_md5 =
+            check_hba(&transport, "md5", username_from_parameters, &pool_name);
         client_identifier.hba_scram = check_hba(
-            addr.ip(),
-            use_tls,
+            &transport,
             "scram-sha-256",
             username_from_parameters,
             &pool_name,
@@ -333,15 +340,15 @@ where
         if !hba_ok_final {
             error_response_terminal(
                 &mut write,
-                format!("Connection from IP address {} to {}@{} (TLS: {}) is not permitted by HBA configuration. Please contact your database administrator.",
-                        addr.ip(), username_from_parameters, pool_name, use_tls).as_str(),
+                format!("Connection from {} to {}@{} (TLS: {}) is not permitted by HBA configuration. Please contact your database administrator.",
+                        transport.peer_display(), username_from_parameters, pool_name, use_tls).as_str(),
                 "28000"
             )
                 .await?;
             return Err(Error::HbaForbiddenError(format!(
-                "Connection not permitted by HBA configuration for client: {} from address: {:?}",
+                "Connection not permitted by HBA configuration for client: {} from {}",
                 client_identifier,
-                addr.ip()
+                transport.peer_display()
             )));
         }
 

@@ -601,6 +601,18 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
         "1048576 bytes",
     );
 
+    write_field_desc(w, fi, "general", "unix_socket_dir");
+    w.comment(
+        fi,
+        "When set, pg_doorman also accepts connections via Unix socket (.s.PGSQL.<port>).",
+    );
+    w.commented_kv(fi, "unix_socket_dir", &w.str_val("/var/run/pg_doorman"));
+    w.blank();
+
+    write_field_comment(w, fi, "general", "unix_socket_mode");
+    w.kv(fi, "unix_socket_mode", &w.str_val(&g.unix_socket_mode));
+    w.blank();
+
     // --- Connection Limits ---
     w.separator(fi, f.section_title("limits").get(w.russian));
     w.blank();

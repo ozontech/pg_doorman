@@ -84,8 +84,7 @@ impl PgConnection {
             StreamKind::Plain(s) => s,
             other => {
                 self.stream = other;
-                return Err(tokio::io::Error::new(
-                    tokio::io::ErrorKind::Other,
+                return Err(tokio::io::Error::other(
                     "Connection is not in plain TCP state",
                 ));
             }
@@ -110,13 +109,13 @@ impl PgConnection {
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
             .build()
-            .map_err(|e| tokio::io::Error::new(tokio::io::ErrorKind::Other, e))?;
+            .map_err(tokio::io::Error::other)?;
         let connector = tokio_native_tls::TlsConnector::from(connector);
 
         let tls_stream = connector
             .connect("localhost", tcp)
             .await
-            .map_err(|e| tokio::io::Error::new(tokio::io::ErrorKind::Other, e))?;
+            .map_err(tokio::io::Error::other)?;
 
         self.stream = StreamKind::Tls(tls_stream);
         Ok(())

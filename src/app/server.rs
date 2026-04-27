@@ -17,7 +17,7 @@ use tokio::{runtime::Builder, sync::mpsc};
 use crate::app::args::Args;
 use crate::config::{get_config, reload_config, Config};
 use crate::daemon;
-use crate::messages::configure_tcp_socket;
+use crate::messages::{configure_tcp_socket, configure_unix_socket};
 use crate::pool::{retain, ClientServerMap, ConnectionPool};
 use crate::prometheus::start_prometheus_server;
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
@@ -225,6 +225,34 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         };
 
         info!("Running on {addr}");
+
+        // Unix socket listener (when unix_socket_dir is set).
+        //
+        // Delegated to `create_unix_listener` so tests can exercise the
+        // bind/chmod/ownership pipeline in a tempdir. `unix_socket_ownership`
+        // captures the (dev, ino) of the inode we create here so the
+        // shutdown path can tell our socket apart from one bound by a
+        // successor process during a SIGUSR2 binary upgrade.
+        let (unix_listener, unix_socket_ownership) = match config.general.unix_socket_dir {
+            Some(ref dir) => {
+                let path = format!("{dir}/.s.PGSQL.{}", config.general.port);
+                let mode = crate::config::General::parse_unix_socket_mode(
+                    &config.general.unix_socket_mode,
+                )
+                .expect("unix_socket_mode validated at config load");
+                match create_unix_listener(&path, mode) {
+                    Ok((listener, ownership)) => {
+                        info!("Unix socket listening on {path} (mode={mode:#o})");
+                        (Some(listener), Some(ownership))
+                    }
+                    Err(err) => {
+                        error!("{err}");
+                        std::process::exit(exitcode::OSERR);
+                    }
+                }
+            }
+            None => (None, None),
+        };
 
         config.show();
 
@@ -467,22 +495,17 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     tokio::task::spawn(async move {
                         let connection_id = TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed) as u64 + 1;
                         let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
-                        // max clients.
                         if current_clients as u64 > max_connections {
                             warn!("[#c{connection_id}] client {addr} rejected: too many clients (current={current_clients}, max={max_connections})");
-                           match crate::client::client_entrypoint_too_many_clients_already(
+                            if let Err(err) = crate::client::client_entrypoint_too_many_clients_already(
                                 socket, client_server_map).await {
-                                Ok(()) => (),
-                                Err(err) => {
-                                    error!("[#c{connection_id}] client {addr} disconnected with error: {err}");
-                                }
+                                error!("[#c{connection_id}] client {addr} disconnected with error: {err}");
                             }
                             CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
-                            return
+                            return;
                         }
                         let start = Utc::now().naive_utc();
-
-                        match crate::client::client_entrypoint(
+                        let result = crate::client::client_entrypoint(
                             socket,
                             client_server_map,
                             admin_only,
@@ -490,30 +513,74 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                             tls_rate_limiter,
                             connection_id,
                         )
-                        .await
-                        {
-                            Ok(session_info) => {
-                                if log_client_disconnections
-                                    || log::log_enabled!(log::Level::Debug)
-                                {
-                                    let session = format_duration(
-                                        &(Utc::now().naive_utc() - start),
-                                    );
-                                    let identity = match &session_info {
-                                        Some(si) => format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id),
-                                        None => format!("[#c{connection_id}]"),
-                                    };
-                                    info!("{identity} client disconnected from {addr}, session={session}");
-                                }
-                            }
+                        .await;
+                        log_session_end(
+                            result,
+                            connection_id,
+                            &addr.to_string(),
+                            start,
+                            log_client_disconnections,
+                        );
+                        CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                    });
+                }
 
-                            Err(err) => {
-                                // Pre-auth failures: identity unknown, only connection_id available.
-                                // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
-                                let session = format_duration(&(Utc::now().naive_utc() - start));
-                                warn!("[#c{connection_id}] client {addr} disconnected with error: {err}, session={session}");
+                // Unix socket client
+                new_unix = async {
+                    if let Some(ref l) = unix_listener {
+                        l.accept().await
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    let (socket, _unix_addr) = match new_unix {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            error!("Failed to accept Unix connection: {err}");
+                            continue;
+                        }
+                    };
+                    if admin_only {
+                        drop(socket);
+                        continue;
+                    }
+                    configure_unix_socket(&socket);
+                    let client_server_map = client_server_map.clone();
+                    let config = get_config();
+                    let log_client_disconnections = config.general.log_client_disconnections;
+                    let max_connections = config.general.max_connections;
+
+                    tokio::task::spawn(async move {
+                        let connection_id = TOTAL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed) as u64 + 1;
+                        let current_clients = CURRENT_CLIENT_COUNT.fetch_add(1, Ordering::SeqCst);
+                        if current_clients as u64 > max_connections {
+                            warn!("[#c{connection_id}] unix client rejected: too many clients (current={current_clients}, max={max_connections})");
+                            if let Err(err) = crate::client::client_entrypoint_too_many_clients_already_unix(
+                                socket,
+                                connection_id,
+                            )
+                            .await
+                            {
+                                warn!("[#c{connection_id}] unix client rejection response failed: {err}");
                             }
-                        };
+                            CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
+                            return;
+                        }
+                        let start = Utc::now().naive_utc();
+                        let result = crate::client::client_entrypoint_unix(
+                            socket,
+                            client_server_map,
+                            admin_only,
+                            connection_id,
+                        )
+                        .await;
+                        log_session_end(
+                            result,
+                            connection_id,
+                            "unix:",
+                            start,
+                            log_client_disconnections,
+                        );
                         CURRENT_CLIENT_COUNT.fetch_add(-1, Ordering::SeqCst);
                     });
                 }
@@ -524,6 +591,26 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
             }
         }
+        // Cleanup Unix socket file only if the inode on disk is still the
+        // one this process created. During a SIGUSR2 binary upgrade the
+        // successor rebinds the same path before we reach this point, so
+        // an unconditional unlink here would wipe out the new listener.
+        if let Some(ref ownership) = unix_socket_ownership {
+            match ownership.cleanup_if_ours() {
+                UnixSocketCleanup::Removed => {}
+                UnixSocketCleanup::Missing => {}
+                UnixSocketCleanup::Skipped { reason } => {
+                    info!(
+                        "Leaving Unix socket {} in place: {reason}",
+                        ownership.path
+                    );
+                }
+                UnixSocketCleanup::Failed { err } => {
+                    warn!("Failed to remove Unix socket {}: {err}", ownership.path);
+                }
+            }
+        }
+
         info!("Shutting down...");
 
         // Signal migration_sender_task to stop, then wait for it to
@@ -927,4 +1014,491 @@ fn spawn_shutdown_timer(exit_tx: mpsc::Sender<()>, shutdown_timeout: Duration) {
             }
         }
     });
+}
+
+/// Identity of a Unix socket file this process bound to, captured as
+/// `(dev, ino)` plus the original path. Used to decide at shutdown whether
+/// the inode on disk is still ours or has been replaced by a successor
+/// process during a binary upgrade.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct UnixSocketOwnership {
+    path: String,
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum UnixSocketCleanup {
+    /// The inode matched; the file has been removed.
+    Removed,
+    /// Nothing was on disk at the captured path.
+    Missing,
+    /// A different inode sits at the path — a successor rebound it.
+    Skipped { reason: String },
+    /// Removal was attempted but the syscall returned an error.
+    Failed { err: String },
+}
+
+#[cfg(unix)]
+impl UnixSocketOwnership {
+    /// Stat the path and remember `(dev, ino)` so future cleanup can verify
+    /// the inode has not been replaced.
+    fn capture(path: &str) -> Result<Self, std::io::Error> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path)?;
+        Ok(Self {
+            path: path.to_string(),
+            dev: meta.dev(),
+            ino: meta.ino(),
+        })
+    }
+
+    /// Remove the socket file only if the inode on disk still matches the
+    /// one captured at `capture` time.
+    fn cleanup_if_ours(&self) -> UnixSocketCleanup {
+        match Self::inspect(&self.path, self.dev, self.ino) {
+            CleanupDecision::Remove => match std::fs::remove_file(&self.path) {
+                Ok(()) => UnixSocketCleanup::Removed,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    UnixSocketCleanup::Missing
+                }
+                Err(err) => UnixSocketCleanup::Failed {
+                    err: err.to_string(),
+                },
+            },
+            CleanupDecision::Missing => UnixSocketCleanup::Missing,
+            CleanupDecision::Skip(reason) => UnixSocketCleanup::Skipped { reason },
+        }
+    }
+
+    /// Pure decision function: given a path and the expected `(dev, ino)`,
+    /// should the caller proceed to unlink the file? Split out so the logic
+    /// can be unit-tested without touching real filesystem state.
+    fn inspect(path: &str, expected_dev: u64, expected_ino: u64) -> CleanupDecision {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => {
+                let dev = meta.dev();
+                let ino = meta.ino();
+                if dev == expected_dev && ino == expected_ino {
+                    CleanupDecision::Remove
+                } else {
+                    CleanupDecision::Skip(format!(
+                        "inode changed (expected dev={expected_dev} ino={expected_ino}, found dev={dev} ino={ino}); another process owns the path now"
+                    ))
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => CleanupDecision::Missing,
+            Err(err) => CleanupDecision::Skip(format!("stat failed: {err}")),
+        }
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum CleanupDecision {
+    Remove,
+    Missing,
+    Skip(String),
+}
+
+/// Log the end of a client session using a shared format string. Both the
+/// TCP and Unix accept branches used to inline the same match on
+/// `Result<Option<ClientSessionInfo>, Error>` — same identity string,
+/// same elapsed-time rendering, same warn vs info split. Centralising
+/// it keeps the two remaining accept sites down to a single call.
+fn log_session_end(
+    result: Result<Option<crate::client::ClientSessionInfo>, crate::errors::Error>,
+    connection_id: u64,
+    peer_label: &str,
+    session_start: chrono::NaiveDateTime,
+    log_disconnections: bool,
+) {
+    let session = format_duration(&(Utc::now().naive_utc() - session_start));
+    match result {
+        Ok(session_info) => {
+            if log_disconnections || log::log_enabled!(log::Level::Debug) {
+                let identity = match &session_info {
+                    Some(si) => {
+                        format!("[{}@{} #c{}]", si.username, si.pool_name, si.connection_id)
+                    }
+                    None => format!("[#c{connection_id}]"),
+                };
+                info!("{identity} client disconnected from {peer_label}, session={session}");
+            }
+        }
+        Err(err) => {
+            // Pre-auth failures: identity unknown, only connection_id available.
+            // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
+            warn!("[#c{connection_id}] client {peer_label} disconnected with error: {err}, session={session}");
+        }
+    }
+}
+
+/// Create a Tokio Unix socket listener at `path` with the given permission
+/// `mode`.
+///
+/// This is the whole bring-up sequence the pooler runs at startup, factored
+/// out of `run_server` so unit tests can reproduce the failure modes (stale
+/// file, dead-end directory, chmod failure) in a tempdir without launching a
+/// full server. On success the returned [`UnixSocketOwnership`] records the
+/// (dev, ino) of the inode so the shutdown path can decide whether the
+/// successor of a binary upgrade has already replaced it.
+#[cfg(unix)]
+fn create_unix_listener(
+    path: &str,
+    mode: u32,
+) -> Result<(tokio::net::UnixListener, UnixSocketOwnership), String> {
+    prepare_unix_socket_path(path)
+        .map_err(|err| format!("Cannot reuse Unix socket path {path}: {err}"))?;
+
+    // Clamp the umask so the socket inode created by bind() never exists with
+    // weaker permissions than `mode`. Without this a concurrent client
+    // connecting in the window between bind() and set_permissions() would
+    // land on the umask-derived rights (typically 0644) and bypass the
+    // configured restriction. set_permissions() still runs afterwards so
+    // callers can loosen the mode (e.g. 0660 with a group bit).
+    let restrict_bits = !(mode & 0o777) & 0o777;
+    let _umask_guard = UmaskGuard::restrict(restrict_bits as libc::mode_t);
+
+    let listener = tokio::net::UnixListener::bind(path)
+        .map_err(|err| format!("Failed to bind Unix socket {path}: {err}"))?;
+    drop(_umask_guard);
+
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .map_err(|err| format!("Failed to set mode {mode:#o} on Unix socket {path}: {err}"))?;
+
+    let ownership = UnixSocketOwnership::capture(path)
+        .map_err(|err| format!("Failed to stat Unix socket {path} after bind: {err}"))?;
+
+    Ok((listener, ownership))
+}
+
+/// Prepare a Unix socket path for bind() by clearing any stale file without
+/// clobbering a live peer.
+///
+/// The previous implementation called `remove_file` unconditionally, which
+/// meant pointing pg_doorman at a shared directory like `/var/run/postgresql`
+/// could silently delete another process's live socket. This helper instead:
+///
+/// 1. Returns Ok if nothing exists at the path.
+/// 2. Attempts a connect — if it succeeds, a live peer owns the socket and
+///    we refuse to touch it so the caller can fail loudly.
+/// 3. Otherwise removes the stale inode (typical case after a crash).
+///
+/// Errors are returned as strings with enough context for the caller to log
+/// and exit; unit tests exercise the three branches without touching the
+/// process umask or the real server bring-up.
+#[cfg(unix)]
+fn prepare_unix_socket_path(path: &str) -> Result<(), String> {
+    use std::os::unix::net::UnixStream;
+
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(format!("stat failed: {err}")),
+    }
+
+    // Short probe: a local Unix connect that would succeed does so in
+    // microseconds. If it refuses, the socket is stale (no listener bound to
+    // the inode) and we can reclaim it.
+    match UnixStream::connect(path) {
+        Ok(_) => Err(format!(
+            "another process is already listening on {path}; refusing to remove it"
+        )),
+        Err(_) => std::fs::remove_file(path)
+            .map_err(|err| format!("failed to remove stale socket {path}: {err}")),
+    }
+}
+
+/// Temporarily tighten the process umask for the lifetime of the guard.
+///
+/// The Unix listener startup needs the socket inode to be created with no
+/// weaker permissions than the configured `unix_socket_mode`. Since `bind()`
+/// applies `0666 & ~umask` at the moment the file appears in the filesystem,
+/// we ratchet the umask up, perform the bind, then restore the original
+/// value on drop. The guard is also safe to drop explicitly once the socket
+/// is in place and `set_permissions` has run.
+#[cfg(unix)]
+struct UmaskGuard {
+    previous: libc::mode_t,
+}
+
+#[cfg(unix)]
+impl UmaskGuard {
+    /// Ensure the process umask masks at least `additional_bits` on top of
+    /// whatever was already set.
+    fn restrict(additional_bits: libc::mode_t) -> Self {
+        // SAFETY: umask is a process-global knob; we snapshot the current
+        // value by setting a known mask, OR in our extra bits, and restore
+        // it on drop. No Rust invariants are touched.
+        let previous = unsafe { libc::umask(0o777) };
+        unsafe { libc::umask(previous | additional_bits) };
+        Self { previous }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UmaskGuard {
+    fn drop(&mut self) {
+        // SAFETY: same rationale as `restrict`; we only touch the umask.
+        unsafe { libc::umask(self.previous) };
+    }
+}
+
+#[cfg(test)]
+mod create_unix_listener_tests {
+    use super::create_unix_listener;
+    use serial_test::serial;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    // Serialised because the umask_guard_tests in this crate flip the
+    // process umask to 0o777 while running; any concurrent tempdir-backed
+    // bind() would land on an inaccessible file and fail with EACCES.
+    #[tokio::test]
+    #[serial]
+    async fn binds_and_applies_mode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".s.PGSQL.6432");
+        let path_str = path.to_str().unwrap();
+
+        let (listener, ownership) =
+            create_unix_listener(path_str, 0o600).expect("bind must succeed in empty tempdir");
+
+        let meta = std::fs::metadata(path_str).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(ownership.path, path_str);
+
+        drop(listener);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn bind_fails_when_directory_missing() {
+        // Directory we never created → bind must return a structured error
+        // instead of panicking or exiting the process.
+        let dir = tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("does")
+            .join("not")
+            .join("exist")
+            .join(".s.PGSQL.6432");
+
+        let err = create_unix_listener(path.to_str().unwrap(), 0o600)
+            .expect_err("bind must fail when parent directory is missing");
+        assert!(err.contains("Failed to bind"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn group_readable_mode_is_applied() {
+        // 0660 exercises the path where set_permissions *loosens* the bits
+        // the umask guard masked off; if we mess that up the file stays
+        // owner-only and client groups lose access silently.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".s.PGSQL.6432");
+
+        let (listener, _ownership) =
+            create_unix_listener(path.to_str().unwrap(), 0o660).expect("bind must succeed");
+
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o660);
+        drop(listener);
+    }
+}
+
+#[cfg(test)]
+mod unix_socket_ownership_tests {
+    use super::{CleanupDecision, UnixSocketCleanup, UnixSocketOwnership};
+    use serial_test::serial;
+    use std::os::unix::net::UnixListener;
+    use tempfile::tempdir;
+
+    #[test]
+    #[serial]
+    fn capture_and_cleanup_round_trip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("owned.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap())
+            .expect("capture must succeed right after bind");
+        assert_eq!(ownership.cleanup_if_ours(), UnixSocketCleanup::Removed);
+        assert!(!path.exists(), "our socket file must be removed");
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_skips_replaced_inode() {
+        // Linux is free to recycle a freed inode immediately on tmpfs/ext4,
+        // so bind→remove→bind on the same path can land on the same ino on
+        // CI runners. We forge the mismatch directly: a stale ownership
+        // claim against a live file is the same observable state the parent
+        // would see after a successor rebound the socket.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("shared.sock");
+        let live = UnixListener::bind(&path).unwrap();
+        let real = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+        let stale = UnixSocketOwnership {
+            path: real.path.clone(),
+            dev: real.dev,
+            ino: real.ino.wrapping_add(1),
+        };
+
+        match stale.cleanup_if_ours() {
+            UnixSocketCleanup::Skipped { reason } => {
+                assert!(
+                    reason.contains("inode changed"),
+                    "unexpected reason: {reason}"
+                );
+            }
+            other => panic!("expected Skipped, got {other:?}"),
+        }
+        assert!(path.exists(), "live socket file must be preserved");
+        drop(live);
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_reports_missing_when_already_removed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gone.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(ownership.cleanup_if_ours(), UnixSocketCleanup::Missing);
+    }
+
+    #[test]
+    #[serial]
+    fn inspect_remove_on_exact_match() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("inspect.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            UnixSocketOwnership::inspect(path.to_str().unwrap(), ownership.dev, ownership.ino),
+            CleanupDecision::Remove
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn inspect_skip_on_mismatched_ino() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("inspect2.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+        let ownership = UnixSocketOwnership::capture(path.to_str().unwrap()).unwrap();
+
+        // Pretend we captured a different inode to simulate replacement.
+        let fake_ino = ownership.ino.wrapping_add(1);
+        match UnixSocketOwnership::inspect(path.to_str().unwrap(), ownership.dev, fake_ino) {
+            CleanupDecision::Skip(reason) => {
+                assert!(reason.contains("inode changed"), "unexpected: {reason}");
+            }
+            other => panic!("expected Skip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn inspect_missing_when_no_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nope.sock");
+        assert_eq!(
+            UnixSocketOwnership::inspect(path.to_str().unwrap(), 0, 0),
+            CleanupDecision::Missing
+        );
+    }
+}
+
+#[cfg(test)]
+mod prepare_unix_socket_path_tests {
+    use super::prepare_unix_socket_path;
+    use serial_test::serial;
+    use std::os::unix::net::UnixListener;
+    use tempfile::tempdir;
+
+    #[test]
+    #[serial]
+    fn missing_path_is_ok() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing.sock");
+        assert!(prepare_unix_socket_path(path.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn stale_file_is_removed() {
+        // A regular file (not a live listener) simulates a post-crash leftover
+        // — prepare_unix_socket_path should clean it up silently.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stale.sock");
+        std::fs::write(&path, b"leftover").unwrap();
+        assert!(path.exists());
+
+        prepare_unix_socket_path(path.to_str().unwrap()).expect("stale file must be removable");
+        assert!(!path.exists(), "stale socket file must be removed");
+    }
+
+    #[test]
+    #[serial]
+    fn live_listener_is_preserved() {
+        // Bind a real UnixListener in a temp dir; the helper must refuse to
+        // touch it and return a descriptive error.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("live.sock");
+        let _listener = UnixListener::bind(&path).unwrap();
+
+        let err = prepare_unix_socket_path(path.to_str().unwrap())
+            .expect_err("live socket must trigger an error");
+        assert!(err.contains("already listening"), "unexpected error: {err}");
+        assert!(path.exists(), "live socket file must stay on disk");
+    }
+}
+
+#[cfg(test)]
+mod umask_guard_tests {
+    use super::UmaskGuard;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn restore_previous_umask_on_drop() {
+        let prior = unsafe { libc::umask(0o022) };
+        {
+            let _guard = UmaskGuard::restrict(0o077);
+            let inside = unsafe { libc::umask(0o777) };
+            unsafe { libc::umask(inside) };
+            assert_eq!(
+                inside & 0o077,
+                0o077,
+                "guard must ensure the restrict bits are set"
+            );
+        }
+        let after = unsafe { libc::umask(0o022) };
+        assert_eq!(after, 0o022, "drop must restore the original umask");
+        unsafe { libc::umask(prior) };
+    }
+
+    #[test]
+    #[serial]
+    fn restrict_preserves_existing_bits() {
+        let prior = unsafe { libc::umask(0o027) };
+        {
+            let _guard = UmaskGuard::restrict(0o050);
+            let inside = unsafe { libc::umask(0o777) };
+            unsafe { libc::umask(inside) };
+            // Prior bits (027) AND new bits (050) must both be present.
+            assert_eq!(inside & 0o077, 0o077);
+        }
+        unsafe { libc::umask(prior) };
+    }
 }

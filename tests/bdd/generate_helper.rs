@@ -133,13 +133,11 @@ fn patch_toml_config(content: &str, port: u16) -> String {
     // Add pg_hba trust rule at the end of the [general] section
     // Find where to insert: after [general] block, before [pools]
     if let Some(pools_pos) = output.find("\n[pools]") {
-        let insert = format!("\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n");
-        output.insert_str(pools_pos, &insert);
+        let insert = "\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n";
+        output.insert_str(pools_pos, insert);
     } else {
         // Fallback: append at the end
-        output.push_str(&format!(
-            "\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n"
-        ));
+        output.push_str("\n[general.pg_hba]\ncontent = \"host all all 127.0.0.1/32 trust\"\n");
     }
 
     output

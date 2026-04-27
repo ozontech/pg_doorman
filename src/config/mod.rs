@@ -4,11 +4,10 @@
 //! for the connection pooler.
 
 use arc_swap::ArcSwap;
-use log::{error, info};
+use log::{error, info, warn};
 use once_cell::sync::Lazy;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -18,6 +17,7 @@ use self::tls::{load_identity, TLSMode};
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
+use crate::transport::ClientTransport;
 use crate::utils::format_duration_ms;
 
 // Sub-modules
@@ -380,11 +380,28 @@ impl Config {
             ));
         }
 
+        // Validate unix_socket_mode upfront so misconfigurations fail at startup
+        // rather than at the moment the listener tries to chmod the socket file.
+        General::parse_unix_socket_mode(&self.general.unix_socket_mode)
+            .map_err(|err| Error::BadConfig(format!("general.{err}")))?;
+
         // Validate mutual exclusion for HBA settings
         if self.general.pg_hba.is_some() && !self.general.hba.is_empty() {
             return Err(Error::BadConfig(
                 "general.hba and general.pg_hba cannot be specified at the same time".to_string(),
             ));
+        }
+
+        // Legacy general.hba is an IP-based whitelist and has no transport
+        // concept, so Unix socket clients unconditionally fall through to
+        // Allow in check_hba_with_general. Warn the operator loudly rather
+        // than silently granting access to anyone with filesystem reach.
+        if legacy_hba_bypassed_by_unix_socket(&self.general) {
+            warn!(
+                "general.hba restricts TCP clients by CIDR but does not apply to Unix socket \
+                 clients — any local process able to connect to the socket file will bypass the \
+                 IP whitelist. Switch to pg_hba with explicit `local` rules to cover this path."
+            );
         }
 
         // Validate prepared_statements
@@ -682,20 +699,47 @@ pub async fn reload_config(client_server_map: ClientServerMap) -> Result<bool, E
 }
 
 pub fn check_hba(
-    ip: IpAddr,
-    ssl: bool,
+    transport: &ClientTransport,
     type_auth: &str,
     username: &str,
     database: &str,
 ) -> CheckResult {
     let config = get_config();
-    if let Some(ref pg) = config.general.pg_hba {
-        return pg.check_hba(ip, ssl, type_auth, username, database);
+    check_hba_with_general(&config.general, transport, type_auth, username, database)
+}
+
+/// True when the operator enabled a Unix listener alongside the legacy
+/// IP-based `general.hba` whitelist, without a `pg_hba` snippet to cover
+/// the `local` transport. In this shape Unix clients bypass the CIDR
+/// check entirely — see `check_hba_with_general`.
+pub(crate) fn legacy_hba_bypassed_by_unix_socket(general: &General) -> bool {
+    general.unix_socket_dir.is_some() && general.pg_hba.is_none() && !general.hba.is_empty()
+}
+
+/// Pure evaluation of HBA rules against an explicit [`General`] snapshot.
+///
+/// Split out of [`check_hba`] so that unit tests can exercise the legacy
+/// `general.hba` branches — including the Unix-socket bypass — without
+/// touching the global config.
+pub(crate) fn check_hba_with_general(
+    general: &General,
+    transport: &ClientTransport,
+    type_auth: &str,
+    username: &str,
+    database: &str,
+) -> CheckResult {
+    if let Some(ref pg) = general.pg_hba {
+        return pg.check_hba(transport, type_auth, username, database);
     }
-    if config.general.hba.is_empty() {
+    // Legacy hba list has no unix concept — allow all unix connections
+    if transport.is_unix() {
         return CheckResult::Allow;
     }
-    if config.general.hba.iter().any(|net| net.contains(&ip)) {
+    if general.hba.is_empty() {
+        return CheckResult::Allow;
+    }
+    let ip = transport.hba_ip();
+    if general.hba.iter().any(|net| net.contains(&ip)) {
         CheckResult::Allow
     } else {
         CheckResult::NotMatched

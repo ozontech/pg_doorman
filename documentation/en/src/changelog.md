@@ -1,5 +1,20 @@
 # Changelog
 
+### 3.6.2 <small>Apr 27, 2026</small>
+
+**New features:**
+
+- **Unix socket listener.** `unix_socket_dir` creates `.s.PGSQL.<port>` socket file. Connect with `psql -h <dir>` or `pgbench -h <dir>`. No TCP overhead on local connections.
+
+- **HBA `local` rule matching.** `local` rules in pg_hba now apply to Unix socket connections. `host`/`hostssl`/`hostnossl` rules apply only to TCP. Previously `local` rules were parsed but ignored.
+
+- **`unix_socket_mode` controls socket file permissions.** New `[general]` setting fixes the permission bits on `.s.PGSQL.<port>` after bind, so the access surface no longer depends on the process umask. Octal string, default `"0600"` (owner only). Set to `"0660"` to grant a Unix group, or `"0666"` to allow any local user. Validated at config load — invalid octal values, setuid/setgid/sticky bits, and overflow into bits above `0o777` are rejected upfront.
+
+**Known limitations (Unix socket):**
+
+- Unix listener not handed off during `SIGUSR2` binary upgrade. New process re-creates the socket; connections refused for ~100ms.
+- `only_ssl_connections` does not reject Unix socket connections. Unix sockets do not need TLS for transport security.
+
 ### 3.6.1 <small>Apr 27, 2026</small>
 
 #### openssl 0.10.78 (CVE-2026-41678, CVE-2026-41681)

@@ -3,7 +3,7 @@ use log::{error, info, warn};
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::Ordering;
 use tokio::io::split;
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UnixStream};
 
 use crate::config::get_config;
 use crate::errors::Error;
@@ -13,6 +13,8 @@ use crate::pool::ClientServerMap;
 use crate::stats::{CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER};
 use crate::utils::rate_limit::RateLimiter;
 
+use crate::transport::ClientTransport;
+
 use super::core::Client;
 use super::startup::{get_startup, startup_tls, ClientConnectionType};
 
@@ -21,6 +23,70 @@ pub struct ClientSessionInfo {
     pub username: String,
     pub pool_name: String,
     pub connection_id: u64,
+}
+
+/// Drive the authenticated-client lifecycle for any transport.
+///
+/// Three places (plain TCP startup, TCP plain-continue after rejected TLS,
+/// and Unix socket startup) used to inline the same sequence: call
+/// `Client::startup`, log "client connected", run `client.handle()`, and
+/// flush `disconnect_stats` on a late error. Centralising it here keeps
+/// the three call sites down to a single generic hop and removes ~90
+/// lines of copy-paste.
+#[allow(clippy::too_many_arguments)]
+async fn drive_authenticated_client<S, T>(
+    read: S,
+    write: T,
+    transport: ClientTransport,
+    bytes: bytes::BytesMut,
+    client_server_map: ClientServerMap,
+    admin_only: bool,
+    connection_id: u64,
+    #[cfg(unix)] raw_fd: Option<std::os::unix::io::RawFd>,
+    #[cfg(all(unix, feature = "tls-migration"))] ssl_ptr: Option<crate::client::core::SslRawPtr>,
+    log_client_connections: bool,
+    log_label: &'static str,
+) -> Result<Option<ClientSessionInfo>, Error>
+where
+    S: tokio::io::AsyncRead + Unpin + Send + 'static,
+    T: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let peer = transport.peer_display();
+    match Client::startup(
+        read,
+        write,
+        transport,
+        bytes,
+        client_server_map,
+        admin_only,
+        connection_id,
+        #[cfg(unix)]
+        raw_fd,
+        #[cfg(all(unix, feature = "tls-migration"))]
+        ssl_ptr,
+    )
+    .await
+    {
+        Ok(mut client) => {
+            if log_client_connections {
+                info!(
+                    "[{}@{} #c{}] client connected from {} ({})",
+                    client.username, client.pool_name, client.connection_id, peer, log_label,
+                );
+            }
+            let session_info = ClientSessionInfo {
+                username: client.username.clone(),
+                pool_name: client.pool_name.clone(),
+                connection_id: client.connection_id,
+            };
+            let result = client.handle().await;
+            if !client.is_admin() && result.is_err() {
+                client.disconnect_stats();
+            }
+            result.map(|_| Some(session_info))
+        }
+        Err(err) => Err(err),
+    }
 }
 
 pub async fn client_entrypoint_too_many_clients_already(
@@ -68,6 +134,47 @@ pub async fn client_entrypoint_too_many_clients_already(
             };
         }
         Err(err) => return Err(err),
+    }
+    error_response_terminal(&mut stream, "sorry, too many clients already", "53300").await?;
+    Ok(())
+}
+
+/// Reject an inbound Unix socket client with a proper PostgreSQL ErrorResponse.
+///
+/// The TCP rejection path above also handles TLS and cancel-request startups,
+/// neither of which applies here: Unix sockets do not negotiate TLS, and
+/// cancel requests through Unix are not forwarded to a backend at startup
+/// time because they carry no addr to pair with the running client. We still
+/// consume the startup bytes so the client reads our ErrorResponse instead
+/// of seeing a bare EOF — the symptom the operator saw in the max_connections
+/// regression.
+pub async fn client_entrypoint_too_many_clients_already_unix(
+    mut stream: UnixStream,
+    connection_id: u64,
+) -> Result<(), Error> {
+    match get_startup::<UnixStream>(&mut stream).await {
+        Ok((ClientConnectionType::Tls, _)) => {
+            // Unix sockets never negotiate TLS; mirror the main Unix entrypoint
+            // and refuse the SSL request with the same error message.
+            error_response_terminal(
+                &mut stream,
+                "TLS is not supported on Unix socket connections",
+                "08P01",
+            )
+            .await?;
+            return Ok(());
+        }
+        Ok((ClientConnectionType::Startup, _)) => (),
+        Ok((ClientConnectionType::CancelQuery, _)) => {
+            // A cancel request arriving while the server is at capacity is a
+            // no-op: we have no worker slot to forward it to. Report back the
+            // same "too many clients" error so the client sees a structured
+            // response instead of EOF.
+        }
+        Err(err) => {
+            warn!("[#c{connection_id}] unix client bad startup: {err}");
+            return Err(err);
+        }
     }
     error_response_terminal(&mut stream, "sorry, too many clients already", "53300").await?;
     Ok(())
@@ -161,44 +268,25 @@ pub async fn client_entrypoint(
                         #[cfg(unix)]
                         let raw_fd = Some(stream.as_raw_fd());
                         let (read, write) = split(stream);
-
-                        // Continue with regular startup.
-                        match Client::startup(
+                        drive_authenticated_client(
                             read,
                             write,
-                            addr,
+                            ClientTransport::Tcp {
+                                peer: addr,
+                                ssl: false,
+                            },
                             bytes,
                             client_server_map,
                             admin_only,
-                            false,
                             connection_id,
                             #[cfg(unix)]
                             raw_fd,
                             #[cfg(all(unix, feature = "tls-migration"))]
                             None, // no SSL for plain TCP
+                            log_client_connections,
+                            "plain",
                         )
                         .await
-                        {
-                            Ok(mut client) => {
-                                if log_client_connections {
-                                    info!(
-                                        "[{}@{} #c{}] client connected from {addr} (plain)",
-                                        client.username, client.pool_name, client.connection_id
-                                    );
-                                }
-                                let session_info = ClientSessionInfo {
-                                    username: client.username.clone(),
-                                    pool_name: client.pool_name.clone(),
-                                    connection_id: client.connection_id,
-                                };
-                                let result = client.handle().await;
-                                if !client.is_admin() && result.is_err() {
-                                    client.disconnect_stats();
-                                }
-                                result.map(|_| Some(session_info))
-                            }
-                            Err(err) => Err(err),
-                        }
                     }
 
                     // Client probably disconnected rejecting our plain text connection.
@@ -227,44 +315,25 @@ pub async fn client_entrypoint(
             #[cfg(unix)]
             let raw_fd = Some(stream.as_raw_fd());
             let (read, write) = split(stream);
-
-            // Continue with regular startup.
-            match Client::startup(
+            drive_authenticated_client(
                 read,
                 write,
-                addr,
+                ClientTransport::Tcp {
+                    peer: addr,
+                    ssl: false,
+                },
                 bytes,
                 client_server_map,
                 admin_only,
-                false,
                 connection_id,
                 #[cfg(unix)]
                 raw_fd,
                 #[cfg(all(unix, feature = "tls-migration"))]
                 None, // no SSL for plain TCP
+                log_client_connections,
+                "plain",
             )
             .await
-            {
-                Ok(mut client) => {
-                    if log_client_connections {
-                        info!(
-                            "[{}@{} #c{}] client connected from {addr} (plain)",
-                            client.username, client.pool_name, client.connection_id
-                        );
-                    }
-                    let session_info = ClientSessionInfo {
-                        username: client.username.clone(),
-                        pool_name: client.pool_name.clone(),
-                        connection_id: client.connection_id,
-                    };
-                    let result = client.handle().await;
-                    if !client.is_admin() && result.is_err() {
-                        client.disconnect_stats();
-                    }
-                    result.map(|_| Some(session_info))
-                }
-                Err(err) => Err(err),
-            }
         }
 
         // Client wants to cancel a query.
@@ -296,6 +365,82 @@ pub async fn client_entrypoint(
         // Something failed, probably the socket.
         Err(err) => {
             error!("#c{connection_id} client {addr} startup failed: {err}");
+            Err(err)
+        }
+    }
+}
+
+/// Unix socket client entrypoint. Uses placeholder addr 127.0.0.1:0 (Unix sockets have no peer address).
+pub async fn client_entrypoint_unix(
+    mut stream: UnixStream,
+    client_server_map: ClientServerMap,
+    admin_only: bool,
+    connection_id: u64,
+) -> Result<Option<ClientSessionInfo>, Error> {
+    let config = get_config();
+    let log_client_connections = config.general.log_client_connections;
+
+    match get_startup::<UnixStream>(&mut stream).await {
+        Ok((ClientConnectionType::Startup, bytes)) => {
+            PLAIN_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let raw_fd = Some(stream.as_raw_fd());
+            let (read, write) = split(stream);
+            drive_authenticated_client(
+                read,
+                write,
+                ClientTransport::Unix,
+                bytes,
+                client_server_map,
+                admin_only,
+                connection_id,
+                #[cfg(unix)]
+                raw_fd,
+                #[cfg(all(unix, feature = "tls-migration"))]
+                None, // no SSL on Unix socket
+                log_client_connections,
+                "unix",
+            )
+            .await
+        }
+
+        Ok((ClientConnectionType::Tls, _)) => {
+            error_response_terminal(
+                &mut stream,
+                "TLS is not supported on Unix socket connections",
+                "08P01",
+            )
+            .await?;
+            Err(Error::ProtocolSyncError(
+                "TLS requested on Unix socket".into(),
+            ))
+        }
+
+        Ok((ClientConnectionType::CancelQuery, bytes)) => {
+            CANCEL_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let (read, write) = split(stream);
+
+            // Unix clients have no peer addr; use the loopback sentinel the
+            // TCP path would have seen so Client::cancel can still do its
+            // client_server_map lookup by process_id + secret_key.
+            let sentinel_addr = std::net::SocketAddr::from((
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                0,
+            ));
+            match Client::cancel(read, write, sentinel_addr, bytes, client_server_map).await {
+                Ok(mut client) => {
+                    info!("Cancel request via unix socket");
+                    let result = client.handle().await;
+                    if !client.is_admin() && result.is_err() {
+                        client.disconnect_stats();
+                    }
+                    result.map(|_| None)
+                }
+                Err(err) => Err(err),
+            }
+        }
+
+        Err(err) => {
+            error!("#c{connection_id} unix client startup failed: {err}");
             Err(err)
         }
     }
