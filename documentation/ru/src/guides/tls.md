@@ -38,9 +38,9 @@ general:
 
 ### Политика шифров
 
-Минимальный TLS 1.2. Список шифров — Mozilla «intermediate»; настройке не подлежит. Direct TLS handshake (PG17, без `SSLRequest`) не поддерживается.
+Минимальный TLS 1.2 enforced на handshake. PgDoorman **не** задаёт явный cipher list — эффективные шифры берутся из системной сборки OpenSSL. Если нужен жёсткий cipher list, настройте его системно (`/etc/ssl/openssl.cnf`) или соберите OpenSSL с нужной политикой.
 
-Для управления шифрами TLS 1.3 или direct TLS из PG17 используйте PgBouncer 1.25+.
+Direct TLS handshake (PG17, без `SSLRequest`) не поддерживается. Для управления шифрами TLS 1.3 или direct TLS из PG17 используйте PgBouncer 1.25+.
 
 ## Серверный TLS
 
