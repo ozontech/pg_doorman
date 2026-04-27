@@ -168,6 +168,10 @@ EOF
 host = "127.0.0.1"
 port = $DOORMAN_PORT
 worker_threads = $DOORMAN_WORKERS
+# Pin every tokio worker to its own CPU starting from core 1 (core 0 is left
+# for postgres + pgbench + the system). Skipped at runtime when the host has
+# fewer than three cores; Ubicloud standard-* always have enough.
+worker_cpu_affinity_pinning = true
 pg_hba = {path = "/tmp/doorman.hba"}
 admin_username = "admin"
 admin_password = "admin"
