@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Parse bench-results.tar.gz from setup-and-run-bench.sh and emit benchmarks.md.
 
-Same shape as documentation/en/src/benchmarks.md: per-protocol sections with a
-relative-throughput table (vs pgbouncer / vs odyssey) and an absolute-latency
-table (p50/p95/p99 in one cell per pooler).
+Layout follows documentation/en/src/benchmarks.md: TL;DR + environment +
+methodology + per-protocol sections (relative-throughput table and absolute
+p50/p95/p99 latency table) + caveats.
 
 Latency percentiles come from pgbench `--log` files (column 3 = µs) — same
-convention as tests/bdd/pgbench_helper.rs::compute_latency_percentiles.
+nearest-rank convention as tests/bdd/pgbench_helper.rs::compute_latency_percentiles.
 
 stdlib only (Python 3.10+).
 """
@@ -29,13 +29,17 @@ NAME_RE = re.compile(
     r"^(?P<pooler>pg_doorman|odyssey|pgbouncer)"
     r"(?:_(?P<ssl>ssl))?"
     # bench.feature names SSL+connect cases without an explicit proto segment
-    # (they all use --protocol=simple), so proto is optional and we default it
-    # to "simple" in parse_test_name.
+    # (they all use --protocol=simple), so proto is optional and defaults to
+    # "simple" in parse_test_name.
     r"(?:_(?P<proto>simple|extended|prepared))?"
     r"(?:_(?P<connect>connect))?"
     r"_c(?P<clients>\d+)$"
 )
-SERVICE_LOG_NAMES = {"doorman", "odyssey", "pgbouncer", "pg"}
+# Stems that the script puts in bench-results/ for debugging — never tests.
+SERVICE_LOG_NAMES = {
+    "doorman", "odyssey", "pgbouncer", "pg",
+    "bench-wrap",  # added by the workflow's nohup wrapper
+}
 
 PROTO_ORDER = ("simple", "extended", "prepared")
 # (ssl, connect) tuples in the same row order as the existing benchmarks.md.
@@ -125,6 +129,143 @@ def format_latency_triplet(rec: dict | None) -> str:
     return f"{p50:.2f} / {p95:.2f} / {p99:.2f}"
 
 
+def _ms_str(value: float | None) -> str:
+    """Adaptive precision for ms values: <10ms → 2 decimals, <100 → 1, else 0.
+    Keeps a column aligned over the 0.04 → 1500 range."""
+    if value is None:
+        return "-"
+    if value < 10:
+        return f"{value:.2f}"
+    if value < 100:
+        return f"{value:.1f}"
+    return f"{value:.0f}"
+
+
+def format_ms(rec: dict | None, key: str) -> str:
+    if not rec:
+        return "-"
+    return _ms_str(rec.get(key))
+
+
+def format_p50_p99(rec: dict | None) -> str:
+    """`<p50> / <p99>` ms for one pooler in one row. Lets the reader see the
+    median next to the tail without three separate tables."""
+    if not rec:
+        return "-"
+    p50 = rec.get("p50_ms")
+    p99 = rec.get("p99_ms")
+    if p50 is None or p99 is None:
+        return "-"
+    return f"{_ms_str(p50)} / {_ms_str(p99)}"
+
+
+def format_spread(rec: dict | None) -> str:
+    """`p99 / p50` as a multiplier — how far the slowest 1% drifts from
+    typical. 1.0× = no tail; 100× = the tail dwarfs the median (the
+    'Tail at Scale' regime where fanout latency hits users)."""
+    if not rec:
+        return "-"
+    p50 = rec.get("p50_ms")
+    p99 = rec.get("p99_ms")
+    if p50 is None or p99 is None or p50 <= 0:
+        return "-"
+    ratio = p99 / p50
+    if ratio < 10:
+        return f"{ratio:.1f}×"
+    return f"{ratio:.0f}×"
+
+
+def parse_iso8601_z(value: str | None) -> datetime | None:
+    """Accept '2026-04-27T05:14:44Z' or with offset; return tz-aware datetime."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def format_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m {s:02d}s"
+    return f"{m}m {s:02d}s"
+
+
+def compute_tldr(groups: dict[tuple, dict[str, dict]]) -> list[str]:
+    """Pick three headline numbers worth showing above the fold.
+
+    Strategy: find the highest pg_doorman speedup vs each competitor at >=40
+    clients in the simple/extended/prepared protocols (no Reconnect, no SSL),
+    plus the worst p99 spread on the steady-state simple-protocol curve.
+    Returns markdown bullet lines. Empty list if data is too sparse.
+    """
+    bullets: list[str] = []
+
+    def best_speedup(other: str) -> tuple[str, float] | None:
+        best: tuple[str, float] | None = None
+        for (proto, ssl, conn, clients), poolers in groups.items():
+            if ssl or conn or clients < 40:
+                continue
+            d_tps = (poolers.get("pg_doorman") or {}).get("tps")
+            o_tps = (poolers.get(other) or {}).get("tps")
+            if not d_tps or not o_tps:
+                continue
+            ratio = d_tps / o_tps
+            if best is None or ratio > best[1]:
+                label = row_label(clients, "")
+                best = (f"{proto} protocol, {label}", ratio)
+        return best
+
+    for other in ("pgbouncer", "odyssey"):
+        b = best_speedup(other)
+        if b is None:
+            continue
+        scenario, ratio = b
+        if ratio >= 1.5:
+            bullets.append(
+                f"- **vs {other}** — pg_doorman peaks at **x{ratio:.1f}** TPS "
+                f"on {scenario}."
+            )
+        elif ratio >= 1.03:
+            bullets.append(
+                f"- **vs {other}** — pg_doorman wins by "
+                f"**+{(ratio - 1) * 100:.0f}%** at most ({scenario})."
+            )
+        else:
+            bullets.append(
+                f"- **vs {other}** — within ±3% on steady-state simple/extended/prepared workloads."
+            )
+
+    # Tail spread under load: simple protocol, 10k clients, no SSL/Reconnect.
+    # This is pg_doorman's headline: tight p99/p50 ratio while competitors'
+    # tails drift orders of magnitude above their median.
+    key = ("simple", False, False, 10000)
+    if key in groups:
+        row = groups[key]
+        spreads = []
+        for pooler in ("pg_doorman", "pgbouncer", "odyssey"):
+            r = row.get(pooler) or {}
+            p50, p99 = r.get("p50_ms"), r.get("p99_ms")
+            if p50 and p99 and p50 > 0:
+                spreads.append((pooler, p99 / p50, p50, p99))
+        if spreads:
+            parts = []
+            for name, ratio, p50, p99 in spreads:
+                ratio_str = f"{ratio:.1f}×" if ratio < 10 else f"{ratio:.0f}×"
+                parts.append(f"{name} {ratio_str} ({_ms_str(p50)}→{_ms_str(p99)}ms)")
+            bullets.append(
+                "- **Tail spread at 10 000 simple-protocol clients** "
+                "(`p99/p50`, lower = more predictable) — " + ", ".join(parts) + "."
+            )
+
+    return bullets
+
+
 # ---------- I/O ----------
 
 
@@ -156,44 +297,110 @@ def emit_metadata(meta: dict | None) -> list[str]:
         return []
     mem_kb = meta.get("memory_kb")
     mem_gb = f"{mem_kb / 1024 / 1024:.1f}" if mem_kb else "?"
-    return [
+    versions = meta.get("versions") or {}
+    pg_v = versions.get("postgres", "?")
+    pgb_v = versions.get("pgbouncer", "?")
+    od_v = versions.get("odyssey", "?")
+    door_v = versions.get("pg_doorman", "?")
+    vm_size = meta.get("vm_size") or "unknown"
+    sha = meta.get("git_sha") or ""
+    started = meta.get("started_at")
+    finished = meta.get("finished_at")
+    started_dt = parse_iso8601_z(started)
+    finished_dt = parse_iso8601_z(finished)
+    duration = (
+        format_duration((finished_dt - started_dt).total_seconds())
+        if started_dt and finished_dt
+        else "?"
+    )
+    started_pretty = started_dt.strftime("%Y-%m-%d %H:%M UTC") if started_dt else "?"
+    finished_pretty = finished_dt.strftime("%Y-%m-%d %H:%M UTC") if finished_dt else "?"
+
+    lines = [
         "### Environment",
         "",
-        f"- **Host**: {meta.get('host', '?')}",
+        f"- **Provider**: Ubicloud `{vm_size}` (eu-central-h1)",
         f"- **Resources**: {meta.get('vcpus', '?')} vCPU / {mem_gb} GB",
+        f"- **Kernel**: `{meta.get('kernel', '?')}`",
+        f"- **Versions**: PostgreSQL {pg_v}, pg_doorman {door_v}, "
+        f"pgbouncer {pgb_v}, odyssey {od_v}",
         f"- **Workers**: pg_doorman: {meta.get('doorman_workers', '?')}, "
         f"odyssey: {meta.get('odyssey_workers', '?')}",
         f"- **Duration per pgbench run**: {meta.get('duration_per_run_sec', '?')}s",
-        f"- **Started**: {meta.get('started_at', '?')}",
-        f"- **Commit**: `{meta.get('git_sha', '?')}`",
-        "",
+        f"- **Started**: {started_pretty}",
+        f"- **Finished**: {finished_pretty}",
+        f"- **Total wall-clock**: {duration}",
     ]
+    if sha and sha != "unknown":
+        lines.append(f"- **Commit**: [`{sha[:8]}`](https://github.com/ozontech/pg_doorman/commit/{sha})")
+    lines.append("")
+    return lines
+
+
+METHODOLOGY = [
+    "### Methodology",
+    "",
+    "Each scenario runs `pgbench -T <duration>` against a 40-connection",
+    "server-side pool (`pool_mode = transaction`). The workload is a single",
+    "`SELECT :aid` (`\\set aid random(1, 100000)`) — pure pooler overhead, no",
+    "real working set. Three poolers, one PostgreSQL backend, identical",
+    "hardware.",
+    "",
+    "- **Reconnect** rows use `pgbench --connect`: a fresh TCP+startup per",
+    "  transaction (worst case for login latency).",
+    "- **SSL** rows set `PGSSLMODE=require` and a self-signed cert.",
+    "- Latency is collected with `pgbench --log` (per-transaction file);",
+    "  percentiles come from those samples, not from `pgbench` summary stats.",
+    "- Scenarios run sequentially with the same data dir and warm OS caches.",
+    "",
+    "Source: [`tests/bdd/features/bench.feature`](https://github.com/ozontech/pg_doorman/blob/master/tests/bdd/features/bench.feature),",
+    "driver: [`benches/setup-and-run-bench.sh`](https://github.com/ozontech/pg_doorman/blob/master/benches/setup-and-run-bench.sh).",
+    "",
+]
 
 
 LEGEND = [
     "### Reading the tables",
     "",
-    "**Throughput** — pg_doorman TPS relative to each competitor:",
+    "**Throughput** — `pg_doorman_TPS / competitor_TPS`, rendered:",
     "",
     "| Value | Meaning |",
     "|-------|---------|",
-    "| +N% | Faster by N% |",
-    "| -N% | Slower by N% |",
-    "| ≈0% | Within 3% |",
-    "| xN | N times faster or slower |",
-    "| ∞ | Competitor got 0 TPS |",
-    "| N/A | Unsupported |",
-    "| - | Not tested |",
+    "| +N% / -N% | Faster / slower by N percent |",
+    "| ≈0% | Within 3% — call it a tie |",
+    "| xN.N | N times faster (when ratio ≥ 1.5) |",
+    "| ∞ | Competitor returned 0 TPS |",
+    "| N/A | Competitor was not measured for this row |",
+    "| - | Not measured for either pooler |",
     "",
-    "**Latency** — per-transaction latency in ms. Each cell: `p50 / p95 / p99`. Lower is better.",
+    "**Latency** — per-transaction in ms. Each row shows `p50 / p99` for",
+    "every pooler plus the **spread** (`p99 / p50`): how far the slowest 1%",
+    "drifts from the median. `1.0×` means the tail equals the median;",
+    "`100×` means the worst 1% takes two orders of magnitude longer than a",
+    "typical request — the regime where fanout latency starts hitting users",
+    "([Dean & Barroso, 2013](https://www.barroso.org/publications/TheTailAtScale.pdf)).",
+    "Watch the spread column to see whether tail latency stays bounded as",
+    "the client count grows. Full p95 series ships in the raw",
+    "`pgbench --log` files in the artifact tarball.",
     "",
 ]
 
-NOTES = [
-    "### Notes",
+
+CAVEATS = [
+    "### Caveats",
     "",
-    "- Throughput values are relative ratios — comparable across runs on identical hardware",
-    "- Latency values are absolute, measured per-transaction",
+    "- 30 s per run is short by `pgbench` standards (the docs recommend",
+    "  minutes); expect ±5% variance between runs. Re-run for production",
+    "  decisions.",
+    "- Single PostgreSQL backend, no replicas, no real working set — these",
+    "  numbers measure pooler overhead, not full-system throughput.",
+    "- All three poolers use vendor defaults plus `pool_size = 40`.",
+    "  Tuning specific knobs (`pgbouncer so_reuseport`, `odyssey workers`)",
+    "  will move the curves.",
+    "- `Reconnect` is the worst-case login-latency scenario; the headline",
+    "  numbers in production rarely look like the Reconnect rows.",
+    "- Workload is a 1-row `SELECT`. Read-heavy OLTP, OLAP, or `LISTEN`/",
+    "  `NOTIFY` paths are not represented.",
 ]
 
 
@@ -223,11 +430,16 @@ def _emit_throughput_table(proto_groups: dict[tuple, dict]) -> list[str]:
 
 
 def _emit_latency_table(proto_groups: dict[tuple, dict]) -> list[str]:
+    """Single table with `p50 / p99` and `p99/p50` spread per pooler.
+
+    The spread column is the headline — it shows how far the tail drifts
+    from the median. p95 lives in the raw `pgbench --log` files.
+    """
     out = [
-        "### Latency — p50 / p95 / p99 (ms)",
+        "### Latency (ms; spread = p99 / p50)",
         "",
-        "| Test | pg_doorman (ms) | pgbouncer (ms) | odyssey (ms) |",
-        "|------|----------------|----------------|--------------|",
+        "| Test | pg_doorman p50/p99 | spread | pgbouncer p50/p99 | spread | odyssey p50/p99 | spread |",
+        "|------|-------------------:|-------:|------------------:|-------:|----------------:|-------:|",
     ]
     for ssl, conn in MODE_ORDER:
         for c in CLIENT_ORDER:
@@ -236,11 +448,14 @@ def _emit_latency_table(proto_groups: dict[tuple, dict]) -> list[str]:
                 continue
             row = proto_groups[key]
             label = row_label(c, mode_label(ssl, conn))
+            d = row.get("pg_doorman")
+            b = row.get("pgbouncer")
+            o = row.get("odyssey")
             out.append(
                 f"| {label} | "
-                f"{format_latency_triplet(row.get('pg_doorman'))} | "
-                f"{format_latency_triplet(row.get('pgbouncer'))} | "
-                f"{format_latency_triplet(row.get('odyssey'))} |"
+                f"{format_p50_p99(d)} | {format_spread(d)} | "
+                f"{format_p50_p99(b)} | {format_spread(b)} | "
+                f"{format_p50_p99(o)} | {format_spread(o)} |"
             )
     return out
 
@@ -256,7 +471,10 @@ def render(results: dict[str, dict], meta: dict | None) -> str:
         key = (n["proto"], n["ssl"], n["connect"], n["clients"])
         groups[key][n["pooler"]] = data
 
-    duration = (meta or {}).get("duration_per_run_sec", "?")
+    if unmatched:
+        print(f"warning: {len(unmatched)} unmatched test name(s) ignored: "
+              f"{', '.join(sorted(unmatched))}", file=sys.stderr)
+
     out: list[str] = [
         "---",
         "title: Benchmarks",
@@ -264,12 +482,21 @@ def render(results: dict[str, dict], meta: dict | None) -> str:
         "",
         "# Benchmarks",
         "",
-        f"pg_doorman vs pgbouncer vs odyssey. Each test runs `pgbench` for {duration} seconds through a 40-connection pool.",
+        "Three connection poolers — pg_doorman, pgbouncer, odyssey — driven",
+        "by `pgbench` against the same PostgreSQL backend on identical",
+        "hardware. Numbers below are relative throughput against each",
+        "competitor and absolute per-transaction latency.",
         "",
-        f"Last updated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}",
+        f"_Last updated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}._",
         "",
     ]
+
+    tldr = compute_tldr(groups)
+    if tldr:
+        out += ["## TL;DR", ""] + tldr + [""]
+
     out += emit_metadata(meta)
+    out += METHODOLOGY
     out += LEGEND
 
     for proto in PROTO_ORDER:
@@ -292,12 +519,7 @@ def render(results: dict[str, dict], meta: dict | None) -> str:
         out.append("")
 
     out += ["---", ""]
-    out += NOTES
-
-    if unmatched:
-        out += ["", "### Unparsed test names", ""]
-        out += [f"- {n}" for n in sorted(unmatched)]
-
+    out += CAVEATS
     out.append("")
     return "\n".join(out)
 

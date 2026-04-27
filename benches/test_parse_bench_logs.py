@@ -161,6 +161,56 @@ class FormatLatencyTriplet(unittest.TestCase):
         self.assertEqual(P.format_latency_triplet(None), "-")
 
 
+class FormatMs(unittest.TestCase):
+    def test_adaptive_precision(self):
+        # <10 → 2 decimals, <100 → 1, else 0
+        self.assertEqual(P.format_ms({"p99_ms": 0.08}, "p99_ms"), "0.08")
+        self.assertEqual(P.format_ms({"p99_ms": 9.99}, "p99_ms"), "9.99")
+        self.assertEqual(P.format_ms({"p99_ms": 44.3}, "p99_ms"), "44.3")
+        self.assertEqual(P.format_ms({"p99_ms": 99.4}, "p99_ms"), "99.4")
+        self.assertEqual(P.format_ms({"p99_ms": 286.4}, "p99_ms"), "286")
+        self.assertEqual(P.format_ms({"p99_ms": 1500.7}, "p99_ms"), "1501")
+
+    def test_missing(self):
+        self.assertEqual(P.format_ms(None, "p99_ms"), "-")
+        self.assertEqual(P.format_ms({}, "p99_ms"), "-")
+        self.assertEqual(P.format_ms({"p99_ms": None}, "p99_ms"), "-")
+        self.assertEqual(P.format_ms({"p50_ms": 1.0}, "p99_ms"), "-")
+
+
+class FormatP50P99(unittest.TestCase):
+    def test_pair(self):
+        rec = {"p50_ms": 3.54, "p95_ms": 4.68, "p99_ms": 6.46}
+        self.assertEqual(P.format_p50_p99(rec), "3.54 / 6.46")
+
+    def test_mixed_precision(self):
+        rec = {"p50_ms": 69.42, "p99_ms": 75.83}
+        self.assertEqual(P.format_p50_p99(rec), "69.4 / 75.8")
+
+    def test_missing(self):
+        self.assertEqual(P.format_p50_p99(None), "-")
+        self.assertEqual(P.format_p50_p99({"p50_ms": 1.0}), "-")
+        self.assertEqual(P.format_p50_p99({"p99_ms": 1.0}), "-")
+
+
+class FormatSpread(unittest.TestCase):
+    def test_steady(self):
+        # pg_doorman at 10k simple: p50=128, p99=150 → 1.17 → "1.2×"
+        self.assertEqual(P.format_spread({"p50_ms": 128, "p99_ms": 150}), "1.2×")
+
+    def test_long_tail(self):
+        # odyssey at 10k simple: p50=2.7, p99=823 → 304.8 → "305×"
+        self.assertEqual(P.format_spread({"p50_ms": 2.7, "p99_ms": 823}), "305×")
+
+    def test_under_10_uses_one_decimal(self):
+        self.assertEqual(P.format_spread({"p50_ms": 1.0, "p99_ms": 1.8}), "1.8×")
+
+    def test_zero_or_missing_p50(self):
+        self.assertEqual(P.format_spread({"p50_ms": 0, "p99_ms": 1.0}), "-")
+        self.assertEqual(P.format_spread({"p99_ms": 1.0}), "-")
+        self.assertEqual(P.format_spread(None), "-")
+
+
 class ModeAndRowLabels(unittest.TestCase):
     def test_mode_label(self):
         self.assertEqual(P.mode_label(False, False), "")
@@ -181,6 +231,71 @@ class ModeAndRowLabels(unittest.TestCase):
             P.row_label(500, "SSL + Reconnect"),
             "500 clients + SSL + Reconnect",
         )
+
+
+class FormatDuration(unittest.TestCase):
+    def test_seconds(self):
+        self.assertEqual(P.format_duration(45), "45s")
+
+    def test_minutes(self):
+        self.assertEqual(P.format_duration(90), "1m 30s")
+
+    def test_hours(self):
+        self.assertEqual(P.format_duration(3661), "1h 01m 01s")
+
+
+class ParseIso8601Z(unittest.TestCase):
+    def test_zulu(self):
+        dt = P.parse_iso8601_z("2026-04-27T05:14:44Z")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.year, 2026)
+
+    def test_none(self):
+        self.assertIsNone(P.parse_iso8601_z(None))
+        self.assertIsNone(P.parse_iso8601_z("not-a-date"))
+
+
+class ComputeTldr(unittest.TestCase):
+    def test_speedup_picks_largest_ratio(self):
+        # pg_doorman 5x pgbouncer at 500 clients simple, 2x at 40
+        groups = {
+            ("simple", False, False, 40): {
+                "pg_doorman": {"tps": 200, "p50_ms": 1, "p95_ms": 2, "p99_ms": 3},
+                "pgbouncer": {"tps": 100, "p50_ms": 2, "p95_ms": 4, "p99_ms": 6},
+                "odyssey": {"tps": 180, "p50_ms": 1, "p95_ms": 2, "p99_ms": 4},
+            },
+            ("simple", False, False, 500): {
+                "pg_doorman": {"tps": 500, "p50_ms": 3, "p95_ms": 5, "p99_ms": 8},
+                "pgbouncer": {"tps": 100, "p50_ms": 8, "p95_ms": 15, "p99_ms": 25},
+                "odyssey": {"tps": 480, "p50_ms": 3, "p95_ms": 5, "p99_ms": 9},
+            },
+        }
+        bullets = P.compute_tldr(groups)
+        self.assertTrue(any("x5.0" in b and "vs pgbouncer" in b for b in bullets))
+
+    def test_empty_groups_returns_empty(self):
+        self.assertEqual(P.compute_tldr({}), [])
+
+    def test_skips_ssl_and_connect(self):
+        # Only SSL+Reconnect data — should produce no speedup bullets.
+        groups = {
+            ("simple", True, True, 40): {
+                "pg_doorman": {"tps": 100, "p50_ms": 1, "p95_ms": 2, "p99_ms": 3},
+                "pgbouncer": {"tps": 50, "p50_ms": 2, "p95_ms": 4, "p99_ms": 6},
+            },
+        }
+        bullets = P.compute_tldr(groups)
+        # No vs-pgbouncer headline because steady-state filter excludes ssl/connect.
+        self.assertFalse(any("vs pgbouncer" in b for b in bullets))
+
+
+class ServiceLogFiltering(unittest.TestCase):
+    def test_bench_wrap_in_blocklist(self):
+        self.assertIn("bench-wrap", P.SERVICE_LOG_NAMES)
+
+    def test_pooler_logs_in_blocklist(self):
+        for name in ("doorman", "odyssey", "pgbouncer", "pg"):
+            self.assertIn(name, P.SERVICE_LOG_NAMES)
 
 
 if __name__ == "__main__":

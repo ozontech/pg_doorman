@@ -22,7 +22,9 @@ on:
         type: boolean
 
 env:
-  UBICLOUD_API: https://api.ubicloud.com
+  UBI_TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
+  UBI_VERSION: '1.1.0'
+  UBI_LOCATION: eu-central-h1
 
 jobs:
   cleanup:
@@ -30,21 +32,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Install ubi CLI
+        run: |
+          set -euo pipefail
+          curl -sSL "https://github.com/ubicloud/cli/releases/download/${UBI_VERSION}/ubi-linux-amd64-${UBI_VERSION}.tar.gz" \
+            | sudo tar -xzC /usr/local/bin
+          ubi version
+
       - name: List matching VMs
         id: list
         env:
-          TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
-          PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: eu-central-h1
           PREFIX: ${{ inputs.name_prefix }}
         run: |
           set -euo pipefail
-          RESP=$(curl -fsS -H "Authorization: Bearer $TOKEN" \
-            "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm")
-          echo "All VMs in $LOCATION:"
-          echo "$RESP" | jq -r '.items[] | "  \(.name)\t\(.state)\t\(.size)\tip4=\(.ip4 // "-")"'
+          echo "All VMs in $UBI_LOCATION:"
+          ubi vm list -l "$UBI_LOCATION"
           echo
-          NAMES=$(echo "$RESP" | jq -r --arg p "$PREFIX" '.items[] | select(.name | startswith($p)) | .name')
+          NAMES=$(ubi vm list -l "$UBI_LOCATION" --no-headers \
+                   | awk -v p="$PREFIX" '$2 ~ "^"p {print $2}')
           if [ -z "$NAMES" ]; then
             echo "No VMs match prefix '$PREFIX'."
           else
@@ -60,22 +65,17 @@ jobs:
       - name: Delete matching VMs
         if: inputs.confirm_delete == true && steps.list.outputs.names != ''
         env:
-          TOKEN: ${{ secrets.UBICLOUD_API_TOKEN }}
-          PROJECT: ${{ secrets.UBICLOUD_PROJECT_ID }}
-          LOCATION: eu-central-h1
           NAMES: ${{ steps.list.outputs.names }}
         run: |
           set -uo pipefail
           fail=0
           while IFS= read -r name; do
             [[ -z "$name" ]] && continue
-            CODE=$(curl -sS -o /tmp/del.body -w '%{http_code}' -X DELETE \
-              -H "Authorization: Bearer $TOKEN" \
-              "$UBICLOUD_API/project/$PROJECT/location/$LOCATION/vm/$name" || echo curl_err)
-            if [[ "$CODE" =~ ^2 ]]; then
-              echo "deleted: $name (HTTP $CODE)"
+            # `ubi vm destroy` reads the VM name from stdin as a confirmation.
+            if echo "$name" | ubi vm "$UBI_LOCATION/$name" destroy; then
+              echo "deleted: $name"
             else
-              echo "FAILED: $name (HTTP $CODE) :: $(cat /tmp/del.body)"
+              echo "FAILED: $name"
               fail=1
             fi
           done <<< "$NAMES"
