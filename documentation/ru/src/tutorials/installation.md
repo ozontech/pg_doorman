@@ -94,11 +94,14 @@ sudo dnf install pg_doorman
 # Замените VERSION и TARGET на нужные значения со страницы релизов.
 curl -L -o pg_doorman \
   "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET"
+curl -L -o pg_doorman.sha256 \
+  "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET.sha256"
+sha256sum -c pg_doorman.sha256                    # должно вывести "OK"
 chmod +x pg_doorman
 sudo mv pg_doorman /usr/local/bin/
 ```
 
-Перед деплоем сверьте SHA-256, опубликованный вместе с релизом.
+Пропуск checksum-шага означает доверие сетевому пути между вами и `objects.githubusercontent.com`. Не делайте так.
 
 ## Docker (только для тестов)
 

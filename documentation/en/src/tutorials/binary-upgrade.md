@@ -1,27 +1,51 @@
 # Binary upgrade
 
-Update pg_doorman without dropping client connections. The old process
-transfers idle clients to the new one through a Unix socket -- clients
-continue working on the same TCP connection without reconnecting.
+Replace the pg_doorman binary on a running server. Idle clients are handed to
+the new process over a Unix socket together with their cancel keys and
+prepared-statement cache, so they keep using the same TCP connection without
+reconnecting. Clients inside a transaction finish on the old process and
+migrate the moment they become idle. Operators get a `kill -USR2` and an exit
+status; applications get neither a reconnect storm nor a wave of
+`auth`/SCRAM handshakes against PostgreSQL.
+
+```admonish info title="How this differs from PgBouncer / Odyssey"
+PgBouncer's online restart (`-R`, deprecated since 1.20; or `so_reuseport`
+rolling restart) and Odyssey's online restart (`SIGUSR2` +
+`bindwith_reuseport`) follow the same pattern as each other: the new process
+picks up new connections, the old one drains until its existing clients
+disconnect. Sessions, prepared statements, and TLS state never cross
+processes. pg_doorman migrates the live socket via `SCM_RIGHTS`, plus the
+cipher state with the `tls-migration` build (Linux, opt-in).
+```
 
 ## Quick start
 
 ```bash
-# 1. Replace the binary on disk (build, download, etc.)
+# 1. Drop the new binary in place.
 cp pg_doorman_new /usr/bin/pg_doorman
 
-# 2. Trigger upgrade
-kill -USR2 $(pgrep pg_doorman)
+# 2. Validate the new binary against the live config before triggering
+#    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
+#    catching it here gives you a chance to fix the config without
+#    touching the running server.
+/usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Verify: old PID gone, clients still connected
-pgrep pg_doorman   # new PID
+# 3. Trigger the upgrade.
+kill -USR2 $(pgrep -f /usr/bin/pg_doorman)
+
+# 4. Verify: a new PID is running and clients are still connected.
+pgrep -f /usr/bin/pg_doorman      # new PID
+psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'   # answers from new process
 ```
 
-Or via the admin console:
+The same upgrade can be triggered from the admin console:
 
 ```sql
 UPGRADE;
 ```
+
+`UPGRADE` sends `SIGUSR2` to the running process, which is the same code
+path as `kill -USR2`.
 
 ## How the upgrade works
 
@@ -88,8 +112,10 @@ serving traffic. An error banner appears in the logs:
 **Daemon mode:**
 
 A new daemon process starts. The old daemon closes its listener.
-Client migration via socketpair is not used -- existing clients
-drain normally (receive error 58006 when `shutdown_timeout` expires).
+Client migration via socketpair is not used — existing clients
+drain in place. When `shutdown_timeout` expires, anyone still
+connected gets SQLSTATE `58006` (`pooler is shut down now`) and the
+old process exits.
 
 ### Phase 3: Idle client migration (foreground)
 
@@ -327,12 +353,18 @@ transaction, plus margin.
 
 ### `tls_private_key` / `tls_certificate`
 
-For TLS migration, both the old and new process load the same files.
-If the certificate changed between binary versions, TLS clients
-receive an error during cipher state import and are disconnected.
+For the `tls-migration` feature to succeed, both the old and the new
+process must load the same client-facing certificate and private key.
+The cipher state is bound to the `SSL_CTX` created from those files,
+and import fails on mismatch — affected clients drop and reconnect.
 
-Rotate certificates via `SIGHUP` (config reload) first, then do
-the binary upgrade.
+Client-facing TLS material is **not** reloaded on `SIGHUP` (only
+server-facing certificates are; see [Hot reload of server TLS](../guides/tls.md)).
+Rotating the client-facing cert therefore requires either a restart
+or a binary upgrade with the new files in place — and during that
+upgrade, TLS clients with the old cert will drop and reconnect even
+with `tls-migration` enabled. Plan the rotation around a window when
+you can tolerate the reconnects.
 
 ### `prepared_statements_cache_size`
 

@@ -8,12 +8,12 @@ This page explains the concept and when to use it. For tuning recipes and read-o
 
 Without a coordinator, every user-pool is independent. A `pool_size` of 40 across 5 users means up to 200 backend connections — and PostgreSQL fights to maintain its own limits.
 
-`max_db_connections` in PgBouncer caps the total but blocks new requests once the cap is reached. Whoever hit the cap first keeps their connections regardless of how heavily they use them, and slow workloads never yield to fast ones.
+`max_db_connections` in PgBouncer caps the total, but once the cap is reached new clients simply queue. Connections only free up when their current owner closes them naturally on `server_idle_timeout`. Whoever grabbed connections first keeps them regardless of how heavily they use them, and slow workloads never yield to fast ones.
 
 PgDoorman's Pool Coordinator caps the total **and**:
 
 - **Evicts** idle connections from over-allocated users when another user needs to grow.
-- **Ranks** users by p95 transaction time so slow pools donate first. Users with fast queries keep their reuse advantage; users with long transactions release first because their connections were idle longer anyway.
+- **Ranks** users by p95 transaction time so the slowest pools yield first. Pools running fast transactions keep their reuse advantage; pools running long transactions sit idle a larger fraction of the time, so taking from them costs less.
 - **Reserves** a small overflow for short bursts. Configured separately from the main cap.
 - **Guarantees** a per-user minimum that is never evicted. Critical workloads keep their footing during contention.
 
@@ -76,7 +76,7 @@ When a user requests a new backend and the cap is reached:
 2. **Skip protected users.** A user below `min_guaranteed_pool_size` is excluded.
 3. **Skip recently-created connections.** Connections younger than `min_connection_lifetime` are not evicted (avoids churn during minor idle gaps).
 4. **Rank by surplus.** Users with the most idle connections above their `min_guaranteed_pool_size` rank highest.
-5. **Tiebreak by p95 transaction time.** Among equally-idle users, the slow pool donates first. Their connections were probably idle because their next query is still being prepared upstream.
+5. **Tiebreak by p95 transaction time.** Among equally-idle users, the pool with the higher p95 yields first. Higher p95 means each transaction holds the connection longer; the same user therefore reuses each connection less often, so a single eviction translates into fewer reused checkouts lost.
 
 The chosen idle connection is closed; the requesting user receives a fresh connection from PostgreSQL.
 

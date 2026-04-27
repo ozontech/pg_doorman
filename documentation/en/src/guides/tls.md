@@ -38,9 +38,9 @@ For zero-downtime certificate rotation, see [Binary Upgrade](../tutorials/binary
 
 ### Cipher policy
 
-Minimum TLS 1.2. The cipher list is the Mozilla "intermediate" recommendation; this is not configurable. Direct TLS handshake (PG17, no `SSLRequest`) is not supported.
+Minimum TLS 1.2 enforced in the handshake. PgDoorman does **not** set an explicit cipher list — the effective ciphers come from the system OpenSSL build. If you need a hardened cipher list, configure it system-wide (`/etc/ssl/openssl.cnf`) or build OpenSSL with the policy you want.
 
-For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.
+Direct TLS handshake (PG17, no `SSLRequest`) is not supported. For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.
 
 ## Server-side TLS
 

@@ -1,62 +1,84 @@
 # Диагностика
 
-Это руководство помогает решить типичные проблемы при использовании PgDoorman.
+Симптомы, на которые вы скорее всего наступите в первую неделю работы PgDoorman, и куда смотреть, когда наступили.
 
 ## Ошибки аутентификации при подключении к PostgreSQL
 
-**Симптом:** PgDoorman запустился успешно, но клиенты получают ошибки аутентификации вроде `password authentication failed` при попытке выполнить запрос.
+**Симптом:** PgDoorman принимает клиентское соединение, но первый же запрос возвращает `password authentication failed` от PostgreSQL.
 
-### Если username пула совпадает с пользователем backend-PostgreSQL
+### Когда username пула совпадает с ролью на backend
 
-PgDoorman по умолчанию использует **passthrough authentication** -- криптографическое доказательство клиента (MD5-хэш или SCRAM ClientKey) повторно используется для аутентификации в PostgreSQL. Убедитесь, что поле `password` в конфиге содержит именно тот хэш, что хранится в `pg_authid` / `pg_shadow`:
+PgDoorman по умолчанию использует **passthrough authentication** — криптографическое доказательство клиента (MD5-хеш или SCRAM `ClientKey`) повторно используется для аутентификации к PostgreSQL. Поле `password` в конфиге должно содержать именно тот хеш, что хранится в `pg_authid` / `pg_shadow`:
 
-```bash
+```sql
 SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 ```
 
-Скопируйте хэш (например, `md5...` или `SCRAM-SHA-256$...`) в поле `password` конфига. Хэш **должен совпадать** с тем, что хранится в PostgreSQL (та же соль и количество итераций для SCRAM).
+Для SCRAM оба процесса должны видеть **одни и те же** salt и iteration count — даже один отличающийся символ в сохранённом verifier ломает passthrough.
 
-### Если username пула отличается от backend-пользователя
+### Когда username пула отличается от роли на backend
 
-Когда обращённый к клиенту `username` в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может -- нужны явные credentials:
+Когда обращённый к клиенту `username` в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может — нечего пробрасывать. Дайте явные credentials:
 
 ```yaml
 users:
   - username: "app_user"              # имя для клиента
-    password: "md5..."                # хэш для аутентификации клиента
+    password: "md5..."                # хеш для аутентификации client → pg_doorman
     server_username: "pg_app_user"    # реальная роль в PostgreSQL
     server_password: "plaintext_pwd"  # plaintext-пароль для этой роли
     pool_size: 40
 ```
 
-Это же касается JWT-аутентификации, где нет пароля для passthrough.
+Это же путь для JWT-аутентификации, где клиент не присылает пароль и пробрасывать нечего.
 
-```admonish tip title="Как получить хэш пароля"
-Хэши паролей пользователей можно получить из PostgreSQL запросом: `SELECT usename, passwd FROM pg_shadow;`
-
-Или используйте команду `pg_doorman generate`, которая получает их автоматически.
+```admonish tip title="Где взять хеш пароля"
+`pg_doorman generate --host …` интроспектирует PostgreSQL и собирает конфиг с уже подставленными хешами. Быстрее, чем копировать руками из `pg_shadow`.
 ```
 
 ## Файл конфигурации не найден
 
-**Симптом:** PgDoorman завершается с ошибкой "configuration file not found".
+**Симптом:** PgDoorman при запуске завершается с `configuration file not found`.
 
-**Решение:** укажите путь к файлу конфигурации явно:
+По умолчанию бинарник ищет `pg_doorman.toml` в текущем рабочем каталоге. Либо назовите файл так и `cd` в его каталог, либо передайте путь явно:
 
 ```bash
-pg_doorman /path/to/pg_doorman.yaml
+pg_doorman /etc/pg_doorman/pg_doorman.yaml
 ```
 
-По умолчанию PgDoorman ищет `pg_doorman.toml` в текущей директории.
+Проверка перед запуском:
+
+```bash
+pg_doorman -t /etc/pg_doorman/pg_doorman.yaml
+```
+
+## Клиенты получают `58006` (`pooler is shut down now`)
+
+Пул выключается, либо binary upgrade был запущен в daemon mode. Посмотрите серверные логи рядом с timestamp ошибки:
+
+- `Got SIGUSR2, starting binary upgrade …` — идёт binary upgrade. В foreground mode idle-клиенты должны мигрировать прозрачно; `58006` получают только клиенты, оставшиеся в транзакции после `shutdown_timeout`. В daemon mode fd-based миграции нет, и каждый клиент получает `58006` при закрытии соединения. См. [Binary upgrade → Troubleshooting](binary-upgrade.md#troubleshooting).
+- Нет строки `SIGUSR2` в логе — кто-то прислал `SIGTERM` или `SIGINT`, и пулер выключился без замены. Проверьте systemd-юнит, конкретный pid и operator runbook.
+
+Если `58006` пришёл во время плановой замены — для этой подмножества клиентов это ожидаемое поведение. Настройте connection pool приложения на retry при transient-ошибках.
 
 ## Pool size слишком мал
 
-**Симптом:** клиенты долго ждут или получают ошибки про слишком большое количество соединений.
+**Симптом:** запросы ходят заметно дольше end-to-end, чем при прямом обращении к PostgreSQL.
 
-**Решение:** увеличьте `pool_size` для затронутого пользователя или проверьте значения `cl_waiting` и `maxwait` в admin-команде `SHOW POOLS`. Если `maxwait` стабильно высокий, значит пул мал для вашей нагрузки.
+Смотрите `SHOW POOLS` и `SHOW POOLS_EXTENDED`:
 
----
+```
+cl_waiting   — сколько клиентов сейчас в очереди за backend
+maxwait      — самое долгое ожидание любого waiter, секунд
+sv_idle      — idle backend-ов в пуле
+sv_active    — backend-ов, выданных клиентам
+```
+
+Если `cl_waiting > 0` стабильно и `sv_idle == 0`, пул мал для нагрузки. Либо поднимайте `pool_size` для этого пользователя, либо разбирайтесь, почему `sv_active` не падает — длинные транзакции, idle-in-transaction сессии, медленный downstream-вызов, который держит backend.
+
+Если у вас включён `max_db_connections`, смотрите ещё `SHOW POOL_COORDINATOR` на `evictions` (доноры под давлением отдают соединения) и `exhaustions` (лимит достигнут даже после вытеснений). См. [Pool Coordinator](../concepts/pool-coordinator.md).
+
+## Куда подавать остальное
 
 ```admonish tip title="Проблема осталась?"
-Если столкнулись с проблемой, которой здесь нет, [откройте issue на GitHub](https://github.com/ozontech/pg_doorman/issues).
+Если вашей проблемы здесь нет — [откройте issue на GitHub](https://github.com/ozontech/pg_doorman/issues): версия pg_doorman, релевантный конфиг (с замазанными паролями), драйвер клиента и его версия, и совпадающие по времени строки логов из pg_doorman и PostgreSQL.
 ```

@@ -2,7 +2,7 @@
 
 PgDoorman supports two pool modes: `transaction` and `session`. Set per pool, with optional per-user override.
 
-There is no `statement` mode. Statement-level pooling breaks more drivers than it helps and PgDoorman optimizes for transaction mode aggressively (prepared statement cache, direct handoff, FIFO scheduling).
+There is no `statement` mode. Statement pooling rotates the backend after every statement, which forces clients to give up multi-statement transactions and breaks the prepared-statement protocol entirely; PgDoorman invests its tuning (prepared-statement cache, direct handoff, strict-FIFO scheduling) in transaction mode instead. PgBouncer keeps `statement` mode for backward compatibility; Odyssey omits it.
 
 ## Transaction mode (recommended)
 
@@ -21,7 +21,7 @@ What works in transaction mode (where most poolers fail):
 - Prepared statements. PgDoorman caches them per-pool, remaps statement names across backend connections, and replays preparation transparently. Drivers that pin to `unnamed` statement (Go pgx, .NET Npgsql, Python asyncpg) work without configuration.
 - Pipelined batches and async `Flush` flow.
 - Cancel requests over TLS.
-- `LISTEN` / `NOTIFY` — but only inside a transaction; cross-transaction notifications are lost (PgBouncer same).
+- `LISTEN` / `NOTIFY` — but only inside a transaction. A `LISTEN` issued and then committed releases the backend, and any notifications delivered to it after that go to whichever client checks it out next, not to the original `LISTEN`-er. PgBouncer behaves the same way; if you need cross-transaction `LISTEN`, use session mode for that client.
 
 What does **not** work in transaction mode:
 
@@ -71,16 +71,17 @@ Useful when one user (operations tooling, migrations) needs session semantics bu
 
 ## Cleanup on checkin
 
-Returning to transaction mode in detail: when a backend goes back to the pool, PgDoorman runs `RESET ALL` and `ROLLBACK` (if `cleanup_server_connections: true`, the default). This drops:
+Cleanup in transaction mode is **mutation-tracked**, not unconditional. PgDoorman watches each transaction for `SET`, `PREPARE`, and `DECLARE CURSOR`, and only when the backend returns to the pool with one of those flags set does it issue `RESET ALL`, `DEALLOCATE ALL`, or `CLOSE ALL` respectively. A read-only transaction skips cleanup entirely — that's a measurable win on hot OLTP paths.
 
-- Session-level `SET` values.
-- Cursors.
-- Prepared statement names that the driver bound to specific backend names (PgDoorman's prepared statement cache survives — it is keyed by query text, not backend statement name).
-- Advisory locks (`pg_advisory_unlock_all` is implicit in `RESET ALL`).
+What gets reset when a flag fires:
 
-`DEALLOCATE ALL` and `DISCARD ALL` from the client also trigger PgDoorman's prepared statement cache to drop everything cached for that client. The pool-level cache is not affected.
+- `SET` flag → `RESET ALL` drops session-level GUCs and runs `pg_advisory_unlock_all` implicitly.
+- `PREPARE` flag → `DEALLOCATE ALL` drops PostgreSQL-side prepared statements that the driver named explicitly. PgDoorman's own prepared-statement cache survives the reset because it is keyed by query text, not by backend name.
+- `DECLARE CURSOR` flag → `CLOSE ALL` drops cursors.
 
-To opt out of cleanup (for performance, in tightly-controlled deployments):
+`DEALLOCATE ALL` and `DISCARD ALL` issued by the client clear that client's prepared-statement cache (so the next `Parse` registers anew). The pool-level shared cache is not affected; other clients keep their entries.
+
+To opt out of cleanup entirely (for performance, in tightly-controlled deployments):
 
 ```yaml
 pools:
@@ -89,7 +90,7 @@ pools:
     cleanup_server_connections: false
 ```
 
-Only do this if you are sure your application never leaks session state.
+Only do this if you are sure your application never leaks session state. The mutation-tracked default is already cheap when no mutation happened, so the opt-out is rarely worth the risk.
 
 ## Reference
 

@@ -1,1 +1,33 @@
 /* Custom styles for PgDoorman documentation */
+
+/* Wider content area so feature comparison tables and long code blocks
+   don't get squeezed into the default ~750px column. */
+:root {
+    --content-max-width: 1400px;
+}
+
+/* Tables: use full available width, allow long strings to wrap inside cells,
+   add a horizontal scroll fallback when even 1400px isn't enough. */
+.content table {
+    width: 100%;
+    table-layout: auto;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+}
+
+.table-wrapper,
+.content table {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/* Slightly denser typography inside tables. */
+.content table {
+    font-size: 0.95em;
+}
+
+.content table code {
+    font-size: 0.88em;
+    word-break: break-word;
+    white-space: normal;
+}

@@ -1,10 +1,8 @@
 # PgDoorman Basic Usage Guide
 
-PgDoorman is a PostgreSQL connection pooler based on PgCat. This guide covers configuration, operation, and administration.
+End-to-end walkthrough: command-line flags, minimal config, the admin console, and operational commands (`PAUSE`, `RESUME`, `RECONNECT`, `RELOAD`). Intended as the second page you read after [Overview](overview.md) and [Installation](installation.md).
 
-## Command Line Options
-
-PgDoorman offers several command-line options to customize its behavior when starting the service:
+## Command-line options
 
 ```bash
 $ pg_doorman --help
@@ -205,7 +203,7 @@ Your application's connection string should be updated to point to PgDoorman ins
 postgresql://doorman:password@localhost:6432/exampledb
 ```
 
-PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.
+The application talks PostgreSQL wire protocol; the connection-pooling layer is transparent to it.
 
 ## Administration
 

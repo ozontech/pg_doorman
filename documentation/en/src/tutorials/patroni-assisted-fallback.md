@@ -38,8 +38,9 @@ them under [Tuning parameters](#tuning-parameters).
 **Planned switchover.** A DBA runs `patroni switchover --candidate node2`.
 Patroni promotes node2, then shuts down PostgreSQL on node1. Between the
 shutdown and Patroni restarting node1 as a replica of node2, doorman on
-node1 has no backend. With fallback enabled, doorman connects to node2
-within 1-2 TCP round trips.
+node1 has no backend. With fallback enabled, the next client request
+that fails to reach the local socket triggers a `/cluster` lookup and
+the new connection is opened to node2.
 
 **Unplanned crash.** PostgreSQL on node1 is killed by the OOM killer.
 Patroni hasn't detected the failure yet. Doorman gets connection refused
@@ -195,7 +196,9 @@ the lookup to fail entirely.
 
 **standby_leader.** Patroni standby clusters use the `standby_leader`
 role. doorman treats it as "other" (lowest priority, after sync_standby
-and replica). This is correct for most deployments.
+and replica). For a primary-cluster deployment this matches what you
+want; if you are running pg_doorman on a standby cluster you most
+likely don't want fallback at all because you have no writeable target.
 
 ## Relationship to patroni_proxy
 

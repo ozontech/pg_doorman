@@ -1,56 +1,27 @@
 # Patroni Proxy
 
-`patroni_proxy` is a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", it focuses exclusively on TCP load balancing and failover for Patroni clusters.
+`patroni_proxy` is a TCP load balancer for Patroni-managed PostgreSQL clusters. It listens on one or more ports, asks the Patroni REST API who is leader / sync / async, and forwards new connections to the chosen role using least-connections balancing. It does not pool connections, parse the wire protocol, or know what SQL is being sent — that part is pg_doorman's job, deployed downstream of `patroni_proxy`.
 
-## Overview
+## What it does
 
-Unlike traditional solutions like HAProxy, `patroni_proxy` provides seamless connection management without disrupting existing connections during cluster topology changes. When a new replica is added or removed, only the affected connections are handled — all other connections continue working without interruption.
+- **Discovers cluster members** by polling Patroni's `/cluster` endpoint at `cluster_update_interval` (default 3 s) and on demand via `GET /update_clusters`.
+- **Routes by role.** Each listen port is bound to one or more roles (`leader`, `sync`, `async`, `any`). Connections to that port land on a member matching one of those roles.
+- **Balances by least connections.** For ports bound to multiple eligible members, the proxy keeps a connection counter per member and picks the one with the fewest live connections. Counters survive cluster updates.
+- **Drops replicas with stale data.** Per-port `max_lag_in_bytes` excludes members whose `replication_lag` (from `/cluster`) is over the threshold. Leader is never excluded by lag.
+- **Skips members that aren't running.** Only `state: "running"` members are eligible; `starting`, `stopped`, `crashed`, and members with `noloadbalance` are filtered out.
 
-## Key Features
+The behaviour that matters operationally is what happens on a topology change: when a new member appears or an old one disappears, `patroni_proxy` updates its routing table for **future** connections only. Existing TCP connections to a still-running backend are not touched. Compared to HAProxy + confd, where a config reload tears down all connections that pass through the affected backend section, this means `cluster_update_interval` doesn't have to fight with long-running transactions.
 
-### Zero-Downtime Connection Management
-
-The main advantage over HAProxy is that `patroni_proxy` **does not terminate existing connections** when the upstream configuration changes. This is critical for long-running transactions and connection-heavy applications.
-
-### Hot Upstream Updates
-
-- Automatic discovery of cluster members via Patroni REST API (`/cluster` endpoint)
-- Periodic polling with configurable interval (`cluster_update_interval`)
-- Immediate updates via HTTP API (`/update_clusters` endpoint)
-- Configuration reload via SIGHUP signal without restart
-
-### Role-Based Routing
-
-Route connections based on PostgreSQL node roles:
+### Roles
 
 | Role | Description |
 |------|-------------|
-| `leader` | Primary/master node |
+| `leader` | Primary / master node |
 | `sync` | Synchronous standby replicas |
 | `async` | Asynchronous replicas |
-| `any` | Any available node |
+| `any` | Any running cluster member |
 
-### Intelligent Load Balancing
-
-- **Least Connections** strategy for distributing connections across backends
-- Connection counters are preserved during cluster updates
-- Automatic exclusion of nodes with `noloadbalance` tag
-
-### Replication Lag Awareness
-
-- Configurable `max_lag_in_bytes` per port
-- Automatic disconnection of clients when replica lag exceeds threshold
-- Only affects replica connections (leader has no lag)
-
-### Member State Filtering
-
-- Only members with `state: "running"` are used as backends
-- Members in `starting`, `stopped`, `crashed` states are automatically excluded
-- Dynamic state changes are handled during periodic updates
-
-## Recommended Deployment Architecture
-
-For optimal performance, we recommend a two-tier architecture:
+## Recommended deployment
 
 ```mermaid
 graph TD
@@ -67,10 +38,10 @@ graph TD
     D3 --> PG3[(PostgreSQL<br/>async replica)]
 ```
 
-- **pg_doorman** should be deployed **close to PostgreSQL servers** — it handles connection pooling, prepared statement caching, and protocol-level optimizations that benefit from low latency to the database
-- **patroni_proxy** should be deployed **close to application clients** — it handles TCP routing and failover, distributing connections across the cluster without the overhead of connection pooling
+- **pg_doorman** lives on the PostgreSQL hosts. It does the pooling, prepared-statement cache, and protocol parsing — work that benefits from low latency to the local socket.
+- **patroni_proxy** lives near the application. It routes TCP, owns the role-aware failover decision, and stays out of the pooler's way.
 
-This separation allows each component to excel at its specific task while providing both high availability and optimal performance.
+If the application traffic is small enough that one pg_doorman per cluster is sufficient, you can collapse the diagram and run pg_doorman directly with [Patroni-assisted fallback](patroni-assisted-fallback.md) and skip `patroni_proxy` entirely.
 
 ## Configuration
 
