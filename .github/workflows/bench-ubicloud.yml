@@ -22,9 +22,9 @@ on:
         required: false
         default: '30'
       doorman_workers:
-        description: 'worker_threads for pg_doorman and odyssey'
+        description: 'worker_threads for pg_doorman and odyssey ("auto" = nproc/2)'
         required: false
-        default: '12'
+        default: 'auto'
       pgbench_jobs:
         description: 'pgbench -j for c40/c120/c500/c10000 (c1 stays at 1)'
         required: false

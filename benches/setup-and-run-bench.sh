@@ -31,8 +31,19 @@ ODYSSEY_PORT=6433
 PGBOUNCER_PORT=6434
 
 BENCH_DURATION="${BENCH_DURATION:-30}"
-DOORMAN_WORKERS="${BENCH_DOORMAN_WORKERS:-12}"
-ODYSSEY_WORKERS="${BENCH_ODYSSEY_WORKERS:-12}"
+DOORMAN_WORKERS="${BENCH_DOORMAN_WORKERS:-auto}"
+ODYSSEY_WORKERS="${BENCH_ODYSSEY_WORKERS:-auto}"
+# 'auto' scales with the VM size: half the cores to the pooler, half left
+# for postgres + pgbench + system. Saturates large hosts (standard-30 → 15
+# workers, standard-60 → 30) instead of pinning to a 12-worker default.
+if [[ "$DOORMAN_WORKERS" == "auto" ]]; then
+  DOORMAN_WORKERS=$(( $(nproc) / 2 ))
+  [[ "$DOORMAN_WORKERS" -lt 2 ]] && DOORMAN_WORKERS=2
+fi
+if [[ "$ODYSSEY_WORKERS" == "auto" ]]; then
+  ODYSSEY_WORKERS=$(( $(nproc) / 2 ))
+  [[ "$ODYSSEY_WORKERS" -lt 2 ]] && ODYSSEY_WORKERS=2
+fi
 PGBENCH_JOBS_C1="${BENCH_PGBENCH_JOBS_C1:-1}"
 PGBENCH_JOBS_C40="${BENCH_PGBENCH_JOBS_C40:-4}"
 PGBENCH_JOBS_C120="${BENCH_PGBENCH_JOBS_C120:-4}"
