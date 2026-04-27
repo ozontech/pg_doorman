@@ -161,9 +161,8 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="Базовое-использование-pgdoorman"><a class="header" href="#Базовое-использование-pgdoorman">Базовое использование PgDoorman</a></h1>
-<p>PgDoorman -- пулер соединений PostgreSQL, основанный на PgCat. В этом руководстве описаны конфигурация, эксплуатация и администрирование.</p>
+<p>Сквозной разбор: ключи командной строки, минимальный конфиг, admin-консоль и эксплуатационные команды (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>). Эта страница — вторая по порядку чтения после <a href="overview.html">Обзора</a> и <a href="installation.html">Установки</a>.</p>
 <h2 id="Параметры-командной-строки"><a class="header" href="#Параметры-командной-строки">Параметры командной строки</a></h2>
-<p>PgDoorman поддерживает несколько параметров командной строки для настройки поведения при запуске:</p>
 <pre><code class="language-bash">$ pg_doorman --help
 
 PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
@@ -348,7 +347,7 @@ pg_doorman generate --no-comments --output pg_doorman.yaml
 <p>Строку подключения вашего приложения нужно изменить так, чтобы она указывала на PgDoorman, а не напрямую на PostgreSQL:</p>
 <pre><code>postgresql://doorman:password@localhost:6432/exampledb
 </code></pre>
-<p>PgDoorman прозрачно обработает пулинг соединений, поэтому приложению не нужно знать, что оно подключается через пулер.</p>
+<p>Приложение разговаривает по PostgreSQL wire-протоколу; уровень пулинга для него прозрачен.</p>
 <h2 id="Администрирование"><a class="header" href="#Администрирование">Администрирование</a></h2>
 <h3 id="admin-консоль"><a class="header" href="#admin-консоль">Admin-консоль</a></h3>
 <p>PgDoorman предоставляет административный интерфейс через специальную базу данных <strong>pgdoorman</strong> (или <strong>pgbouncer</strong> для обратной совместимости):</p>

@@ -231,10 +231,13 @@ sudo dnf install pg_doorman
 <pre><code class="language-bash"># Replace VERSION and TARGET with the desired values from the releases page.
 curl -L -o pg_doorman \
   "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET"
+curl -L -o pg_doorman.sha256 \
+  "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET.sha256"
+sha256sum -c pg_doorman.sha256                    # must print "OK"
 chmod +x pg_doorman
 sudo mv pg_doorman /usr/local/bin/
 </code></pre>
-<p>Verify the SHA-256 published with the release before deploying.</p>
+<p>Skipping the checksum step means trusting the network path between you and <code>objects.githubusercontent.com</code>. Don't.</p>
 <h2 id="docker-testing-only"><a class="header" href="#docker-testing-only">Docker (testing only)</a></h2>
 <p>Docker is supported for development, CI, and quick demos. We do not recommend it for production — packaging and lifecycle management are simpler with the system packages above.</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \

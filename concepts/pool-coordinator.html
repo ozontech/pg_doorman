@@ -165,11 +165,11 @@
 <p>This page explains the concept and when to use it. For tuning recipes and read-out from <code>SHOW POOL_COORDINATOR</code>, see <a href="../tutorials/pool-pressure.html#coordinator-mode">Pool Pressure</a>.</p>
 <h2 id="what-problem-it-solves"><a class="header" href="#what-problem-it-solves">What problem it solves</a></h2>
 <p>Without a coordinator, every user-pool is independent. A <code>pool_size</code> of 40 across 5 users means up to 200 backend connections — and PostgreSQL fights to maintain its own limits.</p>
-<p><code>max_db_connections</code> in PgBouncer caps the total but blocks new requests once the cap is reached. Whoever hit the cap first keeps their connections regardless of how heavily they use them, and slow workloads never yield to fast ones.</p>
+<p><code>max_db_connections</code> in PgBouncer caps the total, but once the cap is reached new clients simply queue. Connections only free up when their current owner closes them naturally on <code>server_idle_timeout</code>. Whoever grabbed connections first keeps them regardless of how heavily they use them, and slow workloads never yield to fast ones.</p>
 <p>PgDoorman's Pool Coordinator caps the total <strong>and</strong>:</p>
 <ul>
 <li><strong>Evicts</strong> idle connections from over-allocated users when another user needs to grow.</li>
-<li><strong>Ranks</strong> users by p95 transaction time so slow pools donate first. Users with fast queries keep their reuse advantage; users with long transactions release first because their connections were idle longer anyway.</li>
+<li><strong>Ranks</strong> users by p95 transaction time so the slowest pools yield first. Pools running fast transactions keep their reuse advantage; pools running long transactions sit idle a larger fraction of the time, so taking from them costs less.</li>
 <li><strong>Reserves</strong> a small overflow for short bursts. Configured separately from the main cap.</li>
 <li><strong>Guarantees</strong> a per-user minimum that is never evicted. Critical workloads keep their footing during contention.</li>
 </ul>
@@ -226,7 +226,7 @@
 <li><strong>Skip protected users.</strong> A user below <code>min_guaranteed_pool_size</code> is excluded.</li>
 <li><strong>Skip recently-created connections.</strong> Connections younger than <code>min_connection_lifetime</code> are not evicted (avoids churn during minor idle gaps).</li>
 <li><strong>Rank by surplus.</strong> Users with the most idle connections above their <code>min_guaranteed_pool_size</code> rank highest.</li>
-<li><strong>Tiebreak by p95 transaction time.</strong> Among equally-idle users, the slow pool donates first. Their connections were probably idle because their next query is still being prepared upstream.</li>
+<li><strong>Tiebreak by p95 transaction time.</strong> Among equally-idle users, the pool with the higher p95 yields first. Higher p95 means each transaction holds the connection longer; the same user therefore reuses each connection less often, so a single eviction translates into fewer reused checkouts lost.</li>
 </ol>
 <p>The chosen idle connection is closed; the requesting user receives a fresh connection from PostgreSQL.</p>
 <h2 id="observability"><a class="header" href="#observability">Observability</a></h2>

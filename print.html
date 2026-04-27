@@ -159,10 +159,9 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
-<p>A multithreaded PostgreSQL connection pooler written in Rust. Drop-in alternative to <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a>, and <a href="https://github.com/postgresml/pgcat">PgCat</a>. In production at Ozon for over three years across Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.6.1</a> · <a href="comparison.html">Compare</a> · <a href="benchmarks.html">Benchmarks</a></p>
-<h2 id="what-makes-pgdoorman-different"><a class="header" href="#what-makes-pgdoorman-different">What makes PgDoorman different</a></h2>
-<p>Three things you will not find in PgBouncer or Odyssey.</p>
+<p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.6.1</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
 <div class="admonition-title">
 <div id="admonition-pool-coordinator-title">
@@ -171,8 +170,8 @@
 <a class="admonition-anchor-link" href="index.html#admonition-pool-coordinator"></a>
 </div>
 <div>
-<p>Database-level connection cap with priority eviction. <code>max_db_connections</code> limits total backend connections per database; when exhausted, idle connections are evicted from users with the largest surplus, ranked by p95 transaction time so slow pools donate first. A reserve pool absorbs short bursts. Per-user <code>min_guaranteed_pool_size</code> protects critical workloads.</p>
-<p>PgBouncer has <code>max_db_connections</code> without eviction or fairness. Odyssey has no equivalent.</p>
+<p>PgDoorman caps total backend connections per database. When <code>max_db_connections</code> is reached, the coordinator evicts an idle connection from the user with the most spare capacity, ranking candidates by p95 transaction time so the slowest pools yield first. A reserve pool absorbs short bursts; per-user <code>min_guaranteed_pool_size</code> keeps critical workloads off the eviction list.</p>
+<p>PgBouncer's <code>max_db_connections</code> has no eviction or fairness — when the cap is reached, clients queue until existing connections close on their own idle timeout. Odyssey has no equivalent setting.</p>
 <p><a href="concepts/pool-coordinator.html">Read more →</a></p>
 </div>
 </div>
@@ -184,8 +183,8 @@
 <a class="admonition-anchor-link" href="index.html#admonition-patroni-assisted-fallback"></a>
 </div>
 <div>
-<p>When PgDoorman runs next to PostgreSQL on the same machine and a Patroni switchover kills the local backend, PgDoorman queries the Patroni REST API <code>/cluster</code> endpoint, picks a live cluster member (<code>sync_standby</code> preferred), and routes new connections there within 1–2 TCP round trips. The local backend stays in cooldown; fallback connections use a short lifetime so the pool returns to local once it recovers.</p>
-<p>One line in <code>[general]</code> enables it for every pool. No external HAProxy, no consul-template.</p>
+<p>When PgDoorman runs next to PostgreSQL on the same machine and a Patroni switchover kills the local backend, PgDoorman polls the Patroni REST API (<code>GET /cluster</code>), picks a live cluster member (priority <code>sync_standby</code> → <code>replica</code>), and routes new connections there. The local backend enters cooldown; fallback connections inherit a short lifetime so the pool returns to local as soon as it recovers.</p>
+<p>Set <code>patroni_api_urls</code> and <code>fallback_cooldown</code> in <code>[general]</code> and it applies to every pool. No HAProxy or <code>consul-template</code> in front of the pooler.</p>
 <p><a href="tutorials/patroni-assisted-fallback.html">Read more →</a></p>
 </div>
 </div>
@@ -197,51 +196,51 @@
 <a class="admonition-anchor-link" href="index.html#admonition-graceful-binary-upgrade"></a>
 </div>
 <div>
-<p>Replace the binary without dropping a single client. The new process accepts new connections immediately while existing clients finish their transactions on the old process. TLS, connection state, and cancel keys all transfer cleanly.</p>
-<p>PgBouncer requires <code>SO_REUSEPORT</code> with separate processes (which causes pool imbalance). Odyssey lacks an equivalent flow.</p>
+<p>Update PgDoorman during business hours without a maintenance window. Apps don't see reconnect errors, PostgreSQL isn't hit by a wave of <code>auth</code>/SCRAM handshakes from simultaneous reconnects, in-flight transactions don't fail.</p>
+<p>On <code>SIGUSR2</code> the old process hands each idle client's TCP socket to the new one through <code>SCM_RIGHTS</code> — same socket, no reconnect — together with cancel keys and the prepared-statement cache. Clients inside a transaction finish on the old process and migrate as soon as they go idle. With the <code>tls-migration</code> build (Linux, opt-in) the OpenSSL cipher state moves too, so TLS sessions survive without a re-handshake.</p>
+<p>PgBouncer's online restart (<code>-R</code>, deprecated since 1.20; or <code>so_reuseport</code> rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) work the same way as each other: the new process picks up new connections, the old one drains until its existing clients disconnect on their own. Sessions, prepared statements, and TLS state never move between processes.</p>
 <p><a href="tutorials/binary-upgrade.html">Read more →</a></p>
 </div>
 </div>
 <h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
 <ul>
-<li><strong>Drop-in replacement.</strong> Caches and remaps prepared statements transparently in transaction mode — no <code>DISCARD ALL</code>, no <code>DEALLOCATE</code>, no driver hacks.</li>
-<li><strong>Multithreaded.</strong> Single shared pool across all worker threads. PgBouncer is single-threaded; running multiple instances via <code>SO_REUSEPORT</code> causes unbalanced pools.</li>
-<li><strong>Thundering herd suppression.</strong> When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates and routes waiters to recycled connections via direct handoff — most land within microseconds.</li>
-<li><strong>Bounded tail latency.</strong> Strict FIFO via direct-handoff channels keeps p99 within 10% of p50 regardless of client count. Pre-replacement on <code>server_lifetime</code> expiry — no spike during connection rotation.</li>
-<li><strong>Dead backend detection.</strong> When a client holds a transaction open and the backend dies (failover, OOM kill), PgDoorman returns an error immediately. Other poolers wait for TCP keepalive, leaving clients hanging for minutes.</li>
-<li><strong>Built for operations.</strong> YAML or TOML config with human-readable durations (<code>"30s"</code>, <code>"5m"</code>). <code>pg_doorman generate --host your-db</code> introspects PostgreSQL to produce a config. <code>pg_doorman -t</code> validates before deploy. Prometheus endpoint is built-in.</li>
+<li><strong>Prepared statements in transaction mode.</strong> PgDoorman remaps client statement names to <code>DOORMAN_N</code> and tracks the cache per pool, per client, and per backend. Drivers see their own names; backends see the remapped ones. No app-level <code>DEALLOCATE</code>, no <code>DISCARD ALL</code>.</li>
+<li><strong>Multi-threaded, single shared pool.</strong> All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind <code>so_reuseport</code> — gives each instance its own pool, and idle counts can drift between processes for the same database.</li>
+<li><strong>Thundering herd suppression.</strong> When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (<code>scaling_max_parallel_creates</code>) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.</li>
+<li><strong>Bounded tail latency.</strong> Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of <code>server_lifetime</code>, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.</li>
+<li><strong>Dead backend detection inside transactions.</strong> If the backend dies mid-transaction (failover, OOM, network partition), PgDoorman returns SQLSTATE <code>08006</code> immediately by racing the client read against backend readability with a 100 ms tick. Without this, the client would block until TCP keepalive fires — on Linux defaults that is about two hours plus 9×75 s probes.</li>
+<li><strong>Built for operations.</strong> YAML or TOML config with human-readable durations (<code>30s</code>, <code>5m</code>). <code>pg_doorman generate --host …</code> introspects an existing PostgreSQL and emits a starter config. <code>pg_doorman -t</code> validates the config without starting the server. A Prometheus <code>/metrics</code> endpoint is built-in.</li>
 </ul>
 <h2 id="comparison"><a class="header" href="#comparison">Comparison</a></h2>
-<div class="table-wrapper"><table><thead><tr><th></th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Multithreaded</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Prepared statements in transaction mode</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.21</td><td style="text-align: center">Since 1.3</td></tr>
-<tr><td>Full extended query protocol</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Partial</td></tr>
-<tr><td>Pool Coordinator with priority eviction</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Multi-threaded with shared pool</td><td style="text-align: center">Yes</td><td style="text-align: center">No (single-threaded)</td><td style="text-align: center">Workers, separate pools</td></tr>
+<tr><td>Prepared statements in transaction mode</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.21)</td><td style="text-align: center">Yes (<code>pool_reserve_prepared_statement</code>)</td></tr>
+<tr><td>Pool Coordinator (per-database cap, priority eviction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Patroni-assisted fallback (built-in)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Pre-replacement on <code>server_lifetime</code> expiry</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Stale backend detection (idle-in-transaction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Graceful binary upgrade</td><td style="text-align: center">Yes</td><td style="text-align: center">Limited</td><td style="text-align: center">No</td></tr>
-<tr><td>Server-side TLS (mTLS, hot reload)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Auth: SCRAM passthrough (no plaintext password in config)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Auth: JWT</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Auth: PAM / <code>pg_hba.conf</code> / auth_query</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Auth: LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes</td></tr>
-<tr><td>YAML / TOML config</td><td style="text-align: center">Yes</td><td style="text-align: center">No (INI)</td><td style="text-align: center">No (own format)</td></tr>
-<tr><td>JSON structured logging</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Latency percentiles (p50/90/95/99)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Stale backend detection inside a transaction</td><td style="text-align: center">Yes (immediate <code>08006</code>)</td><td style="text-align: center">No (waits for TCP keepalive)</td><td style="text-align: center">No (waits for TCP keepalive)</td></tr>
+<tr><td>Binary upgrade with session migration</td><td style="text-align: center">Yes (<code>SCM_RIGHTS</code>, TLS state opt-in)</td><td style="text-align: center">No (sessions stay on old process)</td><td style="text-align: center">No (sessions stay on old process)</td></tr>
+<tr><td>Backend TLS to PostgreSQL</td><td style="text-align: center">Yes (5 modes, hot reload via <code>SIGHUP</code>)</td><td style="text-align: center">Yes (<code>server_tls_*</code>, hot reload via <code>RELOAD</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Auth: SCRAM passthrough (no plaintext password)</td><td style="text-align: center">Yes (<code>ClientKey</code> extracted from proof)</td><td style="text-align: center">Yes (encrypted SCRAM secret via <code>auth_query</code>/<code>userlist.txt</code>, since 1.14)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Auth: JWT (RSA-SHA256)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Auth: PAM / <code>pg_hba.conf</code> / <code>auth_query</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Auth: LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Config format</td><td style="text-align: center">YAML / TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Own format</td></tr>
+<tr><td>JSON structured logging</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes (<code>log_format "json"</code>)</td></tr>
+<tr><td>Latency percentiles (p50/p90/p95/p99)</td><td style="text-align: center">Yes (built-in <code>/metrics</code>)</td><td style="text-align: center">No (averages only)</td><td style="text-align: center">Yes (via separate Go exporter)</td></tr>
 <tr><td>Config test mode (<code>-t</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Auto-config from PostgreSQL</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Built-in Prometheus endpoint</td><td style="text-align: center">Yes</td><td style="text-align: center">External</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Auto-config from PostgreSQL (<code>generate --host</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Prometheus endpoint</td><td style="text-align: center">Built-in <code>/metrics</code></td><td style="text-align: center">External exporter</td><td style="text-align: center">External exporter (Go sidecar)</td></tr>
 </tbody></table>
 </div>
 <p><a href="comparison.html">Full feature matrix →</a></p>
 <h2 id="benchmarks"><a class="header" href="#benchmarks">Benchmarks</a></h2>
-<p>AWS Fargate (16 vCPU), pool size 40, <code>pgbench</code> 30s per test:</p>
+<p>AWS Fargate (16 vCPU), pool size 40, <code>pgbench</code> 30 s per test:</p>
 <div class="table-wrapper"><table><thead><tr><th>Scenario</th><th style="text-align: center">vs PgBouncer</th><th style="text-align: center">vs Odyssey</th></tr></thead><tbody>
 <tr><td>Extended protocol, 500 clients + SSL</td><td style="text-align: center">×3.5</td><td style="text-align: center">+61%</td></tr>
 <tr><td>Prepared statements, 500 clients + SSL</td><td style="text-align: center">×4.0</td><td style="text-align: center">+5%</td></tr>
 <tr><td>Simple protocol, 10 000 clients</td><td style="text-align: center">×2.8</td><td style="text-align: center">+20%</td></tr>
-<tr><td>Extended + SSL + Reconnect, 500 clients</td><td style="text-align: center">+96%</td><td style="text-align: center">~0%</td></tr>
+<tr><td>Extended + SSL + reconnect, 500 clients</td><td style="text-align: center">+96%</td><td style="text-align: center">~0%</td></tr>
 </tbody></table>
 </div>
 <p><a href="benchmarks.html">Full results →</a></p>
@@ -268,7 +267,7 @@ pools:
         password: "md5..."   # hash from pg_shadow / pg_authid
         pool_size: 40
 </code></pre>
-<p><code>server_username</code> and <code>server_password</code> are omitted on purpose — PgDoorman reuses the client's MD5 hash or SCRAM ClientKey to authenticate to PostgreSQL. No plaintext passwords in config.</p>
+<p><code>server_username</code> and <code>server_password</code> are omitted on purpose: PgDoorman re-uses the client's MD5 hash or SCRAM <code>ClientKey</code> to authenticate against PostgreSQL. No plaintext passwords in the config.</p>
 <p><a href="tutorials/installation.html">Installation guide →</a> · <a href="reference/general.html">Configuration reference →</a></p>
 <h2 id="where-to-next"><a class="header" href="#where-to-next">Where to next</a></h2>
 <ul>
@@ -278,37 +277,40 @@ pools:
 <li>Production sizing? Read <a href="tutorials/pool-pressure.html">Pool pressure</a> and <a href="concepts/pool-coordinator.html">Pool Coordinator</a>.</li>
 <li>Operating PgDoorman? See <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Signals</a>, <a href="tutorials/troubleshooting.html">Troubleshooting</a>.</li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat">PgDoorman vs PgBouncer vs Odyssey vs PgCat</a></h1>
-<p>A practical feature matrix for choosing a PostgreSQL connection pooler. PgDoorman targets workloads where prepared statements in transaction mode, multithreaded performance, and operational ergonomics matter.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="pgdoorman-vs-pgbouncer-vs-odyssey"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey">PgDoorman vs PgBouncer vs Odyssey</a></h1>
+<p>Side-by-side feature matrix for choosing a PostgreSQL connection pooler. Every PgBouncer claim is anchored to its <a href="https://www.pgbouncer.org/config.html">config reference</a> and <a href="https://www.pgbouncer.org/changelog.html">changelog</a>; every Odyssey claim is anchored to the project's <a href="https://github.com/yandex/odyssey/tree/master/docs">docs</a>.</p>
+<p>PgCat is intentionally omitted: its design centre is sharding/load-balancing rather than drop-in replacement of PgBouncer, so a row-by-row comparison is misleading. See the <a href="https://github.com/postgresml/pgcat">PgCat repo</a> if you need horizontal sharding.</p>
 <p>For benchmark numbers, see <a href="benchmarks.html">Benchmarks</a>.</p>
 <h2 id="authentication"><a class="header" href="#authentication">Authentication</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>MD5 password</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>SCRAM-SHA-256 (client)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>SCRAM-SHA-256 passthrough (no plaintext password in config)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>SCRAM-SHA-256 (client → pooler)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>SCRAM-SHA-256 passthrough (no plaintext password in config)</td><td style="text-align: center">Yes (<code>ClientKey</code> extracted from client proof)</td><td style="text-align: center">Yes (since 1.14, encrypted SCRAM secret in <code>auth_query</code> / <code>userlist.txt</code>)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>MD5 passthrough</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>auth_query</code> (dynamic users)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>auth_query</code> passthrough mode (per-user backend identity)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>pg_hba.conf</code> format</td><td style="text-align: center">Yes (file or inline)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.4</td></tr>
-<tr><td>PAM</td><td style="text-align: center">Yes (Linux)</td><td style="text-align: center">Yes (HBA)</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>auth_query</code> passthrough mode (per-user backend identity)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (single <code>auth_user</code> for all lookups)</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>pg_hba.conf</code>-style file</td><td style="text-align: center">Yes (file or inline)</td><td style="text-align: center">Yes (<code>auth_hba_file</code>)</td><td style="text-align: center">Yes (since 1.4)</td></tr>
+<tr><td>PAM</td><td style="text-align: center">Yes (Linux)</td><td style="text-align: center">Yes (<code>auth_type=pam</code> or via HBA)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>JWT (RSA-SHA256)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Talos (custom JWT with role extraction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Talos (custom JWT with role extraction)</td><td style="text-align: center">Yes (Ozon-specific)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>SCRAM channel binding (<code>scram-sha-256-plus</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>User name maps (cert/peer → DB user)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Tunable <code>scram_iterations</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+<tr><td>User-name maps (cert/peer → DB user)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.23)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Tunable <code>scram_iterations</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="authentication/overview.html">Authentication</a>.</p>
 <h2 id="tls"><a class="header" href="#tls">TLS</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Client-side TLS (4 modes: disable, allow, require, verify-full)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Server-side TLS to PostgreSQL (6 modes incl. verify-ca, verify-full)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
-<tr><td>mTLS to PostgreSQL (client cert)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
-<tr><td>Hot reload of TLS certificates on <code>SIGHUP</code></td><td style="text-align: center">Yes (server-side)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Minimum TLS 1.2 + Mozilla cipher list</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No (allows TLS 1.0)</td></tr>
-<tr><td>Direct TLS handshake (PG17, no <code>SSLRequest</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
-<tr><td>TLS 1.3 cipher control</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+<tr><td>Client-side TLS (modes: <code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-full</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (<code>disable</code>, <code>allow</code>, <code>prefer</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Server-side TLS to PostgreSQL (<code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Yes (5 modes)</td><td style="text-align: center">Yes (<code>server_tls_*</code>, 6 modes incl. <code>prefer</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>mTLS to PostgreSQL (client cert sent to backend)</td><td style="text-align: center">Yes (<code>server_tls_certificate</code> + <code>server_tls_private_key</code>)</td><td style="text-align: center">Yes (<code>server_tls_key_file</code> + <code>server_tls_cert_file</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Hot reload of server-side TLS certificates</td><td style="text-align: center">Yes (<code>SIGHUP</code>)</td><td style="text-align: center">Yes (via <code>RELOAD</code> / <code>SIGHUP</code>, "new file contents will be used for new connections")</td><td style="text-align: center">No</td></tr>
+<tr><td>Hot reload of client-facing TLS certificates</td><td style="text-align: center">No (requires restart or binary upgrade)</td><td style="text-align: center">Yes (via <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Minimum TLS version configurable</td><td style="text-align: center">Yes (defaults to TLS 1.2)</td><td style="text-align: center">Yes (<code>tls_protocols</code>, default <code>tlsv1.2,tlsv1.3</code>)</td><td style="text-align: center">Configurable, defaults differ</td></tr>
+<tr><td>Direct TLS handshake (PostgreSQL 17, no <code>SSLRequest</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">No</td></tr>
+<tr><td>TLS 1.3 cipher control</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25, <code>client_tls13_ciphers</code>/<code>server_tls13_ciphers</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>TLS session migration across binary upgrade</td><td style="text-align: center">Yes (<code>tls-migration</code> build, Linux, opt-in)</td><td style="text-align: center">No (TLS connections are dropped during online restart)</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="guides/tls.html">TLS</a>.</p>
@@ -316,59 +318,62 @@ pools:
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>Patroni-assisted fallback (built-in <code>/cluster</code> lookup)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Bundled TCP proxy with role-based routing (<code>patroni_proxy</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Replica lag guard</td><td style="text-align: center">Yes (<code>max_lag_in_bytes</code> in <code>patroni_proxy</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (watchdog query)</td></tr>
-<tr><td>Round-robin / least-connections multi-host</td><td style="text-align: center">Yes (<code>patroni_proxy</code>)</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>target_session_attrs</code> (read-write / read-only)</td><td style="text-align: center">Yes (via <code>patroni_proxy</code> roles)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Sequential routing (rules in order)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Connection type routing (TCP vs UNIX)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Availability zone-aware host selection</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Replica lag guard</td><td style="text-align: center">Yes (<code>max_lag_in_bytes</code> in <code>patroni_proxy</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (<code>watchdog_lag_query</code> + <code>catchup_timeout</code>)</td></tr>
+<tr><td>Multiple backend hosts with load balancing</td><td style="text-align: center">Yes (<code>patroni_proxy</code>)</td><td style="text-align: center">Yes (since 1.24, <code>load_balance_hosts</code>)</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>target_session_attrs</code> (read-write / read-only routing)</td><td style="text-align: center">Yes (via <code>patroni_proxy</code> roles)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Sequential routing rules (first-match wins)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Connection-type routing (TCP vs UNIX)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Availability-zone-aware host selection</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a>, <a href="tutorials/patroni-proxy.html"><code>patroni_proxy</code></a>.</p>
 <h2 id="pooling"><a class="header" href="#pooling">Pooling</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Pool modes (transaction, session)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (+ statement)</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Pool Coordinator (cross-user <code>max_db_connections</code> with priority eviction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (no eviction)</td><td style="text-align: center">No</td></tr>
-<tr><td>Reserve pool with <code>min_guaranteed_pool_size</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Reserve only</td><td style="text-align: center">No</td></tr>
-<tr><td>Pre-replacement on <code>server_lifetime</code> expiry</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Anticipation/burst scaling (<code>scaling_warm_pool_ratio</code>, fast retries)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Direct-handoff (waiter receives returning connection in microseconds)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Pool modes</td><td style="text-align: center">session, transaction</td><td style="text-align: center">session, transaction, statement</td><td style="text-align: center">session, transaction</td></tr>
+<tr><td>Pool Coordinator (per-database cap with priority eviction)</td><td style="text-align: center">Yes (<code>max_db_connections</code> + p95-ranked eviction)</td><td style="text-align: center">No (<code>max_db_connections</code> queues clients until idle timeout closes existing connections)</td><td style="text-align: center">No</td></tr>
+<tr><td>Reserve pool</td><td style="text-align: center">Yes (<code>reserve_pool_size</code>)</td><td style="text-align: center">Yes (<code>reserve_pool_size</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>min_guaranteed_pool_size</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Pre-replacement on <code>server_lifetime</code> expiry (warm before old expires)</td><td style="text-align: center">Yes (95% threshold, up to 3 in parallel)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Anticipation / burst scaling (<code>scaling_warm_pool_ratio</code>, fast retries)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Direct-handoff (returning server goes to longest-waiting client via in-process oneshot channel)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Strict FIFO ordering of waiters</td><td style="text-align: center">Yes</td><td style="text-align: center">No (LIFO via <code>server_round_robin = 0</code>)</td><td style="text-align: center">No</td></tr>
 <tr><td><code>min_pool_size</code> (warm connections)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Prepared statement cache (two-level, query interner, statement remap)</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.21</td><td style="text-align: center">Since 1.3</td></tr>
-<tr><td>Smart <code>DISCARD</code> on checkin</td><td style="text-align: center">RESET ALL + drop cache</td><td style="text-align: center">No</td><td style="text-align: center">Yes (auto)</td></tr>
+<tr><td>Prepared statements in transaction mode</td><td style="text-align: center">Yes (two-level cache, query interner, <code>DOORMAN_N</code> remap)</td><td style="text-align: center">Yes (since 1.21, <code>max_prepared_statements</code>, <code>PGBOUNCER_*</code> remap)</td><td style="text-align: center">Yes (<code>pool_reserve_prepared_statement</code>)</td></tr>
+<tr><td>Smart cleanup on checkin (skip <code>DEALLOCATE ALL</code> if cache untouched)</td><td style="text-align: center">Yes (mutation-tracking <code>RESET ALL</code> / <code>DEALLOCATE ALL</code> on demand)</td><td style="text-align: center">No (always <code>DISCARD ALL</code> if <code>server_reset_query</code> set)</td><td style="text-align: center">Yes (auto)</td></tr>
 <tr><td>LISTEN / NOTIFY pinning in transaction mode</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Experimental</td></tr>
-<tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.5.1</td></tr>
-<tr><td><code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (1.4.1+)</td></tr>
+<tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.5.1)</td></tr>
+<tr><td><code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code> admin commands</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.4.1)</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="concepts/pool-coordinator.html">Pool Coordinator</a>, <a href="tutorials/pool-pressure.html">Pool pressure</a>.</p>
 <h2 id="limits-and-timeouts"><a class="header" href="#limits-and-timeouts">Limits and timeouts</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td><code>server_idle_check_timeout</code> (probe before checkout)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td><code>idle_timeout</code> (server connection)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>idle_timeout</code> (server-side)</td><td style="text-align: center">Yes (<code>idle_timeout</code>)</td><td style="text-align: center">Yes (<code>server_idle_timeout</code>)</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>server_lifetime</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>query_wait_timeout</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>client_idle_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td><code>transaction_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
-<tr><td><code>max_user_client_connections</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td>Per-user <code>query_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td>Per-user <code>reserve_pool_size</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td><code>query_wait_notify</code> (NOTICE while waiting for backend)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes (<code>pool_notice_after_waiting_ms</code>)</td></tr>
+<tr><td><code>client_idle_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>transaction_timeout</code> (pooler-enforced)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>max_user_client_connections</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>max_db_client_connections</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>query_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>reserve_pool_size</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>Notify client while waiting for backend</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25, <code>query_wait_notify</code>)</td><td style="text-align: center">Yes (<code>pool_notice_after_waiting_ms</code>)</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="reference/general.html">General settings reference</a>, <a href="reference/pool.html">Pool settings reference</a>.</p>
 <h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Built-in Prometheus endpoint</td><td style="text-align: center">Yes</td><td style="text-align: center">External (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Latency percentiles per pool (p50, p90, p95, p99)</td><td style="text-align: center">Yes (HDR Histogram)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (TDigest)</td></tr>
-<tr><td>Prepared statement counters in stats</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td>JSON structured logging</td><td style="text-align: center">Yes (<code>--log-format Structured</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Prometheus endpoint</td><td style="text-align: center">Built-in <code>/metrics</code></td><td style="text-align: center">External (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">External (Go exporter sidecar that polls the admin console)</td></tr>
+<tr><td>Latency percentiles per pool (p50, p90, p95, p99)</td><td style="text-align: center">Yes (HDR Histogram)</td><td style="text-align: center">No (averages only in <code>SHOW STATS</code>)</td><td style="text-align: center">Yes via the exporter (TDigest, requires <code>quantiles</code> rule option)</td></tr>
+<tr><td>Prepared statement counters in <code>SHOW STATS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>JSON structured logging</td><td style="text-align: center">Yes (<code>--log-format structured</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (<code>log_format "json"</code>)</td></tr>
 <tr><td>Runtime log level control (<code>SET log_level</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Admin <code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Admin <code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Admin <code>SHOW HOSTS</code> (host CPU/memory)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Admin <code>SHOW RULES</code> (dump routing)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>TLS connection metrics (handshake duration, errors, active count)</td><td style="text-align: center">Yes (server-side)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SHOW HOSTS</code> (host CPU/memory)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>SHOW RULES</code> (dump effective routing)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Server-side TLS connection metrics (handshake duration, errors, active count)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Patroni API metrics</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Fallback metrics (active flag, current host, hits)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 </tbody></table>
@@ -376,14 +381,13 @@ pools:
 <p>See <a href="reference/prometheus.html">Prometheus metrics reference</a>, <a href="observability/admin-commands.html">Admin commands</a>.</p>
 <h2 id="operations"><a class="header" href="#operations">Operations</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Graceful binary upgrade (zero-downtime, in-flight clients preserved)</td><td style="text-align: center">Yes</td><td style="text-align: center">Limited (<code>SO_REUSEPORT</code>)</td><td style="text-align: center">No</td></tr>
-<tr><td>YAML config</td><td style="text-align: center">Yes</td><td style="text-align: center">No (INI)</td><td style="text-align: center">No (own format)</td></tr>
-<tr><td>TOML config</td><td style="text-align: center">Yes (legacy)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Human-readable durations &amp; sizes (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Binary upgrade with session migration (TCP socket, cancel keys, prepared cache)</td><td style="text-align: center">Yes (<code>SCM_RIGHTS</code>, plus TLS state with the <code>tls-migration</code> build)</td><td style="text-align: center">No: <code>-R</code> deprecated since 1.20; <code>so_reuseport</code> rolling restart drains old sessions in place</td><td style="text-align: center">No: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> drains old sessions in place</td></tr>
+<tr><td>Configuration format</td><td style="text-align: center">YAML or TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Own format (lex/yacc)</td></tr>
+<tr><td>Human-readable durations and sizes (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (integer microseconds / bytes)</td><td style="text-align: center">No</td></tr>
 <tr><td>Config test mode (<code>pg_doorman -t</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Auto-config from PostgreSQL (<code>pg_doorman generate --host</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Yes (incl. server TLS certs)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>systemd <code>sd-notify</code> integration</td><td style="text-align: center">Yes (<code>Type=notify</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Yes (server TLS certs included; client TLS still requires restart)</td><td style="text-align: center">Yes (<code>auth_file</code>, <code>auth_hba_file</code>, server and client TLS certs)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>systemd <code>sd-notify</code> (<code>Type=notify</code>) integration</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Memory cap (<code>max_memory_usage</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
@@ -396,79 +400,76 @@ pools:
 <tr><td>Async Flush</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
 <tr><td>Cancel requests over TLS</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>COPY IN</code> / <code>COPY OUT</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Replication passthrough (<code>replication=true</code> startup)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">No</td></tr>
-<tr><td>Protocol version negotiation (3.2)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">No</td></tr>
-<tr><td><code>server_drop_on_cached_plan_error</code></td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.5.1</td></tr>
+<tr><td>Replication passthrough (<code>replication=true</code> startup)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.23)</td><td style="text-align: center">No</td></tr>
+<tr><td>Protocol version negotiation (3.2)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.23)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>server_drop_on_cached_plan_error</code></td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.5.1)</td></tr>
 </tbody></table>
 </div>
 <h2 id="when-pgdoorman-is-not-the-right-fit"><a class="header" href="#when-pgdoorman-is-not-the-right-fit">When PgDoorman is not the right fit</a></h2>
 <ul>
-<li>You need LDAP authentication. Use Odyssey or PgBouncer 1.25+.</li>
-<li>You need SCRAM channel binding (<code>scram-sha-256-plus</code>) end-to-end. Use PgBouncer or Odyssey.</li>
-<li>You need replication passthrough for logical replication tools. Use PgBouncer 1.23+.</li>
-<li>You need availability-zone-aware routing or sequential <code>pg_hba</code>-style routing rules. Use Odyssey.</li>
-<li>You need <code>transaction_timeout</code> enforced by the pooler. Use PgBouncer 1.25+.</li>
+<li><strong>You need LDAP authentication.</strong> Use Odyssey or PgBouncer 1.25+.</li>
+<li><strong>You need replication passthrough for logical replication tools.</strong> Use PgBouncer 1.23+.</li>
+<li><strong>You need <code>transaction_timeout</code> enforced by the pooler.</strong> Use PgBouncer 1.25+.</li>
+<li><strong>You need horizontal sharding inside the pooler.</strong> Use PgCat.</li>
 </ul>
-<p>For prepared statements in transaction mode, Patroni HA without external proxies, multithreaded throughput, and zero-downtime restarts, PgDoorman is the closer fit.</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
+<p>For prepared statements in transaction mode, Patroni HA without external proxies, multi-threaded throughput in a single shared pool, and binary upgrades that migrate live sessions, PgDoorman is the closer fit.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="overview"><a class="header" href="#overview">Overview</a></h1>
+<h2 id="what-pgdoorman-does"><a class="header" href="#what-pgdoorman-does">What PgDoorman does</a></h2>
+<p>PgDoorman sits between your applications and PostgreSQL. To the application it looks like a PostgreSQL server (same wire protocol, same <code>psql</code> connect string); under the hood it multiplexes many client sessions onto a much smaller set of real backend connections.</p>
 <pre class="mermaid">graph LR
     App1[Application A] --&gt; Pooler(PgDoorman)
     App2[Application B] --&gt; Pooler
     App3[Application C] --&gt; Pooler
     Pooler --&gt; DB[(PostgreSQL)]
 </pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+<p>PgDoorman was originally forked from <a href="https://github.com/postgresml/pgcat">PgCat</a> but has since been rewritten around different goals: prepared statements in transaction mode, multi-threaded shared pools, Patroni integration, and binary upgrades that migrate live sessions. It is now a separate codebase.</p>
+<h2 id="why-a-pooler-at-all"><a class="header" href="#why-a-pooler-at-all">Why a pooler at all</a></h2>
+<p>Each PostgreSQL connection costs the server roughly 10 MB of RAM, a process, and time on every handshake (auth, SCRAM, search_path resolution). Without a pooler, an application that opens N short-lived connections per second pays N×handshake-time. A pooler lets the same N clients reuse a small set of long-lived backend connections, so the handshake cost is paid once per backend instead of once per client.</p>
+<p>Concrete impact:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>A <code>pool_size</code> of 40 typically serves several thousand client sessions for short OLTP transactions.</li>
+<li>PostgreSQL avoids the per-process memory overhead of the connections it would otherwise have to keep open.</li>
+<li>Failover, restart, or rolling deployments don't translate into a thundering herd of fresh handshakes.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
+<h2 id="pool-modes"><a class="header" href="#pool-modes">Pool modes</a></h2>
+<div id="admonition-transaction-recommended" class="admonition admonish-success" role="note" aria-labelledby="admonition-transaction-recommended-title">
 <div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
+<div id="admonition-transaction-recommended-title">
+<p>Transaction (recommended)</p>
 </div>
-<a class="admonition-anchor-link" href="tutorials/overview.html#admonition-recommended-for-most-use-cases"></a>
+<a class="admonition-anchor-link" href="tutorials/overview.html#admonition-transaction-recommended"></a>
 </div>
 <div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
+<p>The backend connection is held for the duration of one transaction and returned to the pool on <code>COMMIT</code> or <code>ROLLBACK</code>. This is the mode where pooling actually pays off.</p>
 </div>
 </div>
-<ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
-</ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
+<div id="admonition-session" class="admonition admonish-info" role="note" aria-labelledby="admonition-session-title">
 <div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
+<div id="admonition-session-title">
+<p>Session</p>
 </div>
-<a class="admonition-anchor-link" href="tutorials/overview.html#admonition-useful-for-specific-legacy-needs"></a>
+<a class="admonition-anchor-link" href="tutorials/overview.html#admonition-session"></a>
 </div>
 <div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
+<p>The backend connection is held for the entire client session and returned only when the client disconnects. Use this for clients that depend on session-scoped state (<code>SET TIME ZONE</code> outside a transaction, advisory locks across transactions, <code>WITH HOLD</code> cursors).</p>
 </div>
 </div>
+<p>PgDoorman does not implement statement mode. See <a href="tutorials/../concepts/pool-modes.html">Pool Modes</a> for the exact contract of each mode and what works in transaction mode that doesn't work in other poolers.</p>
+<h2 id="operations-surface"><a class="header" href="#operations-surface">Operations surface</a></h2>
 <ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
+<li><strong>Admin console</strong> — a PostgreSQL-compatible endpoint for <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>, <code>RELOAD</code>, <code>PAUSE</code>, <code>UPGRADE</code>, etc.</li>
+<li><strong>Prometheus <code>/metrics</code></strong> — built-in HTTP endpoint with per-pool latency percentiles, prepared-statement counters, fallback state, and TLS metrics.</li>
+<li><strong><code>pg_doorman -t</code></strong> — validate the config without starting the server.</li>
+<li><strong><code>pg_doorman generate --host …</code></strong> — emit a starter config by introspecting an existing PostgreSQL.</li>
 </ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
+<p>See <a href="tutorials/../observability/admin-commands.html">Admin commands</a> and <a href="tutorials/../reference/prometheus.html">Prometheus reference</a>.</p>
+<h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
 <ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
+<li><a href="tutorials/installation.html">Installation</a> — install pg_doorman from packages, source, or Docker.</li>
+<li><a href="tutorials/basic-usage.html">Basic usage</a> — minimal config, first connection, common gotchas.</li>
+<li><a href="tutorials/../concepts/pool-coordinator.html">Pool Coordinator</a> — when one database is shared between several user-pools.</li>
+<li><a href="tutorials/binary-upgrade.html">Binary upgrade</a> — replace the binary in production without dropping live sessions.</li>
 </ul>
-<p>For detailed information on managing PgDoorman, see the <a href="tutorials/./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="installing-pgdoorman"><a class="header" href="#installing-pgdoorman">Installing PgDoorman</a></h1>
 <p>PgDoorman runs on Linux and macOS. The recommended path for production is to build from source against the Rust toolchain you control. Pre-built distribution packages and binaries are also available; Docker is intended for testing.</p>
 <h2 id="system-requirements"><a class="header" href="#system-requirements">System requirements</a></h2>
@@ -540,10 +541,13 @@ sudo dnf install pg_doorman
 <pre><code class="language-bash"># Replace VERSION and TARGET with the desired values from the releases page.
 curl -L -o pg_doorman \
   "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET"
+curl -L -o pg_doorman.sha256 \
+  "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET.sha256"
+sha256sum -c pg_doorman.sha256                    # must print "OK"
 chmod +x pg_doorman
 sudo mv pg_doorman /usr/local/bin/
 </code></pre>
-<p>Verify the SHA-256 published with the release before deploying.</p>
+<p>Skipping the checksum step means trusting the network path between you and <code>objects.githubusercontent.com</code>. Don't.</p>
 <h2 id="docker-testing-only"><a class="header" href="#docker-testing-only">Docker (testing only)</a></h2>
 <p>Docker is supported for development, CI, and quick demos. We do not recommend it for production — packaging and lifecycle management are simpler with the system packages above.</p>
 <pre><code class="language-bash">docker run -p 6432:6432 \
@@ -565,9 +569,8 @@ psql -h 127.0.0.1 -p 6432 -U admin pgdoorman -c "SHOW VERSION;"
 <li><a href="tutorials/./binary-upgrade.html">Binary Upgrade</a> — replacing the binary without dropping clients.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="pgdoorman-basic-usage-guide"><a class="header" href="#pgdoorman-basic-usage-guide">PgDoorman Basic Usage Guide</a></h1>
-<p>PgDoorman is a PostgreSQL connection pooler based on PgCat. This guide covers configuration, operation, and administration.</p>
-<h2 id="command-line-options"><a class="header" href="#command-line-options">Command Line Options</a></h2>
-<p>PgDoorman offers several command-line options to customize its behavior when starting the service:</p>
+<p>End-to-end walkthrough: command-line flags, minimal config, the admin console, and operational commands (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>). Intended as the second page you read after <a href="tutorials/overview.html">Overview</a> and <a href="tutorials/installation.html">Installation</a>.</p>
+<h2 id="command-line-options"><a class="header" href="#command-line-options">Command-line options</a></h2>
 <pre><code class="language-bash">$ pg_doorman --help
 
 PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
@@ -753,8 +756,8 @@ mirroring PostgreSQL behavior. TLS-related rule types are honored: <code>hostssl
 <p>Your application's connection string should be updated to point to PgDoorman instead of directly to PostgreSQL:</p>
 <pre><code>postgresql://doorman:password@localhost:6432/exampledb
 </code></pre>
-<p>PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.</p>
-<h2 id="administration-1"><a class="header" href="#administration-1">Administration</a></h2>
+<p>The application talks PostgreSQL wire protocol; the connection-pooling layer is transparent to it.</p>
+<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
 <h3 id="admin-console"><a class="header" href="#admin-console">Admin Console</a></h3>
 <p>PgDoorman exposes an administrative interface through the special database <strong>pgdoorman</strong> (or <strong>pgbouncer</strong> for backward compatibility):</p>
 <pre><code class="language-bash">$ psql -h localhost -p 6432 -U admin pgdoorman
@@ -1677,8 +1680,8 @@ host    all all 0.0.0.0/0 reject
 <p>Client-side certificates are loaded at startup. Changing them requires a process restart. There is no <code>SIGHUP</code> reload for client-side TLS.</p>
 <p>For zero-downtime certificate rotation, see <a href="guides/../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
 <h3 id="cipher-policy"><a class="header" href="#cipher-policy">Cipher policy</a></h3>
-<p>Minimum TLS 1.2. The cipher list is the Mozilla "intermediate" recommendation; this is not configurable. Direct TLS handshake (PG17, no <code>SSLRequest</code>) is not supported.</p>
-<p>For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.</p>
+<p>Minimum TLS 1.2 enforced in the handshake. PgDoorman does <strong>not</strong> set an explicit cipher list — the effective ciphers come from the system OpenSSL build. If you need a hardened cipher list, configure it system-wide (<code>/etc/ssl/openssl.cnf</code>) or build OpenSSL with the policy you want.</p>
+<p>Direct TLS handshake (PG17, no <code>SSLRequest</code>) is not supported. For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.</p>
 <h2 id="server-side-tls"><a class="header" href="#server-side-tls">Server-side TLS</a></h2>
 <p>Encrypt connections between PgDoorman and PostgreSQL backends. Added in 3.6.0.</p>
 <h3 id="modes-1"><a class="header" href="#modes-1">Modes</a></h3>
@@ -1730,9 +1733,9 @@ host    all all 0.0.0.0/0 reject
 <li>Rotating certificates? See <a href="guides/../tutorials/binary-upgrade.html">Binary Upgrade</a> and <a href="guides/../operations/signals.html">Signals</a>.</li>
 <li>Hardening an existing deployment? Combine with <a href="guides/../authentication/hba.html">pg_hba.conf</a>: force <code>hostssl</code> for non-local connections.</li>
 </ul>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="pool-modes"><a class="header" href="#pool-modes">Pool Modes</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="pool-modes-1"><a class="header" href="#pool-modes-1">Pool Modes</a></h1>
 <p>PgDoorman supports two pool modes: <code>transaction</code> and <code>session</code>. Set per pool, with optional per-user override.</p>
-<p>There is no <code>statement</code> mode. Statement-level pooling breaks more drivers than it helps and PgDoorman optimizes for transaction mode aggressively (prepared statement cache, direct handoff, FIFO scheduling).</p>
+<p>There is no <code>statement</code> mode. Statement pooling rotates the backend after every statement, which forces clients to give up multi-statement transactions and breaks the prepared-statement protocol entirely; PgDoorman invests its tuning (prepared-statement cache, direct handoff, strict-FIFO scheduling) in transaction mode instead. PgBouncer keeps <code>statement</code> mode for backward compatibility; Odyssey omits it.</p>
 <h2 id="transaction-mode-recommended"><a class="header" href="#transaction-mode-recommended">Transaction mode (recommended)</a></h2>
 <pre><code class="language-yaml">pools:
   mydb:
@@ -1745,7 +1748,7 @@ host    all all 0.0.0.0/0 reject
 <li>Prepared statements. PgDoorman caches them per-pool, remaps statement names across backend connections, and replays preparation transparently. Drivers that pin to <code>unnamed</code> statement (Go pgx, .NET Npgsql, Python asyncpg) work without configuration.</li>
 <li>Pipelined batches and async <code>Flush</code> flow.</li>
 <li>Cancel requests over TLS.</li>
-<li><code>LISTEN</code> / <code>NOTIFY</code> — but only inside a transaction; cross-transaction notifications are lost (PgBouncer same).</li>
+<li><code>LISTEN</code> / <code>NOTIFY</code> — but only inside a transaction. A <code>LISTEN</code> issued and then committed releases the backend, and any notifications delivered to it after that go to whichever client checks it out next, not to the original <code>LISTEN</code>-er. PgBouncer behaves the same way; if you need cross-transaction <code>LISTEN</code>, use session mode for that client.</li>
 </ul>
 <p>What does <strong>not</strong> work in transaction mode:</p>
 <ul>
@@ -1784,21 +1787,21 @@ host    all all 0.0.0.0/0 reject
 </code></pre>
 <p>Useful when one user (operations tooling, migrations) needs session semantics but the main application stays in transaction mode.</p>
 <h2 id="cleanup-on-checkin"><a class="header" href="#cleanup-on-checkin">Cleanup on checkin</a></h2>
-<p>Returning to transaction mode in detail: when a backend goes back to the pool, PgDoorman runs <code>RESET ALL</code> and <code>ROLLBACK</code> (if <code>cleanup_server_connections: true</code>, the default). This drops:</p>
+<p>Cleanup in transaction mode is <strong>mutation-tracked</strong>, not unconditional. PgDoorman watches each transaction for <code>SET</code>, <code>PREPARE</code>, and <code>DECLARE CURSOR</code>, and only when the backend returns to the pool with one of those flags set does it issue <code>RESET ALL</code>, <code>DEALLOCATE ALL</code>, or <code>CLOSE ALL</code> respectively. A read-only transaction skips cleanup entirely — that's a measurable win on hot OLTP paths.</p>
+<p>What gets reset when a flag fires:</p>
 <ul>
-<li>Session-level <code>SET</code> values.</li>
-<li>Cursors.</li>
-<li>Prepared statement names that the driver bound to specific backend names (PgDoorman's prepared statement cache survives — it is keyed by query text, not backend statement name).</li>
-<li>Advisory locks (<code>pg_advisory_unlock_all</code> is implicit in <code>RESET ALL</code>).</li>
+<li><code>SET</code> flag → <code>RESET ALL</code> drops session-level GUCs and runs <code>pg_advisory_unlock_all</code> implicitly.</li>
+<li><code>PREPARE</code> flag → <code>DEALLOCATE ALL</code> drops PostgreSQL-side prepared statements that the driver named explicitly. PgDoorman's own prepared-statement cache survives the reset because it is keyed by query text, not by backend name.</li>
+<li><code>DECLARE CURSOR</code> flag → <code>CLOSE ALL</code> drops cursors.</li>
 </ul>
-<p><code>DEALLOCATE ALL</code> and <code>DISCARD ALL</code> from the client also trigger PgDoorman's prepared statement cache to drop everything cached for that client. The pool-level cache is not affected.</p>
-<p>To opt out of cleanup (for performance, in tightly-controlled deployments):</p>
+<p><code>DEALLOCATE ALL</code> and <code>DISCARD ALL</code> issued by the client clear that client's prepared-statement cache (so the next <code>Parse</code> registers anew). The pool-level shared cache is not affected; other clients keep their entries.</p>
+<p>To opt out of cleanup entirely (for performance, in tightly-controlled deployments):</p>
 <pre><code class="language-yaml">pools:
   mydb:
     pool_mode: "transaction"
     cleanup_server_connections: false
 </code></pre>
-<p>Only do this if you are sure your application never leaks session state.</p>
+<p>Only do this if you are sure your application never leaks session state. The mutation-tracked default is already cheap when no mutation happened, so the opt-out is rarely worth the risk.</p>
 <h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
 <ul>
 <li><code>pool_mode</code> parameter: <a href="concepts/../reference/pool.html#pool_mode">Pool Settings</a>.</li>
@@ -1810,11 +1813,11 @@ host    all all 0.0.0.0/0 reject
 <p>This page explains the concept and when to use it. For tuning recipes and read-out from <code>SHOW POOL_COORDINATOR</code>, see <a href="concepts/../tutorials/pool-pressure.html#coordinator-mode">Pool Pressure</a>.</p>
 <h2 id="what-problem-it-solves"><a class="header" href="#what-problem-it-solves">What problem it solves</a></h2>
 <p>Without a coordinator, every user-pool is independent. A <code>pool_size</code> of 40 across 5 users means up to 200 backend connections — and PostgreSQL fights to maintain its own limits.</p>
-<p><code>max_db_connections</code> in PgBouncer caps the total but blocks new requests once the cap is reached. Whoever hit the cap first keeps their connections regardless of how heavily they use them, and slow workloads never yield to fast ones.</p>
+<p><code>max_db_connections</code> in PgBouncer caps the total, but once the cap is reached new clients simply queue. Connections only free up when their current owner closes them naturally on <code>server_idle_timeout</code>. Whoever grabbed connections first keeps them regardless of how heavily they use them, and slow workloads never yield to fast ones.</p>
 <p>PgDoorman's Pool Coordinator caps the total <strong>and</strong>:</p>
 <ul>
 <li><strong>Evicts</strong> idle connections from over-allocated users when another user needs to grow.</li>
-<li><strong>Ranks</strong> users by p95 transaction time so slow pools donate first. Users with fast queries keep their reuse advantage; users with long transactions release first because their connections were idle longer anyway.</li>
+<li><strong>Ranks</strong> users by p95 transaction time so the slowest pools yield first. Pools running fast transactions keep their reuse advantage; pools running long transactions sit idle a larger fraction of the time, so taking from them costs less.</li>
 <li><strong>Reserves</strong> a small overflow for short bursts. Configured separately from the main cap.</li>
 <li><strong>Guarantees</strong> a per-user minimum that is never evicted. Critical workloads keep their footing during contention.</li>
 </ul>
@@ -1871,7 +1874,7 @@ host    all all 0.0.0.0/0 reject
 <li><strong>Skip protected users.</strong> A user below <code>min_guaranteed_pool_size</code> is excluded.</li>
 <li><strong>Skip recently-created connections.</strong> Connections younger than <code>min_connection_lifetime</code> are not evicted (avoids churn during minor idle gaps).</li>
 <li><strong>Rank by surplus.</strong> Users with the most idle connections above their <code>min_guaranteed_pool_size</code> rank highest.</li>
-<li><strong>Tiebreak by p95 transaction time.</strong> Among equally-idle users, the slow pool donates first. Their connections were probably idle because their next query is still being prepared upstream.</li>
+<li><strong>Tiebreak by p95 transaction time.</strong> Among equally-idle users, the pool with the higher p95 yields first. Higher p95 means each transaction holds the connection longer; the same user therefore reuses each connection less often, so a single eviction translates into fewer reused checkouts lost.</li>
 </ol>
 <p>The chosen idle connection is closed; the requesting user receives a fresh connection from PostgreSQL.</p>
 <h2 id="observability-3"><a class="header" href="#observability-3">Observability</a></h2>
@@ -3308,8 +3311,9 @@ them under <a href="tutorials/patroni-assisted-fallback.html#tuning-parameters">
 <p><strong>Planned switchover.</strong> A DBA runs <code>patroni switchover --candidate node2</code>.
 Patroni promotes node2, then shuts down PostgreSQL on node1. Between the
 shutdown and Patroni restarting node1 as a replica of node2, doorman on
-node1 has no backend. With fallback enabled, doorman connects to node2
-within 1-2 TCP round trips.</p>
+node1 has no backend. With fallback enabled, the next client request
+that fails to reach the local socket triggers a <code>/cluster</code> lookup and
+the new connection is opened to node2.</p>
 <p><strong>Unplanned crash.</strong> PostgreSQL on node1 is killed by the OOM killer.
 Patroni hasn't detected the failure yet. Doorman gets connection refused
 on the unix socket, queries the Patroni API, and connects to the
@@ -3433,7 +3437,9 @@ DNS resolution failure during a failover adds latency and may cause
 the lookup to fail entirely.</p>
 <p><strong>standby_leader.</strong> Patroni standby clusters use the <code>standby_leader</code>
 role. doorman treats it as "other" (lowest priority, after sync_standby
-and replica). This is correct for most deployments.</p>
+and replica). For a primary-cluster deployment this matches what you
+want; if you are running pg_doorman on a standby cluster you most
+likely don't want fallback at all because you have no writeable target.</p>
 <h2 id="relationship-to-patroni_proxy"><a class="header" href="#relationship-to-patroni_proxy">Relationship to patroni_proxy</a></h2>
 <p>patroni_proxy and Patroni-assisted fallback solve different problems.</p>
 <p><strong>patroni_proxy</strong> is a TCP load balancer deployed near application
@@ -3446,48 +3452,25 @@ doorman needs a temporary alternative. It does pool connections.</p>
 fallback keeps read traffic flowing at the doorman layer when the local
 backend dies, without affecting patroni_proxy routing.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="patroni-proxy"><a class="header" href="#patroni-proxy">Patroni Proxy</a></h1>
-<p><code>patroni_proxy</code> is a specialized high-performance TCP proxy for Patroni-managed PostgreSQL clusters. Following the Unix philosophy of "do one thing and do it well", it focuses exclusively on TCP load balancing and failover for Patroni clusters.</p>
-<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
-<p>Unlike traditional solutions like HAProxy, <code>patroni_proxy</code> provides seamless connection management without disrupting existing connections during cluster topology changes. When a new replica is added or removed, only the affected connections are handled — all other connections continue working without interruption.</p>
-<h2 id="key-features"><a class="header" href="#key-features">Key Features</a></h2>
-<h3 id="zero-downtime-connection-management"><a class="header" href="#zero-downtime-connection-management">Zero-Downtime Connection Management</a></h3>
-<p>The main advantage over HAProxy is that <code>patroni_proxy</code> <strong>does not terminate existing connections</strong> when the upstream configuration changes. This is critical for long-running transactions and connection-heavy applications.</p>
-<h3 id="hot-upstream-updates"><a class="header" href="#hot-upstream-updates">Hot Upstream Updates</a></h3>
+<p><code>patroni_proxy</code> is a TCP load balancer for Patroni-managed PostgreSQL clusters. It listens on one or more ports, asks the Patroni REST API who is leader / sync / async, and forwards new connections to the chosen role using least-connections balancing. It does not pool connections, parse the wire protocol, or know what SQL is being sent — that part is pg_doorman's job, deployed downstream of <code>patroni_proxy</code>.</p>
+<h2 id="what-it-does"><a class="header" href="#what-it-does">What it does</a></h2>
 <ul>
-<li>Automatic discovery of cluster members via Patroni REST API (<code>/cluster</code> endpoint)</li>
-<li>Periodic polling with configurable interval (<code>cluster_update_interval</code>)</li>
-<li>Immediate updates via HTTP API (<code>/update_clusters</code> endpoint)</li>
-<li>Configuration reload via SIGHUP signal without restart</li>
+<li><strong>Discovers cluster members</strong> by polling Patroni's <code>/cluster</code> endpoint at <code>cluster_update_interval</code> (default 3 s) and on demand via <code>GET /update_clusters</code>.</li>
+<li><strong>Routes by role.</strong> Each listen port is bound to one or more roles (<code>leader</code>, <code>sync</code>, <code>async</code>, <code>any</code>). Connections to that port land on a member matching one of those roles.</li>
+<li><strong>Balances by least connections.</strong> For ports bound to multiple eligible members, the proxy keeps a connection counter per member and picks the one with the fewest live connections. Counters survive cluster updates.</li>
+<li><strong>Drops replicas with stale data.</strong> Per-port <code>max_lag_in_bytes</code> excludes members whose <code>replication_lag</code> (from <code>/cluster</code>) is over the threshold. Leader is never excluded by lag.</li>
+<li><strong>Skips members that aren't running.</strong> Only <code>state: "running"</code> members are eligible; <code>starting</code>, <code>stopped</code>, <code>crashed</code>, and members with <code>noloadbalance</code> are filtered out.</li>
 </ul>
-<h3 id="role-based-routing"><a class="header" href="#role-based-routing">Role-Based Routing</a></h3>
-<p>Route connections based on PostgreSQL node roles:</p>
+<p>The behaviour that matters operationally is what happens on a topology change: when a new member appears or an old one disappears, <code>patroni_proxy</code> updates its routing table for <strong>future</strong> connections only. Existing TCP connections to a still-running backend are not touched. Compared to HAProxy + confd, where a config reload tears down all connections that pass through the affected backend section, this means <code>cluster_update_interval</code> doesn't have to fight with long-running transactions.</p>
+<h3 id="roles"><a class="header" href="#roles">Roles</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Role</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>leader</code></td><td>Primary/master node</td></tr>
+<tr><td><code>leader</code></td><td>Primary / master node</td></tr>
 <tr><td><code>sync</code></td><td>Synchronous standby replicas</td></tr>
 <tr><td><code>async</code></td><td>Asynchronous replicas</td></tr>
-<tr><td><code>any</code></td><td>Any available node</td></tr>
+<tr><td><code>any</code></td><td>Any running cluster member</td></tr>
 </tbody></table>
 </div>
-<h3 id="intelligent-load-balancing"><a class="header" href="#intelligent-load-balancing">Intelligent Load Balancing</a></h3>
-<ul>
-<li><strong>Least Connections</strong> strategy for distributing connections across backends</li>
-<li>Connection counters are preserved during cluster updates</li>
-<li>Automatic exclusion of nodes with <code>noloadbalance</code> tag</li>
-</ul>
-<h3 id="replication-lag-awareness"><a class="header" href="#replication-lag-awareness">Replication Lag Awareness</a></h3>
-<ul>
-<li>Configurable <code>max_lag_in_bytes</code> per port</li>
-<li>Automatic disconnection of clients when replica lag exceeds threshold</li>
-<li>Only affects replica connections (leader has no lag)</li>
-</ul>
-<h3 id="member-state-filtering"><a class="header" href="#member-state-filtering">Member State Filtering</a></h3>
-<ul>
-<li>Only members with <code>state: "running"</code> are used as backends</li>
-<li>Members in <code>starting</code>, <code>stopped</code>, <code>crashed</code> states are automatically excluded</li>
-<li>Dynamic state changes are handled during periodic updates</li>
-</ul>
-<h2 id="recommended-deployment-architecture"><a class="header" href="#recommended-deployment-architecture">Recommended Deployment Architecture</a></h2>
-<p>For optimal performance, we recommend a two-tier architecture:</p>
+<h2 id="recommended-deployment"><a class="header" href="#recommended-deployment">Recommended deployment</a></h2>
 <pre class="mermaid">graph TD
     App1[Application A] --&gt; PP(patroni_proxy&lt;br/&gt;TCP load balancing)
     App2[Application B] --&gt; PP
@@ -3502,10 +3485,10 @@ backend dies, without affecting patroni_proxy routing.</p>
     D3 --&gt; PG3[(PostgreSQL&lt;br/&gt;async replica)]
 </pre>
 <ul>
-<li><strong>pg_doorman</strong> should be deployed <strong>close to PostgreSQL servers</strong> — it handles connection pooling, prepared statement caching, and protocol-level optimizations that benefit from low latency to the database</li>
-<li><strong>patroni_proxy</strong> should be deployed <strong>close to application clients</strong> — it handles TCP routing and failover, distributing connections across the cluster without the overhead of connection pooling</li>
+<li><strong>pg_doorman</strong> lives on the PostgreSQL hosts. It does the pooling, prepared-statement cache, and protocol parsing — work that benefits from low latency to the local socket.</li>
+<li><strong>patroni_proxy</strong> lives near the application. It routes TCP, owns the role-aware failover decision, and stays out of the pooler's way.</li>
 </ul>
-<p>This separation allows each component to excel at its specific task while providing both high availability and optimal performance.</p>
+<p>If the application traffic is small enough that one pg_doorman per cluster is sufficient, you can collapse the diagram and run pg_doorman directly with <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a> and skip <code>patroni_proxy</code> entirely.</p>
 <h2 id="configuration-9"><a class="header" href="#configuration-9">Configuration</a></h2>
 <p>Example <code>patroni_proxy.yaml</code>:</p>
 <pre><code class="language-yaml"># Cluster update interval in seconds (default: 3)
@@ -3611,22 +3594,52 @@ cargo test --test patroni_proxy_bdd
 <li>Enable debug logging to see detailed connection lifecycle</li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="binary-upgrade"><a class="header" href="#binary-upgrade">Binary upgrade</a></h1>
-<p>Update pg_doorman without dropping client connections. The old process
-transfers idle clients to the new one through a Unix socket -- clients
-continue working on the same TCP connection without reconnecting.</p>
+<p>Replace the pg_doorman binary on a running server. Idle clients are handed to
+the new process over a Unix socket together with their cancel keys and
+prepared-statement cache, so they keep using the same TCP connection without
+reconnecting. Clients inside a transaction finish on the old process and
+migrate the moment they become idle. Operators get a <code>kill -USR2</code> and an exit
+status; applications get neither a reconnect storm nor a wave of
+<code>auth</code>/SCRAM handshakes against PostgreSQL.</p>
+<div id="admonition-how-this-differs-from-pgbouncer--odyssey" class="admonition admonish-info" role="note" aria-labelledby="admonition-how-this-differs-from-pgbouncer--odyssey-title">
+<div class="admonition-title">
+<div id="admonition-how-this-differs-from-pgbouncer--odyssey-title">
+<p>How this differs from PgBouncer / Odyssey</p>
+</div>
+<a class="admonition-anchor-link" href="tutorials/binary-upgrade.html#admonition-how-this-differs-from-pgbouncer--odyssey"></a>
+</div>
+<div>
+<p>PgBouncer's online restart (<code>-R</code>, deprecated since 1.20; or <code>so_reuseport</code>
+rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> +
+<code>bindwith_reuseport</code>) follow the same pattern as each other: the new process
+picks up new connections, the old one drains until its existing clients
+disconnect. Sessions, prepared statements, and TLS state never cross
+processes. pg_doorman migrates the live socket via <code>SCM_RIGHTS</code>, plus the
+cipher state with the <code>tls-migration</code> build (Linux, opt-in).</p>
+</div>
+</div>
 <h2 id="quick-start-2"><a class="header" href="#quick-start-2">Quick start</a></h2>
-<pre><code class="language-bash"># 1. Replace the binary on disk (build, download, etc.)
+<pre><code class="language-bash"># 1. Drop the new binary in place.
 cp pg_doorman_new /usr/bin/pg_doorman
 
-# 2. Trigger upgrade
-kill -USR2 $(pgrep pg_doorman)
+# 2. Validate the new binary against the live config before triggering
+#    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
+#    catching it here gives you a chance to fix the config without
+#    touching the running server.
+/usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Verify: old PID gone, clients still connected
-pgrep pg_doorman   # new PID
+# 3. Trigger the upgrade.
+kill -USR2 $(pgrep -f /usr/bin/pg_doorman)
+
+# 4. Verify: a new PID is running and clients are still connected.
+pgrep -f /usr/bin/pg_doorman      # new PID
+psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'   # answers from new process
 </code></pre>
-<p>Or via the admin console:</p>
+<p>The same upgrade can be triggered from the admin console:</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
+<p><code>UPGRADE</code> sends <code>SIGUSR2</code> to the running process, which is the same code
+path as <code>kill -USR2</code>.</p>
 <h2 id="how-the-upgrade-works"><a class="header" href="#how-the-upgrade-works">How the upgrade works</a></h2>
 <pre><code>                        SIGUSR2
                            |
@@ -3683,8 +3696,10 @@ writes to the pipe.</li>
 </ol>
 <p><strong>Daemon mode:</strong></p>
 <p>A new daemon process starts. The old daemon closes its listener.
-Client migration via socketpair is not used -- existing clients
-drain normally (receive error 58006 when <code>shutdown_timeout</code> expires).</p>
+Client migration via socketpair is not used — existing clients
+drain in place. When <code>shutdown_timeout</code> expires, anyone still
+connected gets SQLSTATE <code>58006</code> (<code>pooler is shut down now</code>) and the
+old process exits.</p>
 <h3 id="phase-3-idle-client-migration-foreground"><a class="header" href="#phase-3-idle-client-migration-foreground">Phase 3: Idle client migration (foreground)</a></h3>
 <p>When <code>MIGRATION_IN_PROGRESS</code> is set, each idle client (not in a
 transaction, no pending deferred <code>BEGIN</code>, no buffered reads)
@@ -3891,11 +3906,17 @@ high delays the old process exit when a client is stuck (e.g.,
 idle-in-transaction). Choose a value that covers your longest expected
 transaction, plus margin.</p>
 <h3 id="tls_private_key--tls_certificate"><a class="header" href="#tls_private_key--tls_certificate"><code>tls_private_key</code> / <code>tls_certificate</code></a></h3>
-<p>For TLS migration, both the old and new process load the same files.
-If the certificate changed between binary versions, TLS clients
-receive an error during cipher state import and are disconnected.</p>
-<p>Rotate certificates via <code>SIGHUP</code> (config reload) first, then do
-the binary upgrade.</p>
+<p>For the <code>tls-migration</code> feature to succeed, both the old and the new
+process must load the same client-facing certificate and private key.
+The cipher state is bound to the <code>SSL_CTX</code> created from those files,
+and import fails on mismatch — affected clients drop and reconnect.</p>
+<p>Client-facing TLS material is <strong>not</strong> reloaded on <code>SIGHUP</code> (only
+server-facing certificates are; see <a href="tutorials/../guides/tls.html">Hot reload of server TLS</a>).
+Rotating the client-facing cert therefore requires either a restart
+or a binary upgrade with the new files in place — and during that
+upgrade, TLS clients with the old cert will drop and reconnect even
+with <code>tls-migration</code> enabled. Plan the rotation around a window when
+you can tolerate the reconnects.</p>
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size"><code>prepared_statements_cache_size</code></a></h3>
 <p>Pool-level prepared statement cache. Does not directly affect
 migration, but the pool cache in the new process must be large
@@ -4101,55 +4122,70 @@ Restart=on-failure
 <li><a href="operations/../guides/tls.html#hot-reload">TLS</a> — <code>SIGHUP</code> reload semantics for server-side certificates.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="troubleshooting-3"><a class="header" href="#troubleshooting-3">Troubleshooting</a></h1>
-<p>This guide helps you resolve common issues when using PgDoorman.</p>
-<h2 id="authentication-errors-when-connecting-to-postgresql"><a class="header" href="#authentication-errors-when-connecting-to-postgresql">Authentication Errors When Connecting to PostgreSQL</a></h2>
-<p><strong>Symptom:</strong> PgDoorman starts successfully but clients get authentication errors like <code>password authentication failed</code> when trying to execute queries.</p>
-<h3 id="if-the-pool-username-matches-the-backend-postgresql-user"><a class="header" href="#if-the-pool-username-matches-the-backend-postgresql-user">If the pool username matches the backend PostgreSQL user</a></h3>
-<p>PgDoorman uses <strong>passthrough authentication</strong> by default — the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to authenticate to PostgreSQL. Make sure the <code>password</code> field in your config contains the exact hash from <code>pg_authid</code> / <code>pg_shadow</code>:</p>
-<pre><code class="language-bash">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
+<p>Symptoms you are likely to hit during the first week of running PgDoorman, and what to look at when you do.</p>
+<h2 id="authentication-errors-when-connecting-to-postgresql"><a class="header" href="#authentication-errors-when-connecting-to-postgresql">Authentication errors when connecting to PostgreSQL</a></h2>
+<p><strong>Symptom:</strong> PgDoorman accepts the client connection, but the first query returns <code>password authentication failed</code> from PostgreSQL.</p>
+<h3 id="the-pool-username-matches-the-backend-role"><a class="header" href="#the-pool-username-matches-the-backend-role">The pool username matches the backend role</a></h3>
+<p>PgDoorman uses <strong>passthrough authentication</strong> by default — the cryptographic proof the client sent (MD5 hash or SCRAM <code>ClientKey</code>) is reused to authenticate against PostgreSQL. The <code>password</code> field in your config must hold the exact hash from <code>pg_authid</code> / <code>pg_shadow</code>:</p>
+<pre><code class="language-sql">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 </code></pre>
-<p>Copy the hash (e.g., <code>md5...</code> or <code>SCRAM-SHA-256$...</code>) into your config's <code>password</code> field. The hash <strong>must match</strong> the one stored in PostgreSQL (same salt and iterations for SCRAM).</p>
-<h3 id="if-the-pool-username-differs-from-the-backend-user"><a class="header" href="#if-the-pool-username-differs-from-the-backend-user">If the pool username differs from the backend user</a></h3>
-<p>When the client-facing <code>username</code> in PgDoorman is different from the actual PostgreSQL role, passthrough cannot work — you need explicit credentials:</p>
+<p>For SCRAM, both processes must see the <strong>same</strong> salt and iteration count — even a one-character difference in the stored verifier breaks passthrough.</p>
+<h3 id="the-pool-username-differs-from-the-backend-role"><a class="header" href="#the-pool-username-differs-from-the-backend-role">The pool username differs from the backend role</a></h3>
+<p>When the client-facing <code>username</code> in PgDoorman does not match the actual PostgreSQL role, passthrough cannot work — there is nothing to pass through. Provide explicit credentials:</p>
 <pre><code class="language-yaml">users:
   - username: "app_user"              # client-facing name
-    password: "md5..."                # hash for client authentication
+    password: "md5..."                # hash for client → pg_doorman auth
     server_username: "pg_app_user"    # actual PostgreSQL role
     server_password: "plaintext_pwd"  # plaintext password for that role
     pool_size: 40
 </code></pre>
-<p>This also applies to JWT authentication where there is no password to pass through.</p>
-<div id="admonition-how-to-get-the-password-hash" class="admonition admonish-tip" role="note" aria-labelledby="admonition-how-to-get-the-password-hash-title">
+<p>This is also the path for JWT auth, where the client never sends a password and there is nothing to pass through.</p>
+<div id="admonition-where-to-get-the-password-hash" class="admonition admonish-tip" role="note" aria-labelledby="admonition-where-to-get-the-password-hash-title">
 <div class="admonition-title">
-<div id="admonition-how-to-get-the-password-hash-title">
-<p>How to get the password hash</p>
+<div id="admonition-where-to-get-the-password-hash-title">
+<p>Where to get the password hash</p>
 </div>
-<a class="admonition-anchor-link" href="tutorials/troubleshooting.html#admonition-how-to-get-the-password-hash"></a>
+<a class="admonition-anchor-link" href="tutorials/troubleshooting.html#admonition-where-to-get-the-password-hash"></a>
 </div>
 <div>
-<p>You can get user password hashes from PostgreSQL using: <code>SELECT usename, passwd FROM pg_shadow;</code></p>
-<p>Or use the <code>pg_doorman generate</code> command which automatically retrieves them.</p>
+<p><code>pg_doorman generate --host …</code> introspects PostgreSQL and emits a config with the hashes already filled in. Faster than copy-pasting from <code>pg_shadow</code>.</p>
 </div>
 </div>
-<h2 id="configuration-file-not-found"><a class="header" href="#configuration-file-not-found">Configuration File Not Found</a></h2>
-<p><strong>Symptom:</strong> PgDoorman exits with "configuration file not found" error.</p>
-<p><strong>Solution:</strong> Specify the configuration file path explicitly:</p>
-<pre><code class="language-bash">pg_doorman /path/to/pg_doorman.yaml
+<h2 id="configuration-file-not-found"><a class="header" href="#configuration-file-not-found">Configuration file not found</a></h2>
+<p><strong>Symptom:</strong> PgDoorman exits with <code>configuration file not found</code> on startup.</p>
+<p>By default the binary looks for <code>pg_doorman.toml</code> in the current working directory. Either name your file that way and <code>cd</code> to its directory, or pass the path explicitly:</p>
+<pre><code class="language-bash">pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
-<p>By default, PgDoorman looks for <code>pg_doorman.toml</code> in the current directory.</p>
-<h2 id="pool-size-too-small"><a class="header" href="#pool-size-too-small">Pool Size Too Small</a></h2>
-<p><strong>Symptom:</strong> Clients experience high wait times or receive errors about too many connections.</p>
-<p><strong>Solution:</strong> Increase <code>pool_size</code> for the affected user, or check the <code>SHOW POOLS</code> admin command to see <code>cl_waiting</code> and <code>maxwait</code> values. If <code>maxwait</code> is consistently high, your pool is undersized for your workload.</p>
-<hr />
-<div id="admonition-still-having-issues" class="admonition admonish-tip" role="note" aria-labelledby="admonition-still-having-issues-title">
+<p>Validate before starting:</p>
+<pre><code class="language-bash">pg_doorman -t /etc/pg_doorman/pg_doorman.yaml
+</code></pre>
+<h2 id="clients-receive-58006-pooler-is-shut-down-now"><a class="header" href="#clients-receive-58006-pooler-is-shut-down-now">Clients receive <code>58006</code> (<code>pooler is shut down now</code>)</a></h2>
+<p>The pool is shutting down or the binary upgrade was issued in daemon mode. Check the server logs around the timestamp of the error:</p>
+<ul>
+<li><code>Got SIGUSR2, starting binary upgrade …</code> — a binary upgrade is in progress. In foreground mode, idle clients should migrate transparently; only clients still inside a transaction past <code>shutdown_timeout</code> get <code>58006</code>. In daemon mode there is no fd-based migration and every client gets <code>58006</code> when its connection is closed. See <a href="tutorials/binary-upgrade.html#troubleshooting">Binary upgrade → Troubleshooting</a>.</li>
+<li>No <code>SIGUSR2</code> log line — someone sent <code>SIGTERM</code> or <code>SIGINT</code> and the pooler shut down without spawning a successor. Check the systemd unit, the pid in question, and your operator runbook.</li>
+</ul>
+<p>If the <code>58006</code> happened during a planned upgrade, this is expected for that subset of clients. Configure the application's connection pool to retry on transient errors.</p>
+<h2 id="pool-size-too-small"><a class="header" href="#pool-size-too-small">Pool size too small</a></h2>
+<p><strong>Symptom:</strong> Queries take much longer end-to-end than they do when run directly against PostgreSQL.</p>
+<p>Look at <code>SHOW POOLS</code> and <code>SHOW POOLS_EXTENDED</code>:</p>
+<pre><code>cl_waiting   — how many clients are queued for a backend right now
+maxwait      — longest time any waiter has been queued, in seconds
+sv_idle      — idle backends in the pool
+sv_active    — backends currently checked out
+</code></pre>
+<p>If <code>cl_waiting &gt; 0</code> consistently and <code>sv_idle == 0</code>, the pool is undersized for the load. Either raise <code>pool_size</code> for that user, or look at why <code>sv_active</code> stays high — long transactions, idle-in-transaction sessions, or a slow downstream call holding the backend.</p>
+<p>If you are also using <code>max_db_connections</code>, watch <code>SHOW POOL_COORDINATOR</code> for <code>evictions</code> (donors are giving up connections under pressure) and <code>exhaustions</code> (the cap was hit even after evictions). See <a href="tutorials/../concepts/pool-coordinator.html">Pool Coordinator</a>.</p>
+<h2 id="where-to-file-what-is-left"><a class="header" href="#where-to-file-what-is-left">Where to file what is left</a></h2>
+<div id="admonition-still-stuck" class="admonition admonish-tip" role="note" aria-labelledby="admonition-still-stuck-title">
 <div class="admonition-title">
-<div id="admonition-still-having-issues-title">
-<p>Still having issues?</p>
+<div id="admonition-still-stuck-title">
+<p>Still stuck?</p>
 </div>
-<a class="admonition-anchor-link" href="tutorials/troubleshooting.html#admonition-still-having-issues"></a>
+<a class="admonition-anchor-link" href="tutorials/troubleshooting.html#admonition-still-stuck"></a>
 </div>
 <div>
-<p>If you encounter a problem not listed here, please <a href="https://github.com/ozontech/pg_doorman/issues">open an issue on GitHub</a>.</p>
+<p>If your problem isn't here, <a href="https://github.com/ozontech/pg_doorman/issues">open an issue on GitHub</a> with: pg_doorman version, the relevant config (passwords redacted), the client driver and version, and the matching log lines from both pg_doorman and PostgreSQL.</p>
 </div>
 </div>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="admin-commands"><a class="header" href="#admin-commands">Admin Commands</a></h1>
@@ -4243,19 +4279,19 @@ app  | mydb     | 1        | 12345   | 87         | 3                    | 142  
 <li><a href="observability/../tutorials/troubleshooting.html">Troubleshooting</a> — common failure modes and their <code>SHOW</code> output.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="json-structured-logging"><a class="header" href="#json-structured-logging">JSON Structured Logging</a></h1>
-<p>PgDoorman emits structured JSON logs when run with <code>--log-format Structured</code>. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.</p>
+<p>PgDoorman emits structured JSON logs when run with <code>--log-format structured</code>. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.</p>
 <h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
 <p>Three equivalent ways:</p>
 <pre><code class="language-bash"># Command line flag
-pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
 
 # Long form
-pg_doorman --log-format Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman --log-format structured /etc/pg_doorman/pg_doorman.yaml
 
 # Environment variable
-LOG_FORMAT=Structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
+LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
-<p>The default is <code>Text</code> (human-readable). The <code>--log-format</code> flag accepts <code>Text</code>, <code>Structured</code>, or <code>Debug</code>; the last is currently an alias for <code>Text</code>.</p>
+<p>The default is <code>text</code> (human-readable). The <code>--log-format</code> flag accepts <code>text</code>, <code>structured</code>, or <code>debug</code>; the last is currently an alias for <code>text</code>.</p>
 <h2 id="output"><a class="header" href="#output">Output</a></h2>
 <pre><code class="language-json">{"timestamp":"2026-04-25T08:32:14.512Z","level":"INFO","file":"src/app/server.rs","line":357,"message":"Server is up at 0.0.0.0:6432"}
 {"timestamp":"2026-04-25T08:32:14.514Z","level":"INFO","file":"src/pool/mod.rs","line":421,"message":"Pool 'mydb' initialized: 1 user, pool_size=40"}

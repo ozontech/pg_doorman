@@ -162,7 +162,7 @@
                     <main>
                         <h1 id="pool-modes"><a class="header" href="#pool-modes">Pool Modes</a></h1>
 <p>PgDoorman supports two pool modes: <code>transaction</code> and <code>session</code>. Set per pool, with optional per-user override.</p>
-<p>There is no <code>statement</code> mode. Statement-level pooling breaks more drivers than it helps and PgDoorman optimizes for transaction mode aggressively (prepared statement cache, direct handoff, FIFO scheduling).</p>
+<p>There is no <code>statement</code> mode. Statement pooling rotates the backend after every statement, which forces clients to give up multi-statement transactions and breaks the prepared-statement protocol entirely; PgDoorman invests its tuning (prepared-statement cache, direct handoff, strict-FIFO scheduling) in transaction mode instead. PgBouncer keeps <code>statement</code> mode for backward compatibility; Odyssey omits it.</p>
 <h2 id="transaction-mode-recommended"><a class="header" href="#transaction-mode-recommended">Transaction mode (recommended)</a></h2>
 <pre><code class="language-yaml">pools:
   mydb:
@@ -175,7 +175,7 @@
 <li>Prepared statements. PgDoorman caches them per-pool, remaps statement names across backend connections, and replays preparation transparently. Drivers that pin to <code>unnamed</code> statement (Go pgx, .NET Npgsql, Python asyncpg) work without configuration.</li>
 <li>Pipelined batches and async <code>Flush</code> flow.</li>
 <li>Cancel requests over TLS.</li>
-<li><code>LISTEN</code> / <code>NOTIFY</code> — but only inside a transaction; cross-transaction notifications are lost (PgBouncer same).</li>
+<li><code>LISTEN</code> / <code>NOTIFY</code> — but only inside a transaction. A <code>LISTEN</code> issued and then committed releases the backend, and any notifications delivered to it after that go to whichever client checks it out next, not to the original <code>LISTEN</code>-er. PgBouncer behaves the same way; if you need cross-transaction <code>LISTEN</code>, use session mode for that client.</li>
 </ul>
 <p>What does <strong>not</strong> work in transaction mode:</p>
 <ul>
@@ -214,21 +214,21 @@
 </code></pre>
 <p>Useful when one user (operations tooling, migrations) needs session semantics but the main application stays in transaction mode.</p>
 <h2 id="cleanup-on-checkin"><a class="header" href="#cleanup-on-checkin">Cleanup on checkin</a></h2>
-<p>Returning to transaction mode in detail: when a backend goes back to the pool, PgDoorman runs <code>RESET ALL</code> and <code>ROLLBACK</code> (if <code>cleanup_server_connections: true</code>, the default). This drops:</p>
+<p>Cleanup in transaction mode is <strong>mutation-tracked</strong>, not unconditional. PgDoorman watches each transaction for <code>SET</code>, <code>PREPARE</code>, and <code>DECLARE CURSOR</code>, and only when the backend returns to the pool with one of those flags set does it issue <code>RESET ALL</code>, <code>DEALLOCATE ALL</code>, or <code>CLOSE ALL</code> respectively. A read-only transaction skips cleanup entirely — that's a measurable win on hot OLTP paths.</p>
+<p>What gets reset when a flag fires:</p>
 <ul>
-<li>Session-level <code>SET</code> values.</li>
-<li>Cursors.</li>
-<li>Prepared statement names that the driver bound to specific backend names (PgDoorman's prepared statement cache survives — it is keyed by query text, not backend statement name).</li>
-<li>Advisory locks (<code>pg_advisory_unlock_all</code> is implicit in <code>RESET ALL</code>).</li>
+<li><code>SET</code> flag → <code>RESET ALL</code> drops session-level GUCs and runs <code>pg_advisory_unlock_all</code> implicitly.</li>
+<li><code>PREPARE</code> flag → <code>DEALLOCATE ALL</code> drops PostgreSQL-side prepared statements that the driver named explicitly. PgDoorman's own prepared-statement cache survives the reset because it is keyed by query text, not by backend name.</li>
+<li><code>DECLARE CURSOR</code> flag → <code>CLOSE ALL</code> drops cursors.</li>
 </ul>
-<p><code>DEALLOCATE ALL</code> and <code>DISCARD ALL</code> from the client also trigger PgDoorman's prepared statement cache to drop everything cached for that client. The pool-level cache is not affected.</p>
-<p>To opt out of cleanup (for performance, in tightly-controlled deployments):</p>
+<p><code>DEALLOCATE ALL</code> and <code>DISCARD ALL</code> issued by the client clear that client's prepared-statement cache (so the next <code>Parse</code> registers anew). The pool-level shared cache is not affected; other clients keep their entries.</p>
+<p>To opt out of cleanup entirely (for performance, in tightly-controlled deployments):</p>
 <pre><code class="language-yaml">pools:
   mydb:
     pool_mode: "transaction"
     cleanup_server_connections: false
 </code></pre>
-<p>Only do this if you are sure your application never leaks session state.</p>
+<p>Only do this if you are sure your application never leaks session state. The mutation-tracked default is already cheap when no mutation happened, so the opt-out is rarely worth the risk.</p>
 <h2 id="reference"><a class="header" href="#reference">Reference</a></h2>
 <ul>
 <li><code>pool_mode</code> parameter: <a href="../reference/pool.html#pool_mode">Pool Settings</a>.</li>

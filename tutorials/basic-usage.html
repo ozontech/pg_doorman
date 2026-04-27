@@ -161,9 +161,8 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="pgdoorman-basic-usage-guide"><a class="header" href="#pgdoorman-basic-usage-guide">PgDoorman Basic Usage Guide</a></h1>
-<p>PgDoorman is a PostgreSQL connection pooler based on PgCat. This guide covers configuration, operation, and administration.</p>
-<h2 id="command-line-options"><a class="header" href="#command-line-options">Command Line Options</a></h2>
-<p>PgDoorman offers several command-line options to customize its behavior when starting the service:</p>
+<p>End-to-end walkthrough: command-line flags, minimal config, the admin console, and operational commands (<code>PAUSE</code>, <code>RESUME</code>, <code>RECONNECT</code>, <code>RELOAD</code>). Intended as the second page you read after <a href="overview.html">Overview</a> and <a href="installation.html">Installation</a>.</p>
+<h2 id="command-line-options"><a class="header" href="#command-line-options">Command-line options</a></h2>
 <pre><code class="language-bash">$ pg_doorman --help
 
 PgDoorman: Nextgen PostgreSQL Pooler (based on PgCat)
@@ -349,7 +348,7 @@ mirroring PostgreSQL behavior. TLS-related rule types are honored: <code>hostssl
 <p>Your application's connection string should be updated to point to PgDoorman instead of directly to PostgreSQL:</p>
 <pre><code>postgresql://doorman:password@localhost:6432/exampledb
 </code></pre>
-<p>PgDoorman will handle the connection pooling transparently, so your application doesn't need to be aware that it's connecting through a pooler.</p>
+<p>The application talks PostgreSQL wire protocol; the connection-pooling layer is transparent to it.</p>
 <h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
 <h3 id="admin-console"><a class="header" href="#admin-console">Admin Console</a></h3>
 <p>PgDoorman exposes an administrative interface through the special database <strong>pgdoorman</strong> (or <strong>pgbouncer</strong> for backward compatibility):</p>

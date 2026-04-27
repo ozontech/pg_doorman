@@ -162,7 +162,7 @@
                     <main>
                         <h1 id="Режимы-пула"><a class="header" href="#Режимы-пула">Режимы пула</a></h1>
 <p>pg_doorman поддерживает два режима пула: <code>transaction</code> и <code>session</code>. Режим задаётся для пула, при необходимости переопределяется для конкретного пользователя.</p>
-<p>Режима <code>statement</code> нет. Покул на уровне отдельного оператора ломает больше драйверов, чем помогает, а pg_doorman агрессивно оптимизирован под транзакционный режим (кеш prepared statements, direct handoff, FIFO-планирование).</p>
+<p>Режима <code>statement</code> нет. В statement-пулинге backend ротируется после каждого оператора — это вынуждает клиентов отказаться от мульти-statement транзакций и полностью ломает протокол prepared statements. Свой тюнинг (кеш prepared statements, direct handoff, строгий FIFO-планировщик) pg_doorman вкладывает в транзакционный режим. PgBouncer оставляет <code>statement</code> для обратной совместимости; Odyssey его не реализует.</p>
 <h2 id="Транзакционный-режим-рекомендуется"><a class="header" href="#Транзакционный-режим-рекомендуется">Транзакционный режим (рекомендуется)</a></h2>
 <pre><code class="language-yaml">pools:
   mydb:
@@ -175,7 +175,7 @@
 <li>Prepared statements. pg_doorman кеширует их в рамках пула, переименовывает имена statement между backend-соединениями и прозрачно повторно готовит запрос. Драйверы, привязанные к <code>unnamed</code>-statement (Go pgx, .NET Npgsql, Python asyncpg), работают без настройки.</li>
 <li>Pipelined-батчи и асинхронный поток <code>Flush</code>.</li>
 <li>Cancel-запросы поверх TLS.</li>
-<li><code>LISTEN</code> / <code>NOTIFY</code> — но только внутри транзакции; кросс-транзакционные уведомления теряются (так же, как в PgBouncer).</li>
+<li><code>LISTEN</code> / <code>NOTIFY</code> — но только внутри транзакции. <code>LISTEN</code> после <code>COMMIT</code> отпускает backend, и любые уведомления, доставленные ему после, попадут к тому клиенту, который следующим заберёт это соединение, а не к исходному <code>LISTEN</code>-еру. PgBouncer ведёт себя так же; если вам нужен <code>LISTEN</code> через несколько транзакций, для этого клиента используйте сессионный режим.</li>
 </ul>
 <p>Что в транзакционном режиме <strong>не работает</strong>:</p>
 <ul>
@@ -214,21 +214,21 @@
 </code></pre>
 <p>Полезно, когда одному пользователю (инструменты эксплуатации, миграции) нужна семантика сессии, а основное приложение остаётся в транзакционном режиме.</p>
 <h2 id="Очистка-при-возврате-в-пул"><a class="header" href="#Очистка-при-возврате-в-пул">Очистка при возврате в пул</a></h2>
-<p>Транзакционный режим в подробностях: когда бэкенд уходит обратно в пул, pg_doorman выполняет <code>RESET ALL</code> и <code>ROLLBACK</code> (если <code>cleanup_server_connections: true</code>, как по умолчанию). Это сбрасывает:</p>
+<p>Очистка в транзакционном режиме <strong>трекает мутации</strong>, а не выполняется безусловно. pg_doorman следит за каждой транзакцией на предмет <code>SET</code>, <code>PREPARE</code> и <code>DECLARE CURSOR</code>, и только когда backend уходит в пул с одним из этих флагов, отправляет соответственно <code>RESET ALL</code>, <code>DEALLOCATE ALL</code> или <code>CLOSE ALL</code>. Транзакция только на чтение пропускает очистку целиком — это измеримый выигрыш на горячих OLTP-путях.</p>
+<p>Что сбрасывается, когда сработал флаг:</p>
 <ul>
-<li>значения <code>SET</code> уровня сессии;</li>
-<li>курсоры;</li>
-<li>имена prepared statements, которые драйвер привязал к конкретным backend-именам (кеш prepared statements pg_doorman переживает — он индексируется текстом запроса, а не именем statement на бэкенде);</li>
-<li>advisory-блокировки (<code>pg_advisory_unlock_all</code> неявно входит в <code>RESET ALL</code>).</li>
+<li>Флаг <code>SET</code> → <code>RESET ALL</code> сбрасывает session-level GUCs и неявно вызывает <code>pg_advisory_unlock_all</code>.</li>
+<li>Флаг <code>PREPARE</code> → <code>DEALLOCATE ALL</code> удаляет PostgreSQL-side prepared statements, которые драйвер именовал явно. Собственный кеш prepared statements pg_doorman переживает сброс — он индексируется текстом запроса, а не backend-именем.</li>
+<li>Флаг <code>DECLARE CURSOR</code> → <code>CLOSE ALL</code> закрывает курсоры.</li>
 </ul>
-<p><code>DEALLOCATE ALL</code> и <code>DISCARD ALL</code> со стороны клиента также инициируют сброс всего, что закешировано pg_doorman для этого клиента в кеше prepared statements. Кеш уровня пула не затрагивается.</p>
-<p>Чтобы отключить очистку (ради производительности в жёстко контролируемых развёртываниях):</p>
+<p><code>DEALLOCATE ALL</code> и <code>DISCARD ALL</code> со стороны клиента очищают prepared-statement-кеш именно этого клиента (следующий <code>Parse</code> зарегистрируется заново). Pool-level shared cache не затрагивается; у других клиентов их записи сохраняются.</p>
+<p>Полностью отключить очистку (ради производительности в жёстко контролируемых развёртываниях):</p>
 <pre><code class="language-yaml">pools:
   mydb:
     pool_mode: "transaction"
     cleanup_server_connections: false
 </code></pre>
-<p>Делайте так только если вы уверены, что приложение никогда не оставляет состояние сессии.</p>
+<p>Делайте так только если уверены, что приложение никогда не оставляет состояние сессии. Дефолтная очистка с трекингом мутаций уже дёшева, когда мутаций не было, поэтому отключение редко стоит риска.</p>
 <h2 id="Справочник"><a class="header" href="#Справочник">Справочник</a></h2>
 <ul>
 <li>Параметр <code>pool_mode</code>: <a href="../reference/pool.html#pool_mode">Настройки пула</a>.</li>

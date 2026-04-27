@@ -161,46 +161,61 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="Диагностика"><a class="header" href="#Диагностика">Диагностика</a></h1>
-<p>Это руководство помогает решить типичные проблемы при использовании PgDoorman.</p>
+<p>Симптомы, на которые вы скорее всего наступите в первую неделю работы PgDoorman, и куда смотреть, когда наступили.</p>
 <h2 id="Ошибки-аутентификации-при-подключении-к-postgresql"><a class="header" href="#Ошибки-аутентификации-при-подключении-к-postgresql">Ошибки аутентификации при подключении к PostgreSQL</a></h2>
-<p><strong>Симптом:</strong> PgDoorman запустился успешно, но клиенты получают ошибки аутентификации вроде <code>password authentication failed</code> при попытке выполнить запрос.</p>
-<h3 id="Если-username-пула-совпадает-с-пользователем-backend-postgresql"><a class="header" href="#Если-username-пула-совпадает-с-пользователем-backend-postgresql">Если username пула совпадает с пользователем backend-PostgreSQL</a></h3>
-<p>PgDoorman по умолчанию использует <strong>passthrough authentication</strong> -- криптографическое доказательство клиента (MD5-хэш или SCRAM ClientKey) повторно используется для аутентификации в PostgreSQL. Убедитесь, что поле <code>password</code> в конфиге содержит именно тот хэш, что хранится в <code>pg_authid</code> / <code>pg_shadow</code>:</p>
-<pre><code class="language-bash">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
+<p><strong>Симптом:</strong> PgDoorman принимает клиентское соединение, но первый же запрос возвращает <code>password authentication failed</code> от PostgreSQL.</p>
+<h3 id="Когда-username-пула-совпадает-с-ролью-на-backend"><a class="header" href="#Когда-username-пула-совпадает-с-ролью-на-backend">Когда username пула совпадает с ролью на backend</a></h3>
+<p>PgDoorman по умолчанию использует <strong>passthrough authentication</strong> — криптографическое доказательство клиента (MD5-хеш или SCRAM <code>ClientKey</code>) повторно используется для аутентификации к PostgreSQL. Поле <code>password</code> в конфиге должно содержать именно тот хеш, что хранится в <code>pg_authid</code> / <code>pg_shadow</code>:</p>
+<pre><code class="language-sql">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 </code></pre>
-<p>Скопируйте хэш (например, <code>md5...</code> или <code>SCRAM-SHA-256$...</code>) в поле <code>password</code> конфига. Хэш <strong>должен совпадать</strong> с тем, что хранится в PostgreSQL (та же соль и количество итераций для SCRAM).</p>
-<h3 id="Если-username-пула-отличается-от-backend-пользователя"><a class="header" href="#Если-username-пула-отличается-от-backend-пользователя">Если username пула отличается от backend-пользователя</a></h3>
-<p>Когда обращённый к клиенту <code>username</code> в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может -- нужны явные credentials:</p>
+<p>Для SCRAM оба процесса должны видеть <strong>одни и те же</strong> salt и iteration count — даже один отличающийся символ в сохранённом verifier ломает passthrough.</p>
+<h3 id="Когда-username-пула-отличается-от-роли-на-backend"><a class="header" href="#Когда-username-пула-отличается-от-роли-на-backend">Когда username пула отличается от роли на backend</a></h3>
+<p>Когда обращённый к клиенту <code>username</code> в PgDoorman не совпадает с реальной ролью PostgreSQL, passthrough работать не может — нечего пробрасывать. Дайте явные credentials:</p>
 <pre><code class="language-yaml">users:
   - username: "app_user"              # имя для клиента
-    password: "md5..."                # хэш для аутентификации клиента
+    password: "md5..."                # хеш для аутентификации client → pg_doorman
     server_username: "pg_app_user"    # реальная роль в PostgreSQL
     server_password: "plaintext_pwd"  # plaintext-пароль для этой роли
     pool_size: 40
 </code></pre>
-<p>Это же касается JWT-аутентификации, где нет пароля для passthrough.</p>
-<div id="admonition-Как-получить-хэш-пароля" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Как-получить-хэш-пароля-title">
+<p>Это же путь для JWT-аутентификации, где клиент не присылает пароль и пробрасывать нечего.</p>
+<div id="admonition-Где-взять-хеш-пароля" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Где-взять-хеш-пароля-title">
 <div class="admonition-title">
-<div id="admonition-Как-получить-хэш-пароля-title">
-<p>Как получить хэш пароля</p>
+<div id="admonition-Где-взять-хеш-пароля-title">
+<p>Где взять хеш пароля</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-Как-получить-хэш-пароля"></a>
+<a class="admonition-anchor-link" href="#admonition-Где-взять-хеш-пароля"></a>
 </div>
 <div>
-<p>Хэши паролей пользователей можно получить из PostgreSQL запросом: <code>SELECT usename, passwd FROM pg_shadow;</code></p>
-<p>Или используйте команду <code>pg_doorman generate</code>, которая получает их автоматически.</p>
+<p><code>pg_doorman generate --host …</code> интроспектирует PostgreSQL и собирает конфиг с уже подставленными хешами. Быстрее, чем копировать руками из <code>pg_shadow</code>.</p>
 </div>
 </div>
 <h2 id="Файл-конфигурации-не-найден"><a class="header" href="#Файл-конфигурации-не-найден">Файл конфигурации не найден</a></h2>
-<p><strong>Симптом:</strong> PgDoorman завершается с ошибкой "configuration file not found".</p>
-<p><strong>Решение:</strong> укажите путь к файлу конфигурации явно:</p>
-<pre><code class="language-bash">pg_doorman /path/to/pg_doorman.yaml
+<p><strong>Симптом:</strong> PgDoorman при запуске завершается с <code>configuration file not found</code>.</p>
+<p>По умолчанию бинарник ищет <code>pg_doorman.toml</code> в текущем рабочем каталоге. Либо назовите файл так и <code>cd</code> в его каталог, либо передайте путь явно:</p>
+<pre><code class="language-bash">pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
-<p>По умолчанию PgDoorman ищет <code>pg_doorman.toml</code> в текущей директории.</p>
+<p>Проверка перед запуском:</p>
+<pre><code class="language-bash">pg_doorman -t /etc/pg_doorman/pg_doorman.yaml
+</code></pre>
+<h2 id="Клиенты-получают-58006-pooler-is-shut-down-now"><a class="header" href="#Клиенты-получают-58006-pooler-is-shut-down-now">Клиенты получают <code>58006</code> (<code>pooler is shut down now</code>)</a></h2>
+<p>Пул выключается, либо binary upgrade был запущен в daemon mode. Посмотрите серверные логи рядом с timestamp ошибки:</p>
+<ul>
+<li><code>Got SIGUSR2, starting binary upgrade …</code> — идёт binary upgrade. В foreground mode idle-клиенты должны мигрировать прозрачно; <code>58006</code> получают только клиенты, оставшиеся в транзакции после <code>shutdown_timeout</code>. В daemon mode fd-based миграции нет, и каждый клиент получает <code>58006</code> при закрытии соединения. См. <a href="binary-upgrade.html#troubleshooting">Binary upgrade → Troubleshooting</a>.</li>
+<li>Нет строки <code>SIGUSR2</code> в логе — кто-то прислал <code>SIGTERM</code> или <code>SIGINT</code>, и пулер выключился без замены. Проверьте systemd-юнит, конкретный pid и operator runbook.</li>
+</ul>
+<p>Если <code>58006</code> пришёл во время плановой замены — для этой подмножества клиентов это ожидаемое поведение. Настройте connection pool приложения на retry при transient-ошибках.</p>
 <h2 id="pool-size-слишком-мал"><a class="header" href="#pool-size-слишком-мал">Pool size слишком мал</a></h2>
-<p><strong>Симптом:</strong> клиенты долго ждут или получают ошибки про слишком большое количество соединений.</p>
-<p><strong>Решение:</strong> увеличьте <code>pool_size</code> для затронутого пользователя или проверьте значения <code>cl_waiting</code> и <code>maxwait</code> в admin-команде <code>SHOW POOLS</code>. Если <code>maxwait</code> стабильно высокий, значит пул мал для вашей нагрузки.</p>
-<hr />
+<p><strong>Симптом:</strong> запросы ходят заметно дольше end-to-end, чем при прямом обращении к PostgreSQL.</p>
+<p>Смотрите <code>SHOW POOLS</code> и <code>SHOW POOLS_EXTENDED</code>:</p>
+<pre><code>cl_waiting   — сколько клиентов сейчас в очереди за backend
+maxwait      — самое долгое ожидание любого waiter, секунд
+sv_idle      — idle backend-ов в пуле
+sv_active    — backend-ов, выданных клиентам
+</code></pre>
+<p>Если <code>cl_waiting &gt; 0</code> стабильно и <code>sv_idle == 0</code>, пул мал для нагрузки. Либо поднимайте <code>pool_size</code> для этого пользователя, либо разбирайтесь, почему <code>sv_active</code> не падает — длинные транзакции, idle-in-transaction сессии, медленный downstream-вызов, который держит backend.</p>
+<p>Если у вас включён <code>max_db_connections</code>, смотрите ещё <code>SHOW POOL_COORDINATOR</code> на <code>evictions</code> (доноры под давлением отдают соединения) и <code>exhaustions</code> (лимит достигнут даже после вытеснений). См. <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</p>
+<h2 id="Куда-подавать-остальное"><a class="header" href="#Куда-подавать-остальное">Куда подавать остальное</a></h2>
 <div id="admonition-Проблема-осталась" class="admonition admonish-tip" role="note" aria-labelledby="admonition-Проблема-осталась-title">
 <div class="admonition-title">
 <div id="admonition-Проблема-осталась-title">
@@ -209,7 +224,7 @@
 <a class="admonition-anchor-link" href="#admonition-Проблема-осталась"></a>
 </div>
 <div>
-<p>Если столкнулись с проблемой, которой здесь нет, <a href="https://github.com/ozontech/pg_doorman/issues">откройте issue на GitHub</a>.</p>
+<p>Если вашей проблемы здесь нет — <a href="https://github.com/ozontech/pg_doorman/issues">откройте issue на GitHub</a>: версия pg_doorman, релевантный конфиг (с замазанными паролями), драйвер клиента и его версия, и совпадающие по времени строки логов из pg_doorman и PostgreSQL.</p>
 </div>
 </div>
 

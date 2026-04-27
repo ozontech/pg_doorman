@@ -161,19 +161,19 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="Структурированное-json-логирование"><a class="header" href="#Структурированное-json-логирование">Структурированное JSON-логирование</a></h1>
-<p>pg_doorman пишет структурированные JSON-логи при запуске с <code>--log-format Structured</code>. Каждая строка — самодостаточный JSON-объект с timestamp, уровнем, местом в исходниках и сообщением, готовый к приёму в Loki, Elasticsearch, Datadog или любой пайплайн логов, ожидающий JSON.</p>
+<p>pg_doorman пишет структурированные JSON-логи при запуске с <code>--log-format structured</code>. Каждая строка — самодостаточный JSON-объект с timestamp, уровнем, местом в исходниках и сообщением, готовый к приёму в Loki, Elasticsearch, Datadog или любой пайплайн логов, ожидающий JSON.</p>
 <h2 id="Включение"><a class="header" href="#Включение">Включение</a></h2>
 <p>Три равноценных способа:</p>
 <pre><code class="language-bash"># Флаг командной строки
-pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
 
 # Длинная форма
-pg_doorman --log-format Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman --log-format structured /etc/pg_doorman/pg_doorman.yaml
 
 # Переменная окружения
-LOG_FORMAT=Structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
+LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
-<p>По умолчанию — <code>Text</code> (человекочитаемый). Флаг <code>--log-format</code> принимает значения <code>Text</code>, <code>Structured</code> или <code>Debug</code>; последнее на данный момент является алиасом для <code>Text</code>.</p>
+<p>По умолчанию — <code>text</code> (человекочитаемый). Флаг <code>--log-format</code> принимает значения <code>text</code>, <code>structured</code> или <code>debug</code>; последнее на данный момент является алиасом для <code>text</code>.</p>
 <h2 id="Формат-вывода"><a class="header" href="#Формат-вывода">Формат вывода</a></h2>
 <pre><code class="language-json">{"timestamp":"2026-04-25T08:32:14.512Z","level":"INFO","file":"src/app/server.rs","line":357,"message":"Server is up at 0.0.0.0:6432"}
 {"timestamp":"2026-04-25T08:32:14.514Z","level":"INFO","file":"src/pool/mod.rs","line":421,"message":"Pool 'mydb' initialized: 1 user, pool_size=40"}

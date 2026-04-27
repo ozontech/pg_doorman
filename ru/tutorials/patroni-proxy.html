@@ -161,48 +161,25 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="patroni-proxy"><a class="header" href="#patroni-proxy">Patroni Proxy</a></h1>
-<p><code>patroni_proxy</code> — TCP-прокси для кластеров PostgreSQL под управлением Patroni. Делает одну вещь: балансирует TCP-соединения и обрабатывает failover в Patroni-кластере.</p>
-<h2 id="Обзор"><a class="header" href="#Обзор">Обзор</a></h2>
-<p>В отличие от HAProxy, <code>patroni_proxy</code> не рвёт существующие соединения при изменении топологии кластера. Когда реплика добавляется или удаляется, переключаются только затронутые соединения — остальные продолжают работать.</p>
-<h2 id="Возможности"><a class="header" href="#Возможности">Возможности</a></h2>
-<h3 id="Управление-соединениями-без-простоя"><a class="header" href="#Управление-соединениями-без-простоя">Управление соединениями без простоя</a></h3>
-<p><code>patroni_proxy</code> не разрывает существующие соединения при изменении upstream-конфигурации. Это важно для долгих транзакций и приложений с активным использованием connection pool.</p>
-<h3 id="hot-обновления-upstream"><a class="header" href="#hot-обновления-upstream">Hot-обновления upstream</a></h3>
+<p><code>patroni_proxy</code> — TCP-балансировщик для кластеров PostgreSQL под управлением Patroni. Слушает один или несколько портов, спрашивает у Patroni REST API кто сейчас leader / sync / async, и направляет новые соединения на нужную роль по стратегии least-connections. Не пулит соединения, не парсит wire-протокол, не знает что за SQL внутри — это работа pg_doorman, развёрнутого ниже по цепочке.</p>
+<h2 id="Что-он-делает"><a class="header" href="#Что-он-делает">Что он делает</a></h2>
 <ul>
-<li>Автоматическое обнаружение членов кластера через Patroni REST API (endpoint <code>/cluster</code>).</li>
-<li>Периодический опрос с настраиваемым интервалом (<code>cluster_update_interval</code>).</li>
-<li>Немедленное обновление через HTTP API (endpoint <code>/update_clusters</code>).</li>
-<li>Перечитывание конфигурации сигналом SIGHUP без перезапуска.</li>
+<li><strong>Открытие членов кластера</strong> через опрос <code>/cluster</code> с интервалом <code>cluster_update_interval</code> (по умолчанию 3 с) и по запросу <code>GET /update_clusters</code>.</li>
+<li><strong>Маршрутизация по ролям.</strong> Каждый listen-порт привязан к одной или нескольким ролям (<code>leader</code>, <code>sync</code>, <code>async</code>, <code>any</code>). Соединения с этого порта попадают на члена, у которого совпадает одна из указанных ролей.</li>
+<li><strong>Least-connections.</strong> Для портов с несколькими допустимыми членами прокси держит счётчик соединений на каждого члена и отправляет новое соединение туда, где их меньше. Счётчики переживают cluster update.</li>
+<li><strong>Отбрасывает реплики со старыми данными.</strong> <code>max_lag_in_bytes</code> per-port исключает членов, у которых <code>replication_lag</code> (из <code>/cluster</code>) выше порога. Leader по лагу никогда не исключается.</li>
+<li><strong>Пропускает не-running.</strong> Допускаются только члены со <code>state: "running"</code>; <code>starting</code>, <code>stopped</code>, <code>crashed</code> и узлы с тегом <code>noloadbalance</code> фильтруются.</li>
 </ul>
-<h3 id="Маршрутизация-по-ролям"><a class="header" href="#Маршрутизация-по-ролям">Маршрутизация по ролям</a></h3>
-<p>Маршрутизация соединений на основе ролей узлов PostgreSQL:</p>
+<p>Операционно важно следующее: при изменении топологии <code>patroni_proxy</code> обновляет таблицу маршрутизации только для <strong>новых</strong> соединений. Существующие TCP-соединения к ещё живому backend не трогаются. По сравнению с HAProxy + confd, где reload рвёт все соединения через затронутую backend-секцию, это значит, что <code>cluster_update_interval</code> не воюет с долгоживущими транзакциями.</p>
+<h3 id="Роли"><a class="header" href="#Роли">Роли</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Роль</th><th>Описание</th></tr></thead><tbody>
-<tr><td><code>leader</code></td><td>Узел primary/master</td></tr>
+<tr><td><code>leader</code></td><td>Primary / master</td></tr>
 <tr><td><code>sync</code></td><td>Синхронные standby-реплики</td></tr>
 <tr><td><code>async</code></td><td>Асинхронные реплики</td></tr>
-<tr><td><code>any</code></td><td>Любой доступный узел</td></tr>
+<tr><td><code>any</code></td><td>Любой running-член кластера</td></tr>
 </tbody></table>
 </div>
-<h3 id="Умная-балансировка-нагрузки"><a class="header" href="#Умная-балансировка-нагрузки">Умная балансировка нагрузки</a></h3>
-<ul>
-<li>Стратегия <strong>Least Connections</strong> для распределения соединений между бэкендами.</li>
-<li>Счётчики соединений сохраняются при обновлениях кластера.</li>
-<li>Автоматическое исключение узлов с тегом <code>noloadbalance</code>.</li>
-</ul>
-<h3 id="Учёт-лага-репликации"><a class="header" href="#Учёт-лага-репликации">Учёт лага репликации</a></h3>
-<ul>
-<li>Настраиваемый <code>max_lag_in_bytes</code> для каждого порта.</li>
-<li>Автоматическое отключение клиентов, когда лаг реплики превышает порог.</li>
-<li>Влияет только на соединения к репликам (у leader лага нет).</li>
-</ul>
-<h3 id="Фильтрация-по-состоянию-members"><a class="header" href="#Фильтрация-по-состоянию-members">Фильтрация по состоянию members</a></h3>
-<ul>
-<li>В качестве бэкендов используются только члены со <code>state: "running"</code>.</li>
-<li>Члены в состояниях <code>starting</code>, <code>stopped</code>, <code>crashed</code> автоматически исключаются.</li>
-<li>Динамические изменения состояния обрабатываются при периодических обновлениях.</li>
-</ul>
-<h2 id="Рекомендуемая-архитектура-развёртывания"><a class="header" href="#Рекомендуемая-архитектура-развёртывания">Рекомендуемая архитектура развёртывания</a></h2>
-<p>Двухслойная схема:</p>
+<h2 id="Рекомендуемое-развёртывание"><a class="header" href="#Рекомендуемое-развёртывание">Рекомендуемое развёртывание</a></h2>
 <pre class="mermaid">graph TD
     App1[Приложение A] --&gt; PP(patroni_proxy&lt;br/&gt;TCP-балансировка)
     App2[Приложение B] --&gt; PP
@@ -217,10 +194,10 @@
     D3 --&gt; PG3[(PostgreSQL&lt;br/&gt;async-реплика)]
 </pre>
 <ul>
-<li><strong>pg_doorman</strong> разворачивается <strong>рядом с серверами PostgreSQL</strong> -- он обеспечивает пулинг соединений, кэширование prepared statements и оптимизации на уровне протокола, которым выгодна низкая задержка до базы.</li>
-<li><strong>patroni_proxy</strong> разворачивается <strong>рядом с клиентскими приложениями</strong> -- он отвечает за TCP-маршрутизацию и failover, распределяя соединения по кластеру без накладных расходов пулинга.</li>
+<li><strong>pg_doorman</strong> живёт на хостах PostgreSQL. Делает пулинг, ведёт кеш prepared statements и парсит протокол — работа, которой выгодна низкая задержка до локального сокета.</li>
+<li><strong>patroni_proxy</strong> живёт рядом с приложением. Маршрутизирует TCP, владеет role-aware failover-решением и не лезет в дела пулера.</li>
 </ul>
-<p>Каждый компонент решает свою задачу: pg_doorman — пулинг и протокол, patroni_proxy — маршрутизация и failover.</p>
+<p>Если поток приложения небольшой и одного pg_doorman на кластер достаточно, схема сжимается до одного pg_doorman с включённым <a href="patroni-assisted-fallback.html">Patroni-assisted fallback</a>, а <code>patroni_proxy</code> можно вообще не разворачивать.</p>
 <h2 id="Конфигурация"><a class="header" href="#Конфигурация">Конфигурация</a></h2>
 <p>Пример <code>patroni_proxy.yaml</code>:</p>
 <pre><code class="language-yaml"># Интервал обновления кластера в секундах (по умолчанию: 3)

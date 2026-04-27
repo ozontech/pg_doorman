@@ -160,65 +160,63 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-overview"><a class="header" href="#pgdoorman-overview">PgDoorman Overview</a></h1>
-<h2 id="what-is-pgdoorman"><a class="header" href="#what-is-pgdoorman">What is PgDoorman?</a></h2>
-<p>PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.</p>
+                        <h1 id="overview"><a class="header" href="#overview">Overview</a></h1>
+<h2 id="what-pgdoorman-does"><a class="header" href="#what-pgdoorman-does">What PgDoorman does</a></h2>
+<p>PgDoorman sits between your applications and PostgreSQL. To the application it looks like a PostgreSQL server (same wire protocol, same <code>psql</code> connect string); under the hood it multiplexes many client sessions onto a much smaller set of real backend connections.</p>
 <pre class="mermaid">graph LR
     App1[Application A] --&gt; Pooler(PgDoorman)
     App2[Application B] --&gt; Pooler
     App3[Application C] --&gt; Pooler
     Pooler --&gt; DB[(PostgreSQL)]
 </pre>
-<p>When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.</p>
-<h2 id="key-benefits"><a class="header" href="#key-benefits">Key Benefits</a></h2>
+<p>PgDoorman was originally forked from <a href="https://github.com/postgresml/pgcat">PgCat</a> but has since been rewritten around different goals: prepared statements in transaction mode, multi-threaded shared pools, Patroni integration, and binary upgrades that migrate live sessions. It is now a separate codebase.</p>
+<h2 id="why-a-pooler-at-all"><a class="header" href="#why-a-pooler-at-all">Why a pooler at all</a></h2>
+<p>Each PostgreSQL connection costs the server roughly 10 MB of RAM, a process, and time on every handshake (auth, SCRAM, search_path resolution). Without a pooler, an application that opens N short-lived connections per second pays N×handshake-time. A pooler lets the same N clients reuse a small set of long-lived backend connections, so the handshake cost is paid once per backend instead of once per client.</p>
+<p>Concrete impact:</p>
 <ul>
-<li><strong>Reduced Connection Overhead</strong>: Minimizes the performance impact of establishing new database connections</li>
-<li><strong>Resource Optimization</strong>: Limits the number of connections to your PostgreSQL server</li>
-<li><strong>Improved Scalability</strong>: Allows more client applications to connect to your database</li>
-<li><strong>Connection Management</strong>: Provides tools to monitor and manage database connections</li>
+<li>A <code>pool_size</code> of 40 typically serves several thousand client sessions for short OLTP transactions.</li>
+<li>PostgreSQL avoids the per-process memory overhead of the connections it would otherwise have to keep open.</li>
+<li>Failover, restart, or rolling deployments don't translate into a thundering herd of fresh handshakes.</li>
 </ul>
-<h2 id="pooling-modes"><a class="header" href="#pooling-modes">Pooling Modes</a></h2>
-<p>To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:</p>
-<h3 id="transaction-pooling"><a class="header" href="#transaction-pooling">Transaction Pooling</a></h3>
-<div id="admonition-recommended-for-most-use-cases" class="admonition admonish-success" role="note" aria-labelledby="admonition-recommended-for-most-use-cases-title">
+<h2 id="pool-modes"><a class="header" href="#pool-modes">Pool modes</a></h2>
+<div id="admonition-transaction-recommended" class="admonition admonish-success" role="note" aria-labelledby="admonition-transaction-recommended-title">
 <div class="admonition-title">
-<div id="admonition-recommended-for-most-use-cases-title">
-<p>Recommended for most use cases</p>
+<div id="admonition-transaction-recommended-title">
+<p>Transaction (recommended)</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-recommended-for-most-use-cases"></a>
+<a class="admonition-anchor-link" href="#admonition-transaction-recommended"></a>
 </div>
 <div>
-<p>In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.</p>
+<p>The backend connection is held for the duration of one transaction and returned to the pool on <code>COMMIT</code> or <code>ROLLBACK</code>. This is the mode where pooling actually pays off.</p>
 </div>
 </div>
-<ul>
-<li><strong>High Efficiency</strong>: Connections are shared between clients, allowing thousands of clients to share a small pool.</li>
-<li><strong>Ideal for</strong>: Applications with many short-lived connections or those that don't rely on session state.</li>
-</ul>
-<h3 id="session-pooling"><a class="header" href="#session-pooling">Session Pooling</a></h3>
-<div id="admonition-useful-for-specific-legacy-needs" class="admonition admonish-info" role="note" aria-labelledby="admonition-useful-for-specific-legacy-needs-title">
+<div id="admonition-session" class="admonition admonish-info" role="note" aria-labelledby="admonition-session-title">
 <div class="admonition-title">
-<div id="admonition-useful-for-specific-legacy-needs-title">
-<p>Useful for specific legacy needs</p>
+<div id="admonition-session-title">
+<p>Session</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-useful-for-specific-legacy-needs"></a>
+<a class="admonition-anchor-link" href="#admonition-session"></a>
 </div>
 <div>
-<p>In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.</p>
+<p>The backend connection is held for the entire client session and returned only when the client disconnects. Use this for clients that depend on session-scoped state (<code>SET TIME ZONE</code> outside a transaction, advisory locks across transactions, <code>WITH HOLD</code> cursors).</p>
 </div>
 </div>
+<p>PgDoorman does not implement statement mode. See <a href="../concepts/pool-modes.html">Pool Modes</a> for the exact contract of each mode and what works in transaction mode that doesn't work in other poolers.</p>
+<h2 id="operations-surface"><a class="header" href="#operations-surface">Operations surface</a></h2>
 <ul>
-<li><strong>Exclusive Allocation</strong>: The connection remains exclusively allocated to that client until disconnection.</li>
-<li><strong>Support for Session Features</strong>: Ideal for applications that rely on temporary tables or session variables.</li>
+<li><strong>Admin console</strong> — a PostgreSQL-compatible endpoint for <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>, <code>RELOAD</code>, <code>PAUSE</code>, <code>UPGRADE</code>, etc.</li>
+<li><strong>Prometheus <code>/metrics</code></strong> — built-in HTTP endpoint with per-pool latency percentiles, prepared-statement counters, fallback state, and TLS metrics.</li>
+<li><strong><code>pg_doorman -t</code></strong> — validate the config without starting the server.</li>
+<li><strong><code>pg_doorman generate --host …</code></strong> — emit a starter config by introspecting an existing PostgreSQL.</li>
 </ul>
-<h2 id="administration"><a class="header" href="#administration">Administration</a></h2>
-<p>PgDoorman provides comprehensive tools for monitoring and management:</p>
+<p>See <a href="../observability/admin-commands.html">Admin commands</a> and <a href="../reference/prometheus.html">Prometheus reference</a>.</p>
+<h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
 <ul>
-<li><strong>Admin Console</strong>: A PostgreSQL-compatible interface for viewing statistics and managing the pooler</li>
-<li><strong>Configuration Options</strong>: Extensive settings to customize behavior for your specific needs</li>
-<li><strong>Monitoring</strong>: Detailed metrics about connection usage and performance</li>
+<li><a href="installation.html">Installation</a> — install pg_doorman from packages, source, or Docker.</li>
+<li><a href="basic-usage.html">Basic usage</a> — minimal config, first connection, common gotchas.</li>
+<li><a href="../concepts/pool-coordinator.html">Pool Coordinator</a> — when one database is shared between several user-pools.</li>
+<li><a href="binary-upgrade.html">Binary upgrade</a> — replace the binary in production without dropping live sessions.</li>
 </ul>
-<p>For detailed information on managing PgDoorman, see the <a href="./basic-usage.html#admin-console">Admin Console documentation</a>.</p>
 
                     </main>
 

@@ -161,22 +161,52 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="binary-upgrade"><a class="header" href="#binary-upgrade">Binary upgrade</a></h1>
-<p>Update pg_doorman without dropping client connections. The old process
-transfers idle clients to the new one through a Unix socket -- clients
-continue working on the same TCP connection without reconnecting.</p>
+<p>Replace the pg_doorman binary on a running server. Idle clients are handed to
+the new process over a Unix socket together with their cancel keys and
+prepared-statement cache, so they keep using the same TCP connection without
+reconnecting. Clients inside a transaction finish on the old process and
+migrate the moment they become idle. Operators get a <code>kill -USR2</code> and an exit
+status; applications get neither a reconnect storm nor a wave of
+<code>auth</code>/SCRAM handshakes against PostgreSQL.</p>
+<div id="admonition-how-this-differs-from-pgbouncer--odyssey" class="admonition admonish-info" role="note" aria-labelledby="admonition-how-this-differs-from-pgbouncer--odyssey-title">
+<div class="admonition-title">
+<div id="admonition-how-this-differs-from-pgbouncer--odyssey-title">
+<p>How this differs from PgBouncer / Odyssey</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-how-this-differs-from-pgbouncer--odyssey"></a>
+</div>
+<div>
+<p>PgBouncer's online restart (<code>-R</code>, deprecated since 1.20; or <code>so_reuseport</code>
+rolling restart) and Odyssey's online restart (<code>SIGUSR2</code> +
+<code>bindwith_reuseport</code>) follow the same pattern as each other: the new process
+picks up new connections, the old one drains until its existing clients
+disconnect. Sessions, prepared statements, and TLS state never cross
+processes. pg_doorman migrates the live socket via <code>SCM_RIGHTS</code>, plus the
+cipher state with the <code>tls-migration</code> build (Linux, opt-in).</p>
+</div>
+</div>
 <h2 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h2>
-<pre><code class="language-bash"># 1. Replace the binary on disk (build, download, etc.)
+<pre><code class="language-bash"># 1. Drop the new binary in place.
 cp pg_doorman_new /usr/bin/pg_doorman
 
-# 2. Trigger upgrade
-kill -USR2 $(pgrep pg_doorman)
+# 2. Validate the new binary against the live config before triggering
+#    the upgrade. SIGUSR2 also runs `-t` and aborts on failure, but
+#    catching it here gives you a chance to fix the config without
+#    touching the running server.
+/usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Verify: old PID gone, clients still connected
-pgrep pg_doorman   # new PID
+# 3. Trigger the upgrade.
+kill -USR2 $(pgrep -f /usr/bin/pg_doorman)
+
+# 4. Verify: a new PID is running and clients are still connected.
+pgrep -f /usr/bin/pg_doorman      # new PID
+psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'   # answers from new process
 </code></pre>
-<p>Or via the admin console:</p>
+<p>The same upgrade can be triggered from the admin console:</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
+<p><code>UPGRADE</code> sends <code>SIGUSR2</code> to the running process, which is the same code
+path as <code>kill -USR2</code>.</p>
 <h2 id="how-the-upgrade-works"><a class="header" href="#how-the-upgrade-works">How the upgrade works</a></h2>
 <pre><code>                        SIGUSR2
                            |
@@ -233,8 +263,10 @@ writes to the pipe.</li>
 </ol>
 <p><strong>Daemon mode:</strong></p>
 <p>A new daemon process starts. The old daemon closes its listener.
-Client migration via socketpair is not used -- existing clients
-drain normally (receive error 58006 when <code>shutdown_timeout</code> expires).</p>
+Client migration via socketpair is not used — existing clients
+drain in place. When <code>shutdown_timeout</code> expires, anyone still
+connected gets SQLSTATE <code>58006</code> (<code>pooler is shut down now</code>) and the
+old process exits.</p>
 <h3 id="phase-3-idle-client-migration-foreground"><a class="header" href="#phase-3-idle-client-migration-foreground">Phase 3: Idle client migration (foreground)</a></h3>
 <p>When <code>MIGRATION_IN_PROGRESS</code> is set, each idle client (not in a
 transaction, no pending deferred <code>BEGIN</code>, no buffered reads)
@@ -441,11 +473,17 @@ high delays the old process exit when a client is stuck (e.g.,
 idle-in-transaction). Choose a value that covers your longest expected
 transaction, plus margin.</p>
 <h3 id="tls_private_key--tls_certificate"><a class="header" href="#tls_private_key--tls_certificate"><code>tls_private_key</code> / <code>tls_certificate</code></a></h3>
-<p>For TLS migration, both the old and new process load the same files.
-If the certificate changed between binary versions, TLS clients
-receive an error during cipher state import and are disconnected.</p>
-<p>Rotate certificates via <code>SIGHUP</code> (config reload) first, then do
-the binary upgrade.</p>
+<p>For the <code>tls-migration</code> feature to succeed, both the old and the new
+process must load the same client-facing certificate and private key.
+The cipher state is bound to the <code>SSL_CTX</code> created from those files,
+and import fails on mismatch — affected clients drop and reconnect.</p>
+<p>Client-facing TLS material is <strong>not</strong> reloaded on <code>SIGHUP</code> (only
+server-facing certificates are; see <a href="../guides/tls.html">Hot reload of server TLS</a>).
+Rotating the client-facing cert therefore requires either a restart
+or a binary upgrade with the new files in place — and during that
+upgrade, TLS clients with the old cert will drop and reconnect even
+with <code>tls-migration</code> enabled. Plan the rotation around a window when
+you can tolerate the reconnects.</p>
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size"><code>prepared_statements_cache_size</code></a></h3>
 <p>Pool-level prepared statement cache. Does not directly affect
 migration, but the pool cache in the new process must be large

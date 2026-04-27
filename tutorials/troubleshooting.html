@@ -161,55 +161,70 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
-<p>This guide helps you resolve common issues when using PgDoorman.</p>
-<h2 id="authentication-errors-when-connecting-to-postgresql"><a class="header" href="#authentication-errors-when-connecting-to-postgresql">Authentication Errors When Connecting to PostgreSQL</a></h2>
-<p><strong>Symptom:</strong> PgDoorman starts successfully but clients get authentication errors like <code>password authentication failed</code> when trying to execute queries.</p>
-<h3 id="if-the-pool-username-matches-the-backend-postgresql-user"><a class="header" href="#if-the-pool-username-matches-the-backend-postgresql-user">If the pool username matches the backend PostgreSQL user</a></h3>
-<p>PgDoorman uses <strong>passthrough authentication</strong> by default — the client's cryptographic proof (MD5 hash or SCRAM ClientKey) is reused to authenticate to PostgreSQL. Make sure the <code>password</code> field in your config contains the exact hash from <code>pg_authid</code> / <code>pg_shadow</code>:</p>
-<pre><code class="language-bash">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
+<p>Symptoms you are likely to hit during the first week of running PgDoorman, and what to look at when you do.</p>
+<h2 id="authentication-errors-when-connecting-to-postgresql"><a class="header" href="#authentication-errors-when-connecting-to-postgresql">Authentication errors when connecting to PostgreSQL</a></h2>
+<p><strong>Symptom:</strong> PgDoorman accepts the client connection, but the first query returns <code>password authentication failed</code> from PostgreSQL.</p>
+<h3 id="the-pool-username-matches-the-backend-role"><a class="header" href="#the-pool-username-matches-the-backend-role">The pool username matches the backend role</a></h3>
+<p>PgDoorman uses <strong>passthrough authentication</strong> by default — the cryptographic proof the client sent (MD5 hash or SCRAM <code>ClientKey</code>) is reused to authenticate against PostgreSQL. The <code>password</code> field in your config must hold the exact hash from <code>pg_authid</code> / <code>pg_shadow</code>:</p>
+<pre><code class="language-sql">SELECT usename, passwd FROM pg_shadow WHERE usename = 'your_user';
 </code></pre>
-<p>Copy the hash (e.g., <code>md5...</code> or <code>SCRAM-SHA-256$...</code>) into your config's <code>password</code> field. The hash <strong>must match</strong> the one stored in PostgreSQL (same salt and iterations for SCRAM).</p>
-<h3 id="if-the-pool-username-differs-from-the-backend-user"><a class="header" href="#if-the-pool-username-differs-from-the-backend-user">If the pool username differs from the backend user</a></h3>
-<p>When the client-facing <code>username</code> in PgDoorman is different from the actual PostgreSQL role, passthrough cannot work — you need explicit credentials:</p>
+<p>For SCRAM, both processes must see the <strong>same</strong> salt and iteration count — even a one-character difference in the stored verifier breaks passthrough.</p>
+<h3 id="the-pool-username-differs-from-the-backend-role"><a class="header" href="#the-pool-username-differs-from-the-backend-role">The pool username differs from the backend role</a></h3>
+<p>When the client-facing <code>username</code> in PgDoorman does not match the actual PostgreSQL role, passthrough cannot work — there is nothing to pass through. Provide explicit credentials:</p>
 <pre><code class="language-yaml">users:
   - username: "app_user"              # client-facing name
-    password: "md5..."                # hash for client authentication
+    password: "md5..."                # hash for client → pg_doorman auth
     server_username: "pg_app_user"    # actual PostgreSQL role
     server_password: "plaintext_pwd"  # plaintext password for that role
     pool_size: 40
 </code></pre>
-<p>This also applies to JWT authentication where there is no password to pass through.</p>
-<div id="admonition-how-to-get-the-password-hash" class="admonition admonish-tip" role="note" aria-labelledby="admonition-how-to-get-the-password-hash-title">
+<p>This is also the path for JWT auth, where the client never sends a password and there is nothing to pass through.</p>
+<div id="admonition-where-to-get-the-password-hash" class="admonition admonish-tip" role="note" aria-labelledby="admonition-where-to-get-the-password-hash-title">
 <div class="admonition-title">
-<div id="admonition-how-to-get-the-password-hash-title">
-<p>How to get the password hash</p>
+<div id="admonition-where-to-get-the-password-hash-title">
+<p>Where to get the password hash</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-how-to-get-the-password-hash"></a>
+<a class="admonition-anchor-link" href="#admonition-where-to-get-the-password-hash"></a>
 </div>
 <div>
-<p>You can get user password hashes from PostgreSQL using: <code>SELECT usename, passwd FROM pg_shadow;</code></p>
-<p>Or use the <code>pg_doorman generate</code> command which automatically retrieves them.</p>
+<p><code>pg_doorman generate --host …</code> introspects PostgreSQL and emits a config with the hashes already filled in. Faster than copy-pasting from <code>pg_shadow</code>.</p>
 </div>
 </div>
-<h2 id="configuration-file-not-found"><a class="header" href="#configuration-file-not-found">Configuration File Not Found</a></h2>
-<p><strong>Symptom:</strong> PgDoorman exits with "configuration file not found" error.</p>
-<p><strong>Solution:</strong> Specify the configuration file path explicitly:</p>
-<pre><code class="language-bash">pg_doorman /path/to/pg_doorman.yaml
+<h2 id="configuration-file-not-found"><a class="header" href="#configuration-file-not-found">Configuration file not found</a></h2>
+<p><strong>Symptom:</strong> PgDoorman exits with <code>configuration file not found</code> on startup.</p>
+<p>By default the binary looks for <code>pg_doorman.toml</code> in the current working directory. Either name your file that way and <code>cd</code> to its directory, or pass the path explicitly:</p>
+<pre><code class="language-bash">pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
-<p>By default, PgDoorman looks for <code>pg_doorman.toml</code> in the current directory.</p>
-<h2 id="pool-size-too-small"><a class="header" href="#pool-size-too-small">Pool Size Too Small</a></h2>
-<p><strong>Symptom:</strong> Clients experience high wait times or receive errors about too many connections.</p>
-<p><strong>Solution:</strong> Increase <code>pool_size</code> for the affected user, or check the <code>SHOW POOLS</code> admin command to see <code>cl_waiting</code> and <code>maxwait</code> values. If <code>maxwait</code> is consistently high, your pool is undersized for your workload.</p>
-<hr />
-<div id="admonition-still-having-issues" class="admonition admonish-tip" role="note" aria-labelledby="admonition-still-having-issues-title">
+<p>Validate before starting:</p>
+<pre><code class="language-bash">pg_doorman -t /etc/pg_doorman/pg_doorman.yaml
+</code></pre>
+<h2 id="clients-receive-58006-pooler-is-shut-down-now"><a class="header" href="#clients-receive-58006-pooler-is-shut-down-now">Clients receive <code>58006</code> (<code>pooler is shut down now</code>)</a></h2>
+<p>The pool is shutting down or the binary upgrade was issued in daemon mode. Check the server logs around the timestamp of the error:</p>
+<ul>
+<li><code>Got SIGUSR2, starting binary upgrade …</code> — a binary upgrade is in progress. In foreground mode, idle clients should migrate transparently; only clients still inside a transaction past <code>shutdown_timeout</code> get <code>58006</code>. In daemon mode there is no fd-based migration and every client gets <code>58006</code> when its connection is closed. See <a href="binary-upgrade.html#troubleshooting">Binary upgrade → Troubleshooting</a>.</li>
+<li>No <code>SIGUSR2</code> log line — someone sent <code>SIGTERM</code> or <code>SIGINT</code> and the pooler shut down without spawning a successor. Check the systemd unit, the pid in question, and your operator runbook.</li>
+</ul>
+<p>If the <code>58006</code> happened during a planned upgrade, this is expected for that subset of clients. Configure the application's connection pool to retry on transient errors.</p>
+<h2 id="pool-size-too-small"><a class="header" href="#pool-size-too-small">Pool size too small</a></h2>
+<p><strong>Symptom:</strong> Queries take much longer end-to-end than they do when run directly against PostgreSQL.</p>
+<p>Look at <code>SHOW POOLS</code> and <code>SHOW POOLS_EXTENDED</code>:</p>
+<pre><code>cl_waiting   — how many clients are queued for a backend right now
+maxwait      — longest time any waiter has been queued, in seconds
+sv_idle      — idle backends in the pool
+sv_active    — backends currently checked out
+</code></pre>
+<p>If <code>cl_waiting &gt; 0</code> consistently and <code>sv_idle == 0</code>, the pool is undersized for the load. Either raise <code>pool_size</code> for that user, or look at why <code>sv_active</code> stays high — long transactions, idle-in-transaction sessions, or a slow downstream call holding the backend.</p>
+<p>If you are also using <code>max_db_connections</code>, watch <code>SHOW POOL_COORDINATOR</code> for <code>evictions</code> (donors are giving up connections under pressure) and <code>exhaustions</code> (the cap was hit even after evictions). See <a href="../concepts/pool-coordinator.html">Pool Coordinator</a>.</p>
+<h2 id="where-to-file-what-is-left"><a class="header" href="#where-to-file-what-is-left">Where to file what is left</a></h2>
+<div id="admonition-still-stuck" class="admonition admonish-tip" role="note" aria-labelledby="admonition-still-stuck-title">
 <div class="admonition-title">
-<div id="admonition-still-having-issues-title">
-<p>Still having issues?</p>
+<div id="admonition-still-stuck-title">
+<p>Still stuck?</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-still-having-issues"></a>
+<a class="admonition-anchor-link" href="#admonition-still-stuck"></a>
 </div>
 <div>
-<p>If you encounter a problem not listed here, please <a href="https://github.com/ozontech/pg_doorman/issues">open an issue on GitHub</a>.</p>
+<p>If your problem isn't here, <a href="https://github.com/ozontech/pg_doorman/issues">open an issue on GitHub</a> with: pg_doorman version, the relevant config (passwords redacted), the client driver and version, and the matching log lines from both pg_doorman and PostgreSQL.</p>
 </div>
 </div>
 

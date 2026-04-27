@@ -186,8 +186,8 @@
 <p>Client-side certificates are loaded at startup. Changing them requires a process restart. There is no <code>SIGHUP</code> reload for client-side TLS.</p>
 <p>For zero-downtime certificate rotation, see <a href="../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
 <h3 id="cipher-policy"><a class="header" href="#cipher-policy">Cipher policy</a></h3>
-<p>Minimum TLS 1.2. The cipher list is the Mozilla "intermediate" recommendation; this is not configurable. Direct TLS handshake (PG17, no <code>SSLRequest</code>) is not supported.</p>
-<p>For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.</p>
+<p>Minimum TLS 1.2 enforced in the handshake. PgDoorman does <strong>not</strong> set an explicit cipher list — the effective ciphers come from the system OpenSSL build. If you need a hardened cipher list, configure it system-wide (<code>/etc/ssl/openssl.cnf</code>) or build OpenSSL with the policy you want.</p>
+<p>Direct TLS handshake (PG17, no <code>SSLRequest</code>) is not supported. For TLS 1.3 cipher control or PG17 direct TLS, use PgBouncer 1.25+.</p>
 <h2 id="server-side-tls"><a class="header" href="#server-side-tls">Server-side TLS</a></h2>
 <p>Encrypt connections between PgDoorman and PostgreSQL backends. Added in 3.6.0.</p>
 <h3 id="modes-1"><a class="header" href="#modes-1">Modes</a></h3>

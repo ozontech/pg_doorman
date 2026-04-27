@@ -161,10 +161,9 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
-<p>Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Drop-in замена для <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://github.com/yandex/odyssey">Odyssey</a> и <a href="https://github.com/postgresml/pgcat">PgCat</a>. В production в Ozon уже больше трёх лет под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.</p>
+<p>Многопоточный пулер соединений для PostgreSQL, написанный на Rust. Drop-in замена для <a href="https://www.pgbouncer.org/">PgBouncer</a> и <a href="https://github.com/yandex/odyssey">Odyssey</a>, альтернатива <a href="https://github.com/postgresml/pgcat">PgCat</a>. Три года в production у Ozon под нагрузками Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy) и Node.js.</p>
 <p><a href="tutorials/installation.html">Скачать PgDoorman 3.6.1</a> · <a href="comparison.html">Сравнение</a> · <a href="benchmarks.html">Benchmarks</a></p>
-<h2 id="Что-отличает-pgdoorman"><a class="header" href="#Что-отличает-pgdoorman">Что отличает PgDoorman</a></h2>
-<p>Три вещи, которых вы не найдёте в PgBouncer и Odyssey.</p>
+<h2 id="Ключевые-возможности"><a class="header" href="#Ключевые-возможности">Ключевые возможности</a></h2>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
 <div class="admonition-title">
 <div id="admonition-pool-coordinator-title">
@@ -173,8 +172,8 @@
 <a class="admonition-anchor-link" href="#admonition-pool-coordinator"></a>
 </div>
 <div>
-<p>Ограничение числа соединений на уровне базы с приоритетным вытеснением. <code>max_db_connections</code> задаёт суммарное число backend-соединений к одной базе; когда лимит исчерпан, idle-соединения вытесняются у пользователей с наибольшим избытком, ранжируя их по p95 времени транзакции — самые медленные пулы отдают соединения первыми. Резервный пул поглощает короткие всплески. Per-user <code>min_guaranteed_pool_size</code> защищает критичные нагрузки.</p>
-<p>В PgBouncer <code>max_db_connections</code> есть, но без вытеснения и без честности распределения. В Odyssey аналога нет.</p>
+<p>PgDoorman ограничивает суммарное число backend-соединений к одной базе. При достижении <code>max_db_connections</code> координатор вытесняет idle-соединение у пользователя с наибольшим запасом, ранжируя кандидатов по p95 времени транзакции — медленные пулы уступают первыми. Reserve pool поглощает короткие всплески; per-user <code>min_guaranteed_pool_size</code> исключает критичные нагрузки из списка вытеснения.</p>
+<p>В PgBouncer <code>max_db_connections</code> есть, но без вытеснения и без честности распределения — при достижении лимита клиенты ждут, пока существующие соединения сами не закроются по idle timeout. В Odyssey аналога нет.</p>
 <p><a href="concepts/pool-coordinator.html">Подробнее →</a></p>
 </div>
 </div>
@@ -186,8 +185,8 @@
 <a class="admonition-anchor-link" href="#admonition-patroni-assisted-fallback"></a>
 </div>
 <div>
-<p>Когда PgDoorman работает рядом с PostgreSQL на одной машине и switchover Patroni убивает локальный бэкенд, PgDoorman опрашивает Patroni REST API эндпоинт <code>/cluster</code>, выбирает живого члена кластера (предпочтение отдаётся <code>sync_standby</code>) и направляет новые соединения туда за 1–2 TCP round trips. Локальный бэкенд остаётся в cooldown; fallback-соединения используют короткий lifetime, чтобы пул вернулся к локальному узлу после восстановления.</p>
-<p>Одна строка в <code>[general]</code> включает функцию для всех пулов. Никакого внешнего HAProxy, никакого consul-template.</p>
+<p>Когда PgDoorman работает рядом с PostgreSQL на одной машине и switchover Patroni убивает локальный backend, PgDoorman опрашивает Patroni REST API (<code>GET /cluster</code>), выбирает живого члена кластера (приоритет <code>sync_standby</code> → <code>replica</code>) и направляет новые соединения туда. Локальный backend уходит в cooldown; fallback-соединения наследуют короткий lifetime — пул возвращается на локальный узел сразу, как только тот восстанавливается.</p>
+<p>Задайте <code>patroni_api_urls</code> и <code>fallback_cooldown</code> в <code>[general]</code>, и это применится ко всем пулам. Без HAProxy и <code>consul-template</code> перед пулером.</p>
 <p><a href="tutorials/patroni-assisted-fallback.html">Подробнее →</a></p>
 </div>
 </div>
@@ -199,41 +198,41 @@
 <a class="admonition-anchor-link" href="#admonition-graceful-binary-upgrade"></a>
 </div>
 <div>
-<p>Замените бинарник, не потеряв ни одного клиента. Новый процесс сразу принимает новые соединения, а существующие клиенты завершают свои транзакции на старом. TLS, состояние соединения и cancel keys переносятся корректно.</p>
-<p>PgBouncer требует <code>SO_REUSEPORT</code> с отдельными процессами (что приводит к разбалансировке пулов). В Odyssey аналогичного механизма нет.</p>
+<p>Обновляйте PgDoorman в рабочее время, без maintenance window. Приложения не получают ошибок переподключения, PostgreSQL не накрывает лавиной <code>auth</code>/SCRAM handshake-ов от одновременных reconnect-ов, идущие транзакции не падают.</p>
+<p>По <code>SIGUSR2</code> старый процесс передаёт TCP-сокет каждого idle-клиента новому через <code>SCM_RIGHTS</code> — тот же сокет, без переподключения — вместе с cancel keys и кешем prepared statements. Клиенты внутри транзакции дорабатывают её на старом процессе и мигрируют, как только становятся idle. Со сборкой <code>tls-migration</code> (Linux, opt-in) переезжает и cipher state OpenSSL — TLS-сессии переживают upgrade без re-handshake.</p>
+<p>Online restart в PgBouncer (<code>-R</code>, deprecated с 1.20; либо rolling restart через <code>so_reuseport</code>) и в Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>) устроены одинаково: новый процесс принимает новые соединения, старый дорабатывает до тех пор, пока его клиенты сами не отключатся. Сессии, prepared statements и TLS-состояние между процессами не переезжают.</p>
 <p><a href="tutorials/binary-upgrade.html">Подробнее →</a></p>
 </div>
 </div>
 <h2 id="Почему-pgdoorman"><a class="header" href="#Почему-pgdoorman">Почему PgDoorman</a></h2>
 <ul>
-<li><strong>Drop-in замена.</strong> Прозрачно кэширует и переименовывает prepared statements в транзакционном режиме — никаких <code>DISCARD ALL</code>, <code>DEALLOCATE</code> или хаков в драйверах.</li>
-<li><strong>Многопоточность.</strong> Один общий пул на все рабочие потоки. PgBouncer однопоточен; запуск нескольких инстансов через <code>SO_REUSEPORT</code> приводит к разбалансировке пулов.</li>
-<li><strong>Подавление thundering herd.</strong> Когда 200 клиентов одновременно борются за 4 idle-соединения, PgDoorman ограничивает число параллельных создаваемых backend-соединений и направляет ожидающих на возвращаемые соединения через direct handoff — большинство получают соединение за микросекунды.</li>
-<li><strong>Ограниченная хвостовая задержка.</strong> Строгий FIFO через каналы direct-handoff удерживает p99 в пределах 10% от p50 независимо от числа клиентов. Опережающая замена при истечении <code>server_lifetime</code> — никаких всплесков при ротации соединений.</li>
-<li><strong>Обнаружение разорванных бэкендов.</strong> Когда клиент держит открытую транзакцию, а бэкенд умирает (failover, OOM kill), PgDoorman сразу возвращает ошибку. Другие пулеры ждут TCP keepalive и оставляют клиентов висеть на минуты.</li>
-<li><strong>Сделано для эксплуатации.</strong> Конфиг в YAML или TOML с человекочитаемыми длительностями (<code>"30s"</code>, <code>"5m"</code>). <code>pg_doorman generate --host your-db</code> интроспектирует PostgreSQL и собирает конфиг. <code>pg_doorman -t</code> валидирует его перед деплоем. Prometheus-эндпоинт встроен.</li>
+<li><strong>Prepared statements в transaction mode.</strong> PgDoorman переименовывает клиентские statement names в <code>DOORMAN_N</code> и ведёт кеш на трёх уровнях — pool, client, backend. Драйверы видят свои имена, backend'ы — переименованные. Никаких прикладных <code>DEALLOCATE</code>, никаких <code>DISCARD ALL</code>.</li>
+<li><strong>Многопоточность с одним общим пулом.</strong> Все рабочие потоки делят один пул. PgBouncer однопоточен; рекомендованный способ масштабирования — несколько инстансов за <code>so_reuseport</code> — даёт каждому инстансу свой отдельный пул, и idle-счётчики для одной и той же базы могут расходиться между процессами.</li>
+<li><strong>Подавление thundering herd.</strong> Когда 200 клиентов борются за 4 idle-соединения, PgDoorman ограничивает число параллельно создаваемых backend-соединений (<code>scaling_max_parallel_creates</code>) и направляет возвращающиеся серверы напрямую самому давно ждущему клиенту через in-process oneshot-канал — без перекладывания через idle-очередь.</li>
+<li><strong>Ограниченная хвостовая задержка.</strong> Очередь ожидающих обслуживается строго FIFO — никто не обгоняет того, кто пришёл раньше. Опережающая замена истекающих backend-соединений (на 95% от <code>server_lifetime</code>, до 3 параллельных) удерживает пул прогретым: при ротации поколения соединений нет всплеска checkout-латентности.</li>
+<li><strong>Обнаружение мёртвого backend внутри транзакции.</strong> Если backend умирает посреди транзакции (failover, OOM, network partition), PgDoorman сразу возвращает SQLSTATE <code>08006</code>: чтение клиента состязается с readability backend через 100-мс тик. Без этой проверки клиент завис бы до срабатывания TCP keepalive — на дефолтных настройках Linux это около двух часов плюс 9×75 с probe.</li>
+<li><strong>Сделано для эксплуатации.</strong> Конфиг в YAML или TOML с человекочитаемыми длительностями (<code>30s</code>, <code>5m</code>). <code>pg_doorman generate --host …</code> интроспектирует существующий PostgreSQL и собирает starter-конфиг. <code>pg_doorman -t</code> валидирует конфиг без запуска сервера. Prometheus-эндпоинт <code>/metrics</code> встроен.</li>
 </ul>
 <h2 id="Сравнение"><a class="header" href="#Сравнение">Сравнение</a></h2>
-<div class="table-wrapper"><table><thead><tr><th></th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Многопоточность</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Prepared statements в транзакционном режиме</td><td style="text-align: center">Да</td><td style="text-align: center">Начиная с 1.21</td><td style="text-align: center">Начиная с 1.3</td></tr>
-<tr><td>Полная поддержка extended query protocol</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Частично</td></tr>
-<tr><td>Pool Coordinator с приоритетным вытеснением</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Многопоточность с общим пулом</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (однопоточный)</td><td style="text-align: center">Workers, отдельные пулы</td></tr>
+<tr><td>Prepared statements в transaction mode</td><td style="text-align: center">Да</td><td style="text-align: center">Да (с 1.21)</td><td style="text-align: center">Да (<code>pool_reserve_prepared_statement</code>)</td></tr>
+<tr><td>Pool Coordinator (per-database cap, priority eviction)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Patroni-assisted fallback (встроенный)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Опережающая замена при истечении <code>server_lifetime</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Обнаружение застрявших бэкендов (idle-in-transaction)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Graceful binary upgrade</td><td style="text-align: center">Да</td><td style="text-align: center">Ограниченно</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Server-side TLS (mTLS, горячая перезагрузка)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Auth: passthrough SCRAM (без пароля в открытом виде в конфиге)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Auth: JWT</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Auth: PAM / <code>pg_hba.conf</code> / auth_query</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>Auth: LDAP</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.25</td><td style="text-align: center">Да</td></tr>
-<tr><td>Конфиг YAML / TOML</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (INI)</td><td style="text-align: center">Нет (свой формат)</td></tr>
-<tr><td>JSON структурированное логирование</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Перцентили задержки (p50/90/95/99)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
+<tr><td>Обнаружение мёртвого backend внутри транзакции</td><td style="text-align: center">Да (мгновенный <code>08006</code>)</td><td style="text-align: center">Нет (ждёт TCP keepalive)</td><td style="text-align: center">Нет (ждёт TCP keepalive)</td></tr>
+<tr><td>Binary upgrade с миграцией сессий</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, TLS state opt-in)</td><td style="text-align: center">Нет (сессии остаются на старом процессе)</td><td style="text-align: center">Нет (сессии остаются на старом процессе)</td></tr>
+<tr><td>Backend TLS к PostgreSQL</td><td style="text-align: center">Да (5 режимов, hot reload по <code>SIGHUP</code>)</td><td style="text-align: center">Да (<code>server_tls_*</code>, hot reload по <code>RELOAD</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Auth: SCRAM passthrough (без plaintext-пароля в конфиге)</td><td style="text-align: center">Да (<code>ClientKey</code> извлекается из proof)</td><td style="text-align: center">Да (encrypted SCRAM secret через <code>auth_query</code>/<code>userlist.txt</code>, с 1.14)</td><td style="text-align: center">Да</td></tr>
+<tr><td>Auth: JWT (RSA-SHA256)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Auth: PAM / <code>pg_hba.conf</code> / <code>auth_query</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
+<tr><td>Auth: LDAP</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Да</td></tr>
+<tr><td>Формат конфига</td><td style="text-align: center">YAML / TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Свой формат</td></tr>
+<tr><td>JSON structured logging</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (<code>log_format "json"</code>)</td></tr>
+<tr><td>Latency percentiles (p50/p90/p95/p99)</td><td style="text-align: center">Да (встроенный <code>/metrics</code>)</td><td style="text-align: center">Нет (только средние)</td><td style="text-align: center">Да (через отдельный Go-exporter)</td></tr>
 <tr><td>Режим проверки конфига (<code>-t</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Авто-конфиг из PostgreSQL</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Встроенный Prometheus-эндпоинт</td><td style="text-align: center">Да</td><td style="text-align: center">Внешний</td><td style="text-align: center">Да</td></tr>
+<tr><td>Авто-конфиг из PostgreSQL (<code>generate --host</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Prometheus-эндпоинт</td><td style="text-align: center">Встроенный <code>/metrics</code></td><td style="text-align: center">Внешний exporter</td><td style="text-align: center">Внешний exporter (Go sidecar)</td></tr>
 </tbody></table>
 </div>
 <p><a href="comparison.html">Полная матрица фич →</a></p>
@@ -243,7 +242,7 @@
 <tr><td>Extended protocol, 500 клиентов + SSL</td><td style="text-align: center">×3.5</td><td style="text-align: center">+61%</td></tr>
 <tr><td>Prepared statements, 500 клиентов + SSL</td><td style="text-align: center">×4.0</td><td style="text-align: center">+5%</td></tr>
 <tr><td>Simple protocol, 10 000 клиентов</td><td style="text-align: center">×2.8</td><td style="text-align: center">+20%</td></tr>
-<tr><td>Extended + SSL + Reconnect, 500 клиентов</td><td style="text-align: center">+96%</td><td style="text-align: center">~0%</td></tr>
+<tr><td>Extended + SSL + reconnect, 500 клиентов</td><td style="text-align: center">+96%</td><td style="text-align: center">~0%</td></tr>
 </tbody></table>
 </div>
 <p><a href="benchmarks.html">Полные результаты →</a></p>
@@ -267,18 +266,18 @@ pools:
     pool_mode: "transaction"
     users:
       - username: "app"
-        password: "md5..."   # хэш из pg_shadow / pg_authid
+        password: "md5..."   # хеш из pg_shadow / pg_authid
         pool_size: 40
 </code></pre>
-<p><code>server_username</code> и <code>server_password</code> опущены намеренно — PgDoorman переиспользует MD5-хэш клиента или SCRAM ClientKey для аутентификации в PostgreSQL. Никаких паролей в открытом виде в конфиге.</p>
+<p><code>server_username</code> и <code>server_password</code> намеренно не указаны: PgDoorman использует MD5-хеш клиента или SCRAM <code>ClientKey</code> для аутентификации к PostgreSQL. В конфиге нет паролей в открытом виде.</p>
 <p><a href="tutorials/installation.html">Руководство по установке →</a> · <a href="reference/general.html">Справочник по конфигурации →</a></p>
 <h2 id="Куда-дальше"><a class="header" href="#Куда-дальше">Куда дальше</a></h2>
 <ul>
-<li>Впервые с PgDoorman? Начните с <a href="tutorials/overview.html">Обзора</a>, затем <a href="tutorials/installation.html">Установка</a> и <a href="tutorials/basic-usage.html">Базовое использование</a>.</li>
-<li>Мигрируете с PgBouncer или Odyssey? Прочитайте <a href="comparison.html">Сравнение</a> и <a href="authentication/overview.html">Аутентификация</a>.</li>
+<li>Впервые видите PgDoorman? Начните с <a href="tutorials/overview.html">Обзора</a>, затем <a href="tutorials/installation.html">Установка</a> и <a href="tutorials/basic-usage.html">Базовое использование</a>.</li>
+<li>Мигрируете с PgBouncer или Odyssey? Прочитайте <a href="comparison.html">Сравнение</a> и <a href="authentication/overview.html">Аутентификацию</a>.</li>
 <li>Используете Patroni? См. <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a> и <a href="tutorials/patroni-proxy.html"><code>patroni_proxy</code></a>.</li>
 <li>Готовитесь к production? Прочитайте <a href="tutorials/pool-pressure.html">Пул под нагрузкой</a> и <a href="concepts/pool-coordinator.html">Pool Coordinator</a>.</li>
-<li>Эксплуатация PgDoorman? См. <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Сигналы</a>, <a href="tutorials/troubleshooting.html">Troubleshooting</a>.</li>
+<li>Эксплуатируете PgDoorman? См. <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Сигналы</a>, <a href="tutorials/troubleshooting.html">Troubleshooting</a>.</li>
 </ul>
 
                     </main>

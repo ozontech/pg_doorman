@@ -160,65 +160,63 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="Обзор-pgdoorman"><a class="header" href="#Обзор-pgdoorman">Обзор PgDoorman</a></h1>
-<h2 id="Что-такое-pgdoorman"><a class="header" href="#Что-такое-pgdoorman">Что такое PgDoorman?</a></h2>
-<p>PgDoorman — пулер соединений PostgreSQL на Rust. Изначально форк PgCat, теперь самостоятельный проект. Стоит между приложениями и PostgreSQL: переиспользует серверные соединения вместо того, чтобы открывать их под каждый клиентский запрос.</p>
+                        <h1 id="Обзор"><a class="header" href="#Обзор">Обзор</a></h1>
+<h2 id="Что-делает-pgdoorman"><a class="header" href="#Что-делает-pgdoorman">Что делает PgDoorman</a></h2>
+<p>PgDoorman сидит между приложениями и PostgreSQL. Для приложения он выглядит как сервер PostgreSQL (тот же wire-протокол, та же строка подключения для <code>psql</code>); внутри он мультиплексирует много клиентских сессий на гораздо меньший набор реальных backend-соединений.</p>
 <pre class="mermaid">graph LR
     App1[Приложение A] --&gt; Pooler(PgDoorman)
     App2[Приложение B] --&gt; Pooler
     App3[Приложение C] --&gt; Pooler
     Pooler --&gt; DB[(PostgreSQL)]
 </pre>
-<p>Когда приложение подключается к PgDoorman, тот ведёт себя ровно как сервер PostgreSQL. Внутри PgDoorman либо создаёт новое соединение к настоящему PostgreSQL, либо переиспользует существующее из своего пула, что значительно сокращает накладные расходы на установку соединений.</p>
-<h2 id="Ключевые-преимущества"><a class="header" href="#Ключевые-преимущества">Ключевые преимущества</a></h2>
+<p>Изначально PgDoorman был форкнут из <a href="https://github.com/postgresml/pgcat">PgCat</a>, но с тех пор переписан вокруг других целей: prepared statements в transaction mode, многопоточные общие пулы, интеграция с Patroni и binary upgrade с миграцией живых сессий. Сейчас это самостоятельный кодовый код.</p>
+<h2 id="Зачем-вообще-пулер"><a class="header" href="#Зачем-вообще-пулер">Зачем вообще пулер</a></h2>
+<p>Каждое соединение к PostgreSQL стоит серверу около 10 МБ RAM, отдельный процесс и время на каждый handshake (auth, SCRAM, разрешение <code>search_path</code>). Без пулера приложение, открывающее N короткоживущих соединений в секунду, платит N×время-handshake. Пулер позволяет тем же N клиентам переиспользовать небольшой набор долгоживущих backend-соединений, и стоимость handshake оплачивается один раз на backend, а не один раз на клиента.</p>
+<p>Конкретные эффекты:</p>
 <ul>
-<li><strong>Меньше накладных расходов на соединения</strong>: снижается влияние установки новых соединений к базе на производительность.</li>
-<li><strong>Оптимизация ресурсов</strong>: ограничивается число соединений к серверу PostgreSQL.</li>
-<li><strong>Улучшенная масштабируемость</strong>: больше клиентских приложений могут подключаться к одной базе данных.</li>
-<li><strong>Управление соединениями</strong>: инструменты для мониторинга и управления соединениями.</li>
+<li><code>pool_size</code> равный 40 обычно обслуживает несколько тысяч клиентских сессий для коротких OLTP-транзакций.</li>
+<li>PostgreSQL не платит per-process memory overhead за соединения, которые иначе пришлось бы держать открытыми.</li>
+<li>Failover, restart или rolling deploy не выливаются в thundering herd свежих handshake-ов.</li>
 </ul>
-<h2 id="Режимы-пулинга"><a class="header" href="#Режимы-пулинга">Режимы пулинга</a></h2>
-<p>Чтобы сохранить корректную семантику транзакций при эффективном пулинге соединений, PgDoorman поддерживает несколько режимов:</p>
-<h3 id="Транзакционный-пулинг"><a class="header" href="#Транзакционный-пулинг">Транзакционный пулинг</a></h3>
-<div id="admonition-Рекомендуется-для-большинства-сценариев" class="admonition admonish-success" role="note" aria-labelledby="admonition-Рекомендуется-для-большинства-сценариев-title">
+<h2 id="pool-modes"><a class="header" href="#pool-modes">Pool modes</a></h2>
+<div id="admonition-transaction-рекомендуется" class="admonition admonish-success" role="note" aria-labelledby="admonition-transaction-рекомендуется-title">
 <div class="admonition-title">
-<div id="admonition-Рекомендуется-для-большинства-сценариев-title">
-<p>Рекомендуется для большинства сценариев</p>
+<div id="admonition-transaction-рекомендуется-title">
+<p>Transaction (рекомендуется)</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-Рекомендуется-для-большинства-сценариев"></a>
+<a class="admonition-anchor-link" href="#admonition-transaction-рекомендуется"></a>
 </div>
 <div>
-<p>В транзакционном режиме клиенту выдаётся серверное соединение только на время транзакции. Как только транзакция завершается, соединение возвращается в пул.</p>
+<p>Backend-соединение удерживается на время одной транзакции и возвращается в пул при <code>COMMIT</code> или <code>ROLLBACK</code>. Именно в этом режиме пулинг реально окупается.</p>
 </div>
 </div>
-<ul>
-<li>Соединения переиспользуются между клиентами, поэтому пул из 40 backend-соединений обслуживает тысячи клиентов, пока транзакции короткие.</li>
-<li>Подходит большинству приложений, кроме тех, что полагаются на состояние сессии (<code>SET</code>, <code>WITH HOLD</code> курсоры, advisory-блокировки между транзакциями).</li>
-</ul>
-<h3 id="Сессионный-пулинг"><a class="header" href="#Сессионный-пулинг">Сессионный пулинг</a></h3>
-<div id="admonition-Полезно-для-специфических-legacy-сценариев" class="admonition admonish-info" role="note" aria-labelledby="admonition-Полезно-для-специфических-legacy-сценариев-title">
+<div id="admonition-session" class="admonition admonish-info" role="note" aria-labelledby="admonition-session-title">
 <div class="admonition-title">
-<div id="admonition-Полезно-для-специфических-legacy-сценариев-title">
-<p>Полезно для специфических legacy-сценариев</p>
+<div id="admonition-session-title">
+<p>Session</p>
 </div>
-<a class="admonition-anchor-link" href="#admonition-Полезно-для-специфических-legacy-сценариев"></a>
+<a class="admonition-anchor-link" href="#admonition-session"></a>
 </div>
 <div>
-<p>В сессионном режиме каждому клиенту выделяется собственное серверное соединение на всё время его клиентского соединения.</p>
+<p>Backend-соединение удерживается на всё время клиентской сессии и возвращается только при отключении клиента. Используйте для клиентов, зависящих от состояния уровня сессии (<code>SET TIME ZONE</code> вне транзакции, advisory-блокировки между транзакциями, <code>WITH HOLD</code> курсоры).</p>
 </div>
 </div>
+<p>PgDoorman не реализует statement mode. См. <a href="../concepts/pool-modes.html">Pool Modes</a> — точный контракт каждого режима и что работает в transaction mode у нас, чего нет у других пулеров.</p>
+<h2 id="Что-есть-для-эксплуатации"><a class="header" href="#Что-есть-для-эксплуатации">Что есть для эксплуатации</a></h2>
 <ul>
-<li><strong>Эксклюзивное выделение</strong>: соединение остаётся за клиентом до тех пор, пока тот не отключится.</li>
-<li><strong>Поддержка возможностей сессии</strong>: подходит для приложений, использующих временные таблицы или переменные сессии.</li>
+<li><strong>Admin-консоль</strong> — PostgreSQL-совместимый эндпоинт для <code>SHOW POOLS</code>, <code>SHOW CLIENTS</code>, <code>RELOAD</code>, <code>PAUSE</code>, <code>UPGRADE</code> и т.д.</li>
+<li><strong>Prometheus <code>/metrics</code></strong> — встроенный HTTP-эндпоинт с per-pool latency-перцентилями, счётчиками prepared statements, состоянием fallback и метриками TLS.</li>
+<li><strong><code>pg_doorman -t</code></strong> — валидация конфига без запуска сервера.</li>
+<li><strong><code>pg_doorman generate --host …</code></strong> — собрать starter-конфиг через интроспекцию существующего PostgreSQL.</li>
 </ul>
-<h2 id="Администрирование"><a class="header" href="#Администрирование">Администрирование</a></h2>
-<p>PgDoorman предоставляет полный набор инструментов для мониторинга и управления:</p>
+<p>См. <a href="../observability/admin-commands.html">Admin-команды</a> и <a href="../reference/prometheus.html">Справочник Prometheus</a>.</p>
+<h2 id="Куда-дальше"><a class="header" href="#Куда-дальше">Куда дальше</a></h2>
 <ul>
-<li><strong>Admin-консоль</strong>: PostgreSQL-совместимый интерфейс для просмотра статистики и управления пулером.</li>
-<li><strong>Параметры конфигурации</strong>: широкие возможности настройки поведения под конкретные требования.</li>
-<li><strong>Мониторинг</strong>: подробные метрики использования соединений и производительности.</li>
+<li><a href="installation.html">Установка</a> — установить pg_doorman из пакетов, исходников или Docker.</li>
+<li><a href="basic-usage.html">Базовое использование</a> — минимальный конфиг, первое подключение, типичные грабли.</li>
+<li><a href="../concepts/pool-coordinator.html">Pool Coordinator</a> — когда одна база делится между несколькими user-пулами.</li>
+<li><a href="binary-upgrade.html">Binary upgrade</a> — заменить бинарник в production без потери живых сессий.</li>
 </ul>
-<p>Подробнее об управлении PgDoorman — см. <a href="./basic-usage.html#Admin-%D0%BA%D0%BE%D0%BD%D1%81%D0%BE%D0%BB%D1%8C">документацию admin-консоли</a>.</p>
 
                     </main>
 

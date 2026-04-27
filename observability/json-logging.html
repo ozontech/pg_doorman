@@ -161,19 +161,19 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="json-structured-logging"><a class="header" href="#json-structured-logging">JSON Structured Logging</a></h1>
-<p>PgDoorman emits structured JSON logs when run with <code>--log-format Structured</code>. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.</p>
+<p>PgDoorman emits structured JSON logs when run with <code>--log-format structured</code>. Each line is a self-contained JSON object with timestamp, level, source location, and message — ready for ingestion into Loki, Elasticsearch, Datadog, or any log pipeline that expects JSON.</p>
 <h2 id="enabling"><a class="header" href="#enabling">Enabling</a></h2>
 <p>Three equivalent ways:</p>
 <pre><code class="language-bash"># Command line flag
-pg_doorman -F Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman -F structured /etc/pg_doorman/pg_doorman.yaml
 
 # Long form
-pg_doorman --log-format Structured /etc/pg_doorman/pg_doorman.yaml
+pg_doorman --log-format structured /etc/pg_doorman/pg_doorman.yaml
 
 # Environment variable
-LOG_FORMAT=Structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
+LOG_FORMAT=structured pg_doorman /etc/pg_doorman/pg_doorman.yaml
 </code></pre>
-<p>The default is <code>Text</code> (human-readable). The <code>--log-format</code> flag accepts <code>Text</code>, <code>Structured</code>, or <code>Debug</code>; the last is currently an alias for <code>Text</code>.</p>
+<p>The default is <code>text</code> (human-readable). The <code>--log-format</code> flag accepts <code>text</code>, <code>structured</code>, or <code>debug</code>; the last is currently an alias for <code>text</code>.</p>
 <h2 id="output"><a class="header" href="#output">Output</a></h2>
 <pre><code class="language-json">{"timestamp":"2026-04-25T08:32:14.512Z","level":"INFO","file":"src/app/server.rs","line":357,"message":"Server is up at 0.0.0.0:6432"}
 {"timestamp":"2026-04-25T08:32:14.514Z","level":"INFO","file":"src/pool/mod.rs","line":421,"message":"Pool 'mydb' initialized: 1 user, pool_size=40"}

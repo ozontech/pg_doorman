@@ -161,22 +161,52 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="binary-upgrade"><a class="header" href="#binary-upgrade">Binary upgrade</a></h1>
-<p>Обновление pg_doorman без разрыва клиентских соединений. Старый
-процесс передаёт idle-клиентов новому через Unix socket -- клиенты
-продолжают работу на том же TCP-соединении без reconnect.</p>
+<p>Замена бинарника pg_doorman на работающем сервере. Idle-клиенты передаются
+новому процессу через Unix-сокет вместе с cancel keys и кешем prepared
+statements — клиенты продолжают работать по тому же TCP-соединению без
+переподключения. Клиенты внутри транзакции дорабатывают её на старом
+процессе и мигрируют, как только становятся idle. Оператор получает
+<code>kill -USR2</code> и exit status; приложения — ни лавины reconnect-ов, ни
+лавины <code>auth</code>/SCRAM handshake-ов в адрес PostgreSQL.</p>
+<div id="admonition-Чем-это-отличается-от-pgbouncer--odyssey" class="admonition admonish-info" role="note" aria-labelledby="admonition-Чем-это-отличается-от-pgbouncer--odyssey-title">
+<div class="admonition-title">
+<div id="admonition-Чем-это-отличается-от-pgbouncer--odyssey-title">
+<p>Чем это отличается от PgBouncer / Odyssey</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Чем-это-отличается-от-pgbouncer--odyssey"></a>
+</div>
+<div>
+<p>Online restart в PgBouncer (<code>-R</code>, deprecated с 1.20; либо rolling restart
+через <code>so_reuseport</code>) и в Odyssey (<code>SIGUSR2</code> + <code>bindwith_reuseport</code>)
+устроены одинаково: новый процесс принимает новые соединения, старый
+дорабатывает до тех пор, пока его клиенты сами не отключатся. Сессии,
+prepared statements и TLS-состояние между процессами не переезжают.
+pg_doorman передаёт живой сокет через <code>SCM_RIGHTS</code>, а со сборкой
+<code>tls-migration</code> (Linux, opt-in) — и cipher state.</p>
+</div>
+</div>
 <h2 id="Быстрый-старт"><a class="header" href="#Быстрый-старт">Быстрый старт</a></h2>
-<pre><code class="language-bash"># 1. Заменить бинарник на диске
+<pre><code class="language-bash"># 1. Положите новый бинарник на место.
 cp pg_doorman_new /usr/bin/pg_doorman
 
-# 2. Запустить upgrade
-kill -USR2 $(pgrep pg_doorman)
+# 2. Проверьте, что новый бинарник принимает текущий конфиг, до того
+#    как запускать upgrade. SIGUSR2 тоже прогоняет `-t` и отменяет
+#    upgrade при ошибке, но проверка здесь даёт шанс починить конфиг,
+#    не трогая работающий сервер.
+/usr/bin/pg_doorman -t /etc/pg_doorman.yaml
 
-# 3. Проверить: старый PID исчез, клиенты на месте
-pgrep pg_doorman   # новый PID
+# 3. Запустите upgrade.
+kill -USR2 $(pgrep -f /usr/bin/pg_doorman)
+
+# 4. Убедитесь: запущен новый PID, клиенты на месте.
+pgrep -f /usr/bin/pg_doorman      # новый PID
+psql -h pgdoorman -p 6432 -c 'SHOW POOLS;'   # отвечает уже новый процесс
 </code></pre>
-<p>Или через admin-консоль:</p>
+<p>Тот же upgrade можно запустить из admin-консоли:</p>
 <pre><code class="language-sql">UPGRADE;
 </code></pre>
+<p><code>UPGRADE</code> шлёт <code>SIGUSR2</code> запущенному процессу — тот же путь, что и
+<code>kill -USR2</code>.</p>
 <h2 id="Как-работает-upgrade"><a class="header" href="#Как-работает-upgrade">Как работает upgrade</a></h2>
 <pre><code>                        SIGUSR2
                            |
@@ -234,8 +264,9 @@ pgrep pg_doorman   # новый PID
 </ol>
 <p><strong>Daemon mode:</strong></p>
 <p>Запускается новый daemon-процесс. Старый закрывает listener.
-Миграция клиентов через socketpair не используется -- клиенты
-дренируются (получают error 58006 при истечении <code>shutdown_timeout</code>).</p>
+Миграция клиентов через socketpair не используется — клиенты
+дренируются на месте. По истечении <code>shutdown_timeout</code> все, кто ещё
+держал соединение, получают SQLSTATE <code>58006</code> (<code>pooler is shut down now</code>), и старый процесс выходит.</p>
 <h3 id="Фаза-3-Миграция-idle-клиентов-foreground"><a class="header" href="#Фаза-3-Миграция-idle-клиентов-foreground">Фаза 3: Миграция idle-клиентов (foreground)</a></h3>
 <p>Когда установлен флаг <code>MIGRATION_IN_PROGRESS</code>, каждый idle-клиент
 (нет активной транзакции, нет pending deferred <code>BEGIN</code>, нет
@@ -436,12 +467,18 @@ shutdown_timeout = 60000  # миллисекунды
 (например, idle-in-transaction). Выбирайте значение, покрывающее
 самую длинную ожидаемую транзакцию, с запасом.</p>
 <h3 id="tls_private_key--tls_certificate"><a class="header" href="#tls_private_key--tls_certificate"><code>tls_private_key</code> / <code>tls_certificate</code></a></h3>
-<p>Для TLS migration оба процесса (старый и новый) загружают одни и
-те же файлы. Если сертификат поменялся между версиями бинарника --
-TLS-клиенты получат ошибку при импорте cipher state и будут
-отключены.</p>
-<p>Ротацию сертификатов делайте через <code>SIGHUP</code> (reload конфига) до
-binary upgrade.</p>
+<p>Чтобы фича <code>tls-migration</code> отработала, оба процесса (старый и новый)
+должны загрузить один и тот же client-facing сертификат и приватный
+ключ. Cipher state привязан к <code>SSL_CTX</code>, созданному из этих файлов;
+при несовпадении импорт падает, и затронутые клиенты отключаются и
+переподключаются.</p>
+<p>Client-facing TLS-материал <strong>не</strong> перезагружается по <code>SIGHUP</code> (это
+делает только server-facing TLS, см. <a href="../guides/tls.html">Hot reload server TLS</a>).
+Поэтому ротация client-facing сертификата требует либо restart, либо
+binary upgrade с подложенными новыми файлами — и в этом upgrade
+TLS-клиенты со старым сертификатом всё равно отключатся, даже с
+включённым <code>tls-migration</code>. Планируйте ротацию на окно, когда
+переподключения допустимы.</p>
 <h3 id="prepared_statements_cache_size"><a class="header" href="#prepared_statements_cache_size"><code>prepared_statements_cache_size</code></a></h3>
 <p>Pool-level кэш prepared statements. Напрямую на миграцию не
 влияет, но pool cache в новом процессе должен быть достаточного

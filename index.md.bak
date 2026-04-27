@@ -1,82 +1,81 @@
 # PgDoorman
 
-A multithreaded PostgreSQL connection pooler written in Rust. Drop-in alternative to [PgBouncer](https://www.pgbouncer.org/), [Odyssey](https://github.com/yandex/odyssey), and [PgCat](https://github.com/postgresml/pgcat). In production at Ozon for over three years across Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.
+A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for [PgBouncer](https://www.pgbouncer.org/) and [Odyssey](https://github.com/yandex/odyssey), and an alternative to [PgCat](https://github.com/postgresml/pgcat). Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.
 
-[Get PgDoorman {{VERSION}}](tutorials/installation.md) · [Compare](comparison.md) · [Benchmarks](benchmarks.md)
+[Get PgDoorman {{VERSION}}](tutorials/installation.md) · [Comparison](comparison.md) · [Benchmarks](benchmarks.md)
 
-## What makes PgDoorman different
-
-Three things you will not find in PgBouncer or Odyssey.
+## Headline features
 
 ```admonish success title="Pool Coordinator"
-Database-level connection cap with priority eviction. `max_db_connections` limits total backend connections per database; when exhausted, idle connections are evicted from users with the largest surplus, ranked by p95 transaction time so slow pools donate first. A reserve pool absorbs short bursts. Per-user `min_guaranteed_pool_size` protects critical workloads.
+PgDoorman caps total backend connections per database. When `max_db_connections` is reached, the coordinator evicts an idle connection from the user with the most spare capacity, ranking candidates by p95 transaction time so the slowest pools yield first. A reserve pool absorbs short bursts; per-user `min_guaranteed_pool_size` keeps critical workloads off the eviction list.
 
-PgBouncer has `max_db_connections` without eviction or fairness. Odyssey has no equivalent.
+PgBouncer's `max_db_connections` has no eviction or fairness — when the cap is reached, clients queue until existing connections close on their own idle timeout. Odyssey has no equivalent setting.
 
 [Read more →](concepts/pool-coordinator.md)
 ```
 
 ```admonish success title="Patroni-assisted Fallback"
-When PgDoorman runs next to PostgreSQL on the same machine and a Patroni switchover kills the local backend, PgDoorman queries the Patroni REST API `/cluster` endpoint, picks a live cluster member (`sync_standby` preferred), and routes new connections there within 1–2 TCP round trips. The local backend stays in cooldown; fallback connections use a short lifetime so the pool returns to local once it recovers.
+When PgDoorman runs next to PostgreSQL on the same machine and a Patroni switchover kills the local backend, PgDoorman polls the Patroni REST API (`GET /cluster`), picks a live cluster member (priority `sync_standby` → `replica`), and routes new connections there. The local backend enters cooldown; fallback connections inherit a short lifetime so the pool returns to local as soon as it recovers.
 
-One line in `[general]` enables it for every pool. No external HAProxy, no consul-template.
+Set `patroni_api_urls` and `fallback_cooldown` in `[general]` and it applies to every pool. No HAProxy or `consul-template` in front of the pooler.
 
 [Read more →](tutorials/patroni-assisted-fallback.md)
 ```
 
 ```admonish success title="Graceful Binary Upgrade"
-Replace the binary without dropping a single client. The new process accepts new connections immediately while existing clients finish their transactions on the old process. TLS, connection state, and cancel keys all transfer cleanly.
+Update PgDoorman during business hours without a maintenance window. Apps don't see reconnect errors, PostgreSQL isn't hit by a wave of `auth`/SCRAM handshakes from simultaneous reconnects, in-flight transactions don't fail.
 
-PgBouncer requires `SO_REUSEPORT` with separate processes (which causes pool imbalance). Odyssey lacks an equivalent flow.
+On `SIGUSR2` the old process hands each idle client's TCP socket to the new one through `SCM_RIGHTS` — same socket, no reconnect — together with cancel keys and the prepared-statement cache. Clients inside a transaction finish on the old process and migrate as soon as they go idle. With the `tls-migration` build (Linux, opt-in) the OpenSSL cipher state moves too, so TLS sessions survive without a re-handshake.
+
+PgBouncer's online restart (`-R`, deprecated since 1.20; or `so_reuseport` rolling restart) and Odyssey's online restart (`SIGUSR2` + `bindwith_reuseport`) work the same way as each other: the new process picks up new connections, the old one drains until its existing clients disconnect on their own. Sessions, prepared statements, and TLS state never move between processes.
 
 [Read more →](tutorials/binary-upgrade.md)
 ```
 
 ## Why PgDoorman
 
-- **Drop-in replacement.** Caches and remaps prepared statements transparently in transaction mode — no `DISCARD ALL`, no `DEALLOCATE`, no driver hacks.
-- **Multithreaded.** Single shared pool across all worker threads. PgBouncer is single-threaded; running multiple instances via `SO_REUSEPORT` causes unbalanced pools.
-- **Thundering herd suppression.** When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates and routes waiters to recycled connections via direct handoff — most land within microseconds.
-- **Bounded tail latency.** Strict FIFO via direct-handoff channels keeps p99 within 10% of p50 regardless of client count. Pre-replacement on `server_lifetime` expiry — no spike during connection rotation.
-- **Dead backend detection.** When a client holds a transaction open and the backend dies (failover, OOM kill), PgDoorman returns an error immediately. Other poolers wait for TCP keepalive, leaving clients hanging for minutes.
-- **Built for operations.** YAML or TOML config with human-readable durations (`"30s"`, `"5m"`). `pg_doorman generate --host your-db` introspects PostgreSQL to produce a config. `pg_doorman -t` validates before deploy. Prometheus endpoint is built-in.
+- **Prepared statements in transaction mode.** PgDoorman remaps client statement names to `DOORMAN_N` and tracks the cache per pool, per client, and per backend. Drivers see their own names; backends see the remapped ones. No app-level `DEALLOCATE`, no `DISCARD ALL`.
+- **Multi-threaded, single shared pool.** All worker threads share one pool. PgBouncer is single-threaded; the recommended scale-out — several instances behind `so_reuseport` — gives each instance its own pool, and idle counts can drift between processes for the same database.
+- **Thundering herd suppression.** When 200 clients race for 4 idle connections, PgDoorman caps concurrent backend creates (`scaling_max_parallel_creates`) and routes returning servers straight to the longest-waiting client through an in-process oneshot channel — no requeue through the idle pool.
+- **Bounded tail latency.** Waiters are served strict FIFO so the worst-case wait can't be overtaken by latecomers. Pre-replacement of expiring backends — at 95% of `server_lifetime`, up to 3 in parallel — keeps the pool warm, so there is no checkout spike when a generation of connections rotates out.
+- **Dead backend detection inside transactions.** If the backend dies mid-transaction (failover, OOM, network partition), PgDoorman returns SQLSTATE `08006` immediately by racing the client read against backend readability with a 100 ms tick. Without this, the client would block until TCP keepalive fires — on Linux defaults that is about two hours plus 9×75 s probes.
+- **Built for operations.** YAML or TOML config with human-readable durations (`30s`, `5m`). `pg_doorman generate --host …` introspects an existing PostgreSQL and emits a starter config. `pg_doorman -t` validates the config without starting the server. A Prometheus `/metrics` endpoint is built-in.
 
 ## Comparison
 
-|                                                          |    PgDoorman    | PgBouncer | Odyssey |
-| -------------------------------------------------------- | :-------------: | :-------: | :-----: |
-| Multithreaded                                            |       Yes       |    No     |   Yes   |
-| Prepared statements in transaction mode                  |       Yes       | Since 1.21 | Since 1.3 |
-| Full extended query protocol                             |       Yes       |    Yes    | Partial |
-| Pool Coordinator with priority eviction                  |       Yes       |    No     |   No    |
-| Patroni-assisted fallback (built-in)                     |       Yes       |    No     |   No    |
-| Pre-replacement on `server_lifetime` expiry              |       Yes       |    No     |   No    |
-| Stale backend detection (idle-in-transaction)            |       Yes       |    No     |   No    |
-| Graceful binary upgrade                                  |       Yes       |  Limited  |   No    |
-| Server-side TLS (mTLS, hot reload)                       |       Yes       |    No     |   No    |
-| Auth: SCRAM passthrough (no plaintext password in config) |      Yes       |    No     |   Yes   |
-| Auth: JWT                                                |       Yes       |    No     |   No    |
-| Auth: PAM / `pg_hba.conf` / auth_query                   |       Yes       |   Yes     |   Yes   |
-| Auth: LDAP                                               |       No        | Since 1.25 |   Yes  |
-| YAML / TOML config                                       |       Yes       | No (INI)  | No (own format) |
-| JSON structured logging                                  |       Yes       |    No     |   Yes   |
-| Latency percentiles (p50/90/95/99)                       |       Yes       |    No     |   Yes   |
-| Config test mode (`-t`)                                  |       Yes       |    No     |   No    |
-| Auto-config from PostgreSQL                              |       Yes       |    No     |   No    |
-| Built-in Prometheus endpoint                             |       Yes       | External  |   Yes   |
+| Feature                                                  |       PgDoorman       |              PgBouncer              |          Odyssey           |
+| -------------------------------------------------------- | :-------------------: | :---------------------------------: | :------------------------: |
+| Multi-threaded with shared pool                          |          Yes          |        No (single-threaded)         |  Workers, separate pools   |
+| Prepared statements in transaction mode                  |          Yes          |           Yes (since 1.21)          | Yes (`pool_reserve_prepared_statement`) |
+| Pool Coordinator (per-database cap, priority eviction)   |          Yes          |                 No                  |             No             |
+| Patroni-assisted fallback (built-in)                     |          Yes          |                 No                  |             No             |
+| Pre-replacement on `server_lifetime` expiry              |          Yes          |                 No                  |             No             |
+| Stale backend detection inside a transaction             | Yes (immediate `08006`) |     No (waits for TCP keepalive)    | No (waits for TCP keepalive) |
+| Binary upgrade with session migration                    | Yes (`SCM_RIGHTS`, TLS state opt-in) | No (sessions stay on old process) | No (sessions stay on old process) |
+| Backend TLS to PostgreSQL                                |   Yes (5 modes, hot reload via `SIGHUP`) | Yes (`server_tls_*`, hot reload via `RELOAD`) |             No             |
+| Auth: SCRAM passthrough (no plaintext password)          | Yes (`ClientKey` extracted from proof) | Yes (encrypted SCRAM secret via `auth_query`/`userlist.txt`, since 1.14) |            Yes             |
+| Auth: JWT (RSA-SHA256)                                   |          Yes          |                 No                  |             No             |
+| Auth: PAM / `pg_hba.conf` / `auth_query`                 |          Yes          |                 Yes                 |            Yes             |
+| Auth: LDAP                                               |          No           |           Yes (since 1.25)          |            Yes             |
+| Config format                                            |     YAML / TOML       |                 INI                 |        Own format          |
+| JSON structured logging                                  |          Yes          |                 No                  |   Yes (`log_format "json"`)   |
+| Latency percentiles (p50/p90/p95/p99)                    | Yes (built-in `/metrics`) |        No (averages only)         |  Yes (via separate Go exporter) |
+| Config test mode (`-t`)                                  |          Yes          |                 No                  |             No             |
+| Auto-config from PostgreSQL (`generate --host`)          |          Yes          |                 No                  |             No             |
+| Prometheus endpoint                                      | Built-in `/metrics`   |          External exporter          |  External exporter (Go sidecar) |
 
 [Full feature matrix →](comparison.md)
 
 ## Benchmarks
 
-AWS Fargate (16 vCPU), pool size 40, `pgbench` 30s per test:
+AWS Fargate (16 vCPU), pool size 40, `pgbench` 30 s per test:
 
 | Scenario                                | vs PgBouncer | vs Odyssey |
 | --------------------------------------- | :----------: | :--------: |
 | Extended protocol, 500 clients + SSL    |     ×3.5     |    +61%    |
 | Prepared statements, 500 clients + SSL  |     ×4.0     |    +5%     |
 | Simple protocol, 10 000 clients         |     ×2.8     |    +20%    |
-| Extended + SSL + Reconnect, 500 clients |    +96%     |    ~0%     |
+| Extended + SSL + reconnect, 500 clients |     +96%     |    ~0%     |
 
 [Full results →](benchmarks.md)
 
@@ -110,7 +109,7 @@ pools:
         pool_size: 40
 ```
 
-`server_username` and `server_password` are omitted on purpose — PgDoorman reuses the client's MD5 hash or SCRAM ClientKey to authenticate to PostgreSQL. No plaintext passwords in config.
+`server_username` and `server_password` are omitted on purpose: PgDoorman re-uses the client's MD5 hash or SCRAM `ClientKey` to authenticate against PostgreSQL. No plaintext passwords in the config.
 
 [Installation guide →](tutorials/installation.md) · [Configuration reference →](reference/general.md)
 

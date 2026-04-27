@@ -186,8 +186,8 @@
 <p>Клиентские сертификаты загружаются при старте. Их смена требует рестарта процесса. Для клиентского TLS перезагрузки по <code>SIGHUP</code> нет.</p>
 <p>Для ротации сертификатов без простоя смотрите <a href="../tutorials/binary-upgrade.html">Binary Upgrade</a>.</p>
 <h3 id="Политика-шифров"><a class="header" href="#Политика-шифров">Политика шифров</a></h3>
-<p>Минимальный TLS 1.2. Список шифров — Mozilla «intermediate»; настройке не подлежит. Direct TLS handshake (PG17, без <code>SSLRequest</code>) не поддерживается.</p>
-<p>Для управления шифрами TLS 1.3 или direct TLS из PG17 используйте PgBouncer 1.25+.</p>
+<p>Минимальный TLS 1.2 enforced на handshake. PgDoorman <strong>не</strong> задаёт явный cipher list — эффективные шифры берутся из системной сборки OpenSSL. Если нужен жёсткий cipher list, настройте его системно (<code>/etc/ssl/openssl.cnf</code>) или соберите OpenSSL с нужной политикой.</p>
+<p>Direct TLS handshake (PG17, без <code>SSLRequest</code>) не поддерживается. Для управления шифрами TLS 1.3 или direct TLS из PG17 используйте PgBouncer 1.25+.</p>
 <h2 id="Серверный-tls"><a class="header" href="#Серверный-tls">Серверный TLS</a></h2>
 <p>Шифрование соединений между pg_doorman и бэкендами PostgreSQL. Появилось в 3.6.0.</p>
 <h3 id="Режимы-1"><a class="header" href="#Режимы-1">Режимы</a></h3>

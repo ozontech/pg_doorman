@@ -160,37 +160,40 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat">PgDoorman vs PgBouncer vs Odyssey vs PgCat</a></h1>
-<p>A practical feature matrix for choosing a PostgreSQL connection pooler. PgDoorman targets workloads where prepared statements in transaction mode, multithreaded performance, and operational ergonomics matter.</p>
+                        <h1 id="pgdoorman-vs-pgbouncer-vs-odyssey"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey">PgDoorman vs PgBouncer vs Odyssey</a></h1>
+<p>Side-by-side feature matrix for choosing a PostgreSQL connection pooler. Every PgBouncer claim is anchored to its <a href="https://www.pgbouncer.org/config.html">config reference</a> and <a href="https://www.pgbouncer.org/changelog.html">changelog</a>; every Odyssey claim is anchored to the project's <a href="https://github.com/yandex/odyssey/tree/master/docs">docs</a>.</p>
+<p>PgCat is intentionally omitted: its design centre is sharding/load-balancing rather than drop-in replacement of PgBouncer, so a row-by-row comparison is misleading. See the <a href="https://github.com/postgresml/pgcat">PgCat repo</a> if you need horizontal sharding.</p>
 <p>For benchmark numbers, see <a href="benchmarks.html">Benchmarks</a>.</p>
 <h2 id="authentication"><a class="header" href="#authentication">Authentication</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>MD5 password</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>SCRAM-SHA-256 (client)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>SCRAM-SHA-256 passthrough (no plaintext password in config)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>SCRAM-SHA-256 (client → pooler)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td>SCRAM-SHA-256 passthrough (no plaintext password in config)</td><td style="text-align: center">Yes (<code>ClientKey</code> extracted from client proof)</td><td style="text-align: center">Yes (since 1.14, encrypted SCRAM secret in <code>auth_query</code> / <code>userlist.txt</code>)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>MD5 passthrough</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>auth_query</code> (dynamic users)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>auth_query</code> passthrough mode (per-user backend identity)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>pg_hba.conf</code> format</td><td style="text-align: center">Yes (file or inline)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.4</td></tr>
-<tr><td>PAM</td><td style="text-align: center">Yes (Linux)</td><td style="text-align: center">Yes (HBA)</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>auth_query</code> passthrough mode (per-user backend identity)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (single <code>auth_user</code> for all lookups)</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>pg_hba.conf</code>-style file</td><td style="text-align: center">Yes (file or inline)</td><td style="text-align: center">Yes (<code>auth_hba_file</code>)</td><td style="text-align: center">Yes (since 1.4)</td></tr>
+<tr><td>PAM</td><td style="text-align: center">Yes (Linux)</td><td style="text-align: center">Yes (<code>auth_type=pam</code> or via HBA)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>JWT (RSA-SHA256)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Talos (custom JWT with role extraction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Talos (custom JWT with role extraction)</td><td style="text-align: center">Yes (Ozon-specific)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>LDAP</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">Yes</td></tr>
 <tr><td>SCRAM channel binding (<code>scram-sha-256-plus</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>User name maps (cert/peer → DB user)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Tunable <code>scram_iterations</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+<tr><td>User-name maps (cert/peer → DB user)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.23)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Tunable <code>scram_iterations</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="authentication/overview.html">Authentication</a>.</p>
 <h2 id="tls"><a class="header" href="#tls">TLS</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Client-side TLS (4 modes: disable, allow, require, verify-full)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Server-side TLS to PostgreSQL (6 modes incl. verify-ca, verify-full)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
-<tr><td>mTLS to PostgreSQL (client cert)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
-<tr><td>Hot reload of TLS certificates on <code>SIGHUP</code></td><td style="text-align: center">Yes (server-side)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Minimum TLS 1.2 + Mozilla cipher list</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No (allows TLS 1.0)</td></tr>
-<tr><td>Direct TLS handshake (PG17, no <code>SSLRequest</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
-<tr><td>TLS 1.3 cipher control</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
+<tr><td>Client-side TLS (modes: <code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-full</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (<code>disable</code>, <code>allow</code>, <code>prefer</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Server-side TLS to PostgreSQL (<code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Yes (5 modes)</td><td style="text-align: center">Yes (<code>server_tls_*</code>, 6 modes incl. <code>prefer</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>mTLS to PostgreSQL (client cert sent to backend)</td><td style="text-align: center">Yes (<code>server_tls_certificate</code> + <code>server_tls_private_key</code>)</td><td style="text-align: center">Yes (<code>server_tls_key_file</code> + <code>server_tls_cert_file</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Hot reload of server-side TLS certificates</td><td style="text-align: center">Yes (<code>SIGHUP</code>)</td><td style="text-align: center">Yes (via <code>RELOAD</code> / <code>SIGHUP</code>, "new file contents will be used for new connections")</td><td style="text-align: center">No</td></tr>
+<tr><td>Hot reload of client-facing TLS certificates</td><td style="text-align: center">No (requires restart or binary upgrade)</td><td style="text-align: center">Yes (via <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Minimum TLS version configurable</td><td style="text-align: center">Yes (defaults to TLS 1.2)</td><td style="text-align: center">Yes (<code>tls_protocols</code>, default <code>tlsv1.2,tlsv1.3</code>)</td><td style="text-align: center">Configurable, defaults differ</td></tr>
+<tr><td>Direct TLS handshake (PostgreSQL 17, no <code>SSLRequest</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">No</td></tr>
+<tr><td>TLS 1.3 cipher control</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25, <code>client_tls13_ciphers</code>/<code>server_tls13_ciphers</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>TLS session migration across binary upgrade</td><td style="text-align: center">Yes (<code>tls-migration</code> build, Linux, opt-in)</td><td style="text-align: center">No (TLS connections are dropped during online restart)</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="guides/tls.html">TLS</a>.</p>
@@ -198,59 +201,62 @@
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>Patroni-assisted fallback (built-in <code>/cluster</code> lookup)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Bundled TCP proxy with role-based routing (<code>patroni_proxy</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Replica lag guard</td><td style="text-align: center">Yes (<code>max_lag_in_bytes</code> in <code>patroni_proxy</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (watchdog query)</td></tr>
-<tr><td>Round-robin / least-connections multi-host</td><td style="text-align: center">Yes (<code>patroni_proxy</code>)</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>target_session_attrs</code> (read-write / read-only)</td><td style="text-align: center">Yes (via <code>patroni_proxy</code> roles)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Sequential routing (rules in order)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Connection type routing (TCP vs UNIX)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Availability zone-aware host selection</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Replica lag guard</td><td style="text-align: center">Yes (<code>max_lag_in_bytes</code> in <code>patroni_proxy</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (<code>watchdog_lag_query</code> + <code>catchup_timeout</code>)</td></tr>
+<tr><td>Multiple backend hosts with load balancing</td><td style="text-align: center">Yes (<code>patroni_proxy</code>)</td><td style="text-align: center">Yes (since 1.24, <code>load_balance_hosts</code>)</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>target_session_attrs</code> (read-write / read-only routing)</td><td style="text-align: center">Yes (via <code>patroni_proxy</code> roles)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Sequential routing rules (first-match wins)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Connection-type routing (TCP vs UNIX)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Availability-zone-aware host selection</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a>, <a href="tutorials/patroni-proxy.html"><code>patroni_proxy</code></a>.</p>
 <h2 id="pooling"><a class="header" href="#pooling">Pooling</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Pool modes (transaction, session)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (+ statement)</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Pool Coordinator (cross-user <code>max_db_connections</code> with priority eviction)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (no eviction)</td><td style="text-align: center">No</td></tr>
-<tr><td>Reserve pool with <code>min_guaranteed_pool_size</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Reserve only</td><td style="text-align: center">No</td></tr>
-<tr><td>Pre-replacement on <code>server_lifetime</code> expiry</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Anticipation/burst scaling (<code>scaling_warm_pool_ratio</code>, fast retries)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Direct-handoff (waiter receives returning connection in microseconds)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Pool modes</td><td style="text-align: center">session, transaction</td><td style="text-align: center">session, transaction, statement</td><td style="text-align: center">session, transaction</td></tr>
+<tr><td>Pool Coordinator (per-database cap with priority eviction)</td><td style="text-align: center">Yes (<code>max_db_connections</code> + p95-ranked eviction)</td><td style="text-align: center">No (<code>max_db_connections</code> queues clients until idle timeout closes existing connections)</td><td style="text-align: center">No</td></tr>
+<tr><td>Reserve pool</td><td style="text-align: center">Yes (<code>reserve_pool_size</code>)</td><td style="text-align: center">Yes (<code>reserve_pool_size</code>)</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>min_guaranteed_pool_size</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Pre-replacement on <code>server_lifetime</code> expiry (warm before old expires)</td><td style="text-align: center">Yes (95% threshold, up to 3 in parallel)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Anticipation / burst scaling (<code>scaling_warm_pool_ratio</code>, fast retries)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Direct-handoff (returning server goes to longest-waiting client via in-process oneshot channel)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Strict FIFO ordering of waiters</td><td style="text-align: center">Yes</td><td style="text-align: center">No (LIFO via <code>server_round_robin = 0</code>)</td><td style="text-align: center">No</td></tr>
 <tr><td><code>min_pool_size</code> (warm connections)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Prepared statement cache (two-level, query interner, statement remap)</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.21</td><td style="text-align: center">Since 1.3</td></tr>
-<tr><td>Smart <code>DISCARD</code> on checkin</td><td style="text-align: center">RESET ALL + drop cache</td><td style="text-align: center">No</td><td style="text-align: center">Yes (auto)</td></tr>
+<tr><td>Prepared statements in transaction mode</td><td style="text-align: center">Yes (two-level cache, query interner, <code>DOORMAN_N</code> remap)</td><td style="text-align: center">Yes (since 1.21, <code>max_prepared_statements</code>, <code>PGBOUNCER_*</code> remap)</td><td style="text-align: center">Yes (<code>pool_reserve_prepared_statement</code>)</td></tr>
+<tr><td>Smart cleanup on checkin (skip <code>DEALLOCATE ALL</code> if cache untouched)</td><td style="text-align: center">Yes (mutation-tracking <code>RESET ALL</code> / <code>DEALLOCATE ALL</code> on demand)</td><td style="text-align: center">No (always <code>DISCARD ALL</code> if <code>server_reset_query</code> set)</td><td style="text-align: center">Yes (auto)</td></tr>
 <tr><td>LISTEN / NOTIFY pinning in transaction mode</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Experimental</td></tr>
-<tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.5.1</td></tr>
-<tr><td><code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (1.4.1+)</td></tr>
+<tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.5.1)</td></tr>
+<tr><td><code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code> admin commands</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.4.1)</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="concepts/pool-coordinator.html">Pool Coordinator</a>, <a href="tutorials/pool-pressure.html">Pool pressure</a>.</p>
 <h2 id="limits-and-timeouts"><a class="header" href="#limits-and-timeouts">Limits and timeouts</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td><code>server_idle_check_timeout</code> (probe before checkout)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td><code>idle_timeout</code> (server connection)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>idle_timeout</code> (server-side)</td><td style="text-align: center">Yes (<code>idle_timeout</code>)</td><td style="text-align: center">Yes (<code>server_idle_timeout</code>)</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>server_lifetime</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>query_wait_timeout</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td><code>client_idle_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td><code>transaction_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">No</td></tr>
-<tr><td><code>max_user_client_connections</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td>Per-user <code>query_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td>Per-user <code>reserve_pool_size</code></td><td style="text-align: center">No</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td><code>query_wait_notify</code> (NOTICE while waiting for backend)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.25</td><td style="text-align: center">Yes (<code>pool_notice_after_waiting_ms</code>)</td></tr>
+<tr><td><code>client_idle_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>transaction_timeout</code> (pooler-enforced)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>max_user_client_connections</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>max_db_client_connections</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>query_timeout</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>Per-user <code>reserve_pool_size</code></td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>Notify client while waiting for backend</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.25, <code>query_wait_notify</code>)</td><td style="text-align: center">Yes (<code>pool_notice_after_waiting_ms</code>)</td></tr>
 </tbody></table>
 </div>
 <p>See <a href="reference/general.html">General settings reference</a>, <a href="reference/pool.html">Pool settings reference</a>.</p>
 <h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Built-in Prometheus endpoint</td><td style="text-align: center">Yes</td><td style="text-align: center">External (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Latency percentiles per pool (p50, p90, p95, p99)</td><td style="text-align: center">Yes (HDR Histogram)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (TDigest)</td></tr>
-<tr><td>Prepared statement counters in stats</td><td style="text-align: center">Yes</td><td style="text-align: center">Since 1.24</td><td style="text-align: center">No</td></tr>
-<tr><td>JSON structured logging</td><td style="text-align: center">Yes (<code>--log-format Structured</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Prometheus endpoint</td><td style="text-align: center">Built-in <code>/metrics</code></td><td style="text-align: center">External (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">External (Go exporter sidecar that polls the admin console)</td></tr>
+<tr><td>Latency percentiles per pool (p50, p90, p95, p99)</td><td style="text-align: center">Yes (HDR Histogram)</td><td style="text-align: center">No (averages only in <code>SHOW STATS</code>)</td><td style="text-align: center">Yes via the exporter (TDigest, requires <code>quantiles</code> rule option)</td></tr>
+<tr><td>Prepared statement counters in <code>SHOW STATS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes (since 1.24)</td><td style="text-align: center">No</td></tr>
+<tr><td>JSON structured logging</td><td style="text-align: center">Yes (<code>--log-format structured</code>)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (<code>log_format "json"</code>)</td></tr>
 <tr><td>Runtime log level control (<code>SET log_level</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Admin <code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Admin <code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Admin <code>SHOW HOSTS</code> (host CPU/memory)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Admin <code>SHOW RULES</code> (dump routing)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
-<tr><td>TLS connection metrics (handshake duration, errors, active count)</td><td style="text-align: center">Yes (server-side)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SHOW HOSTS</code> (host CPU/memory)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td><code>SHOW RULES</code> (dump effective routing)</td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
+<tr><td>Server-side TLS connection metrics (handshake duration, errors, active count)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Patroni API metrics</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Fallback metrics (active flag, current host, hits)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 </tbody></table>
@@ -258,14 +264,13 @@
 <p>See <a href="reference/prometheus.html">Prometheus metrics reference</a>, <a href="observability/admin-commands.html">Admin commands</a>.</p>
 <h2 id="operations"><a class="header" href="#operations">Operations</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Feature</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Graceful binary upgrade (zero-downtime, in-flight clients preserved)</td><td style="text-align: center">Yes</td><td style="text-align: center">Limited (<code>SO_REUSEPORT</code>)</td><td style="text-align: center">No</td></tr>
-<tr><td>YAML config</td><td style="text-align: center">Yes</td><td style="text-align: center">No (INI)</td><td style="text-align: center">No (own format)</td></tr>
-<tr><td>TOML config</td><td style="text-align: center">Yes (legacy)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td>Human-readable durations &amp; sizes (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td>Binary upgrade with session migration (TCP socket, cancel keys, prepared cache)</td><td style="text-align: center">Yes (<code>SCM_RIGHTS</code>, plus TLS state with the <code>tls-migration</code> build)</td><td style="text-align: center">No: <code>-R</code> deprecated since 1.20; <code>so_reuseport</code> rolling restart drains old sessions in place</td><td style="text-align: center">No: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> drains old sessions in place</td></tr>
+<tr><td>Configuration format</td><td style="text-align: center">YAML or TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Own format (lex/yacc)</td></tr>
+<tr><td>Human-readable durations and sizes (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No (integer microseconds / bytes)</td><td style="text-align: center">No</td></tr>
 <tr><td>Config test mode (<code>pg_doorman -t</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Auto-config from PostgreSQL (<code>pg_doorman generate --host</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
-<tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Yes (incl. server TLS certs)</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>systemd <code>sd-notify</code> integration</td><td style="text-align: center">Yes (<code>Type=notify</code>)</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
+<tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Yes (server TLS certs included; client TLS still requires restart)</td><td style="text-align: center">Yes (<code>auth_file</code>, <code>auth_hba_file</code>, server and client TLS certs)</td><td style="text-align: center">Yes</td></tr>
+<tr><td>systemd <code>sd-notify</code> (<code>Type=notify</code>) integration</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 <tr><td>Memory cap (<code>max_memory_usage</code>)</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">No</td></tr>
 </tbody></table>
 </div>
@@ -278,20 +283,19 @@
 <tr><td>Async Flush</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">No</td></tr>
 <tr><td>Cancel requests over TLS</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
 <tr><td><code>COPY IN</code> / <code>COPY OUT</code></td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td><td style="text-align: center">Yes</td></tr>
-<tr><td>Replication passthrough (<code>replication=true</code> startup)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">No</td></tr>
-<tr><td>Protocol version negotiation (3.2)</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.23</td><td style="text-align: center">No</td></tr>
-<tr><td><code>server_drop_on_cached_plan_error</code></td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Since 1.5.1</td></tr>
+<tr><td>Replication passthrough (<code>replication=true</code> startup)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.23)</td><td style="text-align: center">No</td></tr>
+<tr><td>Protocol version negotiation (3.2)</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.23)</td><td style="text-align: center">No</td></tr>
+<tr><td><code>server_drop_on_cached_plan_error</code></td><td style="text-align: center">No</td><td style="text-align: center">No</td><td style="text-align: center">Yes (since 1.5.1)</td></tr>
 </tbody></table>
 </div>
 <h2 id="when-pgdoorman-is-not-the-right-fit"><a class="header" href="#when-pgdoorman-is-not-the-right-fit">When PgDoorman is not the right fit</a></h2>
 <ul>
-<li>You need LDAP authentication. Use Odyssey or PgBouncer 1.25+.</li>
-<li>You need SCRAM channel binding (<code>scram-sha-256-plus</code>) end-to-end. Use PgBouncer or Odyssey.</li>
-<li>You need replication passthrough for logical replication tools. Use PgBouncer 1.23+.</li>
-<li>You need availability-zone-aware routing or sequential <code>pg_hba</code>-style routing rules. Use Odyssey.</li>
-<li>You need <code>transaction_timeout</code> enforced by the pooler. Use PgBouncer 1.25+.</li>
+<li><strong>You need LDAP authentication.</strong> Use Odyssey or PgBouncer 1.25+.</li>
+<li><strong>You need replication passthrough for logical replication tools.</strong> Use PgBouncer 1.23+.</li>
+<li><strong>You need <code>transaction_timeout</code> enforced by the pooler.</strong> Use PgBouncer 1.25+.</li>
+<li><strong>You need horizontal sharding inside the pooler.</strong> Use PgCat.</li>
 </ul>
-<p>For prepared statements in transaction mode, Patroni HA without external proxies, multithreaded throughput, and zero-downtime restarts, PgDoorman is the closer fit.</p>
+<p>For prepared statements in transaction mode, Patroni HA without external proxies, multi-threaded throughput in a single shared pool, and binary upgrades that migrate live sessions, PgDoorman is the closer fit.</p>
 
                     </main>
 

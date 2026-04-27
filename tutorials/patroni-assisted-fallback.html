@@ -190,8 +190,9 @@ them under <a href="#tuning-parameters">Tuning parameters</a>.</p>
 <p><strong>Planned switchover.</strong> A DBA runs <code>patroni switchover --candidate node2</code>.
 Patroni promotes node2, then shuts down PostgreSQL on node1. Between the
 shutdown and Patroni restarting node1 as a replica of node2, doorman on
-node1 has no backend. With fallback enabled, doorman connects to node2
-within 1-2 TCP round trips.</p>
+node1 has no backend. With fallback enabled, the next client request
+that fails to reach the local socket triggers a <code>/cluster</code> lookup and
+the new connection is opened to node2.</p>
 <p><strong>Unplanned crash.</strong> PostgreSQL on node1 is killed by the OOM killer.
 Patroni hasn't detected the failure yet. Doorman gets connection refused
 on the unix socket, queries the Patroni API, and connects to the
@@ -315,7 +316,9 @@ DNS resolution failure during a failover adds latency and may cause
 the lookup to fail entirely.</p>
 <p><strong>standby_leader.</strong> Patroni standby clusters use the <code>standby_leader</code>
 role. doorman treats it as "other" (lowest priority, after sync_standby
-and replica). This is correct for most deployments.</p>
+and replica). For a primary-cluster deployment this matches what you
+want; if you are running pg_doorman on a standby cluster you most
+likely don't want fallback at all because you have no writeable target.</p>
 <h2 id="relationship-to-patroni_proxy"><a class="header" href="#relationship-to-patroni_proxy">Relationship to patroni_proxy</a></h2>
 <p>patroni_proxy and Patroni-assisted fallback solve different problems.</p>
 <p><strong>patroni_proxy</strong> is a TCP load balancer deployed near application

@@ -160,138 +160,142 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey-vs-pgcat">PgDoorman vs PgBouncer vs Odyssey vs PgCat</a></h1>
-<p>Практическая матрица фич для выбора пулера соединений PostgreSQL. PgDoorman нацелен на нагрузки, где важны prepared statements в транзакционном режиме, многопоточная производительность и удобство эксплуатации.</p>
-<p>Числа бенчмарков — см. <a href="benchmarks.html">Benchmarks</a>.</p>
+                        <h1 id="pgdoorman-vs-pgbouncer-vs-odyssey"><a class="header" href="#pgdoorman-vs-pgbouncer-vs-odyssey">PgDoorman vs PgBouncer vs Odyssey</a></h1>
+<p>Сравнительная матрица фич для выбора пулера соединений PostgreSQL. Каждое утверждение про PgBouncer привязано к <a href="https://www.pgbouncer.org/config.html">config reference</a> и <a href="https://www.pgbouncer.org/changelog.html">changelog</a>; каждое утверждение про Odyssey — к <a href="https://github.com/yandex/odyssey/tree/master/docs">docs</a> проекта.</p>
+<p>PgCat намеренно опущен: у него центр тяжести — шардинг и балансировка, а не drop-in замена PgBouncer, поэтому построчное сравнение вводит в заблуждение. Если нужен горизонтальный шардинг, см. <a href="https://github.com/postgresml/pgcat">репозиторий PgCat</a>.</p>
+<p>Цифры из бенчмарков — <a href="benchmarks.html">Бенчмарки</a>.</p>
 <h2 id="Аутентификация"><a class="header" href="#Аутентификация">Аутентификация</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>MD5 пароль</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>SCRAM-SHA-256 (клиент)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>Passthrough SCRAM-SHA-256 (без пароля в открытом виде в конфиге)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Passthrough MD5</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>MD5 password</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
+<tr><td>SCRAM-SHA-256 (клиент → пулер)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
+<tr><td>SCRAM-SHA-256 passthrough (без plaintext-пароля в конфиге)</td><td style="text-align: center">Да (<code>ClientKey</code> извлекается из клиентского proof)</td><td style="text-align: center">Да (с 1.14, encrypted SCRAM secret в <code>auth_query</code> / <code>userlist.txt</code>)</td><td style="text-align: center">Да</td></tr>
+<tr><td>MD5 passthrough</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
 <tr><td><code>auth_query</code> (динамические пользователи)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>Режим passthrough в auth_query (per-user идентичность бэкенда)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Формат <code>pg_hba.conf</code></td><td style="text-align: center">Да (файл или inline)</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.4</td></tr>
-<tr><td>PAM</td><td style="text-align: center">Да (Linux)</td><td style="text-align: center">Да (HBA)</td><td style="text-align: center">Да</td></tr>
+<tr><td><code>auth_query</code> passthrough mode (свой backend identity на каждого пользователя)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (один <code>auth_user</code> на все lookup-ы)</td><td style="text-align: center">Да</td></tr>
+<tr><td>Файл в формате <code>pg_hba.conf</code></td><td style="text-align: center">Да (файл или inline)</td><td style="text-align: center">Да (<code>auth_hba_file</code>)</td><td style="text-align: center">Да (с 1.4)</td></tr>
+<tr><td>PAM</td><td style="text-align: center">Да (Linux)</td><td style="text-align: center">Да (<code>auth_type=pam</code> или через HBA)</td><td style="text-align: center">Да</td></tr>
 <tr><td>JWT (RSA-SHA256)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Talos (кастомный JWT с извлечением роли)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>LDAP</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.25</td><td style="text-align: center">Да</td></tr>
+<tr><td>Talos (custom JWT с извлечением роли)</td><td style="text-align: center">Да (специфика Ozon)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>LDAP</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Да</td></tr>
 <tr><td>SCRAM channel binding (<code>scram-sha-256-plus</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>Маппинг имён пользователей (cert/peer → DB user)</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.23</td><td style="text-align: center">Да</td></tr>
-<tr><td>Настраиваемый <code>scram_iterations</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.25</td><td style="text-align: center">Нет</td></tr>
+<tr><td>User-name maps (cert/peer → DB user)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.23)</td><td style="text-align: center">Да</td></tr>
+<tr><td>Тонкая настройка <code>scram_iterations</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="authentication/overview.html">Аутентификация</a>.</p>
 <h2 id="tls"><a class="header" href="#tls">TLS</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Client-side TLS (4 режима: disable, allow, require, verify-full)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>Server-side TLS к PostgreSQL (6 режимов, включая verify-ca, verify-full)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td></tr>
-<tr><td>mTLS к PostgreSQL (клиентский сертификат)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Горячая перезагрузка TLS-сертификатов по <code>SIGHUP</code></td><td style="text-align: center">Да (server-side)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Минимум TLS 1.2 + список шифров Mozilla</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (разрешает TLS 1.0)</td></tr>
-<tr><td>Direct TLS handshake (PG17, без <code>SSLRequest</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.25</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Управление шифрами TLS 1.3</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.25</td><td style="text-align: center">Нет</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Client-side TLS (режимы: <code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-full</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Да (<code>disable</code>, <code>allow</code>, <code>prefer</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Да</td></tr>
+<tr><td>Server-side TLS к PostgreSQL (<code>disable</code>, <code>allow</code>, <code>require</code>, <code>verify-ca</code>, <code>verify-full</code>)</td><td style="text-align: center">Да (5 режимов)</td><td style="text-align: center">Да (<code>server_tls_*</code>, 6 режимов вкл. <code>prefer</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>mTLS к PostgreSQL (отправка клиентского сертификата на backend)</td><td style="text-align: center">Да (<code>server_tls_certificate</code> + <code>server_tls_private_key</code>)</td><td style="text-align: center">Да (<code>server_tls_key_file</code> + <code>server_tls_cert_file</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Hot reload server-side TLS-сертификатов</td><td style="text-align: center">Да (<code>SIGHUP</code>)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>, "new file contents will be used for new connections")</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Hot reload client-facing TLS-сертификатов</td><td style="text-align: center">Нет (требуется restart или binary upgrade)</td><td style="text-align: center">Да (через <code>RELOAD</code> / <code>SIGHUP</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Минимальная версия TLS настраивается</td><td style="text-align: center">Да (по умолчанию TLS 1.2)</td><td style="text-align: center">Да (<code>tls_protocols</code>, default <code>tlsv1.2,tlsv1.3</code>)</td><td style="text-align: center">Настраивается, дефолты другие</td></tr>
+<tr><td>Direct TLS handshake (PostgreSQL 17, без <code>SSLRequest</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Контроль TLS 1.3 cipher suites</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25, <code>client_tls13_ciphers</code>/<code>server_tls13_ciphers</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Миграция TLS-сессии при binary upgrade</td><td style="text-align: center">Да (сборка <code>tls-migration</code>, Linux, opt-in)</td><td style="text-align: center">Нет (TLS-соединения дропаются при online restart)</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="guides/tls.html">TLS</a>.</p>
 <h2 id="Маршрутизация-и-высокая-доступность"><a class="header" href="#Маршрутизация-и-высокая-доступность">Маршрутизация и высокая доступность</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Patroni-assisted fallback (встроенный поиск через <code>/cluster</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Встроенный TCP-прокси с маршрутизацией по ролям (<code>patroni_proxy</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Защита от отставания реплики</td><td style="text-align: center">Да (<code>max_lag_in_bytes</code> в <code>patroni_proxy</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (watchdog-запрос)</td></tr>
-<tr><td>Round-robin / least-connections для нескольких хостов</td><td style="text-align: center">Да (<code>patroni_proxy</code>)</td><td style="text-align: center">Начиная с 1.24</td><td style="text-align: center">Да</td></tr>
-<tr><td><code>target_session_attrs</code> (read-write / read-only)</td><td style="text-align: center">Да (через роли в <code>patroni_proxy</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Последовательная маршрутизация (правила по порядку)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Patroni-assisted fallback (встроенный <code>/cluster</code> lookup)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Bundled TCP-прокси с маршрутизацией по ролям (<code>patroni_proxy</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Защита от лага реплик</td><td style="text-align: center">Да (<code>max_lag_in_bytes</code> в <code>patroni_proxy</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (<code>watchdog_lag_query</code> + <code>catchup_timeout</code>)</td></tr>
+<tr><td>Несколько backend-хостов с балансировкой</td><td style="text-align: center">Да (<code>patroni_proxy</code>)</td><td style="text-align: center">Да (с 1.24, <code>load_balance_hosts</code>)</td><td style="text-align: center">Да</td></tr>
+<tr><td><code>target_session_attrs</code> (read-write / read-only routing)</td><td style="text-align: center">Да (через роли <code>patroni_proxy</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
+<tr><td>Sequential routing rules (правило-в-порядке-первое-совпадение)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
 <tr><td>Маршрутизация по типу соединения (TCP vs UNIX)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
 <tr><td>Выбор хоста с учётом availability zone</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a>, <a href="tutorials/patroni-proxy.html"><code>patroni_proxy</code></a>.</p>
 <h2 id="Пулинг"><a class="header" href="#Пулинг">Пулинг</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Режимы пула (transaction, session)</td><td style="text-align: center">Да</td><td style="text-align: center">Да (+ statement)</td><td style="text-align: center">Да</td></tr>
-<tr><td>Pool Coordinator (cross-user <code>max_db_connections</code> с приоритетным вытеснением)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (без вытеснения)</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Резервный пул с <code>min_guaranteed_pool_size</code></td><td style="text-align: center">Да</td><td style="text-align: center">Только reserve</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Опережающая замена при истечении <code>server_lifetime</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Опережающее создание / burst scaling (<code>scaling_warm_pool_ratio</code>, быстрые retry)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Direct-handoff (ожидающий получает возвращаемое соединение за микросекунды)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td><code>min_pool_size</code> (прогретые соединения)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Кэш prepared statements (двухуровневый, query interner, statement remap)</td><td style="text-align: center">Да</td><td style="text-align: center">Начиная с 1.21</td><td style="text-align: center">Начиная с 1.3</td></tr>
-<tr><td>Умный <code>DISCARD</code> при возврате</td><td style="text-align: center">RESET ALL + сброс кэша</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (авто)</td></tr>
-<tr><td>Прикрепление LISTEN / NOTIFY в транзакционном режиме</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Экспериментально</td></tr>
-<tr><td>Cross-rule ограничение соединений (<code>shared_pool</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.5.1</td></tr>
-<tr><td><code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да (1.4.1+)</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Pool modes</td><td style="text-align: center">session, transaction</td><td style="text-align: center">session, transaction, statement</td><td style="text-align: center">session, transaction</td></tr>
+<tr><td>Pool Coordinator (per-database cap с приоритетным вытеснением)</td><td style="text-align: center">Да (<code>max_db_connections</code> + вытеснение по p95)</td><td style="text-align: center">Нет (<code>max_db_connections</code> ставит клиентов в очередь, пока существующие соединения не закроются по idle timeout)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Reserve pool</td><td style="text-align: center">Да (<code>reserve_pool_size</code>)</td><td style="text-align: center">Да (<code>reserve_pool_size</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Per-user <code>min_guaranteed_pool_size</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Опережающая замена при истечении <code>server_lifetime</code> (warm-up до экспирации старого)</td><td style="text-align: center">Да (порог 95%, до 3 параллельных)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Anticipation / burst scaling (<code>scaling_warm_pool_ratio</code>, fast retries)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Direct-handoff (возвращающийся сервер уходит самому давно ждущему клиенту через in-process oneshot-канал)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Строгий FIFO порядок ожидающих</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (LIFO через <code>server_round_robin = 0</code>)</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>min_pool_size</code> (warm connections)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
+<tr><td>Prepared statements в transaction mode</td><td style="text-align: center">Да (двухуровневый кеш, query interner, переименование <code>DOORMAN_N</code>)</td><td style="text-align: center">Да (с 1.21, <code>max_prepared_statements</code>, переименование <code>PGBOUNCER_*</code>)</td><td style="text-align: center">Да (<code>pool_reserve_prepared_statement</code>)</td></tr>
+<tr><td>Smart cleanup при checkin (пропустить <code>DEALLOCATE ALL</code>, если кеш не трогали)</td><td style="text-align: center">Да (<code>RESET ALL</code> / <code>DEALLOCATE ALL</code> по факту мутаций)</td><td style="text-align: center">Нет (всегда <code>DISCARD ALL</code>, если задан <code>server_reset_query</code>)</td><td style="text-align: center">Да (auto)</td></tr>
+<tr><td>LISTEN / NOTIFY pinning в transaction mode</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Экспериментально</td></tr>
+<tr><td>Cross-rule connection cap (<code>shared_pool</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.5.1)</td></tr>
+<tr><td>Admin-команды <code>PAUSE</code> / <code>RESUME</code> / <code>RECONNECT</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да (с 1.4.1)</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="concepts/pool-coordinator.html">Pool Coordinator</a>, <a href="tutorials/pool-pressure.html">Пул под нагрузкой</a>.</p>
 <h2 id="Лимиты-и-таймауты"><a class="header" href="#Лимиты-и-таймауты">Лимиты и таймауты</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td><code>server_idle_check_timeout</code> (проверка перед выдачей)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td><code>idle_timeout</code> (серверное соединение)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td><code>server_idle_check_timeout</code> (probe перед checkout)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>idle_timeout</code> (server-side)</td><td style="text-align: center">Да (<code>idle_timeout</code>)</td><td style="text-align: center">Да (<code>server_idle_timeout</code>)</td><td style="text-align: center">Да</td></tr>
 <tr><td><code>server_lifetime</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
 <tr><td><code>query_wait_timeout</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td><code>client_idle_timeout</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.24</td><td style="text-align: center">Нет</td></tr>
-<tr><td><code>transaction_timeout</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.25</td><td style="text-align: center">Нет</td></tr>
-<tr><td><code>max_user_client_connections</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.24</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Per-user <code>query_timeout</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.24</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Per-user <code>reserve_pool_size</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.24</td><td style="text-align: center">Нет</td></tr>
-<tr><td><code>query_wait_notify</code> (NOTICE при ожидании бэкенда)</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.25</td><td style="text-align: center">Да (<code>pool_notice_after_waiting_ms</code>)</td></tr>
+<tr><td><code>client_idle_timeout</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.24)</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>transaction_timeout</code> (enforced пулером)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25)</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>max_user_client_connections</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.24)</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>max_db_client_connections</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.24)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Per-user <code>query_timeout</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.24)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Per-user <code>reserve_pool_size</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.24)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Уведомление клиента, пока тот ждёт backend</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.25, <code>query_wait_notify</code>)</td><td style="text-align: center">Да (<code>pool_notice_after_waiting_ms</code>)</td></tr>
 </tbody></table>
 </div>
-<p>См. <a href="reference/general.html">Справочник по general settings</a>, <a href="reference/pool.html">Справочник по pool settings</a>.</p>
-<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Встроенный Prometheus-эндпоинт</td><td style="text-align: center">Да</td><td style="text-align: center">Внешний (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">Да</td></tr>
-<tr><td>Перцентили задержки на пул (p50, p90, p95, p99)</td><td style="text-align: center">Да (HDR Histogram)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (TDigest)</td></tr>
-<tr><td>Счётчики prepared statements в статистике</td><td style="text-align: center">Да</td><td style="text-align: center">Начиная с 1.24</td><td style="text-align: center">Нет</td></tr>
-<tr><td>JSON структурированное логирование</td><td style="text-align: center">Да (<code>--log-format Structured</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Управление уровнем логирования в рантайме (<code>SET log_level</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Admin <code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Admin <code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Admin <code>SHOW HOSTS</code> (CPU/память хоста)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Admin <code>SHOW RULES</code> (дамп маршрутизации)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
-<tr><td>Метрики TLS-соединений (длительность handshake, ошибки, активные)</td><td style="text-align: center">Да (server-side)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<p>См. <a href="reference/general.html">Справочник по general-настройкам</a>, <a href="reference/pool.html">Справочник по pool-настройкам</a>.</p>
+<h2 id="Наблюдаемость"><a class="header" href="#Наблюдаемость">Наблюдаемость</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Prometheus-эндпоинт</td><td style="text-align: center">Встроенный <code>/metrics</code></td><td style="text-align: center">Внешний (<code>pgbouncer_exporter</code>)</td><td style="text-align: center">Внешний (Go-exporter sidecar, опрашивает admin-консоль)</td></tr>
+<tr><td>Перцентили задержки на пул (p50, p90, p95, p99)</td><td style="text-align: center">Да (HDR Histogram)</td><td style="text-align: center">Нет (только средние в <code>SHOW STATS</code>)</td><td style="text-align: center">Да через exporter (TDigest, требует rule-опцию <code>quantiles</code>)</td></tr>
+<tr><td>Счётчики prepared statements в <code>SHOW STATS</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да (с 1.24)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>JSON structured logging</td><td style="text-align: center">Да (<code>--log-format structured</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (<code>log_format "json"</code>)</td></tr>
+<tr><td>Управление уровнем логов в рантайме (<code>SET log_level</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>SHOW POOL_COORDINATOR</code> / <code>SHOW POOL_SCALING</code> / <code>SHOW SOCKETS</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>SHOW PREPARED_STATEMENTS</code></td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>SHOW HOSTS</code> (CPU/память хоста)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
+<tr><td><code>SHOW RULES</code> (дамп активной маршрутизации)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да</td></tr>
+<tr><td>Метрики server-side TLS-соединений (длительность handshake, ошибки, активные)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Метрики Patroni API</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Метрики fallback (флаг активности, текущий хост, попадания)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Метрики fallback (active flag, текущий хост, hits)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
-<p>См. <a href="reference/prometheus.html">Справочник по Prometheus-метрикам</a>, <a href="observability/admin-commands.html">Admin-команды</a>.</p>
+<p>См. <a href="reference/prometheus.html">Справочник Prometheus-метрик</a>, <a href="observability/admin-commands.html">Admin-команды</a>.</p>
 <h2 id="Эксплуатация"><a class="header" href="#Эксплуатация">Эксплуатация</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
-<tr><td>Graceful binary upgrade (zero-downtime, in-flight клиенты сохраняются)</td><td style="text-align: center">Да</td><td style="text-align: center">Ограниченно (<code>SO_REUSEPORT</code>)</td><td style="text-align: center">Нет</td></tr>
-<tr><td>YAML конфиг</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (INI)</td><td style="text-align: center">Нет (свой формат)</td></tr>
-<tr><td>TOML конфиг</td><td style="text-align: center">Да (legacy)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Человекочитаемые длительности и размеры (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<tr><td>Binary upgrade с миграцией сессий (TCP-сокет, cancel keys, prepared cache)</td><td style="text-align: center">Да (<code>SCM_RIGHTS</code>, плюс TLS state со сборкой <code>tls-migration</code>)</td><td style="text-align: center">Нет: <code>-R</code> deprecated с 1.20; rolling restart через <code>so_reuseport</code> оставляет старые сессии на старом процессе</td><td style="text-align: center">Нет: <code>SIGUSR2</code> + <code>bindwith_reuseport</code> оставляет старые сессии на старом процессе</td></tr>
+<tr><td>Формат конфига</td><td style="text-align: center">YAML или TOML</td><td style="text-align: center">INI</td><td style="text-align: center">Свой формат (lex/yacc)</td></tr>
+<tr><td>Человекочитаемые длительности и размеры (<code>30s</code>, <code>1h</code>, <code>256MB</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет (целые микросекунды / байты)</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Режим проверки конфига (<code>pg_doorman -t</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Авто-конфиг из PostgreSQL (<code>pg_doorman generate --host</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Перезагрузка по <code>SIGHUP</code></td><td style="text-align: center">Да (включая server TLS-сертификаты)</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>Интеграция с systemd <code>sd-notify</code></td><td style="text-align: center">Да (<code>Type=notify</code>)</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>SIGHUP</code> reload</td><td style="text-align: center">Да (server TLS certs включены; client TLS требует restart)</td><td style="text-align: center">Да (<code>auth_file</code>, <code>auth_hba_file</code>, server и client TLS certs)</td><td style="text-align: center">Да</td></tr>
+<tr><td>systemd <code>sd-notify</code> (<code>Type=notify</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 <tr><td>Лимит памяти (<code>max_memory_usage</code>)</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td></tr>
 </tbody></table>
 </div>
 <p>См. <a href="tutorials/binary-upgrade.html">Binary upgrade</a>, <a href="operations/signals.html">Сигналы</a>.</p>
 <h2 id="Протокол"><a class="header" href="#Протокол">Протокол</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Фича</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
+<div class="table-wrapper"><table><thead><tr><th>Возможность</th><th style="text-align: center">PgDoorman</th><th style="text-align: center">PgBouncer</th><th style="text-align: center">Odyssey</th></tr></thead><tbody>
 <tr><td>Simple query</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
 <tr><td>Extended query</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Частично</td></tr>
 <tr><td>Pipelined batches</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Частично</td></tr>
 <tr><td>Async Flush</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Cancel-запросы поверх TLS</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
+<tr><td>Cancel requests поверх TLS</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
 <tr><td><code>COPY IN</code> / <code>COPY OUT</code></td><td style="text-align: center">Да</td><td style="text-align: center">Да</td><td style="text-align: center">Да</td></tr>
-<tr><td>Проброс replication-соединений (<code>replication=true</code> в startup)</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.23</td><td style="text-align: center">Нет</td></tr>
-<tr><td>Поддержка версии протокола 3.2</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.23</td><td style="text-align: center">Нет</td></tr>
-<tr><td><code>server_drop_on_cached_plan_error</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Начиная с 1.5.1</td></tr>
+<tr><td>Replication passthrough (<code>replication=true</code> startup)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.23)</td><td style="text-align: center">Нет</td></tr>
+<tr><td>Согласование версии протокола (3.2)</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.23)</td><td style="text-align: center">Нет</td></tr>
+<tr><td><code>server_drop_on_cached_plan_error</code></td><td style="text-align: center">Нет</td><td style="text-align: center">Нет</td><td style="text-align: center">Да (с 1.5.1)</td></tr>
 </tbody></table>
 </div>
-<h2 id="Когда-pgdoorman-не-подходит"><a class="header" href="#Когда-pgdoorman-не-подходит">Когда PgDoorman не подходит</a></h2>
+<h2 id="Когда-pgdoorman-не-подойдёт"><a class="header" href="#Когда-pgdoorman-не-подойдёт">Когда PgDoorman не подойдёт</a></h2>
 <ul>
-<li>Нужна аутентификация LDAP. Используйте Odyssey или PgBouncer 1.25+.</li>
-<li>Нужен SCRAM channel binding (<code>scram-sha-256-plus</code>) end-to-end. Используйте PgBouncer или Odyssey.</li>
-<li>Нужна сквозная replication для инструментов логической репликации. Используйте PgBouncer 1.23+.</li>
-<li>Нужна маршрутизация с учётом availability zone или последовательные правила в стиле <code>pg_hba</code>. Используйте Odyssey.</li>
-<li>Нужно, чтобы <code>transaction_timeout</code> принудительно применялся пулером. Используйте PgBouncer 1.25+.</li>
+<li><strong>Нужна LDAP-аутентификация.</strong> Используйте Odyssey или PgBouncer 1.25+.</li>
+<li><strong>Нужен replication passthrough для logical replication tools.</strong> Используйте PgBouncer 1.23+.</li>
+<li><strong>Нужен <code>transaction_timeout</code>, который enforced пулером.</strong> Используйте PgBouncer 1.25+.</li>
+<li><strong>Нужен горизонтальный шардинг внутри пулера.</strong> Используйте PgCat.</li>
 </ul>
-<p>Если важны prepared statements в транзакционном режиме, Patroni HA без внешних прокси, многопоточный throughput и перезапуски без простоя — PgDoorman подходит ближе.</p>
+<p>Если нужны prepared statements в transaction mode, Patroni HA без внешних прокси, многопоточная пропускная способность с одним общим пулом и binary upgrade с миграцией живых сессий — PgDoorman ближе по профилю.</p>
 
                     </main>
 
