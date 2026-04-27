@@ -148,9 +148,7 @@ PgCat намеренно опущен: у него центр тяжести —
 ## Когда PgDoorman не подойдёт
 
 - **Нужна LDAP-аутентификация.** Используйте Odyssey или PgBouncer 1.25+.
-- **Нужен SCRAM channel binding (`scram-sha-256-plus`) end-to-end.** Используйте PgBouncer или Odyssey.
 - **Нужен replication passthrough для logical replication tools.** Используйте PgBouncer 1.23+.
-- **Нужен availability-zone-aware routing или sequential `pg_hba`-style rules.** Используйте Odyssey.
 - **Нужен `transaction_timeout`, который enforced пулером.** Используйте PgBouncer 1.25+.
 - **Нужен горизонтальный шардинг внутри пулера.** Используйте PgCat.
 

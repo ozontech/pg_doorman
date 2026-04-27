@@ -148,9 +148,7 @@ See [Binary upgrade](tutorials/binary-upgrade.md), [Signals](operations/signals.
 ## When PgDoorman is not the right fit
 
 - **You need LDAP authentication.** Use Odyssey or PgBouncer 1.25+.
-- **You need SCRAM channel binding (`scram-sha-256-plus`) end-to-end.** Use PgBouncer or Odyssey.
 - **You need replication passthrough for logical replication tools.** Use PgBouncer 1.23+.
-- **You need availability-zone-aware routing or sequential `pg_hba`-style routing rules.** Use Odyssey.
 - **You need `transaction_timeout` enforced by the pooler.** Use PgBouncer 1.25+.
 - **You need horizontal sharding inside the pooler.** Use PgCat.
 
