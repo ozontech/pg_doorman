@@ -1,8 +1,8 @@
-# PgDoorman Overview
+# Overview
 
-## What is PgDoorman?
+## What PgDoorman does
 
-PgDoorman is a high-performance PostgreSQL connection pooler based on PgCat. It acts as a middleware between your applications and PostgreSQL servers, efficiently managing database connections to improve performance and resource utilization.
+PgDoorman sits between your applications and PostgreSQL. To the application it looks like a PostgreSQL server (same wire protocol, same `psql` connect string); under the hood it multiplexes many client sessions onto a much smaller set of real backend connections.
 
 ```mermaid
 graph LR
@@ -12,43 +12,42 @@ graph LR
     Pooler --> DB[(PostgreSQL)]
 ```
 
-When an application connects to PgDoorman, it behaves exactly like a PostgreSQL server. Behind the scenes, PgDoorman either creates a new connection to the actual PostgreSQL server or reuses an existing connection from its pool, significantly reducing connection overhead.
+PgDoorman was originally forked from [PgCat](https://github.com/postgresml/pgcat) but has since been rewritten around different goals: prepared statements in transaction mode, multi-threaded shared pools, Patroni integration, and binary upgrades that migrate live sessions. It is now a separate codebase.
 
-## Key Benefits
+## Why a pooler at all
 
-- **Reduced Connection Overhead**: Minimizes the performance impact of establishing new database connections
-- **Resource Optimization**: Limits the number of connections to your PostgreSQL server
-- **Improved Scalability**: Allows more client applications to connect to your database
-- **Connection Management**: Provides tools to monitor and manage database connections
+Each PostgreSQL connection costs the server roughly 10 MB of RAM, a process, and time on every handshake (auth, SCRAM, search_path resolution). Without a pooler, an application that opens N short-lived connections per second pays N×handshake-time. A pooler lets the same N clients reuse a small set of long-lived backend connections, so the handshake cost is paid once per backend instead of once per client.
 
-## Pooling Modes
+Concrete impact:
 
-To maintain proper transaction semantics while providing efficient connection pooling, PgDoorman supports multiple pooling modes:
+- A `pool_size` of 40 typically serves several thousand client sessions for short OLTP transactions.
+- PostgreSQL avoids the per-process memory overhead of the connections it would otherwise have to keep open.
+- Failover, restart, or rolling deployments don't translate into a thundering herd of fresh handshakes.
 
-### Transaction Pooling
+## Pool modes
 
-```admonish success title="Recommended for most use cases"
-In transaction pooling mode, a client is assigned a server connection only for the duration of a transaction. Once the transaction ends, the connection is released back into the pool.
+```admonish success title="Transaction (recommended)"
+The backend connection is held for the duration of one transaction and returned to the pool on `COMMIT` or `ROLLBACK`. This is the mode where pooling actually pays off.
 ```
 
-- **High Efficiency**: Connections are shared between clients, allowing thousands of clients to share a small pool.
-- **Ideal for**: Applications with many short-lived connections or those that don't rely on session state.
-
-### Session Pooling
-
-```admonish info title="Useful for specific legacy needs"
-In session pooling mode, each client is assigned a dedicated server connection for the entire duration of the client connection.
+```admonish info title="Session"
+The backend connection is held for the entire client session and returned only when the client disconnects. Use this for clients that depend on session-scoped state (`SET TIME ZONE` outside a transaction, advisory locks across transactions, `WITH HOLD` cursors).
 ```
 
-- **Exclusive Allocation**: The connection remains exclusively allocated to that client until disconnection.
-- **Support for Session Features**: Ideal for applications that rely on temporary tables or session variables.
+PgDoorman does not implement statement mode. See [Pool Modes](../concepts/pool-modes.md) for the exact contract of each mode and what works in transaction mode that doesn't work in other poolers.
 
-## Administration
+## Operations surface
 
-PgDoorman provides comprehensive tools for monitoring and management:
+- **Admin console** — a PostgreSQL-compatible endpoint for `SHOW POOLS`, `SHOW CLIENTS`, `RELOAD`, `PAUSE`, `UPGRADE`, etc.
+- **Prometheus `/metrics`** — built-in HTTP endpoint with per-pool latency percentiles, prepared-statement counters, fallback state, and TLS metrics.
+- **`pg_doorman -t`** — validate the config without starting the server.
+- **`pg_doorman generate --host …`** — emit a starter config by introspecting an existing PostgreSQL.
 
-- **Admin Console**: A PostgreSQL-compatible interface for viewing statistics and managing the pooler
-- **Configuration Options**: Extensive settings to customize behavior for your specific needs
-- **Monitoring**: Detailed metrics about connection usage and performance
+See [Admin commands](../observability/admin-commands.md) and [Prometheus reference](../reference/prometheus.md).
 
-For detailed information on managing PgDoorman, see the [Admin Console documentation](./basic-usage.md#admin-console).
+## Where to go next
+
+- [Installation](installation.md) — install pg_doorman from packages, source, or Docker.
+- [Basic usage](basic-usage.md) — minimal config, first connection, common gotchas.
+- [Pool Coordinator](../concepts/pool-coordinator.md) — when one database is shared between several user-pools.
+- [Binary upgrade](binary-upgrade.md) — replace the binary in production without dropping live sessions.

@@ -94,11 +94,14 @@ If neither building from source nor distribution packages fit, download a static
 # Replace VERSION and TARGET with the desired values from the releases page.
 curl -L -o pg_doorman \
   "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET"
+curl -L -o pg_doorman.sha256 \
+  "https://github.com/ozontech/pg_doorman/releases/download/VERSION/pg_doorman-TARGET.sha256"
+sha256sum -c pg_doorman.sha256                    # must print "OK"
 chmod +x pg_doorman
 sudo mv pg_doorman /usr/local/bin/
 ```
 
-Verify the SHA-256 published with the release before deploying.
+Skipping the checksum step means trusting the network path between you and `objects.githubusercontent.com`. Don't.
 
 ## Docker (testing only)
 
