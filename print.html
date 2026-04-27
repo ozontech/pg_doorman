@@ -5215,166 +5215,211 @@ You can copy password hashes directly from PostgreSQL: <code>SELECT usename, pas
 <div style="break-before: page; page-break-before: always;"></div><hr />
 <h2 id="title-benchmarks"><a class="header" href="#title-benchmarks">title: Benchmarks</a></h2>
 <h1 id="benchmarks-1"><a class="header" href="#benchmarks-1">Benchmarks</a></h1>
-<p>pg_doorman vs pgbouncer vs odyssey. Each test runs <code>pgbench</code> for 30 seconds through a 40-connection pool.</p>
-<p>Last updated: 2026-04-21 18:54 UTC</p>
+<p>Three connection poolers — pg_doorman, pgbouncer, odyssey — driven
+by <code>pgbench</code> against the same PostgreSQL backend on identical
+hardware. Numbers below are relative throughput against each
+competitor and absolute per-transaction latency.</p>
+<p><em>Last updated: 2026-04-27 12:00 UTC.</em></p>
+<h2 id="tldr"><a class="header" href="#tldr">TL;DR</a></h2>
+<ul>
+<li><strong>vs pgbouncer</strong> — pg_doorman peaks at <strong>x12.0</strong> TPS on prepared protocol, 120 clients.</li>
+<li><strong>vs odyssey</strong> — pg_doorman wins by <strong>+40%</strong> at most (extended protocol, 120 clients).</li>
+<li><strong>Tail spread at 10 000 simple-protocol clients</strong> (<code>p99/p50</code>, lower = more predictable) — pg_doorman 1.1× (59.9→64.5ms), pgbouncer 1.4× (276→387ms), odyssey 11× (17.9→204ms).</li>
+</ul>
 <h3 id="environment"><a class="header" href="#environment">Environment</a></h3>
 <ul>
-<li><strong>Instance</strong>: AWS Fargate (16 vCPU, 32 GB RAM)</li>
-<li><strong>Workers</strong>: pg_doorman: 12, odyssey: 12</li>
-<li><strong>pgbench jobs</strong>: 4 (global override)</li>
-<li><strong>Started</strong>: 2026-04-21 17:31:01 UTC</li>
-<li><strong>Finished</strong>: 2026-04-21 18:54:11 UTC</li>
-<li><strong>Total duration</strong>: 1h 23m 9s</li>
+<li><strong>Provider</strong>: Ubicloud <code>standard-60</code> (eu-central-h1)</li>
+<li><strong>Resources</strong>: 60 vCPU / 235.9 GB</li>
+<li><strong>Kernel</strong>: <code>Linux 5.15.0-139-generic x86_64</code></li>
+<li><strong>Versions</strong>: PostgreSQL 14.22, pg_doorman 3.6.1, pgbouncer 1.25.1, odyssey 1.4.1</li>
+<li><strong>Workers</strong>: pg_doorman: 30, odyssey: 30</li>
+<li><strong>Duration per pgbench run</strong>: 60s</li>
+<li><strong>Started</strong>: 2026-04-27 08:06 UTC</li>
+<li><strong>Finished</strong>: 2026-04-27 11:03 UTC</li>
+<li><strong>Total wall-clock</strong>: 2h 57m 08s</li>
+<li><strong>Commit</strong>: <a href="https://github.com/ozontech/pg_doorman/commit/c9dd765c60605e453d203f93e2d5cfadf2734716"><code>c9dd765c</code></a></li>
 </ul>
+<h3 id="methodology"><a class="header" href="#methodology">Methodology</a></h3>
+<p>Each scenario runs <code>pgbench -T &lt;duration&gt;</code> against a 40-connection
+server-side pool (<code>pool_mode = transaction</code>). The workload is a single
+<code>SELECT :aid</code> (<code>\set aid random(1, 100000)</code>) — pure pooler overhead, no
+real working set. Three poolers, one PostgreSQL backend, identical
+hardware.</p>
+<ul>
+<li><strong>Reconnect</strong> rows use <code>pgbench --connect</code>: a fresh TCP+startup per
+transaction (worst case for login latency).</li>
+<li><strong>SSL</strong> rows set <code>PGSSLMODE=require</code> and a self-signed cert.</li>
+<li>Latency is collected with <code>pgbench --log</code> (per-transaction file);
+percentiles come from those samples, not from <code>pgbench</code> summary stats.</li>
+<li>Scenarios run sequentially with the same data dir and warm OS caches.</li>
+</ul>
+<p>Source: <a href="https://github.com/ozontech/pg_doorman/blob/master/tests/bdd/features/bench.feature"><code>tests/bdd/features/bench.feature</code></a>,
+driver: <a href="https://github.com/ozontech/pg_doorman/blob/master/benches/setup-and-run-bench.sh"><code>benches/setup-and-run-bench.sh</code></a>.</p>
 <h3 id="reading-the-tables"><a class="header" href="#reading-the-tables">Reading the tables</a></h3>
-<p><strong>Throughput</strong> — pg_doorman TPS relative to each competitor:</p>
+<p><strong>Throughput</strong> — <code>pg_doorman_TPS / competitor_TPS</code>, rendered:</p>
 <div class="table-wrapper"><table><thead><tr><th>Value</th><th>Meaning</th></tr></thead><tbody>
-<tr><td>+N%</td><td>Faster by N%</td></tr>
-<tr><td>-N%</td><td>Slower by N%</td></tr>
-<tr><td>≈0%</td><td>Within 3%</td></tr>
-<tr><td>xN</td><td>N times faster or slower</td></tr>
-<tr><td>∞</td><td>Competitor got 0 TPS</td></tr>
-<tr><td>N/A</td><td>Unsupported</td></tr>
-<tr><td>-</td><td>Not tested</td></tr>
+<tr><td>+N% / -N%</td><td>Faster / slower by N percent</td></tr>
+<tr><td>≈0%</td><td>Within 3% — call it a tie</td></tr>
+<tr><td>xN.N</td><td>N times faster (when ratio ≥ 1.5)</td></tr>
+<tr><td>∞</td><td>Competitor returned 0 TPS</td></tr>
+<tr><td>N/A</td><td>Competitor was not measured for this row</td></tr>
+<tr><td>-</td><td>Not measured for either pooler</td></tr>
 </tbody></table>
 </div>
-<p><strong>Latency</strong> — per-transaction latency in ms. Each cell: <code>p50 / p95 / p99</code>. Lower is better.</p>
+<p><strong>Latency</strong> — per-transaction in ms. Each row shows <code>p50 / p99</code> for
+every pooler plus the <strong>spread</strong> (<code>p99 / p50</code>): how far the slowest 1%
+drifts from the median. <code>1.0×</code> means the tail equals the median;
+<code>100×</code> means the worst 1% takes two orders of magnitude longer than a
+typical request — the regime where fanout latency starts hitting users
+(<a href="https://www.barroso.org/publications/TheTailAtScale.pdf">Dean &amp; Barroso, 2013</a>).
+Watch the spread column to see whether tail latency stays bounded as
+the client count grows. Full p95 series ships in the raw
+<code>pgbench --log</code> files in the artifact tarball.</p>
 <hr />
 <h2 id="simple-protocol"><a class="header" href="#simple-protocol">Simple protocol</a></h2>
 <h3 id="throughput"><a class="header" href="#throughput">Throughput</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Test</th><th>vs pgbouncer</th><th>vs odyssey</th></tr></thead><tbody>
-<tr><td>1 client</td><td>-3%</td><td>-9%</td></tr>
-<tr><td>40 clients</td><td>+82%</td><td>-5%</td></tr>
-<tr><td>120 clients</td><td>x2.6</td><td>≈0%</td></tr>
-<tr><td>500 clients</td><td>x2.5</td><td>+6%</td></tr>
-<tr><td>10,000 clients</td><td>x2.7</td><td>+18%</td></tr>
-<tr><td>1 client + Reconnect</td><td>-6%</td><td>x9.0</td></tr>
-<tr><td>40 clients + Reconnect</td><td>+21%</td><td>x2.1</td></tr>
-<tr><td>120 clients + Reconnect</td><td>+19%</td><td>+98%</td></tr>
-<tr><td>500 clients + Reconnect</td><td>+20%</td><td>+97%</td></tr>
-<tr><td>10,000 clients + Reconnect</td><td>+63%</td><td>x2.1</td></tr>
-<tr><td>1 client + SSL</td><td>-8%</td><td>-8%</td></tr>
-<tr><td>40 clients + SSL</td><td>x2.1</td><td>≈0%</td></tr>
-<tr><td>120 clients + SSL</td><td>x3.1</td><td>+6%</td></tr>
-<tr><td>500 clients + SSL</td><td>x3.0</td><td>+11%</td></tr>
-<tr><td>10,000 clients + SSL</td><td>x3.2</td><td>+17%</td></tr>
+<tr><td>1 client</td><td>≈0%</td><td>≈0%</td></tr>
+<tr><td>40 clients</td><td>x2.9</td><td>-46%</td></tr>
+<tr><td>120 clients</td><td>x9.9</td><td>≈0%</td></tr>
+<tr><td>500 clients</td><td>x6.6</td><td>-32%</td></tr>
+<tr><td>10,000 clients</td><td>x4.7</td><td>-34%</td></tr>
+<tr><td>1 client + Reconnect</td><td>-14%</td><td>x2.0</td></tr>
+<tr><td>40 clients + Reconnect</td><td>x1.6</td><td>N/A</td></tr>
+<tr><td>120 clients + Reconnect</td><td>x1.7</td><td>N/A</td></tr>
+<tr><td>500 clients + Reconnect</td><td>x1.7</td><td>N/A</td></tr>
+<tr><td>10,000 clients + Reconnect</td><td>+41%</td><td>N/A</td></tr>
+<tr><td>1 client + SSL</td><td>≈0%</td><td>≈0%</td></tr>
+<tr><td>40 clients + SSL</td><td>x3.1</td><td>-38%</td></tr>
+<tr><td>120 clients + SSL</td><td>x8.5</td><td>-5%</td></tr>
+<tr><td>500 clients + SSL</td><td>x10.6</td><td>+18%</td></tr>
+<tr><td>10,000 clients + SSL</td><td>x7.1</td><td>+12%</td></tr>
+<tr><td>1 client + SSL + Reconnect</td><td>-6%</td><td>x1.6</td></tr>
+<tr><td>40 clients + SSL + Reconnect</td><td>≈0%</td><td>-35%</td></tr>
+<tr><td>120 clients + SSL + Reconnect</td><td>+5%</td><td>-39%</td></tr>
+<tr><td>500 clients + SSL + Reconnect</td><td>+17%</td><td>-28%</td></tr>
+<tr><td>10,000 clients + SSL + Reconnect</td><td>-8%</td><td>-16%</td></tr>
 </tbody></table>
 </div>
-<h3 id="latency--p50--p95--p99-ms"><a class="header" href="#latency--p50--p95--p99-ms">Latency — p50 / p95 / p99 (ms)</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Test</th><th>pg_doorman (ms)</th><th>pgbouncer (ms)</th><th>odyssey (ms)</th></tr></thead><tbody>
-<tr><td>1 client</td><td>0.07 / 0.07 / 0.08</td><td>0.07 / 0.08 / 0.08</td><td>0.06 / 0.07 / 0.07</td></tr>
-<tr><td>40 clients</td><td>0.26 / 0.36 / 0.44</td><td>0.46 / 0.67 / 0.71</td><td>0.22 / 0.42 / 0.57</td></tr>
-<tr><td>120 clients</td><td>0.49 / 1.86 / 3.03</td><td>1.81 / 2.12 / 2.24</td><td>0.54 / 1.33 / 1.84</td></tr>
-<tr><td>500 clients</td><td>3.54 / 5.64 / 6.46</td><td>7.59 / 8.71 / 9.33</td><td>0.99 / 13.19 / 22.41</td></tr>
-<tr><td>10,000 clients</td><td>69.42 / 71.72 / 75.83</td><td>184.39 / 202.56 / 213.44</td><td>2.70 / 326.10 / 570.34</td></tr>
-<tr><td>1 client + Reconnect</td><td>0.06 / 0.08 / 0.09</td><td>0.06 / 0.06 / 0.07</td><td>0.07 / 0.09 / 0.10</td></tr>
-<tr><td>40 clients + Reconnect</td><td>1.07 / 2.19 / 2.52</td><td>1.02 / 2.34 / 11.93</td><td>1.00 / 2.74 / 3.35</td></tr>
-<tr><td>120 clients + Reconnect</td><td>3.36 / 6.33 / 7.62</td><td>3.37 / 7.10 / 31.61</td><td>4.67 / 9.45 / 11.54</td></tr>
-<tr><td>500 clients + Reconnect</td><td>13.77 / 25.15 / 28.86</td><td>13.61 / 30.11 / 125.79</td><td>22.99 / 41.95 / 48.02</td></tr>
-<tr><td>10,000 clients + Reconnect</td><td>295.83 / 515.96 / 559.54</td><td>562.42 / 926.93 / 972.88</td><td>597.47 / 1078.06 / 1365.21</td></tr>
-<tr><td>1 client + SSL</td><td>0.08 / 0.09 / 0.10</td><td>0.08 / 0.08 / 0.09</td><td>0.07 / 0.09 / 0.09</td></tr>
-<tr><td>40 clients + SSL</td><td>0.29 / 0.44 / 0.56</td><td>0.64 / 0.93 / 1.00</td><td>0.27 / 0.51 / 0.67</td></tr>
-<tr><td>120 clients + SSL</td><td>0.59 / 2.32 / 3.93</td><td>2.56 / 2.93 / 3.14</td><td>0.67 / 1.65 / 2.30</td></tr>
-<tr><td>500 clients + SSL</td><td>4.16 / 6.85 / 7.84</td><td>10.89 / 12.64 / 13.55</td><td>1.23 / 16.20 / 27.94</td></tr>
-<tr><td>10,000 clients + SSL</td><td>82.15 / 86.57 / 91.75</td><td>262.65 / 289.09 / 367.39</td><td>4.24 / 387.21 / 753.84</td></tr>
+<h3 id="latency-ms-spread--p99--p50"><a class="header" href="#latency-ms-spread--p99--p50">Latency (ms; spread = p99 / p50)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Test</th><th style="text-align: right">pg_doorman p50/p99</th><th style="text-align: right">spread</th><th style="text-align: right">pgbouncer p50/p99</th><th style="text-align: right">spread</th><th style="text-align: right">odyssey p50/p99</th><th style="text-align: right">spread</th></tr></thead><tbody>
+<tr><td>1 client</td><td style="text-align: right">0.08 / 0.10</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.07 / 0.10</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.07 / 0.12</td><td style="text-align: right">1.7×</td></tr>
+<tr><td>40 clients</td><td style="text-align: right">0.27 / 0.50</td><td style="text-align: right">1.8×</td><td style="text-align: right">0.74 / 1.90</td><td style="text-align: right">2.6×</td><td style="text-align: right">0.12 / 0.30</td><td style="text-align: right">2.5×</td></tr>
+<tr><td>120 clients</td><td style="text-align: right">0.29 / 0.91</td><td style="text-align: right">3.2×</td><td style="text-align: right">2.86 / 6.77</td><td style="text-align: right">2.4×</td><td style="text-align: right">0.24 / 2.07</td><td style="text-align: right">8.8×</td></tr>
+<tr><td>500 clients</td><td style="text-align: right">2.30 / 4.38</td><td style="text-align: right">1.9×</td><td style="text-align: right">12.6 / 27.6</td><td style="text-align: right">2.2×</td><td style="text-align: right">0.82 / 7.87</td><td style="text-align: right">9.5×</td></tr>
+<tr><td>10,000 clients</td><td style="text-align: right">59.9 / 64.5</td><td style="text-align: right">1.1×</td><td style="text-align: right">276 / 387</td><td style="text-align: right">1.4×</td><td style="text-align: right">17.9 / 204</td><td style="text-align: right">11×</td></tr>
+<tr><td>1 client + Reconnect</td><td style="text-align: right">0.14 / 0.23</td><td style="text-align: right">1.6×</td><td style="text-align: right">0.11 / 0.21</td><td style="text-align: right">1.9×</td><td style="text-align: right">0.18 / 0.31</td><td style="text-align: right">1.7×</td></tr>
+<tr><td>40 clients + Reconnect</td><td style="text-align: right">1.26 / 4.10</td><td style="text-align: right">3.2×</td><td style="text-align: right">1.91 / 6.26</td><td style="text-align: right">3.3×</td><td style="text-align: right">1.85 / 5.35</td><td style="text-align: right">2.9×</td></tr>
+<tr><td>120 clients + Reconnect</td><td style="text-align: right">3.83 / 11.1</td><td style="text-align: right">2.9×</td><td style="text-align: right">5.89 / 18.1</td><td style="text-align: right">3.1×</td><td style="text-align: right">5.95 / 16.7</td><td style="text-align: right">2.8×</td></tr>
+<tr><td>500 clients + Reconnect</td><td style="text-align: right">16.3 / 42.9</td><td style="text-align: right">2.6×</td><td style="text-align: right">26.2 / 71.1</td><td style="text-align: right">2.7×</td><td style="text-align: right">25.3 / 65.4</td><td style="text-align: right">2.6×</td></tr>
+<tr><td>10,000 clients + Reconnect</td><td style="text-align: right">369 / 763</td><td style="text-align: right">2.1×</td><td style="text-align: right">524 / 1106</td><td style="text-align: right">2.1×</td><td style="text-align: right">744 / 1519</td><td style="text-align: right">2.0×</td></tr>
+<tr><td>1 client + SSL</td><td style="text-align: right">0.08 / 0.11</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.08 / 0.11</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.08 / 0.12</td><td style="text-align: right">1.6×</td></tr>
+<tr><td>40 clients + SSL</td><td style="text-align: right">0.27 / 0.50</td><td style="text-align: right">1.8×</td><td style="text-align: right">0.87 / 2.16</td><td style="text-align: right">2.5×</td><td style="text-align: right">0.15 / 0.28</td><td style="text-align: right">1.9×</td></tr>
+<tr><td>120 clients + SSL</td><td style="text-align: right">0.42 / 1.16</td><td style="text-align: right">2.7×</td><td style="text-align: right">3.71 / 8.61</td><td style="text-align: right">2.3×</td><td style="text-align: right">0.30 / 2.07</td><td style="text-align: right">7.0×</td></tr>
+<tr><td>500 clients + SSL</td><td style="text-align: right">1.09 / 2.54</td><td style="text-align: right">2.3×</td><td style="text-align: right">17.0 / 34.7</td><td style="text-align: right">2.0×</td><td style="text-align: right">1.04 / 5.42</td><td style="text-align: right">5.2×</td></tr>
+<tr><td>10,000 clients + SSL</td><td style="text-align: right">26.9 / 64.0</td><td style="text-align: right">2.4×</td><td style="text-align: right">369 / 511</td><td style="text-align: right">1.4×</td><td style="text-align: right">29.7 / 82.4</td><td style="text-align: right">2.8×</td></tr>
+<tr><td>1 client + SSL + Reconnect</td><td style="text-align: right">0.23 / 0.36</td><td style="text-align: right">1.6×</td><td style="text-align: right">0.19 / 0.35</td><td style="text-align: right">1.9×</td><td style="text-align: right">0.28 / 0.43</td><td style="text-align: right">1.5×</td></tr>
+<tr><td>40 clients + SSL + Reconnect</td><td style="text-align: right">17.6 / 42.2</td><td style="text-align: right">2.4×</td><td style="text-align: right">16.3 / 53.1</td><td style="text-align: right">3.3×</td><td style="text-align: right">11.4 / 31.7</td><td style="text-align: right">2.8×</td></tr>
+<tr><td>120 clients + SSL + Reconnect</td><td style="text-align: right">57.0 / 130</td><td style="text-align: right">2.3×</td><td style="text-align: right">55.6 / 166</td><td style="text-align: right">3.0×</td><td style="text-align: right">33.9 / 95.7</td><td style="text-align: right">2.8×</td></tr>
+<tr><td>500 clients + SSL + Reconnect</td><td style="text-align: right">212 / 483</td><td style="text-align: right">2.3×</td><td style="text-align: right">237 / 619</td><td style="text-align: right">2.6×</td><td style="text-align: right">150 / 392</td><td style="text-align: right">2.6×</td></tr>
+<tr><td>10,000 clients + SSL + Reconnect</td><td style="text-align: right">5033 / 10055</td><td style="text-align: right">2.0×</td><td style="text-align: right">4052 / 10245</td><td style="text-align: right">2.5×</td><td style="text-align: right">4361 / 8612</td><td style="text-align: right">2.0×</td></tr>
 </tbody></table>
 </div>
 <hr />
 <h2 id="extended-protocol"><a class="header" href="#extended-protocol">Extended protocol</a></h2>
 <h3 id="throughput-1"><a class="header" href="#throughput-1">Throughput</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Test</th><th>vs pgbouncer</th><th>vs odyssey</th></tr></thead><tbody>
-<tr><td>1 client</td><td>+5%</td><td>+40%</td></tr>
-<tr><td>40 clients</td><td>+98%</td><td>+43%</td></tr>
-<tr><td>120 clients</td><td>x2.8</td><td>+60%</td></tr>
-<tr><td>500 clients</td><td>x2.7</td><td>+64%</td></tr>
-<tr><td>10,000 clients</td><td>x2.8</td><td>+74%</td></tr>
-<tr><td>1 client + Reconnect</td><td>-4%</td><td>x3.0</td></tr>
-<tr><td>40 clients + Reconnect</td><td>+20%</td><td>x2.2</td></tr>
-<tr><td>120 clients + Reconnect</td><td>+21%</td><td>+88%</td></tr>
-<tr><td>500 clients + Reconnect</td><td>+21%</td><td>+100%</td></tr>
-<tr><td>10,000 clients + Reconnect</td><td>+61%</td><td>+27%</td></tr>
-<tr><td>1 client + SSL</td><td>+4%</td><td>+36%</td></tr>
-<tr><td>40 clients + SSL</td><td>x2.3</td><td>+48%</td></tr>
-<tr><td>120 clients + SSL</td><td>x3.2</td><td>+65%</td></tr>
-<tr><td>500 clients + SSL</td><td>x3.4</td><td>+69%</td></tr>
-<tr><td>10,000 clients + SSL</td><td>x3.4</td><td>+73%</td></tr>
-<tr><td>1 client + SSL + Reconnect</td><td>+9%</td><td>+13%</td></tr>
-<tr><td>40 clients + SSL + Reconnect</td><td>+96%</td><td>+5%</td></tr>
-<tr><td>120 clients + SSL + Reconnect</td><td>+99%</td><td>+5%</td></tr>
-<tr><td>500 clients + SSL + Reconnect</td><td>x2.0</td><td>+5%</td></tr>
-<tr><td>10,000 clients + SSL + Reconnect</td><td>+93%</td><td>+5%</td></tr>
+<tr><td>1 client</td><td>≈0%</td><td>x1.6</td></tr>
+<tr><td>40 clients</td><td>x3.0</td><td>-21%</td></tr>
+<tr><td>120 clients</td><td>x10.4</td><td>+40%</td></tr>
+<tr><td>500 clients</td><td>x7.4</td><td>+7%</td></tr>
+<tr><td>10,000 clients</td><td>x5.2</td><td>≈0%</td></tr>
+<tr><td>1 client + Reconnect</td><td>-16%</td><td>x1.9</td></tr>
+<tr><td>40 clients + Reconnect</td><td>x1.7</td><td>N/A</td></tr>
+<tr><td>120 clients + Reconnect</td><td>x1.6</td><td>x1.5</td></tr>
+<tr><td>500 clients + Reconnect</td><td>x1.7</td><td>N/A</td></tr>
+<tr><td>10,000 clients + Reconnect</td><td>+41%</td><td>x2.2</td></tr>
+<tr><td>1 client + SSL</td><td>≈0%</td><td>+49%</td></tr>
+<tr><td>40 clients + SSL</td><td>x3.3</td><td>-13%</td></tr>
+<tr><td>120 clients + SSL</td><td>x9.4</td><td>+50%</td></tr>
+<tr><td>500 clients + SSL</td><td>x10.4</td><td>x1.7</td></tr>
+<tr><td>10,000 clients + SSL</td><td>x7.1</td><td>+25%</td></tr>
 </tbody></table>
 </div>
-<h3 id="latency--p50--p95--p99-ms-1"><a class="header" href="#latency--p50--p95--p99-ms-1">Latency — p50 / p95 / p99 (ms)</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Test</th><th>pg_doorman (ms)</th><th>pgbouncer (ms)</th><th>odyssey (ms)</th></tr></thead><tbody>
-<tr><td>1 client</td><td>0.07 / 0.07 / 0.08</td><td>0.07 / 0.08 / 0.08</td><td>0.09 / 0.10 / 0.11</td></tr>
-<tr><td>40 clients</td><td>0.25 / 0.35 / 0.43</td><td>0.48 / 0.72 / 0.76</td><td>0.32 / 0.62 / 0.84</td></tr>
-<tr><td>120 clients</td><td>0.47 / 1.82 / 2.99</td><td>1.87 / 2.27 / 2.39</td><td>0.83 / 2.33 / 3.48</td></tr>
-<tr><td>500 clients</td><td>3.45 / 5.48 / 6.26</td><td>7.77 / 9.35 / 9.69</td><td>1.31 / 18.35 / 31.99</td></tr>
-<tr><td>10,000 clients</td><td>67.94 / 70.05 / 72.43</td><td>188.62 / 206.44 / 218.36</td><td>3.74 / 468.64 / 810.47</td></tr>
-<tr><td>1 client + Reconnect</td><td>0.07 / 0.08 / 0.08</td><td>0.06 / 0.08 / 0.09</td><td>0.10 / 0.12 / 0.13</td></tr>
-<tr><td>40 clients + Reconnect</td><td>1.08 / 2.21 / 2.55</td><td>1.03 / 2.40 / 11.13</td><td>0.92 / 2.77 / 3.66</td></tr>
-<tr><td>120 clients + Reconnect</td><td>3.27 / 6.20 / 7.44</td><td>3.23 / 7.11 / 33.54</td><td>4.61 / 9.52 / 11.37</td></tr>
-<tr><td>500 clients + Reconnect</td><td>13.83 / 25.40 / 29.12</td><td>13.80 / 30.20 / 118.88</td><td>23.89 / 43.77 / 67.05</td></tr>
-<tr><td>10,000 clients + Reconnect</td><td>298.47 / 519.98 / 573.71</td><td>569.79 / 921.35 / 966.33</td><td>549.71 / 1052.37 / 1402.38</td></tr>
-<tr><td>1 client + SSL</td><td>0.08 / 0.09 / 0.09</td><td>0.08 / 0.10 / 0.10</td><td>0.11 / 0.12 / 0.13</td></tr>
-<tr><td>40 clients + SSL</td><td>0.29 / 0.44 / 0.59</td><td>0.67 / 0.99 / 1.07</td><td>0.39 / 0.80 / 1.08</td></tr>
-<tr><td>120 clients + SSL</td><td>0.56 / 2.31 / 3.90</td><td>2.62 / 3.06 / 3.24</td><td>1.07 / 2.90 / 4.35</td></tr>
-<tr><td>500 clients + SSL</td><td>4.16 / 6.87 / 7.88</td><td>12.30 / 14.21 / 15.64</td><td>1.71 / 22.66 / 38.83</td></tr>
-<tr><td>10,000 clients + SSL</td><td>81.93 / 86.01 / 89.18</td><td>280.73 / 308.19 / 385.99</td><td>139.94 / 557.71 / 844.51</td></tr>
-<tr><td>1 client + SSL + Reconnect</td><td>0.10 / 0.12 / 0.13</td><td>0.08 / 0.10 / 0.11</td><td>0.09 / 0.12 / 0.12</td></tr>
-<tr><td>40 clients + SSL + Reconnect</td><td>12.31 / 23.03 / 25.02</td><td>24.07 / 44.29 / 46.70</td><td>12.99 / 24.30 / 26.07</td></tr>
-<tr><td>120 clients + SSL + Reconnect</td><td>37.28 / 69.57 / 76.18</td><td>73.98 / 137.78 / 147.32</td><td>39.21 / 72.80 / 79.97</td></tr>
-<tr><td>500 clients + SSL + Reconnect</td><td>157.07 / 292.82 / 319.41</td><td>311.77 / 593.21 / 673.84</td><td>165.06 / 306.22 / 336.63</td></tr>
-<tr><td>10,000 clients + SSL + Reconnect</td><td>2954.51 / 5951.58 / 6556.46</td><td>5078.21 / 11531.36 / 12358.70</td><td>3096.16 / 6192.08 / 6844.73</td></tr>
+<h3 id="latency-ms-spread--p99--p50-1"><a class="header" href="#latency-ms-spread--p99--p50-1">Latency (ms; spread = p99 / p50)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Test</th><th style="text-align: right">pg_doorman p50/p99</th><th style="text-align: right">spread</th><th style="text-align: right">pgbouncer p50/p99</th><th style="text-align: right">spread</th><th style="text-align: right">odyssey p50/p99</th><th style="text-align: right">spread</th></tr></thead><tbody>
+<tr><td>1 client</td><td style="text-align: right">0.07 / 0.11</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.07 / 0.10</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.11 / 0.18</td><td style="text-align: right">1.6×</td></tr>
+<tr><td>40 clients</td><td style="text-align: right">0.27 / 0.48</td><td style="text-align: right">1.8×</td><td style="text-align: right">0.76 / 1.90</td><td style="text-align: right">2.5×</td><td style="text-align: right">0.18 / 0.48</td><td style="text-align: right">2.7×</td></tr>
+<tr><td>120 clients</td><td style="text-align: right">0.28 / 0.89</td><td style="text-align: right">3.2×</td><td style="text-align: right">3.06 / 6.87</td><td style="text-align: right">2.2×</td><td style="text-align: right">0.35 / 3.52</td><td style="text-align: right">10×</td></tr>
+<tr><td>500 clients</td><td style="text-align: right">2.08 / 3.98</td><td style="text-align: right">1.9×</td><td style="text-align: right">12.8 / 27.7</td><td style="text-align: right">2.2×</td><td style="text-align: right">1.55 / 13.2</td><td style="text-align: right">8.5×</td></tr>
+<tr><td>10,000 clients</td><td style="text-align: right">55.4 / 60.3</td><td style="text-align: right">1.1×</td><td style="text-align: right">288 / 387</td><td style="text-align: right">1.3×</td><td style="text-align: right">52.2 / 326</td><td style="text-align: right">6.2×</td></tr>
+<tr><td>1 client + Reconnect</td><td style="text-align: right">0.14 / 0.22</td><td style="text-align: right">1.6×</td><td style="text-align: right">0.12 / 0.22</td><td style="text-align: right">1.8×</td><td style="text-align: right">0.24 / 0.41</td><td style="text-align: right">1.7×</td></tr>
+<tr><td>40 clients + Reconnect</td><td style="text-align: right">1.25 / 4.02</td><td style="text-align: right">3.2×</td><td style="text-align: right">1.96 / 6.44</td><td style="text-align: right">3.3×</td><td style="text-align: right">1.85 / 5.48</td><td style="text-align: right">3.0×</td></tr>
+<tr><td>120 clients + Reconnect</td><td style="text-align: right">3.81 / 11.1</td><td style="text-align: right">2.9×</td><td style="text-align: right">5.62 / 17.8</td><td style="text-align: right">3.2×</td><td style="text-align: right">5.74 / 15.7</td><td style="text-align: right">2.7×</td></tr>
+<tr><td>500 clients + Reconnect</td><td style="text-align: right">16.5 / 44.6</td><td style="text-align: right">2.7×</td><td style="text-align: right">26.5 / 72.3</td><td style="text-align: right">2.7×</td><td style="text-align: right">27.1 / 72.2</td><td style="text-align: right">2.7×</td></tr>
+<tr><td>10,000 clients + Reconnect</td><td style="text-align: right">368 / 764</td><td style="text-align: right">2.1×</td><td style="text-align: right">511 / 1139</td><td style="text-align: right">2.2×</td><td style="text-align: right">816 / 1657</td><td style="text-align: right">2.0×</td></tr>
+<tr><td>1 client + SSL</td><td style="text-align: right">0.09 / 0.11</td><td style="text-align: right">1.2×</td><td style="text-align: right">0.08 / 0.12</td><td style="text-align: right">1.5×</td><td style="text-align: right">0.12 / 0.20</td><td style="text-align: right">1.7×</td></tr>
+<tr><td>40 clients + SSL</td><td style="text-align: right">0.27 / 0.49</td><td style="text-align: right">1.8×</td><td style="text-align: right">0.91 / 2.20</td><td style="text-align: right">2.4×</td><td style="text-align: right">0.23 / 0.37</td><td style="text-align: right">1.6×</td></tr>
+<tr><td>120 clients + SSL</td><td style="text-align: right">0.38 / 1.05</td><td style="text-align: right">2.8×</td><td style="text-align: right">3.68 / 8.69</td><td style="text-align: right">2.4×</td><td style="text-align: right">0.57 / 2.62</td><td style="text-align: right">4.6×</td></tr>
+<tr><td>500 clients + SSL</td><td style="text-align: right">1.01 / 2.65</td><td style="text-align: right">2.6×</td><td style="text-align: right">17.6 / 36.1</td><td style="text-align: right">2.1×</td><td style="text-align: right">2.29 / 7.34</td><td style="text-align: right">3.2×</td></tr>
+<tr><td>10,000 clients + SSL</td><td style="text-align: right">27.7 / 65.9</td><td style="text-align: right">2.4×</td><td style="text-align: right">384 / 521</td><td style="text-align: right">1.4×</td><td style="text-align: right">49.2 / 152</td><td style="text-align: right">3.1×</td></tr>
 </tbody></table>
 </div>
 <hr />
 <h2 id="prepared-protocol"><a class="header" href="#prepared-protocol">Prepared protocol</a></h2>
 <h3 id="throughput-2"><a class="header" href="#throughput-2">Throughput</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Test</th><th>vs pgbouncer</th><th>vs odyssey</th></tr></thead><tbody>
-<tr><td>1 client</td><td>-4%</td><td>-8%</td></tr>
-<tr><td>40 clients</td><td>x2.4</td><td>-7%</td></tr>
-<tr><td>120 clients</td><td>x3.5</td><td>≈0%</td></tr>
-<tr><td>500 clients</td><td>x3.3</td><td>+8%</td></tr>
-<tr><td>10,000 clients</td><td>x3.1</td><td>+16%</td></tr>
-<tr><td>1 client + Reconnect</td><td>≈0%</td><td>∞</td></tr>
-<tr><td>40 clients + Reconnect</td><td>≈0%</td><td>∞</td></tr>
-<tr><td>120 clients + Reconnect</td><td>≈0%</td><td>∞</td></tr>
-<tr><td>500 clients + Reconnect</td><td>+4%</td><td>∞</td></tr>
-<tr><td>10,000 clients + Reconnect</td><td>+25%</td><td>∞</td></tr>
-<tr><td>1 client + SSL</td><td>-4%</td><td>-5%</td></tr>
-<tr><td>40 clients + SSL</td><td>x2.7</td><td>≈0%</td></tr>
-<tr><td>120 clients + SSL</td><td>x3.8</td><td>+6%</td></tr>
-<tr><td>500 clients + SSL</td><td>x3.7</td><td>+11%</td></tr>
-<tr><td>10,000 clients + SSL</td><td>x3.9</td><td>+15%</td></tr>
+<tr><td>1 client</td><td>≈0%</td><td>≈0%</td></tr>
+<tr><td>40 clients</td><td>x3.4</td><td>-49%</td></tr>
+<tr><td>120 clients</td><td>x12.0</td><td>≈0%</td></tr>
+<tr><td>500 clients</td><td>x8.5</td><td>-29%</td></tr>
+<tr><td>10,000 clients</td><td>x6.2</td><td>-32%</td></tr>
+<tr><td>1 client + Reconnect</td><td>-9%</td><td>x2.1</td></tr>
+<tr><td>40 clients + Reconnect</td><td>x1.6</td><td>+48%</td></tr>
+<tr><td>120 clients + Reconnect</td><td>x1.7</td><td>N/A</td></tr>
+<tr><td>500 clients + Reconnect</td><td>x1.8</td><td>N/A</td></tr>
+<tr><td>10,000 clients + Reconnect</td><td>+40%</td><td>x2.1</td></tr>
+<tr><td>1 client + SSL</td><td>+3%</td><td>≈0%</td></tr>
+<tr><td>40 clients + SSL</td><td>x3.8</td><td>-36%</td></tr>
+<tr><td>120 clients + SSL</td><td>x10.0</td><td>≈0%</td></tr>
+<tr><td>500 clients + SSL</td><td>x12.7</td><td>+19%</td></tr>
+<tr><td>10,000 clients + SSL</td><td>x8.6</td><td>+12%</td></tr>
 </tbody></table>
 </div>
-<h3 id="latency--p50--p95--p99-ms-2"><a class="header" href="#latency--p50--p95--p99-ms-2">Latency — p50 / p95 / p99 (ms)</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Test</th><th>pg_doorman (ms)</th><th>pgbouncer (ms)</th><th>odyssey (ms)</th></tr></thead><tbody>
-<tr><td>1 client</td><td>0.06 / 0.07 / 0.07</td><td>0.06 / 0.07 / 0.07</td><td>0.06 / 0.07 / 0.07</td></tr>
-<tr><td>40 clients</td><td>0.24 / 0.34 / 0.42</td><td>0.60 / 0.88 / 0.91</td><td>0.20 / 0.40 / 0.53</td></tr>
-<tr><td>120 clients</td><td>0.47 / 1.72 / 2.79</td><td>2.25 / 2.60 / 2.69</td><td>0.51 / 1.27 / 1.79</td></tr>
-<tr><td>500 clients</td><td>3.31 / 5.28 / 6.04</td><td>9.35 / 10.58 / 11.20</td><td>0.90 / 12.75 / 21.56</td></tr>
-<tr><td>10,000 clients</td><td>66.31 / 69.32 / 72.46</td><td>205.26 / 221.39 / 243.49</td><td>2.76 / 306.09 / 534.07</td></tr>
-<tr><td>1 client + Reconnect</td><td>0.11 / 0.13 / 0.14</td><td>0.10 / 0.12 / 0.13</td><td>0.15 / 0.18 / 0.19</td></tr>
-<tr><td>40 clients + Reconnect</td><td>1.56 / 3.01 / 3.33</td><td>1.59 / 2.95 / 3.31</td><td>1.86 / 3.56 / 4.61</td></tr>
-<tr><td>120 clients + Reconnect</td><td>4.49 / 8.39 / 9.73</td><td>4.60 / 8.55 / 9.72</td><td>6.76 / 83.39 / 88.89</td></tr>
-<tr><td>500 clients + Reconnect</td><td>18.64 / 34.07 / 37.72</td><td>19.43 / 35.46 / 39.86</td><td>24.27 / 197.01 / 297.22</td></tr>
-<tr><td>10,000 clients + Reconnect</td><td>396.39 / 710.66 / 769.05</td><td>483.59 / 927.03 / 1000.58</td><td>483.21 / 1256.91 / 1563.08</td></tr>
-<tr><td>1 client + SSL</td><td>0.08 / 0.09 / 0.09</td><td>0.07 / 0.08 / 0.09</td><td>0.07 / 0.08 / 0.09</td></tr>
-<tr><td>40 clients + SSL</td><td>0.28 / 0.42 / 0.57</td><td>0.80 / 1.15 / 1.24</td><td>0.24 / 0.48 / 0.65</td></tr>
-<tr><td>120 clients + SSL</td><td>0.56 / 2.19 / 3.67</td><td>3.00 / 3.27 / 3.49</td><td>0.63 / 1.60 / 2.27</td></tr>
-<tr><td>500 clients + SSL</td><td>3.95 / 6.56 / 7.51</td><td>12.70 / 13.91 / 15.23</td><td>1.10 / 15.54 / 26.49</td></tr>
-<tr><td>10,000 clients + SSL</td><td>79.24 / 84.27 / 88.85</td><td>308.74 / 326.58 / 488.80</td><td>5.17 / 364.12 / 633.46</td></tr>
+<h3 id="latency-ms-spread--p99--p50-2"><a class="header" href="#latency-ms-spread--p99--p50-2">Latency (ms; spread = p99 / p50)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Test</th><th style="text-align: right">pg_doorman p50/p99</th><th style="text-align: right">spread</th><th style="text-align: right">pgbouncer p50/p99</th><th style="text-align: right">spread</th><th style="text-align: right">odyssey p50/p99</th><th style="text-align: right">spread</th></tr></thead><tbody>
+<tr><td>1 client</td><td style="text-align: right">0.07 / 0.10</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.07 / 0.10</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.07 / 0.11</td><td style="text-align: right">1.6×</td></tr>
+<tr><td>40 clients</td><td style="text-align: right">0.27 / 0.49</td><td style="text-align: right">1.8×</td><td style="text-align: right">0.90 / 2.23</td><td style="text-align: right">2.5×</td><td style="text-align: right">0.12 / 0.26</td><td style="text-align: right">2.2×</td></tr>
+<tr><td>120 clients</td><td style="text-align: right">0.30 / 0.94</td><td style="text-align: right">3.2×</td><td style="text-align: right">3.82 / 8.20</td><td style="text-align: right">2.1×</td><td style="text-align: right">0.23 / 1.48</td><td style="text-align: right">6.3×</td></tr>
+<tr><td>500 clients</td><td style="text-align: right">2.21 / 4.23</td><td style="text-align: right">1.9×</td><td style="text-align: right">16.5 / 33.0</td><td style="text-align: right">2.0×</td><td style="text-align: right">0.81 / 6.93</td><td style="text-align: right">8.6×</td></tr>
+<tr><td>10,000 clients</td><td style="text-align: right">57.5 / 62.9</td><td style="text-align: right">1.1×</td><td style="text-align: right">353 / 465</td><td style="text-align: right">1.3×</td><td style="text-align: right">17.5 / 205</td><td style="text-align: right">12×</td></tr>
+<tr><td>1 client + Reconnect</td><td style="text-align: right">0.20 / 0.33</td><td style="text-align: right">1.6×</td><td style="text-align: right">0.20 / 0.33</td><td style="text-align: right">1.7×</td><td style="text-align: right">0.37 / 0.61</td><td style="text-align: right">1.6×</td></tr>
+<tr><td>40 clients + Reconnect</td><td style="text-align: right">1.84 / 5.20</td><td style="text-align: right">2.8×</td><td style="text-align: right">2.67 / 8.54</td><td style="text-align: right">3.2×</td><td style="text-align: right">2.73 / 7.35</td><td style="text-align: right">2.7×</td></tr>
+<tr><td>120 clients + Reconnect</td><td style="text-align: right">5.25 / 14.6</td><td style="text-align: right">2.8×</td><td style="text-align: right">8.11 / 25.0</td><td style="text-align: right">3.1×</td><td style="text-align: right">7.72 / 21.6</td><td style="text-align: right">2.8×</td></tr>
+<tr><td>500 clients + Reconnect</td><td style="text-align: right">21.6 / 58.4</td><td style="text-align: right">2.7×</td><td style="text-align: right">38.0 / 101</td><td style="text-align: right">2.7×</td><td style="text-align: right">33.3 / 82.8</td><td style="text-align: right">2.5×</td></tr>
+<tr><td>10,000 clients + Reconnect</td><td style="text-align: right">485 / 1031</td><td style="text-align: right">2.1×</td><td style="text-align: right">672 / 1421</td><td style="text-align: right">2.1×</td><td style="text-align: right">1026 / 2214</td><td style="text-align: right">2.2×</td></tr>
+<tr><td>1 client + SSL</td><td style="text-align: right">0.08 / 0.12</td><td style="text-align: right">1.4×</td><td style="text-align: right">0.08 / 0.12</td><td style="text-align: right">1.5×</td><td style="text-align: right">0.08 / 0.13</td><td style="text-align: right">1.7×</td></tr>
+<tr><td>40 clients + SSL</td><td style="text-align: right">0.26 / 0.48</td><td style="text-align: right">1.8×</td><td style="text-align: right">1.02 / 2.59</td><td style="text-align: right">2.5×</td><td style="text-align: right">0.15 / 0.27</td><td style="text-align: right">1.8×</td></tr>
+<tr><td>120 clients + SSL</td><td style="text-align: right">0.42 / 1.16</td><td style="text-align: right">2.8×</td><td style="text-align: right">4.44 / 9.74</td><td style="text-align: right">2.2×</td><td style="text-align: right">0.28 / 1.15</td><td style="text-align: right">4.0×</td></tr>
+<tr><td>500 clients + SSL</td><td style="text-align: right">1.08 / 2.60</td><td style="text-align: right">2.4×</td><td style="text-align: right">21.5 / 41.0</td><td style="text-align: right">1.9×</td><td style="text-align: right">1.06 / 5.35</td><td style="text-align: right">5.0×</td></tr>
+<tr><td>10,000 clients + SSL</td><td style="text-align: right">27.1 / 58.3</td><td style="text-align: right">2.1×</td><td style="text-align: right">463 / 609</td><td style="text-align: right">1.3×</td><td style="text-align: right">29.8 / 86.2</td><td style="text-align: right">2.9×</td></tr>
 </tbody></table>
 </div>
 <hr />
-<h3 id="notes"><a class="header" href="#notes">Notes</a></h3>
+<h3 id="caveats-7"><a class="header" href="#caveats-7">Caveats</a></h3>
 <ul>
-<li>Odyssey performs poorly with extended query protocol in transaction pooling mode</li>
-<li>Throughput values are relative ratios — comparable across runs on identical hardware</li>
-<li>Latency values are absolute, measured per-transaction</li>
+<li>30 s per run is short by <code>pgbench</code> standards (the docs recommend
+minutes); expect ±5% variance between runs. Re-run for production
+decisions.</li>
+<li>Single PostgreSQL backend, no replicas, no real working set — these
+numbers measure pooler overhead, not full-system throughput.</li>
+<li>All three poolers use vendor defaults plus <code>pool_size = 40</code>.
+Tuning specific knobs (<code>pgbouncer so_reuseport</code>, <code>odyssey workers</code>)
+will move the curves.</li>
+<li><code>Reconnect</code> is the worst-case login-latency scenario; the headline
+numbers in production rarely look like the Reconnect rows.</li>
+<li>Workload is a 1-row <code>SELECT</code>. Read-heavy OLTP, OLAP, or <code>LISTEN</code>/
+<code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
 <h3 id="362-apr-27-2026"><a class="header" href="#362-apr-27-2026">3.6.2 <small>Apr 27, 2026</small></a></h3>
