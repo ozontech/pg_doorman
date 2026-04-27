@@ -217,6 +217,17 @@ jobs:
             echo "got_tarball=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Delete VM
+        if: always() && steps.create_vm.outputs.vm_name != ''
+        env:
+          VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
+        run: |
+          # Tear down as soon as the tarball is on the runner — parse and
+          # upload-artifact run on the runner-local file and don't need the
+          # bench host alive. `ubi vm destroy` reads the VM name from stdin
+          # as a confirmation; no --yes flag exists in 1.1.0.
+          echo "$VM_NAME" | ubi vm "$UBI_LOCATION/$VM_NAME" destroy || true
+
       - name: Parse logs into benchmarks.md
         if: steps.download.outputs.got_tarball == 'true'
         run: |
@@ -234,16 +245,6 @@ jobs:
           name: ubicloud-bench-${{ github.run_number }}
           path: artifacts/
           retention-days: 30
-
-      - name: Delete VM
-        if: always() && steps.create_vm.outputs.vm_name != ''
-        env:
-          VM_NAME: ${{ steps.create_vm.outputs.vm_name }}
-        run: |
-          # `ubi vm destroy` reads the VM name from stdin as a confirmation.
-          # No --yes flag exists (1.1.0); piping the name in is the official
-          # non-interactive form.
-          echo "$VM_NAME" | ubi vm "$UBI_LOCATION/$VM_NAME" destroy || true
 
       - name: Create Pull Request with results
         if: steps.download.outputs.got_tarball == 'true' && inputs.create_pr

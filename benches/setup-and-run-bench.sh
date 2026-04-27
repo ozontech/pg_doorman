@@ -79,7 +79,7 @@ EOF
     "postgresql-$PG_VERSION" "postgresql-contrib-$PG_VERSION" \
     pgbouncer postgresql-client \
     build-essential pkg-config libssl-dev libpq-dev cmake git \
-    netcat-openbsd openssl jq runit
+    netcat-openbsd openssl jq runit pigz
   # The Ubuntu/PGDG packages auto-start postgres on 5432 and pgbouncer on
   # 6432 — exactly the ports our runit instances want to claim. Without
   # disabling them, our pg_doorman silently loses 6432 to the system
@@ -168,6 +168,10 @@ EOF
 host = "127.0.0.1"
 port = $DOORMAN_PORT
 worker_threads = $DOORMAN_WORKERS
+# Pin every tokio worker to its own CPU starting from core 1 (core 0 is left
+# for postgres + pgbench + the system). Skipped at runtime when the host has
+# fewer than three cores; Ubicloud standard-* always have enough.
+worker_cpu_affinity_pinning = true
 pg_hba = {path = "/tmp/doorman.hba"}
 admin_username = "admin"
 admin_password = "admin"
@@ -351,7 +355,10 @@ cleanup() {
     [[ -f "$f" ]] && cp -f "$f" "$RESULTS_DIR/" 2>/dev/null || true
   done
   if [[ -d "$RESULTS_DIR" ]]; then
-    tar czf "$RESULTS_TARBALL" -C /tmp bench-results 2>/dev/null || true
+    # On the failure path raw pgbench --log files are still here; pigz keeps
+    # the postmortem tarball from blocking wrap-up for tens of minutes.
+    tar -I "pigz -p $(nproc) -1" -cf "$RESULTS_TARBALL" \
+      -C /tmp bench-results 2>/dev/null || true
   fi
 }
 
@@ -493,8 +500,15 @@ main() {
   run_all_pgbench
   write_metadata
 
+  # Summarize per-transaction latencies on the VM so the workflow only ships
+  # tens of KB of JSON instead of gigabytes of raw pgbench --log ASCII.
+  log "Computing latency percentiles from raw pgbench logs"
+  python3 "$WORKSPACE/benches/compute_percentiles.py" "$RESULTS_DIR"
+  log "Dropping raw pgbench --log files (percentiles already computed)"
+  rm -f "$RESULTS_DIR"/*_pgbenchlog.*
+
   log "Packing $RESULTS_TARBALL"
-  tar czf "$RESULTS_TARBALL" -C /tmp bench-results
+  tar -I "pigz -p $(nproc) -1" -cf "$RESULTS_TARBALL" -C /tmp bench-results
   ls -lh "$RESULTS_TARBALL"
   log "DONE"
 }

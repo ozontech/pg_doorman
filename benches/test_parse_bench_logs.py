@@ -5,6 +5,8 @@ or: python3 benches/test_parse_bench_logs.py
 """
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -296,6 +298,48 @@ class ServiceLogFiltering(unittest.TestCase):
     def test_pooler_logs_in_blocklist(self):
         for name in ("doorman", "odyssey", "pgbouncer", "pg"):
             self.assertIn(name, P.SERVICE_LOG_NAMES)
+
+
+class ParseTestPercentilesSource(unittest.TestCase):
+    """parse_test prefers <name>_percentiles.json (written on the bench host
+    by compute_percentiles.py) over raw pgbench --log files."""
+
+    def test_uses_percentiles_json_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "alpha.log").write_text(
+                "tps = 1000\nlatency average = 5.0\n"
+            )
+            (d / "alpha_percentiles.json").write_text(json.dumps({
+                "samples": 42, "p50_ms": 1.5, "p95_ms": 4.0, "p99_ms": 8.0,
+            }))
+            # A stale raw log next to the JSON must not influence the result.
+            (d / "alpha_pgbenchlog.1").write_text("0 1 999999\n")
+            rec = P.parse_test("alpha", d)
+            self.assertEqual(rec["tps"], 1000.0)
+            self.assertEqual(rec["lat_avg_ms"], 5.0)
+            self.assertEqual(rec["samples"], 42)
+            self.assertEqual(rec["p50_ms"], 1.5)
+            self.assertEqual(rec["p95_ms"], 4.0)
+            self.assertEqual(rec["p99_ms"], 8.0)
+
+    def test_falls_back_to_raw_logs_when_json_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "alpha.log").write_text("tps = 100\n")
+            (d / "alpha_pgbenchlog.1").write_text("0 1 1000\n0 2 2000\n")
+            rec = P.parse_test("alpha", d)
+            self.assertEqual(rec["samples"], 2)
+            # n=2, p99: idx = ceil(2*0.99)-1 = 1 → 2000 µs → 2.0 ms
+            self.assertEqual(rec["p99_ms"], 2.0)
+
+    def test_no_data_at_all_yields_none_percentiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "alpha.log").write_text("tps = 0\n")
+            rec = P.parse_test("alpha", d)
+            self.assertIsNone(rec["p50_ms"])
+            self.assertEqual(rec["samples"], 0)
 
 
 if __name__ == "__main__":
