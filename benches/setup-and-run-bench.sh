@@ -396,26 +396,58 @@ run_all_pgbench() {
 }
 
 write_metadata() {
-  cat > "$RESULTS_DIR/metadata.json" <<EOF
-{
-  "host": "$(hostname)",
-  "kernel": "$(uname -srm)",
-  "vcpus": $(nproc),
-  "memory_kb": $(awk '/MemTotal/ {print $2}' /proc/meminfo),
-  "started_at": "$(date -u +%FT%TZ)",
-  "doorman_workers": $DOORMAN_WORKERS,
-  "odyssey_workers": $ODYSSEY_WORKERS,
-  "duration_per_run_sec": $BENCH_DURATION,
-  "pgbench_jobs": {
-    "c1": $PGBENCH_JOBS_C1,
-    "c40": $PGBENCH_JOBS_C40,
-    "c120": $PGBENCH_JOBS_C120,
-    "c500": $PGBENCH_JOBS_C500,
-    "c10000": $PGBENCH_JOBS_C10000
-  },
-  "git_sha": "$(cd "$WORKSPACE" && git rev-parse HEAD 2>/dev/null || echo unknown)"
-}
-EOF
+  # `git archive` strips .git, so the bench can't run `git rev-parse` itself —
+  # the workflow forwards the SHA via BENCH_GIT_SHA. BENCH_VM_SIZE is also
+  # set by the workflow because the script can't otherwise know which Ubicloud
+  # SKU it landed on (or even that it's on Ubicloud at all).
+  local git_sha="${BENCH_GIT_SHA:-unknown}"
+  local vm_size="${BENCH_VM_SIZE:-unknown}"
+  local pg_version
+  pg_version=$("$PGBIN/postgres" --version 2>/dev/null | awk '{print $3}')
+  local pgbouncer_version
+  pgbouncer_version=$(pgbouncer -V 2>/dev/null | head -1 | awk '{print $2}')
+  local odyssey_version="1.4.1"  # pinned in build_odyssey()
+  local doorman_version
+  doorman_version=$(/usr/local/bin/pg_doorman --version 2>/dev/null | awk '{print $NF}')
+
+  jq -n \
+    --arg vm_size "$vm_size" \
+    --arg kernel "$(uname -srm)" \
+    --argjson vcpus "$(nproc)" \
+    --argjson memory_kb "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" \
+    --arg started_at "$(date -u +%FT%TZ)" \
+    --argjson doorman_workers "$DOORMAN_WORKERS" \
+    --argjson odyssey_workers "$ODYSSEY_WORKERS" \
+    --argjson duration "$BENCH_DURATION" \
+    --argjson c1 "$PGBENCH_JOBS_C1" \
+    --argjson c40 "$PGBENCH_JOBS_C40" \
+    --argjson c120 "$PGBENCH_JOBS_C120" \
+    --argjson c500 "$PGBENCH_JOBS_C500" \
+    --argjson c10000 "$PGBENCH_JOBS_C10000" \
+    --arg git_sha "$git_sha" \
+    --arg pg_version "${pg_version:-unknown}" \
+    --arg pgbouncer_version "${pgbouncer_version:-unknown}" \
+    --arg odyssey_version "$odyssey_version" \
+    --arg doorman_version "${doorman_version:-unknown}" \
+    '{
+      vm_size: $vm_size,
+      kernel: $kernel,
+      vcpus: $vcpus,
+      memory_kb: $memory_kb,
+      started_at: $started_at,
+      finished_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+      doorman_workers: $doorman_workers,
+      odyssey_workers: $odyssey_workers,
+      duration_per_run_sec: $duration,
+      pgbench_jobs: {c1: $c1, c40: $c40, c120: $c120, c500: $c500, c10000: $c10000},
+      git_sha: $git_sha,
+      versions: {
+        postgres: $pg_version,
+        pgbouncer: $pgbouncer_version,
+        odyssey: $odyssey_version,
+        pg_doorman: $doorman_version
+      }
+    }' > "$RESULTS_DIR/metadata.json"
 }
 
 main() {
