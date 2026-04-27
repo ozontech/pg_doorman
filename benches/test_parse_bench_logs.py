@@ -183,5 +183,70 @@ class ModeAndRowLabels(unittest.TestCase):
         )
 
 
+class FormatDuration(unittest.TestCase):
+    def test_seconds(self):
+        self.assertEqual(P.format_duration(45), "45s")
+
+    def test_minutes(self):
+        self.assertEqual(P.format_duration(90), "1m 30s")
+
+    def test_hours(self):
+        self.assertEqual(P.format_duration(3661), "1h 01m 01s")
+
+
+class ParseIso8601Z(unittest.TestCase):
+    def test_zulu(self):
+        dt = P.parse_iso8601_z("2026-04-27T05:14:44Z")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.year, 2026)
+
+    def test_none(self):
+        self.assertIsNone(P.parse_iso8601_z(None))
+        self.assertIsNone(P.parse_iso8601_z("not-a-date"))
+
+
+class ComputeTldr(unittest.TestCase):
+    def test_speedup_picks_largest_ratio(self):
+        # pg_doorman 5x pgbouncer at 500 clients simple, 2x at 40
+        groups = {
+            ("simple", False, False, 40): {
+                "pg_doorman": {"tps": 200, "p50_ms": 1, "p95_ms": 2, "p99_ms": 3},
+                "pgbouncer": {"tps": 100, "p50_ms": 2, "p95_ms": 4, "p99_ms": 6},
+                "odyssey": {"tps": 180, "p50_ms": 1, "p95_ms": 2, "p99_ms": 4},
+            },
+            ("simple", False, False, 500): {
+                "pg_doorman": {"tps": 500, "p50_ms": 3, "p95_ms": 5, "p99_ms": 8},
+                "pgbouncer": {"tps": 100, "p50_ms": 8, "p95_ms": 15, "p99_ms": 25},
+                "odyssey": {"tps": 480, "p50_ms": 3, "p95_ms": 5, "p99_ms": 9},
+            },
+        }
+        bullets = P.compute_tldr(groups)
+        self.assertTrue(any("x5.0" in b and "vs pgbouncer" in b for b in bullets))
+
+    def test_empty_groups_returns_empty(self):
+        self.assertEqual(P.compute_tldr({}), [])
+
+    def test_skips_ssl_and_connect(self):
+        # Only SSL+Reconnect data — should produce no speedup bullets.
+        groups = {
+            ("simple", True, True, 40): {
+                "pg_doorman": {"tps": 100, "p50_ms": 1, "p95_ms": 2, "p99_ms": 3},
+                "pgbouncer": {"tps": 50, "p50_ms": 2, "p95_ms": 4, "p99_ms": 6},
+            },
+        }
+        bullets = P.compute_tldr(groups)
+        # No vs-pgbouncer headline because steady-state filter excludes ssl/connect.
+        self.assertFalse(any("vs pgbouncer" in b for b in bullets))
+
+
+class ServiceLogFiltering(unittest.TestCase):
+    def test_bench_wrap_in_blocklist(self):
+        self.assertIn("bench-wrap", P.SERVICE_LOG_NAMES)
+
+    def test_pooler_logs_in_blocklist(self):
+        for name in ("doorman", "odyssey", "pgbouncer", "pg"):
+            self.assertIn(name, P.SERVICE_LOG_NAMES)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
