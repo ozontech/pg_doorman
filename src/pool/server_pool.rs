@@ -170,21 +170,13 @@ impl ServerPool {
                             self.address.username, self.address.pool_name,
                         );
                     }
-                    match fallback.get_fallback_target().await {
-                        Ok(target) => {
-                            crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
-                                .with_label_values(&[&self.address.pool_name])
-                                .inc();
-                            return self.create_fallback_connection(target).await;
-                        }
-                        Err(e) => {
+                    match self.create_fallback_connection().await {
+                        Ok(conn) => return Ok(conn),
+                        Err(err) => {
                             warn!(
-                                "[{}@{}] fallback: Patroni API failed during cooldown: {e}",
+                                "[{}@{}] fallback: connection failed during cooldown: {err}",
                                 self.address.username, self.address.pool_name,
                             );
-                            crate::prometheus::PATRONI_API_ERRORS_TOTAL
-                                .with_label_values(&[&self.address.pool_name])
-                                .inc();
                             // Fall through to try the local backend anyway
                         }
                     }
@@ -216,17 +208,22 @@ impl ServerPool {
 
         stats.register(stats.clone());
 
-        let result = Server::startup(
-            &self.address,
-            &self.user,
-            &self.database,
-            self.client_server_map.clone(),
-            stats.clone(),
-            self.cleanup_connections,
-            self.log_client_parameter_status_changes,
-            self.prepared_statement_cache_size,
-            self.application_name.clone(),
-            self.session_mode,
+        let result = startup_with_timeout(
+            self.connect_timeout,
+            &self.address.host,
+            self.address.port,
+            Server::startup(
+                &self.address,
+                &self.user,
+                &self.database,
+                self.client_server_map.clone(),
+                stats.clone(),
+                self.cleanup_connections,
+                self.log_client_parameter_status_changes,
+                self.prepared_statement_cache_size,
+                self.application_name.clone(),
+                self.session_mode,
+            ),
         )
         .await;
 
@@ -266,17 +263,22 @@ impl ServerPool {
                 crate::utils::clock::now(),
             ));
             retry_stats.register(retry_stats.clone());
-            let retry_result = Server::startup(
-                &retry_address,
-                &self.user,
-                &self.database,
-                self.client_server_map.clone(),
-                retry_stats.clone(),
-                self.cleanup_connections,
-                self.log_client_parameter_status_changes,
-                self.prepared_statement_cache_size,
-                self.application_name.clone(),
-                self.session_mode,
+            let retry_result = startup_with_timeout(
+                self.connect_timeout,
+                &retry_address.host,
+                retry_address.port,
+                Server::startup(
+                    &retry_address,
+                    &self.user,
+                    &self.database,
+                    self.client_server_map.clone(),
+                    retry_stats.clone(),
+                    self.cleanup_connections,
+                    self.log_client_parameter_status_changes,
+                    self.prepared_statement_cache_size,
+                    self.application_name.clone(),
+                    self.session_mode,
+                ),
             )
             .await;
             (retry_result, retry_stats)
@@ -299,30 +301,11 @@ impl ServerPool {
                         crate::prometheus::FALLBACK_ACTIVE
                             .with_label_values(&[&self.address.pool_name])
                             .set(1.0);
-                        match fallback.get_fallback_target().await {
-                            Ok(target) => {
-                                info!(
-                                    "[{}@{}] fallback: connecting to {}:{} (original error: {err})",
-                                    self.address.username,
-                                    self.address.pool_name,
-                                    target.host,
-                                    target.port,
-                                );
-                                crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
-                                    .with_label_values(&[&self.address.pool_name])
-                                    .inc();
-                                return self.create_fallback_connection(target).await;
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "[{}@{}] fallback: Patroni API failed: {e}",
-                                    self.address.username, self.address.pool_name,
-                                );
-                                crate::prometheus::PATRONI_API_ERRORS_TOTAL
-                                    .with_label_values(&[&self.address.pool_name])
-                                    .inc();
-                            }
-                        }
+                        info!(
+                            "[{}@{}] fallback: routing through fallback (original error: {err})",
+                            self.address.username, self.address.pool_name,
+                        );
+                        return self.create_fallback_connection().await;
                     }
                 }
                 // Brief backoff on error to avoid hammering a failing server
@@ -337,12 +320,126 @@ impl ServerPool {
         &self.address
     }
 
-    async fn create_fallback_connection(
+    /// Establish a fallback connection by iterating through Patroni-discovered
+    /// candidates. Per-candidate failures (auth error, "database is starting up",
+    /// startup timeout, etc.) mark the candidate unhealthy and proceed to the
+    /// next one; only when every alive candidate refuses does the caller see an
+    /// error. Whitelist hits get one extra round with fresh discovery if their
+    /// single cached host fails.
+    async fn create_fallback_connection(&self) -> Result<Server, Error> {
+        let fallback = match self.fallback_state.as_ref() {
+            Some(fb) => fb,
+            None => {
+                return Err(Error::ConnectError(
+                    "fallback path entered without configured fallback_state".to_string(),
+                ));
+            }
+        };
+
+        let was_whitelisted = fallback.is_whitelisted();
+        match self.run_fallback_round(fallback).await {
+            Ok(conn) => Ok(conn),
+            Err(err) if was_whitelisted => {
+                // The whitelist gave us a single stale candidate that just
+                // failed. Wipe it and rerun with full discovery — bounded to
+                // one extra round so we can never spin forever.
+                fallback.clear_whitelist();
+                self.run_fallback_round(fallback).await.map_err(|e2| {
+                    Error::ConnectError(format!(
+                        "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
+                    ))
+                })
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Run discovery once (or hit the whitelist) and try every alive candidate
+    /// in priority order. Returns the first successful connection; on
+    /// exhaustion returns a `ConnectError` summarising the last failure.
+    async fn run_fallback_round(
         &self,
-        target: super::fallback::FallbackTarget,
+        fallback: &super::fallback::FallbackState,
     ) -> Result<Server, Error> {
+        let targets = match fallback.get_fallback_targets().await {
+            Ok(t) => t,
+            Err(e) => {
+                crate::prometheus::PATRONI_API_ERRORS_TOTAL
+                    .with_label_values(&[&self.address.pool_name])
+                    .inc();
+                warn!(
+                    "[{}@{}] fallback: discovery failed: {e}",
+                    self.address.username, self.address.pool_name,
+                );
+                return Err(Error::ConnectError(format!(
+                    "fallback discovery failed: {e}"
+                )));
+            }
+        };
+        if targets.is_empty() {
+            return Err(Error::ConnectError(
+                "fallback returned no candidates".to_string(),
+            ));
+        }
+
+        let mut last_err: Option<Error> = None;
+        for target in &targets {
+            info!(
+                "[{}@{}] fallback: connecting to {}:{} (role: {:?})",
+                self.address.username,
+                self.address.pool_name,
+                target.host,
+                target.port,
+                target.role,
+            );
+            crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
+                .with_label_values(&[&self.address.pool_name])
+                .inc();
+            match self.try_fallback_target(target).await {
+                Ok(conn) => {
+                    fallback.set_whitelisted(target.host.clone(), target.port, target.role.clone());
+                    return Ok(conn);
+                }
+                Err(err) => {
+                    warn!(
+                        "[{}@{}] fallback: {}:{} rejected ({}), trying next",
+                        self.address.username,
+                        self.address.pool_name,
+                        target.host,
+                        target.port,
+                        err
+                    );
+                    fallback.mark_unhealthy(&target.host, target.port);
+                    last_err = Some(err);
+                }
+            }
+        }
+
+        let last = last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "no candidates available".to_string());
+        Err(Error::ConnectError(format!(
+            "all fallback candidates rejected (last: {last})"
+        )))
+    }
+
+    /// Attempt a single fallback target with optional sslmode=allow TLS retry.
+    /// Returns Ok with a ready Server, or Err mapped from `Server::startup`
+    /// (including `ConnectError` on `startup_with_timeout` deadline).
+    async fn try_fallback_target(
+        &self,
+        target: &super::fallback::FallbackTarget,
+    ) -> Result<Server, Error> {
+        // Use the fallback_connect_timeout for fallback startup deadlines —
+        // the same scale as the TCP-probe and per-candidate cooldown window.
+        let fallback_timeout = self
+            .fallback_state
+            .as_ref()
+            .map(|fb| fb.connect_timeout())
+            .unwrap_or(self.connect_timeout);
+
         let mut fallback_address = self.address.clone();
-        fallback_address.host = target.host;
+        fallback_address.host = target.host.clone();
         fallback_address.port = target.port;
 
         let stats = Arc::new(ServerStats::new(
@@ -351,17 +448,22 @@ impl ServerPool {
         ));
         stats.register(stats.clone());
 
-        let result = Server::startup(
-            &fallback_address,
-            &self.user,
-            &self.database,
-            self.client_server_map.clone(),
-            stats.clone(),
-            self.cleanup_connections,
-            self.log_client_parameter_status_changes,
-            self.prepared_statement_cache_size,
-            self.application_name.clone(),
-            self.session_mode,
+        let result = startup_with_timeout(
+            fallback_timeout,
+            &fallback_address.host,
+            fallback_address.port,
+            Server::startup(
+                &fallback_address,
+                &self.user,
+                &self.database,
+                self.client_server_map.clone(),
+                stats.clone(),
+                self.cleanup_connections,
+                self.log_client_parameter_status_changes,
+                self.prepared_statement_cache_size,
+                self.application_name.clone(),
+                self.session_mode,
+            ),
         )
         .await;
 
@@ -394,17 +496,22 @@ impl ServerPool {
                 crate::utils::clock::now(),
             ));
             retry_stats.register(retry_stats.clone());
-            let retry_result = Server::startup(
-                &retry_address,
-                &self.user,
-                &self.database,
-                self.client_server_map.clone(),
-                retry_stats.clone(),
-                self.cleanup_connections,
-                self.log_client_parameter_status_changes,
-                self.prepared_statement_cache_size,
-                self.application_name.clone(),
-                self.session_mode,
+            let retry_result = startup_with_timeout(
+                fallback_timeout,
+                &retry_address.host,
+                retry_address.port,
+                Server::startup(
+                    &retry_address,
+                    &self.user,
+                    &self.database,
+                    self.client_server_map.clone(),
+                    retry_stats.clone(),
+                    self.cleanup_connections,
+                    self.log_client_parameter_status_changes,
+                    self.prepared_statement_cache_size,
+                    self.application_name.clone(),
+                    self.session_mode,
+                ),
             )
             .await;
             (retry_result, retry_stats)
@@ -420,18 +527,6 @@ impl ServerPool {
             }
             Err(err) => {
                 active_stats.disconnect();
-                warn!(
-                    "[{}@{}] fallback: connection to {}:{} failed: {}",
-                    self.address.username,
-                    self.address.pool_name,
-                    fallback_address.host,
-                    fallback_address.port,
-                    err
-                );
-                // Drop the cached host so the next attempt re-queries Patroni.
-                if let Some(ref fallback) = self.fallback_state {
-                    fallback.clear_whitelist();
-                }
                 Err(err)
             }
         }
@@ -572,6 +667,32 @@ fn is_backend_unreachable(err: &Error) -> bool {
     )
 }
 
+/// Wraps a `Server::startup` call in a hard deadline. On timeout returns
+/// `Error::ConnectError`, which is treated as transport-level failure: on the
+/// main path it triggers fallback, on the fallback path it lets the caller
+/// mark the candidate unhealthy and try the next one. Without this, a postgres
+/// that opened a TCP socket but never replies to StartupMessage would keep
+/// pg_doorman blocked on `read_u8` forever.
+async fn startup_with_timeout<F>(
+    timeout_duration: Duration,
+    host: &str,
+    port: u16,
+    fut: F,
+) -> Result<Server, Error>
+where
+    F: std::future::Future<Output = Result<Server, Error>>,
+{
+    match tokio::time::timeout(timeout_duration, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(Error::ConnectError(format!(
+            "server startup timed out to {}:{} after {}ms",
+            host,
+            port,
+            timeout_duration.as_millis()
+        ))),
+    }
+}
+
 /// Returns `Some(age_ms)` when a connection should be closed because it
 /// crossed its per-connection `lifetime_ms` budget. Returns `None` when the
 /// caller asked to skip the check (`skip_lifetime`), the lifetime budget is
@@ -636,5 +757,45 @@ mod tests {
         // Generous budget — connection is fresh, no breach reported.
         let metrics = metrics_with_lifetime(60_000);
         assert!(lifetime_exceeded(&metrics, false).is_none());
+    }
+
+    #[tokio::test]
+    async fn startup_with_timeout_returns_connect_error_on_deadline() {
+        // Simulates a server that opened TCP but never replies to
+        // StartupMessage: the inner future never resolves. We expect
+        // `startup_with_timeout` to surface this as `ConnectError`, which is
+        // what callers treat as a transport-level failure (triggers fallback
+        // on the main path; marks the candidate unhealthy on the fallback path).
+        let pending = std::future::pending::<Result<Server, Error>>();
+        let result =
+            startup_with_timeout(Duration::from_millis(20), "1.2.3.4", 5432, pending).await;
+
+        match result {
+            Err(Error::ConnectError(msg)) => {
+                assert!(
+                    msg.contains("startup timed out") && msg.contains("1.2.3.4:5432"),
+                    "unexpected message: {msg}"
+                );
+            }
+            other => panic!("expected ConnectError, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_with_timeout_passes_through_when_inner_resolves() {
+        // Successful inner future must not be modified by the wrapper.
+        let inner = async {
+            Err::<Server, _>(Error::ConnectError(
+                "deliberate inner error to assert pass-through".into(),
+            ))
+        };
+        let result = startup_with_timeout(Duration::from_secs(1), "1.2.3.4", 5432, inner).await;
+
+        match result {
+            Err(Error::ConnectError(msg)) => {
+                assert!(msg.contains("pass-through"), "unexpected message: {msg}");
+            }
+            other => panic!("expected pass-through ConnectError, got: {other:?}"),
+        }
     }
 }

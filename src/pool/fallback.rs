@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,6 +47,12 @@ pub struct FallbackState {
     /// Suppresses repeat blacklist log lines.
     blacklist_logged: AtomicBool,
 
+    /// Per-candidate cooldown set after a failed startup. Each entry maps
+    /// `(host, port) -> cooldown_until`. While the entry is in the future,
+    /// `select_candidates_filtered` skips this candidate, so a recovering
+    /// postgres on a target node does not get hammered on every client request.
+    unhealthy_candidates: Mutex<HashMap<(String, u16), Instant>>,
+
     pool_name: String,
     discovery_urls: Vec<String>,
     blacklist_duration: Duration,
@@ -74,6 +81,7 @@ impl FallbackState {
             whitelisted_host: Mutex::new(None),
             inflight: tokio::sync::Mutex::new(None),
             blacklist_logged: AtomicBool::new(false),
+            unhealthy_candidates: Mutex::new(HashMap::new()),
             pool_name,
             discovery_urls,
             blacklist_duration,
@@ -127,7 +135,7 @@ impl FallbackState {
         !self.blacklist_logged.swap(true, Ordering::Relaxed)
     }
 
-    /// Reset blacklist, whitelist, and metrics.
+    /// Reset blacklist, whitelist, candidate cooldowns, and metrics.
     pub fn clear(&self) {
         {
             let mut guard = self.blacklisted_until.lock();
@@ -144,13 +152,30 @@ impl FallbackState {
                 &port.to_string(),
             ]);
         }
+        self.unhealthy_candidates.lock().clear();
         self.blacklist_logged.store(false, Ordering::Relaxed);
         crate::prometheus::FALLBACK_ACTIVE
             .with_label_values(&[&self.pool_name])
             .set(0.0);
     }
 
-    /// Clear whitelist cache so the next `get_fallback_target` re-runs discovery.
+    /// True iff a whitelisted host is currently cached. Lets the fallback
+    /// caller distinguish "whitelist round failed" (which warrants a single
+    /// retry with fresh discovery) from "discovery round failed" (where a
+    /// retry would just repeat the same query).
+    pub fn is_whitelisted(&self) -> bool {
+        self.whitelisted_host.lock().is_some()
+    }
+
+    /// `fallback_connect_timeout` — used both as the per-startup deadline on
+    /// fallback connections and as the per-candidate cooldown window after a
+    /// failed startup. Kept as one parameter for now: same scale, same
+    /// "candidate looks unresponsive" semantics.
+    pub fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
+    }
+
+    /// Clear whitelist cache so the next `get_fallback_targets` re-runs discovery.
     pub fn clear_whitelist(&self) {
         let old = {
             let mut guard = self.whitelisted_host.lock();
@@ -165,32 +190,79 @@ impl FallbackState {
         }
     }
 
-    pub async fn get_fallback_target(&self) -> Result<FallbackTarget, String> {
-        // 1. Check whitelist — return cached host immediately
+    /// Mark a candidate unhealthy for `connect_timeout` window. The next
+    /// `get_fallback_targets` call will skip it. Used after a failed startup
+    /// (auth error, `database is starting up`, timeout, etc.) so that a
+    /// recovering candidate is not retried on every client request.
+    pub fn mark_unhealthy(&self, host: &str, port: u16) {
+        let until = Instant::now() + self.connect_timeout;
+        let mut guard = self.unhealthy_candidates.lock();
+        guard.insert((host.to_string(), port), until);
+    }
+
+    /// True if `(host, port)` is currently within its cooldown window.
+    /// Performs lazy cleanup of an expired entry on miss.
+    pub fn is_unhealthy(&self, host: &str, port: u16) -> bool {
+        let mut guard = self.unhealthy_candidates.lock();
+        let key = (host.to_string(), port);
+        match guard.get(&key) {
+            Some(until) if Instant::now() < *until => true,
+            Some(_) => {
+                guard.remove(&key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Build the candidate list the caller must iterate when establishing a
+    /// fallback connection.
+    ///
+    /// On whitelist hit returns a single-element vector with the cached host
+    /// (skipping discovery) — unless that host is currently in cooldown, in
+    /// which case the whitelist is bypassed and full discovery runs.
+    ///
+    /// Otherwise: fetch `/cluster`, drop unhealthy candidates, run parallel
+    /// TCP-probe, and return all alive candidates ordered by priority
+    /// (sync_standby > replica > leader). Caller iterates the list and is
+    /// responsible for `set_whitelisted` on the first successful startup and
+    /// `mark_unhealthy` on each failure.
+    pub async fn get_fallback_targets(&self) -> Result<Vec<FallbackTarget>, String> {
+        // 1. Check whitelist — return cached host immediately, unless it just
+        // got marked unhealthy (in which case we skip the cache and rediscover).
         {
             let guard = self.whitelisted_host.lock();
             if let Some((ref host, port, ref role)) = *guard {
-                debug!(
-                    "[pool: {}] fallback: returning whitelisted host {}:{}",
-                    self.pool_name, host, port
-                );
-                crate::prometheus::FALLBACK_CACHE_HITS_TOTAL
-                    .with_label_values(&[&self.pool_name])
-                    .inc();
-                return Ok(FallbackTarget {
-                    host: host.clone(),
-                    port,
-                    role: role.clone(),
-                    lifetime_ms: self.server_lifetime_ms,
-                });
+                let host_owned = host.clone();
+                let role_owned = role.clone();
+                drop(guard);
+                if !self.is_unhealthy(&host_owned, port) {
+                    debug!(
+                        "[pool: {}] fallback: returning whitelisted host {}:{}",
+                        self.pool_name, host_owned, port
+                    );
+                    crate::prometheus::FALLBACK_CACHE_HITS_TOTAL
+                        .with_label_values(&[&self.pool_name])
+                        .inc();
+                    return Ok(vec![FallbackTarget {
+                        host: host_owned,
+                        port,
+                        role: role_owned,
+                        lifetime_ms: self.server_lifetime_ms,
+                    }]);
+                }
             }
         }
 
-        // 2. Fetch /cluster via coalesced request
+        // 2. Fetch /cluster via coalesced request.
         let cluster = self.fetch_cluster_coalesced().await?;
 
-        // 3-4. Filter and sort candidates
-        let candidates = select_candidates(&cluster.members);
+        // 3. Filter and sort candidates, then drop those in cooldown.
+        let raw_candidates = select_candidates(&cluster.members);
+        let candidates: Vec<(String, u16, Role)> = raw_candidates
+            .into_iter()
+            .filter(|(host, port, _)| !self.is_unhealthy(host, *port))
+            .collect();
         info!(
             "[pool: {}] fallback: discovered {} members, {} candidates: {}",
             self.pool_name,
@@ -206,11 +278,34 @@ impl FallbackState {
             return Err("no eligible members in /cluster response".to_string());
         }
 
-        // 5-7. Parallel TCP connect to all candidates
-        let timeout = self.connect_timeout;
-        let (host, port, role) = self.try_connect_candidates(&candidates, timeout).await?;
+        // 4. Parallel TCP-probe; collect every alive candidate sorted by priority.
+        let alive = self
+            .try_connect_candidates(&candidates, self.connect_timeout)
+            .await;
+        if alive.is_empty() {
+            warn!(
+                "[pool: {}] fallback: all {} candidates unreachable",
+                self.pool_name,
+                candidates.len()
+            );
+            return Err("all candidates unreachable".to_string());
+        }
 
-        // 8. Whitelist the successful host
+        Ok(alive
+            .into_iter()
+            .map(|(host, port, role)| FallbackTarget {
+                host,
+                port,
+                role,
+                lifetime_ms: self.server_lifetime_ms,
+            })
+            .collect())
+    }
+
+    /// Record a successful fallback host so subsequent calls hit
+    /// `get_fallback_targets`'s whitelist branch and skip discovery.
+    /// Called from `server_pool` after `Server::startup` returns Ok.
+    pub fn set_whitelisted(&self, host: String, port: u16, role: Role) {
         {
             let mut guard = self.whitelisted_host.lock();
             *guard = Some((host.clone(), port, role.clone()));
@@ -222,14 +317,6 @@ impl FallbackState {
         crate::prometheus::FALLBACK_HOST
             .with_label_values(&[&self.pool_name, &host, &port.to_string()])
             .set(1.0);
-
-        // 9. Return FallbackTarget
-        Ok(FallbackTarget {
-            host,
-            port,
-            role,
-            lifetime_ms: self.server_lifetime_ms,
-        })
     }
 
     async fn fetch_cluster_coalesced(&self) -> Result<ClusterResponse, String> {
@@ -290,14 +377,19 @@ impl FallbackState {
         fut.boxed().shared()
     }
 
-    /// Parallel TCP-connect; returns the highest-priority responder
-    /// (sync_standby > replica > leader). Pinned futures over `tokio::spawn`
-    /// so cancellation propagates when `rest` is dropped.
+    /// Parallel TCP-probe across all candidates. Returns every alive one
+    /// sorted by priority (sync_standby > replica > leader); empty vec means
+    /// nothing answered.
+    ///
+    /// We wait for all probes to complete instead of returning on first
+    /// sync_standby: `create_fallback_connection` iterates this list when a
+    /// startup fails on the best candidate, so it needs the lower-priority
+    /// alternatives ready.
     async fn try_connect_candidates(
         &self,
         candidates: &[(String, u16, Role)],
         timeout: Duration,
-    ) -> Result<(String, u16, Role), String> {
+    ) -> Vec<(String, u16, Role)> {
         type ConnectFuture = Pin<Box<dyn Future<Output = Option<(String, u16, Role)>> + Send>>;
         let mut futs: Vec<ConnectFuture> = Vec::with_capacity(candidates.len());
 
@@ -333,40 +425,10 @@ impl FallbackState {
             futs.push(fut);
         }
 
-        let mut best: Option<(String, u16, Role)> = None;
-        let mut remaining = futs;
-
-        while !remaining.is_empty() {
-            let (result, _idx, rest) = futures::future::select_all(remaining).await;
-
-            if let Some((host, port, role)) = result {
-                let priority = role_priority(&role);
-                if priority == 0 {
-                    // sync_standby found — return now; dropping `rest` cancels in-flight probes.
-                    return Ok((host, port, role));
-                }
-                let dominated = best
-                    .as_ref()
-                    .is_none_or(|(_, _, ref r)| priority < role_priority(r));
-                if dominated {
-                    best = Some((host, port, role));
-                }
-            }
-
-            remaining = rest;
-        }
-
-        match best {
-            Some((h, p, r)) => Ok((h, p, r)),
-            None => {
-                warn!(
-                    "[pool: {}] fallback: all {} candidates unreachable",
-                    self.pool_name,
-                    candidates.len()
-                );
-                Err("all candidates unreachable".to_string())
-            }
-        }
+        let results = futures::future::join_all(futs).await;
+        let mut alive: Vec<(String, u16, Role)> = results.into_iter().flatten().collect();
+        alive.sort_by_key(|(_, _, role)| role_priority(role));
+        alive
     }
 }
 
@@ -437,6 +499,91 @@ mod tests {
 
         state.clear();
         assert_eq!(state.check_blacklist(), BlacklistCheck::NotBlacklisted);
+    }
+
+    #[test]
+    fn mark_unhealthy_lifecycle() {
+        let state = FallbackState::new(
+            "test_pool_unhealthy_lifecycle".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            // Short cooldown so the test does not stall.
+            Duration::from_millis(50),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        assert!(!state.is_unhealthy("10.0.0.1", 5432));
+        state.mark_unhealthy("10.0.0.1", 5432);
+        assert!(state.is_unhealthy("10.0.0.1", 5432));
+
+        // Wait past the cooldown window; the next call must report healthy
+        // again and lazy-clean the entry.
+        std::thread::sleep(Duration::from_millis(70));
+        assert!(!state.is_unhealthy("10.0.0.1", 5432));
+
+        // Marking the same host again restarts the window.
+        state.mark_unhealthy("10.0.0.1", 5432);
+        assert!(state.is_unhealthy("10.0.0.1", 5432));
+    }
+
+    #[test]
+    fn mark_unhealthy_is_per_host_port() {
+        let state = FallbackState::new(
+            "test_pool_unhealthy_per_host".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        state.mark_unhealthy("10.0.0.1", 5432);
+        assert!(state.is_unhealthy("10.0.0.1", 5432));
+        // Different host — still healthy.
+        assert!(!state.is_unhealthy("10.0.0.2", 5432));
+        // Same host, different port — also independent.
+        assert!(!state.is_unhealthy("10.0.0.1", 5433));
+    }
+
+    #[test]
+    fn clear_drops_unhealthy_entries() {
+        let state = FallbackState::new(
+            "test_pool_unhealthy_clear".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        state.mark_unhealthy("10.0.0.1", 5432);
+        state.mark_unhealthy("10.0.0.2", 5432);
+        state.clear();
+        assert!(!state.is_unhealthy("10.0.0.1", 5432));
+        assert!(!state.is_unhealthy("10.0.0.2", 5432));
+    }
+
+    #[test]
+    fn is_whitelisted_reflects_state() {
+        let state = FallbackState::new(
+            "test_pool_is_whitelisted".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        assert!(!state.is_whitelisted());
+        state.set_whitelisted("10.0.0.1".to_string(), 5432, Role::SyncStandby);
+        assert!(state.is_whitelisted());
+        state.clear_whitelist();
+        assert!(!state.is_whitelisted());
     }
 
     #[test]
@@ -707,6 +854,85 @@ mod tests {
             }
         });
         port
+    }
+
+    /// Bind a TCP listener that just accepts and drops connections, simulating
+    /// a postgres TCP listener that's alive at L4. Lives until the runtime
+    /// shuts down.
+    async fn start_alive_listener() -> u16 {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while listener.accept().await.is_ok() {
+                // accept and drop — only the L4 handshake matters for probes
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn try_connect_candidates_returns_full_sorted_list() {
+        // Three alive TCP listeners — order in `candidates` is intentionally
+        // not by priority, so the result must be sorted by `role_priority`.
+        let port_a = start_alive_listener().await;
+        let port_b = start_alive_listener().await;
+        let port_c = start_alive_listener().await;
+
+        let state = FallbackState::new(
+            "test_pool_full_sorted".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+            30_000,
+        )
+        .unwrap();
+
+        let candidates = vec![
+            ("127.0.0.1".to_string(), port_a, Role::Leader),
+            ("127.0.0.1".to_string(), port_b, Role::Replica),
+            ("127.0.0.1".to_string(), port_c, Role::SyncStandby),
+        ];
+
+        let alive = state
+            .try_connect_candidates(&candidates, Duration::from_millis(500))
+            .await;
+        assert_eq!(alive.len(), 3);
+        assert_eq!(alive[0].2, Role::SyncStandby);
+        assert_eq!(alive[1].2, Role::Replica);
+        assert_eq!(alive[2].2, Role::Leader);
+    }
+
+    #[tokio::test]
+    async fn get_fallback_targets_skips_unhealthy_in_discovery() {
+        let port_alive = start_alive_listener().await;
+        let port_marked = start_alive_listener().await;
+
+        let body = format!(
+            r#"{{"members":[
+                {{"name":"a","host":"127.0.0.1","port":{port_marked},"role":"replica","state":"streaming"}},
+                {{"name":"b","host":"127.0.0.1","port":{port_alive},"role":"replica","state":"streaming"}}
+            ]}}"#
+        );
+        let api_port = start_mock_patroni_success(body).await;
+
+        let state = FallbackState::new(
+            "test_pool_skip_unhealthy".to_string(),
+            vec![format!("http://127.0.0.1:{api_port}/cluster")],
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+            30_000,
+        )
+        .unwrap();
+
+        // Mark one member's host:port as unhealthy. Discovery must drop it.
+        state.mark_unhealthy("127.0.0.1", port_marked);
+
+        let targets = state.get_fallback_targets().await.unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].port, port_alive);
     }
 
     #[tokio::test]
