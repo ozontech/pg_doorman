@@ -11,6 +11,27 @@ use crate::errors::Error;
 use crate::errors::Error::ProxyTimeout;
 use crate::messages::{CURRENT_MEMORY, MAX_MESSAGE_SIZE};
 
+/// Default capacity for a freshly allocated reusable read buffer.
+const REUSE_BUF_DEFAULT_CAPACITY: usize = 16 * 1024;
+
+/// `BytesMut::split()` keeps the backing allocation alive through its Arc.
+/// When the caller drops the returned `BytesMut`, the reusable buffer
+/// reclaims that capacity for the next read, including a multi-MiB region
+/// allocated for one oversized query. Without this cap, `buf` retains the
+/// largest allocation it has served. On a pool with thousands of clients,
+/// each occasional megabyte-sized INSERT turns into a per-connection leak.
+const REUSE_BUF_SHRINK_THRESHOLD: usize = 256 * 1024;
+
+/// Drop an oversized reusable read buffer before the next read. Without it,
+/// `reserve()` would inherit the previous multi-MiB allocation. The
+/// steady-state path (capacity within threshold) falls through unchanged.
+#[inline]
+fn shrink_reuse_buf(buf: &mut BytesMut) {
+    if buf.capacity() > REUSE_BUF_SHRINK_THRESHOLD {
+        *buf = BytesMut::with_capacity(REUSE_BUF_DEFAULT_CAPACITY);
+    }
+}
+
 /// Write all data in the buffer to the TcpStream.
 pub async fn write_all<S>(stream: &mut S, buf: BytesMut) -> Result<(), Error>
 where
@@ -127,12 +148,15 @@ where
     result
 }
 
-/// Read a message into a reusable buffer. Returns owned BytesMut via split(),
-/// keeping the backing capacity in `buf` for the next call.
+/// Read a message into a reusable buffer. Returns the owned `BytesMut` via
+/// `split()` while the backing capacity stays in `buf` for the next call.
 ///
-/// Amortized allocation cost: ~1 heap alloc per `8192 / msg_size` messages.
-/// split() hands off the filled region; reserve() reuses remaining capacity
-/// in the same backing allocation until exhausted, then allocates fresh 8KB.
+/// Amortized allocation cost: roughly one heap alloc per
+/// `REUSE_BUF_DEFAULT_CAPACITY / msg_size` messages. `split()` hands off the
+/// filled region; `reserve()` reuses any remaining capacity in the same
+/// allocation until exhausted. A buffer that grew past
+/// `REUSE_BUF_SHRINK_THRESHOLD` is dropped before the next read, so a single
+/// oversized message does not pin its allocation across the connection.
 #[inline]
 pub async fn read_message_reuse<S>(
     stream: &mut S,
@@ -162,6 +186,7 @@ where
     }
 
     let total_len = len as usize + 1;
+    shrink_reuse_buf(buf);
     buf.clear();
     buf.reserve(total_len);
     buf.put_u8(code);
@@ -200,6 +225,7 @@ where
     }
 
     let total_len = len as usize + 1;
+    shrink_reuse_buf(buf);
     buf.clear();
     buf.reserve(total_len);
     buf.put_u8(code);
@@ -559,6 +585,48 @@ mod tests {
         );
     }
 
+    /// Realistic hot path: the previous message is dropped before the next read.
+    /// Each iteration of the client loop reads a `Q`, processes it, and drops the
+    /// `BytesMut` before the next call. `BytesMut::split()` lets the reusable
+    /// `buf` reclaim the dropped allocation through its Arc, so a 5 MiB capacity
+    /// follows the buf into every subsequent small read. Across 15 000 idle
+    /// clients that each ran one large INSERT once, this compounds to multi-GiB
+    /// pooler RSS. The test fails when the leak is present.
+    #[tokio::test]
+    async fn reuse_large_dropped_then_small_no_bloat() {
+        let large_body = vec![0u8; 5 * 1024 * 1024]; // 5 MiB — matches mcp-ss-bitmaps payloads
+        let small_body = vec![0u8; 16];
+
+        let mut all = Vec::new();
+        all.extend_from_slice(&wire_msg(b'Q', &large_body));
+        for _ in 0..50 {
+            all.extend_from_slice(&wire_msg(b'Q', &small_body));
+        }
+
+        let mut stream = Cursor::new(all);
+        let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
+
+        // Read the large Q and immediately drop it — that's what handle_simple_query
+        // does once execute_server_roundtrip returns.
+        {
+            let _ = read_message_reuse(&mut stream, &mut buf, u64::MAX)
+                .await
+                .unwrap();
+        }
+
+        for _ in 0..50 {
+            let _msg = read_message_reuse(&mut stream, &mut buf, u64::MAX)
+                .await
+                .unwrap();
+        }
+
+        assert!(
+            buf.capacity() <= REUSE_BUF_SHRINK_THRESHOLD,
+            "buf bloated after one large read followed by small reads: capacity={} bytes",
+            buf.capacity(),
+        );
+    }
+
     // =========================================================================
     // read_message_body_reuse — server-side path
     // =========================================================================
@@ -649,6 +717,45 @@ mod tests {
         // result should have the data
         assert_eq!(result[0], b'C');
         assert_eq!(&result[5..], body);
+    }
+
+    /// Server-side path of the same regression. `Server.read_buf` must not
+    /// retain a multi-MiB allocation after one large `DataRow` or `CopyData`
+    /// passes through. Long-lived backend connections in transaction mode
+    /// would otherwise pin RSS to the size of the largest message handled.
+    #[tokio::test]
+    async fn body_reuse_large_dropped_then_small_no_bloat() {
+        let large_body = vec![0u8; 5 * 1024 * 1024];
+        let large_len = (4 + large_body.len()) as i32;
+        let small_body = vec![0u8; 16];
+        let small_len = (4 + small_body.len()) as i32;
+
+        let mut all = Vec::new();
+        all.extend_from_slice(&large_body);
+        for _ in 0..50 {
+            all.extend_from_slice(&small_body);
+        }
+
+        let mut stream = Cursor::new(all);
+        let mut buf = BytesMut::with_capacity(READ_BUF_DEFAULT_CAPACITY);
+
+        {
+            let _ = read_message_body_reuse(&mut stream, &mut buf, b'D', large_len)
+                .await
+                .unwrap();
+        }
+
+        for _ in 0..50 {
+            let _ = read_message_body_reuse(&mut stream, &mut buf, b'D', small_len)
+                .await
+                .unwrap();
+        }
+
+        assert!(
+            buf.capacity() <= REUSE_BUF_SHRINK_THRESHOLD,
+            "buf bloated after one large body read followed by small reads: capacity={} bytes",
+            buf.capacity(),
+        );
     }
 
     /// After split, buf retains capacity for next message (the optimization).

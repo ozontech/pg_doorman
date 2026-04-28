@@ -1,5 +1,13 @@
 # Changelog
 
+### 3.6.3 <small>Apr 28, 2026</small>
+
+#### Fix: per-connection read buffer leak under multi-MiB simple-query INSERTs
+
+Per-connection reusable read buffers (`Client.read_buf`, `Server.read_buf`) retained the largest allocation each connection had served. After one multi-MiB simple-query INSERT, every subsequent small message split out of that allocation, and the reusable buffer reclaimed the multi-MiB region as soon as the previous `BytesMut` was dropped. Across thousands of clients in transaction mode, occasional megabyte-sized payloads compounded into a 100 MB → 4 GB pooler RSS regression.
+
+`read_message_reuse` and `read_message_body_reuse` now drop the backing allocation before each read when the buffer's capacity exceeds 256 KiB and fall back to a fresh 16 KiB buffer. The steady-state path (capacity within threshold) is unchanged.
+
 ### 3.6.2 <small>Apr 27, 2026</small>
 
 **New features:**
