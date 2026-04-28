@@ -546,3 +546,187 @@ Feature: Patroni-assisted fallback
       pool_size = 5
       """
     Then psql query "SELECT 1" via pg_doorman as user "example_user_1" to database "example_db" with password "" returns "1"
+
+
+  Scenario: Fallback iterates past dead sync_standby to live replica
+    # B''. Best candidate (sync_standby) refuses TCP; the next priority
+    # (replica) is alive — fallback must reach it instead of giving up.
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      host all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And mock Patroni server 'p1' with response:
+      """
+      {
+        "scope": "test_cluster",
+        "members": [
+          {"name": "sync-dead",   "host": "127.0.0.1", "port": 59995,         "role": "sync_standby", "state": "streaming", "timeline": 1, "lag": 0},
+          {"name": "replica-live","host": "127.0.0.1", "port": ${PG_PORT},    "role": "replica",      "state": "streaming", "timeline": 1, "lag": 0}
+        ]
+      }
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      connect_timeout = "2s"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = 59999
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_P1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "1s"
+      patroni_api_timeout = "3s"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      """
+    Then psql query "SELECT 1" via pg_doorman as user "example_user_1" to database "example_db" with password "" returns "1"
+
+  Scenario: Cooldown lets the second client request reach the live candidate without retrying the dead one
+    # C. After the first request fails on the dead sync_standby and falls
+    # through to the live replica, the second request must also succeed —
+    # cooldown should not break repeat queries.
+    Given PostgreSQL started with pg_hba.conf:
+      """
+      host all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And mock Patroni server 'p1' with response:
+      """
+      {
+        "scope": "test_cluster",
+        "members": [
+          {"name": "sync-dead",   "host": "127.0.0.1", "port": 59995,         "role": "sync_standby", "state": "streaming", "timeline": 1, "lag": 0},
+          {"name": "replica-live","host": "127.0.0.1", "port": ${PG_PORT},    "role": "replica",      "state": "streaming", "timeline": 1, "lag": 0}
+        ]
+      }
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      connect_timeout = "2s"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = 59999
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_P1_PORT}"]
+      fallback_cooldown = "30s"
+      fallback_connect_timeout = "5s"
+      patroni_api_timeout = "3s"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      """
+    Then psql query "SELECT 1" via pg_doorman as user "example_user_1" to database "example_db" with password "" returns "1"
+    When we sleep for 500 milliseconds
+    Then psql query "SELECT 1" via pg_doorman as user "example_user_1" to database "example_db" with password "" returns "1"
+
+  Scenario: All fallback candidates hang on startup — exhaustion error names reasons
+    # E + G. Two candidates whose TCP listener accepts but never replies to
+    # StartupMessage exercise startup_with_timeout (Timeout reason) and the
+    # exhaustion summary "all fallback candidates rejected (...)" returned
+    # to the client.
+    Given we start hung TCP listener as 'sync'
+    And we start hung TCP listener as 'replica'
+    And PostgreSQL started with pg_hba.conf:
+      """
+      host all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And mock Patroni server 'p1' with response:
+      """
+      {
+        "scope": "test_cluster",
+        "members": [
+          {"name": "sync-hung",   "host": "127.0.0.1", "port": ${HUNG_SYNC_PORT},   "role": "sync_standby", "state": "streaming", "timeline": 1, "lag": 0},
+          {"name": "replica-hung","host": "127.0.0.1", "port": ${HUNG_REPLICA_PORT},"role": "replica",      "state": "streaming", "timeline": 1, "lag": 0}
+        ]
+      }
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      connect_timeout = "1s"
+      query_wait_timeout = "10s"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = 59999
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_P1_PORT}"]
+      fallback_cooldown = "5s"
+      fallback_connect_timeout = "300ms"
+      patroni_api_timeout = "3s"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      """
+    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "" fails with error containing "all fallback candidates rejected"
+
+  Scenario: Fallback total deadline aborts when query_wait_timeout elapses
+    # A'. With local PG dead and a single hung Patroni member, query_wait_timeout
+    # caps how long the client waits before getting an error — without the
+    # outer deadline pg_doorman would loop through cooldown→discovery
+    # indefinitely.
+    Given we start hung TCP listener as 'only'
+    And PostgreSQL started with pg_hba.conf:
+      """
+      host all all 127.0.0.1/32 trust
+      """
+    And fixtures from "tests/fixture.sql" applied
+    And mock Patroni server 'p1' with response:
+      """
+      {
+        "scope": "test_cluster",
+        "members": [
+          {"name": "only-hung", "host": "127.0.0.1", "port": ${HUNG_ONLY_PORT}, "role": "sync_standby", "state": "streaming", "timeline": 1, "lag": 0}
+        ]
+      }
+      """
+    And pg_doorman started with config:
+      """
+      [general]
+      host = "127.0.0.1"
+      port = ${DOORMAN_PORT}
+      admin_username = "admin"
+      admin_password = "admin"
+      pg_hba.content = "host all all 127.0.0.1/32 trust"
+      connect_timeout = "500ms"
+      query_wait_timeout = "2s"
+
+      [pools.example_db]
+      server_host = "127.0.0.1"
+      server_port = 59999
+      patroni_api_urls = ["http://127.0.0.1:${PATRONI_P1_PORT}"]
+      fallback_cooldown = "30s"
+      fallback_connect_timeout = "10s"
+      patroni_api_timeout = "3s"
+
+      [[pools.example_db.users]]
+      username = "example_user_1"
+      password = ""
+      pool_size = 5
+      """
+    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "" fails

@@ -62,8 +62,14 @@ pub struct ServerPool {
     /// Time after which idle connections should be checked before reuse (0 = disabled).
     idle_check_timeout_ms: u64,
 
-    /// Connect timeout for alive checks.
+    /// Connect timeout for alive checks and main-path startup deadline.
     connect_timeout: Duration,
+
+    /// Hard upper bound on how long a single client may wait for a server
+    /// connection. Used as the outer deadline around the entire fallback
+    /// path: there's no point spending more time than the client itself is
+    /// willing to wait. Sourced from `general.query_wait_timeout`.
+    query_wait_timeout: Duration,
 
     /// Session mode flag passed to created Server connections.
     session_mode: bool,
@@ -118,6 +124,7 @@ impl ServerPool {
         idle_timeout_ms: u64,
         idle_check_timeout_ms: u64,
         connect_timeout: Duration,
+        query_wait_timeout: Duration,
         session_mode: bool,
         fallback_state: Option<Arc<super::fallback::FallbackState>>,
     ) -> ServerPool {
@@ -136,6 +143,7 @@ impl ServerPool {
             idle_timeout_ms,
             idle_check_timeout_ms,
             connect_timeout,
+            query_wait_timeout,
             pool_state: AtomicU64::new(0),
             resume_notify: Notify::new(),
             session_mode,
@@ -323,10 +331,22 @@ impl ServerPool {
     /// Establish a fallback connection by iterating through Patroni-discovered
     /// candidates. Per-candidate failures (auth error, "database is starting up",
     /// startup timeout, etc.) mark the candidate unhealthy and proceed to the
-    /// next one; only when every alive candidate refuses does the caller see an
-    /// error. Whitelist hits get one extra round with fresh discovery if their
-    /// single cached host fails.
+    /// next one. Hard-bounded by `query_wait_timeout`: there is no point
+    /// spending more time here than the client itself is willing to wait.
     async fn create_fallback_connection(&self) -> Result<Server, Error> {
+        let deadline = self.query_wait_timeout;
+        match tokio::time::timeout(deadline, self.create_fallback_connection_inner()).await {
+            Ok(result) => result,
+            Err(_) => Err(Error::ConnectError(format!(
+                "fallback total deadline {}ms exceeded",
+                deadline.as_millis()
+            ))),
+        }
+    }
+
+    /// Inner body so the outer wrapper can apply the `query_wait_timeout`
+    /// guard. Holds the retry-after-stale-whitelist policy.
+    async fn create_fallback_connection_inner(&self) -> Result<Server, Error> {
         let fallback = match self.fallback_state.as_ref() {
             Some(fb) => fb,
             None => {
@@ -336,33 +356,36 @@ impl ServerPool {
             }
         };
 
-        let was_whitelisted = fallback.is_whitelisted();
-        match self.run_fallback_round(fallback).await {
-            Ok(conn) => Ok(conn),
-            Err(err) if was_whitelisted => {
-                // The whitelist gave us a single stale candidate that just
-                // failed. Wipe it and rerun with full discovery — bounded to
-                // one extra round so we can never spin forever.
+        let (result, source) = self.run_fallback_round(fallback).await;
+        match (result, source) {
+            (Ok(conn), _) => Ok(conn),
+            (Err(err), super::fallback::TargetSource::WhitelistCache) => {
+                // Cached host was stale; wipe it and try with full discovery
+                // exactly once more. Bounded retry — discovery round failure
+                // surfaces directly without a third try.
                 fallback.clear_whitelist();
-                self.run_fallback_round(fallback).await.map_err(|e2| {
+                let (retry_result, _) = self.run_fallback_round(fallback).await;
+                retry_result.map_err(|e2| {
                     Error::ConnectError(format!(
                         "fallback exhausted (whitelist round: {err}; discovery round: {e2})"
                     ))
                 })
             }
-            Err(err) => Err(err),
+            (Err(err), super::fallback::TargetSource::Discovery) => Err(err),
         }
     }
 
-    /// Run discovery once (or hit the whitelist) and try every alive candidate
-    /// in priority order. Returns the first successful connection; on
-    /// exhaustion returns a `ConnectError` summarising the last failure.
+    /// Run a single fallback round (whitelist hit or discovery) and try every
+    /// alive candidate in priority order. Returns the first successful
+    /// connection; on exhaustion returns a `ConnectError` summarising the
+    /// failure mix by reason ("3 startup_error, 1 timeout"). Returned
+    /// `TargetSource` lets the caller decide whether to retry once more.
     async fn run_fallback_round(
         &self,
         fallback: &super::fallback::FallbackState,
-    ) -> Result<Server, Error> {
-        let targets = match fallback.get_fallback_targets().await {
-            Ok(t) => t,
+    ) -> (Result<Server, Error>, super::fallback::TargetSource) {
+        let (targets, source) = match fallback.get_fallback_targets().await {
+            Ok(pair) => pair,
             Err(e) => {
                 crate::prometheus::PATRONI_API_ERRORS_TOTAL
                     .with_label_values(&[&self.address.pool_name])
@@ -371,18 +394,20 @@ impl ServerPool {
                     "[{}@{}] fallback: discovery failed: {e}",
                     self.address.username, self.address.pool_name,
                 );
-                return Err(Error::ConnectError(format!(
-                    "fallback discovery failed: {e}"
-                )));
+                return (
+                    Err(Error::ConnectError(format!(
+                        "fallback discovery failed: {e}"
+                    ))),
+                    // Discovery itself failed: no source to speak of, but the
+                    // caller treats Discovery as "no retry" — which is what
+                    // we want here, the next attempt will be a fresh client
+                    // request, not an automatic retry.
+                    super::fallback::TargetSource::Discovery,
+                );
             }
         };
-        if targets.is_empty() {
-            return Err(Error::ConnectError(
-                "fallback returned no candidates".to_string(),
-            ));
-        }
 
-        let mut last_err: Option<Error> = None;
+        let mut summary = FailureSummary::default();
         for target in &targets {
             info!(
                 "[{}@{}] fallback: connecting to {}:{} (role: {:?})",
@@ -398,29 +423,42 @@ impl ServerPool {
             match self.try_fallback_target(target).await {
                 Ok(conn) => {
                     fallback.set_whitelisted(target.host.clone(), target.port, target.role.clone());
-                    return Ok(conn);
+                    return (Ok(conn), source);
                 }
                 Err(err) => {
-                    warn!(
-                        "[{}@{}] fallback: {}:{} rejected ({}), trying next",
-                        self.address.username,
-                        self.address.pool_name,
-                        target.host,
-                        target.port,
-                        err
-                    );
-                    fallback.mark_unhealthy(&target.host, target.port);
-                    last_err = Some(err);
+                    let reason = super::fallback::FailureReason::from(&err);
+                    fallback.mark_unhealthy(&target.host, target.port, reason);
+                    if fallback.should_log_unhealthy(&target.host, target.port) {
+                        warn!(
+                            "[{}@{}] fallback: {}:{} rejected ({}), trying next",
+                            self.address.username,
+                            self.address.pool_name,
+                            target.host,
+                            target.port,
+                            err
+                        );
+                    } else {
+                        debug!(
+                            "[{}@{}] fallback: {}:{} rejected ({}), trying next",
+                            self.address.username,
+                            self.address.pool_name,
+                            target.host,
+                            target.port,
+                            err
+                        );
+                    }
+                    summary.record(err, reason);
                 }
             }
         }
 
-        let last = last_err
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "no candidates available".to_string());
-        Err(Error::ConnectError(format!(
-            "all fallback candidates rejected (last: {last})"
-        )))
+        let summary_str = summary.format();
+        (
+            Err(Error::ConnectError(format!(
+                "all fallback candidates rejected ({summary_str})"
+            ))),
+            source,
+        )
     }
 
     /// Attempt a single fallback target with optional sslmode=allow TLS retry.
@@ -667,6 +705,39 @@ fn is_backend_unreachable(err: &Error) -> bool {
     )
 }
 
+/// Aggregator for per-candidate failure reasons inside one fallback round.
+/// Lets `run_fallback_round` build a categorical summary like "3
+/// startup_error, 1 timeout" instead of leaking only the last error to the
+/// client — operators can tell apart "kernel-level connectivity broken" from
+/// "everyone refused on auth" at a glance.
+#[derive(Default)]
+struct FailureSummary {
+    last_err: Option<Error>,
+    counts: std::collections::HashMap<super::fallback::FailureReason, u32>,
+}
+
+impl FailureSummary {
+    fn record(&mut self, err: Error, reason: super::fallback::FailureReason) {
+        *self.counts.entry(reason).or_insert(0) += 1;
+        self.last_err = Some(err);
+    }
+
+    fn format(&self) -> String {
+        if self.counts.is_empty() {
+            return "no candidates".to_string();
+        }
+        // Stable ordering so the message is deterministic in logs and tests.
+        let mut parts: Vec<(super::fallback::FailureReason, u32)> =
+            self.counts.iter().map(|(r, c)| (*r, *c)).collect();
+        parts.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        parts
+            .into_iter()
+            .map(|(r, c)| format!("{c} {}", r.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 /// Wraps a `Server::startup` call in a hard deadline. On timeout returns
 /// `Error::ConnectError`, which is treated as transport-level failure: on the
 /// main path it triggers fallback, on the fallback path it lets the caller
@@ -779,6 +850,40 @@ mod tests {
             }
             other => panic!("expected ConnectError, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn failure_summary_format_aggregates_by_reason() {
+        use super::super::fallback::FailureReason;
+        let mut s = FailureSummary::default();
+        s.record(
+            Error::ServerStartupError(
+                "auth fail".into(),
+                crate::errors::ServerIdentifier::new("u".into(), "d", "p"),
+            ),
+            FailureReason::StartupError,
+        );
+        s.record(
+            Error::ServerStartupError(
+                "auth fail".into(),
+                crate::errors::ServerIdentifier::new("u".into(), "d", "p"),
+            ),
+            FailureReason::StartupError,
+        );
+        s.record(
+            Error::ConnectError("timed out".into()),
+            FailureReason::Timeout,
+        );
+
+        let out = s.format();
+        // Stable alphabetic order by reason.as_str(): startup_error < timeout.
+        assert_eq!(out, "2 startup_error, 1 timeout");
+    }
+
+    #[test]
+    fn failure_summary_format_no_candidates_when_empty() {
+        let s = FailureSummary::default();
+        assert_eq!(s.format(), "no candidates");
     }
 
     #[tokio::test]

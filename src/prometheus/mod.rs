@@ -525,6 +525,20 @@ pub(crate) static FALLBACK_CACHE_HITS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| 
     counter
 });
 
+pub(crate) static FALLBACK_CANDIDATE_FAILURES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let counter = IntCounterVec::new(
+        Opts::new(
+            "pg_doorman_fallback_candidate_failures_total",
+            "Total number of fallback candidates rejected, by pool and failure reason \
+             (connect_error, startup_error, server_unavailable, timeout, other).",
+        ),
+        &["pool", "reason"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(counter.clone())).unwrap();
+    counter
+});
+
 pub(crate) static PATRONI_API_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     let histogram = HistogramVec::new(
         prometheus::HistogramOpts::new(

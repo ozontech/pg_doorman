@@ -319,6 +319,7 @@ mod tests {
             60_000,
             60_000,
             Duration::from_secs(5),
+            Duration::from_secs(5),
             false,
             None,
         );

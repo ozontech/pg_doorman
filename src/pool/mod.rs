@@ -434,6 +434,7 @@ impl ConnectionPool {
                         .unwrap_or(config.general.idle_timeout.as_millis()),
                     config.general.server_idle_check_timeout.as_millis(),
                     config.general.connect_timeout.as_std(),
+                    config.general.query_wait_timeout.as_std(),
                     pool_mode == PoolMode::Session,
                     fallback_state,
                 );
@@ -601,6 +602,7 @@ impl ConnectionPool {
                                 .unwrap_or(config.general.idle_timeout.as_millis()),
                             config.general.server_idle_check_timeout.as_millis(),
                             config.general.connect_timeout.as_std(),
+                            config.general.query_wait_timeout.as_std(),
                             pool_mode == PoolMode::Session,
                             fallback_state,
                         );

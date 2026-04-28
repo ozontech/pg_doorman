@@ -1,5 +1,29 @@
 # Changelog
 
+### 3.6.4 <small>Apr 28, 2026</small>
+
+#### Fix: fallback resilience — startup timeout, candidate iteration, per-host cooldown
+
+When the local PostgreSQL next to pg_doorman dies and Patroni-assisted fallback engages, the path had three structural gaps that surfaced as client hangs and per-request `/cluster` storms. All closed in this release.
+
+- **`Server::startup` now has a deadline.** Both the main path and the fallback path wrap startup in `tokio::time::timeout`. Main path uses `general.connect_timeout` (default 3s) — same parameter that already governs alive-check and TCP-probe; **the deadline now also covers StartupMessage round-trip**. If your local backend has slow startup (large WAL replay after restart), raise `connect_timeout`. Fallback path uses `fallback_connect_timeout` (default 5s) per-candidate. On timeout the candidate is treated as transport-unreachable.
+
+- **Fallback iterates the full candidate list.** Previously one `best` candidate was picked and a single startup failure (auth, `database is starting up`, anything non-transport) returned an error to the client. Now `try_connect_candidates` returns every TCP-alive candidate sorted by priority (`sync_standby > replica > leader`), and `create_fallback_connection` walks the list — startup failure on one moves to the next. On exhaustion the client gets an explicit `"all fallback candidates rejected (3 startup_error, 1 timeout)"` summary aggregated by failure reason.
+
+- **Per-candidate cooldown with exponential backoff.** A failed startup marks the candidate unhealthy for `fallback_connect_timeout` (5s base), doubling on each consecutive failure to a 60s cap. Subsequent discovery skips candidates inside the cooldown window, so a recovering backend isn't hammered on every client request. Cooldown resets to base after the window naturally elapses (lazy clean). The `unhealthy_candidates` map is bounded at 256 entries — past that, expired entries are pruned before insert.
+
+- **Outer deadline `query_wait_timeout`.** The whole fallback path is wrapped in `tokio::time::timeout(query_wait_timeout)` (default 5s). There is no point spending more time than the client itself is willing to wait — if all candidates are unreachable or hung, the client gets `"fallback total deadline {ms}ms exceeded"` exactly when it would otherwise abandon the connection.
+
+- **Whitelist post-failure rediscovery.** When the cached whitelisted host fails on startup, pg_doorman clears the cache and runs one extra discovery round to find a replacement before surfacing the error. Bounded to one retry — no infinite loop.
+
+- **Log rate-limit on per-candidate WARN.** Under failure storm the per-candidate `"<host>:<port> rejected"` WARN is emitted at most once per 10s per `(pool, host:port)`. Suppressed lines move to DEBUG.
+
+- **`set_whitelisted` now removes the old `pg_doorman_fallback_host` Prometheus label.** Previously after a switchover both the old and new `(host, port)` labels stayed at `1.0`, suggesting fallback was active on two hosts at once.
+
+New Prometheus metric `pg_doorman_fallback_candidate_failures_total{pool, reason}` (reasons: `connect_error`, `startup_error`, `server_unavailable`, `timeout`, `other`).
+
+**Recommendation:** use IP addresses (not hostnames) in Patroni `member.host` to avoid DNS resolve latency on the fallback hot path — the wrapper covers DNS through `TcpStream::connect`, but a 5s DNS hang still costs the whole `fallback_connect_timeout` budget.
+
 ### 3.6.3 <small>Apr 28, 2026</small>
 
 #### Fix: per-connection read buffer leak under multi-MiB simple-query INSERTs
