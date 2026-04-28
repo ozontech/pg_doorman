@@ -160,7 +160,7 @@
                     <main>
                         <h1 id="pgdoorman"><a class="header" href="#pgdoorman">PgDoorman</a></h1>
 <p>A multi-threaded PostgreSQL connection pooler written in Rust. Drop-in replacement for <a href="https://www.pgbouncer.org/">PgBouncer</a> and <a href="https://github.com/yandex/odyssey">Odyssey</a>, and an alternative to <a href="https://github.com/postgresml/pgcat">PgCat</a>. Three years in production at Ozon under Go (pgx), .NET (Npgsql), Python (asyncpg, SQLAlchemy), and Node.js workloads.</p>
-<p><a href="tutorials/installation.html">Get PgDoorman 3.6.2</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
+<p><a href="tutorials/installation.html">Get PgDoorman 3.6.3</a> · <a href="comparison.html">Comparison</a> · <a href="benchmarks.html">Benchmarks</a></p>
 <h2 id="headline-features"><a class="header" href="#headline-features">Headline features</a></h2>
 <div id="admonition-pool-coordinator" class="admonition admonish-success" role="note" aria-labelledby="admonition-pool-coordinator-title">
 <div class="admonition-title">
@@ -5422,6 +5422,10 @@ numbers in production rarely look like the Reconnect rows.</li>
 <code>NOTIFY</code> paths are not represented.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="363-apr-28-2026"><a class="header" href="#363-apr-28-2026">3.6.3 <small>Apr 28, 2026</small></a></h3>
+<h4 id="fix-per-connection-read-buffer-leak-under-multi-mib-simple-query-inserts"><a class="header" href="#fix-per-connection-read-buffer-leak-under-multi-mib-simple-query-inserts">Fix: per-connection read buffer leak under multi-MiB simple-query INSERTs</a></h4>
+<p>Per-connection reusable read buffers (<code>Client.read_buf</code>, <code>Server.read_buf</code>) retained the largest allocation each connection had served. After one multi-MiB simple-query INSERT, every subsequent small message split out of that allocation, and the reusable buffer reclaimed the multi-MiB region as soon as the previous <code>BytesMut</code> was dropped. Across thousands of clients in transaction mode, occasional megabyte-sized payloads compounded into a 100 MB → 4 GB pooler RSS regression.</p>
+<p><code>read_message_reuse</code> and <code>read_message_body_reuse</code> now drop the backing allocation before each read when the buffer's capacity exceeds 256 KiB and fall back to a fresh 16 KiB buffer. The steady-state path (capacity within threshold) is unchanged.</p>
 <h3 id="362-apr-27-2026"><a class="header" href="#362-apr-27-2026">3.6.2 <small>Apr 27, 2026</small></a></h3>
 <p><strong>New features:</strong></p>
 <ul>
