@@ -14,19 +14,17 @@ use crate::messages::{CURRENT_MEMORY, MAX_MESSAGE_SIZE};
 /// Default capacity for a freshly allocated reusable read buffer.
 const REUSE_BUF_DEFAULT_CAPACITY: usize = 16 * 1024;
 
-/// Once `split()` returns the message body to the caller, BytesMut keeps the
-/// underlying allocation alive through its internal Arc. As soon as the caller
-/// drops the returned BytesMut, the reusable buffer reclaims that capacity for
-/// the next message — including a multi-MiB allocation made for one oversized
-/// query. Without an explicit cap the buffer would forever hold the largest
-/// message it has ever seen, which on a pool with thousands of clients turns
-/// every occasional megabyte-sized INSERT into a per-connection memory leak.
+/// `BytesMut::split()` keeps the backing allocation alive through its Arc.
+/// When the caller drops the returned `BytesMut`, the reusable buffer
+/// reclaims that capacity for the next read, including a multi-MiB region
+/// allocated for one oversized query. Without this cap, `buf` retains the
+/// largest allocation it has served. On a pool with thousands of clients,
+/// each occasional megabyte-sized INSERT turns into a per-connection leak.
 const REUSE_BUF_SHRINK_THRESHOLD: usize = 256 * 1024;
 
-/// Drop an oversized reusable read buffer so the next reserve() allocates a
-/// fresh small buffer instead of inheriting the previous large allocation.
-/// Called before each read; the steady-state path (capacity within threshold)
-/// is a single comparison and falls through unchanged.
+/// Drop an oversized reusable read buffer before the next read. Without it,
+/// `reserve()` would inherit the previous multi-MiB allocation. The
+/// steady-state path (capacity within threshold) falls through unchanged.
 #[inline]
 fn shrink_reuse_buf(buf: &mut BytesMut) {
     if buf.capacity() > REUSE_BUF_SHRINK_THRESHOLD {
@@ -150,14 +148,15 @@ where
     result
 }
 
-/// Read a message into a reusable buffer. Returns owned BytesMut via split(),
-/// keeping the backing capacity in `buf` for the next call.
+/// Read a message into a reusable buffer. Returns the owned `BytesMut` via
+/// `split()` while the backing capacity stays in `buf` for the next call.
 ///
-/// Amortized allocation cost: ~1 heap alloc per `REUSE_BUF_DEFAULT_CAPACITY /
-/// msg_size` messages. split() hands off the filled region; reserve() reuses
-/// remaining capacity in the same backing allocation until exhausted. Buffers
-/// that grew past `REUSE_BUF_SHRINK_THRESHOLD` are dropped before the next
-/// read so an oversized message does not pin the allocation forever.
+/// Amortized allocation cost: roughly one heap alloc per
+/// `REUSE_BUF_DEFAULT_CAPACITY / msg_size` messages. `split()` hands off the
+/// filled region; `reserve()` reuses any remaining capacity in the same
+/// allocation until exhausted. A buffer that grew past
+/// `REUSE_BUF_SHRINK_THRESHOLD` is dropped before the next read, so a single
+/// oversized message does not pin its allocation across the connection.
 #[inline]
 pub async fn read_message_reuse<S>(
     stream: &mut S,
@@ -586,14 +585,13 @@ mod tests {
         );
     }
 
-    /// Realistic hot path: caller drops the previous message before reading the next.
-    /// In production each iteration of the client loop reads a Q, processes it, and
-    /// drops the BytesMut before the next read. With BytesMut::split() the dropped
-    /// allocation is reclaimed by the reusable buf via its internal Arc, so the
-    /// 5 MiB capacity follows the buf into all subsequent small reads. Multiplied
-    /// by 15k idle clients that each handled one large INSERT once, this is the
-    /// 100 MB → 4 GB pooler RSS regression. The test asserts that this does NOT
-    /// happen.
+    /// Realistic hot path: the previous message is dropped before the next read.
+    /// Each iteration of the client loop reads a `Q`, processes it, and drops the
+    /// `BytesMut` before the next call. `BytesMut::split()` lets the reusable
+    /// `buf` reclaim the dropped allocation through its Arc, so a 5 MiB capacity
+    /// follows the buf into every subsequent small read. Across 15 000 idle
+    /// clients that each ran one large INSERT once, this compounds to multi-GiB
+    /// pooler RSS. The test fails when the leak is present.
     #[tokio::test]
     async fn reuse_large_dropped_then_small_no_bloat() {
         let large_body = vec![0u8; 5 * 1024 * 1024]; // 5 MiB — matches mcp-ss-bitmaps payloads
@@ -721,11 +719,10 @@ mod tests {
         assert_eq!(&result[5..], body);
     }
 
-    /// Same regression as reuse_large_dropped_then_small_no_bloat, server-side path.
-    /// Server.read_buf must not retain a multi-MiB allocation after a single large
-    /// DataRow / CopyData is forwarded, otherwise long-lived backend connections
-    /// in transaction mode pile up RSS proportional to the largest message ever
-    /// seen on each connection.
+    /// Server-side path of the same regression. `Server.read_buf` must not
+    /// retain a multi-MiB allocation after one large `DataRow` or `CopyData`
+    /// passes through. Long-lived backend connections in transaction mode
+    /// would otherwise pin RSS to the size of the largest message handled.
     #[tokio::test]
     async fn body_reuse_large_dropped_then_small_no_bloat() {
         let large_body = vec![0u8; 5 * 1024 * 1024];
