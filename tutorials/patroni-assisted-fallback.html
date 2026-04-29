@@ -218,18 +218,59 @@ Fallback:
 into cooldown for <code>fallback_cooldown</code> (default 30 seconds).</li>
 <li>Doorman sends <code>GET /cluster</code> to all configured Patroni URLs
 <strong>in parallel</strong> and takes the first successful response.</li>
-<li>From the member list, doorman picks the highest-priority host:
-<code>sync_standby</code> first, then <code>replica</code>, then any other member.
-TCP connect to all candidates runs in parallel; if a <code>sync_standby</code>
-responds, it is chosen immediately over any replica.</li>
-<li>The new connection enters the pool with a <strong>reduced lifetime</strong>
-(default 30 seconds, matching the cooldown). It follows
-all normal pool rules: coordinator limits, idle timeout, recycle.</li>
+<li>From the member list, doorman drops members in cooldown and
+partitions the rest into two waves by role:
+wave 1 — every <code>sync_standby</code>; wave 2 — every other member
+(replica + leader, in discovery order).</li>
+<li><strong>Wave 1 (strict-priority race).</strong> Doorman runs <code>Server::startup</code>
+against every sync_standby in parallel, each under
+<code>fallback_connect_timeout</code> (default 5 seconds). The first sync_standby
+to finish startup wins immediately and its connection is delivered
+to the client. While any sync_standby is still in-flight no
+replica/leader is considered, even if a replica would have answered
+sooner — the goal is to preserve write traffic, and the sync_standby
+is the lowest-data-loss promotion target.</li>
+<li><strong>Wave 2 (no sub-priority).</strong> Only entered if every sync_standby
+failed (or none exists). Doorman races startup against the rest in
+parallel under the same per-candidate timeout; whichever candidate
+completes startup first wins — replica and leader compete on equal
+footing.</li>
+<li><strong>Exhaustion.</strong> If both waves finish with no winner, the doorman log
+records <code>all fallback candidates rejected (3 startup_error, 1 timeout)</code>
+with a deterministic per-reason breakdown. The client always sees
+the same sanitized FATAL pg_doorman uses for startup-time errors —
+<code>Unable to retrieve server parameters … may be unavailable or misconfigured</code> — read the doorman log for the wave/winner trace.</li>
+<li>The successful connection enters the pool with a <strong>reduced lifetime</strong>
+(default 30 seconds, matching the cooldown). It follows all normal
+pool rules: coordinator limits, idle timeout, recycle.</li>
 <li>Subsequent connections during the cooldown go to the same fallback
-host directly, without re-querying the Patroni API.</li>
+host directly, without re-querying the Patroni API. If that cached
+host fails on a later startup, doorman clears the cache and runs
+one extra discovery round.</li>
 <li>When the cooldown expires, doorman tries the local socket again.
 If it works, normal mode resumes. If not, the cycle repeats.</li>
 </ol>
+<p>Per-candidate failures (auth error, <code>database is starting up</code>, timeout)
+mark the candidate unhealthy with exponential backoff; subsequent
+discovery rounds skip those hosts until their cooldown lapses.</p>
+<h3 id="wait-time-bounds"><a class="header" href="#wait-time-bounds">Wait time bounds</a></h3>
+<p>A client never waits for fallback longer than <code>query_wait_timeout</code>
+(default 5 seconds). When that deadline elapses, doorman aborts the
+fallback path with <code>fallback: outer deadline {ms}ms exceeded</code> in the
+log and the client sees the same sanitized FATAL as any other
+startup-time failure. The deadline is <strong>soft</strong>: per-candidate
+<code>fallback_connect_timeout</code> is the hard guarantee against hangs, the
+outer deadline is just the upper bound on how long the client itself
+is willing to wait.</p>
+<h3 id="per-host-cooldown"><a class="header" href="#per-host-cooldown">Per-host cooldown</a></h3>
+<p>A candidate that fails startup stays out of the next discovery for
+<code>fallback_connect_timeout</code> (default 5 seconds). Each consecutive
+failure on the same host doubles the cooldown, capped at 60 seconds.
+After the window elapses the entry is dropped (lazy cleanup on the
+next discovery cycle) and the counter resets on the next failure.
+This prevents a stuck candidate (postgres in recovery, persistent
+auth misconfiguration, slow network path) from being retried on every
+client request and hammering both the candidate and the Patroni API.</p>
 <h2 id="write-queries-on-a-replica"><a class="header" href="#write-queries-on-a-replica">Write queries on a replica</a></h2>
 <p>If the fallback host is a replica that hasn't been promoted yet,
 write queries return:</p>
@@ -274,8 +315,10 @@ patroni_api_urls = [
 <div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>fallback_cooldown</code></td><td><code>"30s"</code></td><td>How long the local backend stays marked as down after a failed connect. During this window, all new connections go to the fallback host.</td></tr>
 <tr><td><code>patroni_api_timeout</code></td><td><code>"5s"</code></td><td>HTTP timeout for Patroni API requests. Applies per URL; since all URLs are queried in parallel, the effective timeout is this value, not multiplied by the number of URLs.</td></tr>
-<tr><td><code>fallback_connect_timeout</code></td><td><code>"5s"</code></td><td>TCP connect timeout for fallback candidates. Applies to the entire parallel connect batch, not per member.</td></tr>
+<tr><td><code>fallback_connect_timeout</code></td><td><code>"5s"</code></td><td>Per-candidate <code>Server::startup</code> deadline (covers TCP connect plus StartupMessage round-trip) and the per-host cooldown base after a failed startup. One parameter governs both because they share the "candidate looks unresponsive" semantics.</td></tr>
 <tr><td><code>fallback_lifetime</code></td><td>same as <code>fallback_cooldown</code></td><td>Lifetime of fallback connections. Shorter than normal <code>server_lifetime</code> so the pool returns to the local backend quickly after recovery.</td></tr>
+<tr><td><code>connect_timeout</code> (<code>[general]</code>)</td><td><code>"3s"</code></td><td>Deadline for the local-backend <code>Server::startup</code>, in addition to its existing role for alive-check and TCP probe. Raise this if your local PostgreSQL has slow startup (large WAL replay, big <code>shared_buffers</code> warmup).</td></tr>
+<tr><td><code>query_wait_timeout</code> (<code>[general]</code>)</td><td><code>"5s"</code></td><td>Outer deadline for the entire fallback path. The client never waits longer than this for a server connection, regardless of how many candidates are walked.</td></tr>
 </tbody></table>
 </div>
 <h3 id="what-to-put-in-patroni_api_urls"><a class="header" href="#what-to-put-in-patroni_api_urls">What to put in <code>patroni_api_urls</code></a></h3>
@@ -293,6 +336,7 @@ queries all URLs in parallel and takes the first response.</p>
 <tr><td><code>pg_doorman_fallback_active</code></td><td>gauge</td><td>1 while the local backend is in cooldown and the pool is using a fallback</td></tr>
 <tr><td><code>pg_doorman_fallback_host</code></td><td>gauge</td><td>Currently active fallback host (1 = active). Labels: pool, host, port</td></tr>
 <tr><td><code>pg_doorman_fallback_cache_hits_total</code></td><td>counter</td><td>Cached fallback host reused without re-querying Patroni</td></tr>
+<tr><td><code>pg_doorman_fallback_candidate_failures_total</code></td><td>counter</td><td>Per-candidate startup failure. Labels: <code>pool</code>, <code>reason</code> (<code>connect_error</code>, <code>startup_error</code>, <code>server_unavailable</code>, <code>timeout</code>, <code>other</code>). Use this to tell apart "everyone refused on auth" from "kernel-level connectivity broken" during exhaustion.</td></tr>
 <tr><td><code>pg_doorman_patroni_api_duration_seconds</code></td><td>histogram</td><td>Time spent fetching <code>/cluster</code></td></tr>
 </tbody></table>
 </div>
@@ -311,9 +355,24 @@ Verify that fallback nodes accept the configured credentials.</p>
 local backend. If the local backend uses a unix socket (no TLS),
 fallback TCP connections will also run without TLS. Configure
 <code>server_tls_mode</code> explicitly if fallback connections must be encrypted.</p>
-<p><strong>DNS.</strong> Use IP addresses in <code>patroni_api_urls</code>, not hostnames.
-DNS resolution failure during a failover adds latency and may cause
-the lookup to fail entirely.</p>
+<p><strong>DNS.</strong> Use IP addresses in <code>patroni_api_urls</code> and in Patroni
+<code>member.host</code>, not hostnames. The startup-timeout wrapper covers DNS
+resolution via <code>TcpStream::connect</code>, but a 5s DNS hang consumes the
+full <code>fallback_connect_timeout</code> budget for that candidate before the
+next one is tried.</p>
+<p><strong>Log volume under failure storm.</strong> The per-candidate
+<code>&lt;host&gt;:&lt;port&gt; rejected (...)</code> WARN is rate-limited to one line per
+10 seconds per <code>(pool, host, port)</code>. Suppressed lines log at DEBUG.
+If you see only one WARN where you expected many, that's the
+rate-limit, not lost data — check the
+<code>pg_doorman_fallback_candidate_failures_total</code> counter for the real
+attempt count.</p>
+<p><strong>Whitelist switchover and <code>pg_doorman_fallback_host</code>.</strong> When the
+fallback target changes (cooldown drains, retry round picks a
+different host), the gauge for the previous <code>(host, port)</code> is
+removed in the same operation that sets the gauge for the new one.
+Dashboards do not see two hosts marked active at once during the
+transition.</p>
 <p><strong>standby_leader.</strong> Patroni standby clusters use the <code>standby_leader</code>
 role. doorman treats it as "other" (lowest priority, after sync_standby
 and replica). For a primary-cluster deployment this matches what you

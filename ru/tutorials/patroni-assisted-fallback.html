@@ -214,24 +214,65 @@ Fallback:
                       +-- GET /cluster --&gt; Patroni API
 </code></pre>
 <ol>
-<li>Doorman пробует локальный unix socket.</li>
+<li>doorman пробует локальный unix socket.</li>
 <li>Connection refused или socket error: doorman помечает локальный
 backend как недоступный на <code>fallback_cooldown</code> (по умолчанию 30 секунд).</li>
 <li>doorman отправляет <code>GET /cluster</code> ко всем Patroni URL из конфига
 <strong>параллельно</strong> и берёт первый успешный ответ.</li>
-<li>Из списка members doorman выбирает кандидата с наивысшим приоритетом:
-сначала <code>sync_standby</code>, потом <code>replica</code>, потом любой другой.
-TCP connect ко всем кандидатам запускается параллельно; если
-<code>sync_standby</code> отвечает, он выбирается немедленно, обходя replica.</li>
-<li>Новое соединение попадает в пул со <strong>сниженным lifetime</strong>
+<li>Из списка members doorman отбрасывает находящихся в cooldown и
+делит остальных на две волны по роли: волна 1 — все
+<code>sync_standby</code>; волна 2 — все остальные (replica + leader, в
+порядке discovery).</li>
+<li><strong>Волна 1 (строгий приоритет sync_standby).</strong> doorman параллельно
+запускает <code>Server::startup</code> для каждого sync_standby, каждый под
+<code>fallback_connect_timeout</code> (по умолчанию 5 секунд). Первый
+sync_standby, успешно прошедший startup, выигрывает и его
+соединение отдаётся клиенту. Пока хоть один sync_standby ещё в
+процессе startup, replica/leader не учитываются — даже если
+replica уже готова. Цель — сохранить пишущий трафик: sync_standby
+это кандидат на promote с минимальной потерей данных.</li>
+<li><strong>Волна 2 (без приоритета).</strong> Запускается, только если все
+sync_standby упали (или их нет в кластере). doorman параллельно
+стартует остальных кандидатов под тем же per-candidate timeout;
+выигрывает первый, кто успешно завершит startup — replica и
+leader идут на равных.</li>
+<li><strong>Exhaustion.</strong> Если обе волны кончились без победителя, в лог
+doorman пишется
+<code>all fallback candidates rejected (3 startup_error, 1 timeout)</code> с
+детерминированной разбивкой по причинам. Клиент получает
+sanitized FATAL — <code>Unable to retrieve server parameters … may be unavailable or misconfigured</code>; разбор смотрите в логе doorman.</li>
+<li>Успешное соединение попадает в пул со <strong>сниженным lifetime</strong>
 (по умолчанию 30 секунд, совпадает с <code>fallback_cooldown</code>).
 На него действуют все обычные правила пула: лимиты coordinator,
 idle timeout, recycle.</li>
 <li>Последующие соединения в рамках cooldown идут к тому же
-fallback-хосту напрямую, без повторного запроса к Patroni API.</li>
+fallback-хосту напрямую, без повторного запроса к Patroni API.
+Если кэшированный host позже отказывает на startup, doorman
+очищает кэш и выполняет один дополнительный раунд discovery.</li>
 <li>Когда cooldown истекает, doorman снова пробует локальный socket.
 Если работает — штатный режим. Если нет — цикл повторяется.</li>
 </ol>
+<p>Per-candidate отказ (auth, <code>database is starting up</code>, таймаут) ставит
+кандидата в cooldown с экспоненциальным backoff; следующие раунды
+discovery пропускают эти хосты до истечения окна.</p>
+<h3 id="Ограничение-времени-ожидания-клиента"><a class="header" href="#Ограничение-времени-ожидания-клиента">Ограничение времени ожидания клиента</a></h3>
+<p>Клиент никогда не ждёт fallback дольше <code>query_wait_timeout</code>
+(по умолчанию 5 секунд). Если дедлайн срабатывает, doorman прерывает
+fallback с записью <code>fallback: outer deadline {ms}ms exceeded</code> в лог,
+а клиент получает sanitized FATAL — тот же, что и на любую другую
+startup-time ошибку. Дедлайн <strong>мягкий</strong>: жёсткую защиту от зависаний
+обеспечивает per-candidate <code>fallback_connect_timeout</code>, а внешний
+дедлайн — это верхняя граница того, сколько клиент сам готов ждать.</p>
+<h3 id="cooldown-на-отдельных-хостах"><a class="header" href="#cooldown-на-отдельных-хостах">Cooldown на отдельных хостах</a></h3>
+<p>Кандидат, отказавший на startup, исключается из ближайшего discovery
+на <code>fallback_connect_timeout</code> (по умолчанию 5 секунд). Каждый
+последовательный отказ того же хоста удваивает cooldown, с верхним
+пределом 60 секунд. После окончания окна запись удаляется (lazy
+cleanup на следующем discovery-цикле), счётчик сбрасывается на
+следующем отказе. Это не даёт застрявшему кандидату (postgres в
+recovery, persistent ошибка auth, медленная сеть) повторно
+тестироваться на каждый клиентский запрос и заваливать одновременно
+и кандидата, и Patroni API.</p>
 <h2 id="write-запросы-на-реплике"><a class="header" href="#write-запросы-на-реплике">Write-запросы на реплике</a></h2>
 <p>Если fallback-хост — реплика, которая ещё не промотирована,
 write-запросы получат ошибку от PostgreSQL:</p>
@@ -276,8 +317,10 @@ patroni_api_urls = [
 <div class="table-wrapper"><table><thead><tr><th>Параметр</th><th>По умолчанию</th><th>Описание</th></tr></thead><tbody>
 <tr><td><code>fallback_cooldown</code></td><td><code>"30s"</code></td><td>Сколько локальный backend остаётся помеченным как недоступный после ошибки соединения. В течение этого окна все новые соединения идут на fallback-хост.</td></tr>
 <tr><td><code>patroni_api_timeout</code></td><td><code>"5s"</code></td><td>HTTP-таймаут запросов к Patroni API. Действует на каждый URL; так как все URL опрашиваются параллельно, реальный таймаут равен этому значению, а не умноженному на количество URL.</td></tr>
-<tr><td><code>fallback_connect_timeout</code></td><td><code>"5s"</code></td><td>Таймаут TCP connect к fallback-кандидатам. Действует на всю пачку параллельных connect, не на каждый member отдельно.</td></tr>
+<tr><td><code>fallback_connect_timeout</code></td><td><code>"5s"</code></td><td>Дедлайн <code>Server::startup</code> для каждого кандидата (покрывает TCP-connect плюс StartupMessage round-trip) и база per-host cooldown после отказа startup. Один параметр на две роли — обе имеют одинаковую семантику «кандидат не отвечает».</td></tr>
 <tr><td><code>fallback_lifetime</code></td><td>= <code>fallback_cooldown</code></td><td>Lifetime fallback-соединений. Короче штатного <code>server_lifetime</code>, чтобы doorman быстро вернулся к локальному backend после восстановления.</td></tr>
+<tr><td><code>connect_timeout</code> (<code>[general]</code>)</td><td><code>"3s"</code></td><td>Дедлайн <code>Server::startup</code> для локального backend, в дополнение к существующим ролям для alive-check и TCP probe. Поднимите этот параметр, если ваш локальный PostgreSQL имеет медленный startup (большой WAL replay, прогрев <code>shared_buffers</code>).</td></tr>
+<tr><td><code>query_wait_timeout</code> (<code>[general]</code>)</td><td><code>"5s"</code></td><td>Внешний дедлайн всего fallback-пути. Клиент никогда не ждёт server connection дольше этого значения, независимо от количества перебираемых кандидатов.</td></tr>
 </tbody></table>
 </div>
 <h3 id="Что-указывать-в-patroni_api_urls"><a class="header" href="#Что-указывать-в-patroni_api_urls">Что указывать в <code>patroni_api_urls</code></a></h3>
@@ -295,6 +338,7 @@ patroni_api_urls = [
 <tr><td><code>pg_doorman_fallback_active</code></td><td>gauge</td><td>1, пока локальный backend в cooldown и пул использует fallback</td></tr>
 <tr><td><code>pg_doorman_fallback_host</code></td><td>gauge</td><td>Текущий активный fallback-хост (1 = активен). Labels: pool, host, port</td></tr>
 <tr><td><code>pg_doorman_fallback_cache_hits_total</code></td><td>counter</td><td>Повторное использование кешированного fallback-хоста без запроса к Patroni API</td></tr>
+<tr><td><code>pg_doorman_fallback_candidate_failures_total</code></td><td>counter</td><td>Отказ конкретного кандидата на startup. Labels: <code>pool</code>, <code>reason</code> (<code>connect_error</code>, <code>startup_error</code>, <code>server_unavailable</code>, <code>timeout</code>, <code>other</code>). По разбивке по reason при exhaustion видно, что произошло — auth-фейлы на всех нодах или сетевая проблема.</td></tr>
 <tr><td><code>pg_doorman_patroni_api_duration_seconds</code></td><td>histogram</td><td>Время запроса <code>/cluster</code></td></tr>
 </tbody></table>
 </div>
@@ -315,9 +359,24 @@ credentials.</p>
 socket (без TLS), fallback TCP-соединения тоже пойдут без TLS.
 Настройте <code>server_tls_mode</code> явно, если fallback-соединения должны
 быть зашифрованы.</p>
-<p><strong>DNS.</strong> Используйте IP-адреса в <code>patroni_api_urls</code>, а не hostname.
-Неудача DNS-резолва во время failover добавляет задержку и может
-привести к полному отказу запроса.</p>
+<p><strong>DNS.</strong> Используйте IP-адреса и в <code>patroni_api_urls</code>, и в Patroni
+<code>member.host</code>, не hostname. Дедлайн startup покрывает DNS-резолв
+через <code>TcpStream::connect</code>, но 5-секундный DNS hang съест весь
+бюджет <code>fallback_connect_timeout</code> для конкретного кандидата прежде
+чем будет проверен следующий.</p>
+<p><strong>Объём логов при failure storm.</strong> Per-candidate
+<code>&lt;host&gt;:&lt;port&gt; rejected (...)</code> WARN ограничен одной строкой в
+10 секунд на <code>(pool, host, port)</code>. Подавленные строки уходят в
+DEBUG. Если вы видите один WARN там, где ожидали много — это
+rate-limit, не потерянные данные; проверяйте счётчик
+<code>pg_doorman_fallback_candidate_failures_total</code> для реального
+количества попыток.</p>
+<p><strong>Switchover whitelist и <code>pg_doorman_fallback_host</code>.</strong> Когда
+fallback-цель меняется (cooldown истёк, retry-раунд выбрал другой
+host), gauge для предыдущего <code>(host, port)</code> удаляется в той же
+операции, что устанавливает gauge для нового. Дашборды не видят
+два хоста одновременно помеченных как активные во время
+переключения.</p>
 <p><strong>standby_leader.</strong> В standby-кластерах Patroni используется роль
 <code>standby_leader</code>. doorman обрабатывает её как «other» (наименьший
 приоритет, после sync_standby и replica). Для primary-кластерного
