@@ -637,11 +637,12 @@ Feature: Patroni-assisted fallback
     When we sleep for 500 milliseconds
     Then psql query "SELECT 1" via pg_doorman as user "example_user_1" to database "example_db" with password "" returns "1"
 
-  Scenario: All fallback candidates hang on startup — exhaustion error names reasons
+  Scenario: All fallback candidates hang on startup — client gets a sanitized error
     # E + G. Two candidates whose TCP listener accepts but never replies to
-    # StartupMessage exercise startup_with_timeout (Timeout reason) and the
-    # exhaustion summary "all fallback candidates rejected (...)" returned
-    # to the client.
+    # StartupMessage exercise startup_with_timeout (Timeout reason). The full
+    # exhaustion summary "all fallback candidates rejected (...)" appears in
+    # pg_doorman logs; the client receives a sanitized FATAL with the
+    # standard "may be unavailable or misconfigured" wording.
     Given we start hung TCP listener as 'sync'
     And we start hung TCP listener as 'replica'
     And PostgreSQL started with pg_hba.conf:
@@ -683,7 +684,7 @@ Feature: Patroni-assisted fallback
       password = ""
       pool_size = 5
       """
-    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "" fails with error containing "all fallback candidates rejected"
+    Then psql connection to pg_doorman as user "example_user_1" to database "example_db" with password "" fails with error containing "may be unavailable or misconfigured"
 
   Scenario: Fallback total deadline aborts when query_wait_timeout elapses
     # A'. With local PG dead and a single hung Patroni member, query_wait_timeout

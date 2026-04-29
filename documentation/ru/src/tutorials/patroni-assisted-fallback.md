@@ -83,8 +83,12 @@ Fallback:
    5 секунд). Первый успешно завершивший startup кандидат побеждает.
 6. Если кандидат отказывает на startup (auth, `database is starting
    up`, таймаут), doorman помечает его unhealthy и пробует следующего.
-   Если все кандидаты отказали, клиент получает ошибку
-   `all fallback candidates rejected (...)` с агрегацией по причинам.
+   При exhaustion в лог doorman пишется
+   `all fallback candidates rejected (3 startup_error, 1 timeout)` с
+   агрегацией по причинам. Клиент же всегда получает sanitized FATAL,
+   который pg_doorman возвращает на любые startup-time ошибки —
+   `Unable to retrieve server parameters … may be unavailable or
+   misconfigured`; разбор по причинам смотрите в логе doorman.
 7. Успешное соединение попадает в пул со **сниженным lifetime**
    (по умолчанию 30 секунд, совпадает с `fallback_cooldown`).
    На него действуют все обычные правила пула: лимиты coordinator,
@@ -100,11 +104,12 @@ Fallback:
 
 Клиент никогда не ждёт fallback дольше `query_wait_timeout`
 (по умолчанию 5 секунд). Если за это окно ни один кандидат не
-успел подняться, клиент получает
-`fallback total deadline {ms}ms exceeded`. Это тот же параметр,
-которым pg_doorman ограничивает любое ожидание server connection;
-fallback наследует его, чтобы медленный Patroni member или длинный
-список кандидатов не вышли за его пределы.
+успел подняться, в лог doorman пишется
+`fallback total deadline {ms}ms exceeded`, а клиент получает тот
+же sanitized FATAL, что и на любую startup-time ошибку. Это тот же
+параметр, которым pg_doorman ограничивает любое ожидание server
+connection; fallback наследует его, чтобы медленный Patroni member
+или длинный список кандидатов не вышли за его пределы.
 
 ### Cooldown на отдельных хостах
 

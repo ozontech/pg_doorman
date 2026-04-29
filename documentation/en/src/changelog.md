@@ -7,9 +7,9 @@
 Patroni-assisted fallback now bounds wait time, iterates through candidates on startup failure, and skips recently-failed hosts. See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md) for operator-level details.
 
 - **Startup deadline.** `Server::startup` runs under `tokio::time::timeout`. Main path: `connect_timeout` (default `3s`), now also covers StartupMessage round-trip. Fallback path: `fallback_connect_timeout` (default `5s`) per candidate. Raise `connect_timeout` if your backend startup exceeds 3s (large WAL replay after restart).
-- **Iteration.** Fallback walks every TCP-alive candidate in priority order (`sync_standby > replica > leader`). On exhaustion the client gets `all fallback candidates rejected (3 startup_error, 1 timeout)` aggregated by reason.
+- **Iteration.** Fallback walks every TCP-alive candidate in priority order (`sync_standby > replica > leader`). On exhaustion pg_doorman logs `all fallback candidates rejected (3 startup_error, 1 timeout)` aggregated by reason. The client sees the sanitized `Unable to retrieve server parameters … may be unavailable or misconfigured` FATAL pg_doorman uses for any startup-time failure — drill into the log for the breakdown.
 - **Per-host cooldown with exponential backoff.** Failed candidate is marked unhealthy for `fallback_connect_timeout`, doubling on consecutive failures up to `60s`; resets to base after the window elapses. Map bounded at 256 entries.
-- **Outer deadline.** Full fallback path runs under `query_wait_timeout` (default `5s`). Client gets `fallback total deadline {ms}ms exceeded` if no candidate succeeds in the window.
+- **Outer deadline.** Full fallback path runs under `query_wait_timeout` (default `5s`). pg_doorman logs `fallback total deadline {ms}ms exceeded` when no candidate succeeds in the window; the client sees the same sanitized FATAL.
 - **Whitelist post-failure rediscovery.** Stale cached host failure clears the cache and runs one extra discovery round.
 - **Log rate-limit.** Per-candidate `WARN` rate-limited to 1 per 10s per `(pool, host:port)`; suppressed lines log at DEBUG.
 - **`pg_doorman_fallback_host` cleanup on switchover.** Old `(host, port)` label removed when whitelist changes.

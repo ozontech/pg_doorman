@@ -82,8 +82,12 @@ Fallback:
    The first candidate to complete startup wins.
 6. If a candidate refuses startup (auth error, `database is starting
    up`, timeout), doorman marks it unhealthy and tries the next one.
-   On exhaustion the client receives
-   `all fallback candidates rejected (...)` aggregated by failure reason.
+   On exhaustion the doorman log records
+   `all fallback candidates rejected (3 startup_error, 1 timeout)`
+   aggregated by failure reason. The client always sees the same
+   sanitized FATAL pg_doorman uses for startup-time errors —
+   `Unable to retrieve server parameters … may be unavailable or
+   misconfigured` — read the doorman log for the breakdown.
 7. The successful connection enters the pool with a **reduced lifetime**
    (default 30 seconds, matching the cooldown). It follows all normal
    pool rules: coordinator limits, idle timeout, recycle.
@@ -98,10 +102,12 @@ Fallback:
 
 A client never waits for fallback longer than `query_wait_timeout`
 (default 5 seconds). When that deadline elapses with no candidate
-ready, the client receives `fallback total deadline {ms}ms exceeded`.
-This is the same deadline the rest of pg_doorman uses to limit how
-long a client waits for any server connection — fallback inherits it
-so a slow Patroni member or a long candidate list cannot push past it.
+ready, the doorman log records `fallback total deadline {ms}ms
+exceeded` and the client sees the same sanitized FATAL it gets for
+any startup-time failure. This is the same deadline the rest of
+pg_doorman uses to limit how long a client waits for any server
+connection — fallback inherits it so a slow Patroni member or a long
+candidate list cannot push past it.
 
 ### Per-host cooldown
 
