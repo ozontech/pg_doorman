@@ -72,6 +72,7 @@ async fn setup_internal_pool(world: &mut DoormanWorld, size: usize, _mode: Strin
         0,                       // idle_timeout_ms (0 = disabled)
         0,                       // idle_check_timeout_ms (0 = disabled)
         Duration::from_secs(10), // connect_timeout
+        Duration::from_secs(10), // query_wait_timeout
         false,                   // session_mode
         None,                    // fallback_state
     );
@@ -422,6 +423,7 @@ async fn setup_internal_pool_with_lifetimes(
         lifetime_ms,
         idle_timeout_ms,
         0,
+        Duration::from_secs(10),
         Duration::from_secs(10),
         false,
         None,

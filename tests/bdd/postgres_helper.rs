@@ -445,7 +445,7 @@ pub async fn start_postgres_with_options_and_hba(
     start_postgres_internal(world, &hba_content, &options).await;
 }
 
-fn build_psql_via_doorman(
+pub(crate) fn build_psql_via_doorman(
     port: u16,
     user: &str,
     database: &str,

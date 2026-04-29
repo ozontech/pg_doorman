@@ -6,7 +6,8 @@ use crate::utils::{
 use crate::world::DoormanWorld;
 use cucumber::{gherkin::Step, given, then, when};
 use portpicker::pick_unused_port;
-use std::process::{Child, Command};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::time::sleep;
@@ -278,6 +279,20 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
         "info"
     };
     let (stdout_cfg, stderr_cfg) = get_stdio_config();
+    // Per-scenario log capture: if `doorman_log_path` was set by an earlier
+    // `Given pg_doorman log capture enabled` step, redirect the child's stderr
+    // (where pg_doorman writes its log records) to that file. This lets later
+    // `Then pg_doorman log contains "..."` steps assert on log content.
+    let stderr_cfg = match world.doorman_log_path.as_ref() {
+        Some(path) => Stdio::from(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .expect("Failed to open doorman log capture file"),
+        ),
+        None => stderr_cfg,
+    };
 
     let child = Command::new(doorman_binary)
         .arg(&config_path)
@@ -297,7 +312,13 @@ pub async fn start_doorman_with_config(world: &mut DoormanWorld, step: &Step) {
     world.doorman_process = Some(child);
 
     // Wait for pg_doorman to be ready (custom implementation with log capture)
-    wait_for_doorman_ready(doorman_port, world.doorman_process.as_mut().unwrap()).await;
+    let log_path = world.doorman_log_path.clone();
+    wait_for_doorman_ready(
+        doorman_port,
+        world.doorman_process.as_mut().unwrap(),
+        log_path.as_deref(),
+    )
+    .await;
 }
 
 #[given("pg_doorman shutdown-only mode")]
@@ -308,15 +329,25 @@ pub async fn set_shutdown_only_mode(world: &mut DoormanWorld) {
 }
 
 /// Helper function to wait for pg_doorman to be ready (max 5 seconds)
-/// This is a custom implementation that captures logs on failure
-pub(crate) async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
+/// This is a custom implementation that captures logs on failure.
+///
+/// `log_path` is set when stderr was redirected to a file (log capture); the
+/// child's stderr is then `None`, so on failure we read from the file
+/// instead.
+pub(crate) async fn wait_for_doorman_ready(port: u16, child: &mut Child, log_path: Option<&Path>) {
     use std::io::Read;
+
+    let read_captured_stderr = |buf: &mut String| {
+        if let Some(p) = log_path {
+            let _ = std::fs::File::open(p).and_then(|mut f| f.read_to_string(buf));
+        }
+    };
 
     let mut success = false;
     for _ in 0..20 {
         match child.try_wait() {
             Ok(Some(status)) => {
-                // Process exited, capture stdout and stderr
+                // Process exited, capture stdout and stderr (or log file)
                 let mut stdout_output = String::new();
                 let mut stderr_output = String::new();
 
@@ -325,6 +356,8 @@ pub(crate) async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
                 }
                 if let Some(ref mut stderr) = child.stderr {
                     let _ = stderr.read_to_string(&mut stderr_output);
+                } else {
+                    read_captured_stderr(&mut stderr_output);
                 }
 
                 panic!(
@@ -356,6 +389,8 @@ pub(crate) async fn wait_for_doorman_ready(port: u16, child: &mut Child) {
         }
         if let Some(ref mut stderr) = child.stderr {
             let _ = stderr.read_to_string(&mut stderr_output);
+        } else {
+            read_captured_stderr(&mut stderr_output);
         }
 
         let _ = child.wait();

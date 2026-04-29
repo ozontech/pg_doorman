@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -5,10 +6,10 @@ use std::time::{Duration, Instant};
 
 use futures::future::Shared;
 use futures::FutureExt;
-use log::{debug, info, warn};
+use log::{debug, info};
 use parking_lot::Mutex;
-use tokio::net::TcpStream;
 
+use crate::errors::Error;
 use crate::patroni::client::PatroniClient;
 use crate::patroni::types::{ClusterResponse, Member, Role};
 
@@ -22,6 +23,90 @@ pub struct FallbackTarget {
     pub role: Role,
     pub lifetime_ms: u64,
 }
+
+/// Where the candidate list returned by `get_fallback_targets` came from.
+/// Lets the caller decide whether a failed round warrants one extra
+/// discovery retry (whitelist hit may be stale) or not (discovery already
+/// gave us the freshest list — exhaustion is final).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetSource {
+    /// Single cached host, no discovery performed.
+    WhitelistCache,
+    /// Full list freshly fetched from `/cluster`.
+    Discovery,
+}
+
+/// Categorical reason for a fallback candidate failing a connection attempt.
+/// Used both for the per-candidate Prometheus counter and for aggregating
+/// the exhaustion error message so the operator sees `"3 startup_error,
+/// 1 timeout"` rather than just the last error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FailureReason {
+    /// Couldn't reach the candidate at the transport layer (TCP refuse,
+    /// network unreachable, DNS).
+    ConnectError,
+    /// Server was reached but responded with FATAL during startup
+    /// (auth, pg_hba, missing database).
+    StartupError,
+    /// Server responded `57P*` (admin shutdown, crash recovery, "database
+    /// is starting up", database dropped).
+    ServerUnavailable,
+    /// `startup_with_timeout` deadline elapsed.
+    Timeout,
+    /// Anything else — should normally not happen on the fallback path.
+    Other,
+}
+
+impl FailureReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureReason::ConnectError => "connect_error",
+            FailureReason::StartupError => "startup_error",
+            FailureReason::ServerUnavailable => "server_unavailable",
+            FailureReason::Timeout => "timeout",
+            FailureReason::Other => "other",
+        }
+    }
+}
+
+impl From<&Error> for FailureReason {
+    fn from(err: &Error) -> Self {
+        match err {
+            // `startup_with_timeout` produces ConnectError with a literal
+            // "startup timed out" prefix; promote it to its own bucket so
+            // operators distinguish "couldn't connect" from "stuck postgres".
+            Error::ConnectError(msg) if msg.starts_with("server startup timed out") => {
+                FailureReason::Timeout
+            }
+            Error::ConnectError(_) => FailureReason::ConnectError,
+            Error::ServerUnavailableError(_, _) => FailureReason::ServerUnavailable,
+            Error::ServerStartupError(_, _) => FailureReason::StartupError,
+            _ => FailureReason::Other,
+        }
+    }
+}
+
+/// Per-candidate cooldown entry. Tracks the active deadline, the
+/// consecutive failure count for exponential backoff, and the last warn-log
+/// timestamp so we can rate-limit per-candidate WARN spam under failure storm.
+#[derive(Debug, Clone)]
+struct CooldownEntry {
+    until: Instant,
+    attempts: u32,
+    last_warn_at: Option<Instant>,
+}
+
+/// Cooldown grows as `base * 2^(attempts - 1)` capped at this value.
+/// 60s is comfortably longer than typical Patroni `loop_wait` (10s) and
+/// PostgreSQL restart cycles, but short enough that a candidate that
+/// recovered isn't ignored for an absurd window.
+const COOLDOWN_MAX: Duration = Duration::from_secs(60);
+
+/// Per-candidate WARN log rate-limit. Under a failure storm with N pools
+/// and M clients each retrying, naive per-attempt logging spams the log
+/// with thousands of identical lines per second; this throttles it to
+/// roughly one line per candidate per 10s.
+const COOLDOWN_LOG_RATE: Duration = Duration::from_secs(10);
 
 /// Three-way blacklist state. `JustExpired` exists so callers can drain stale
 /// fallback connections on natural expiry.
@@ -45,6 +130,13 @@ pub struct FallbackState {
 
     /// Suppresses repeat blacklist log lines.
     blacklist_logged: AtomicBool,
+
+    /// Per-candidate cooldown set after a failed startup. The entry tracks
+    /// the active deadline, the consecutive-failure count for exponential
+    /// backoff, and the last warn-log timestamp for log rate-limiting.
+    /// Pruned of expired entries at the start of each `get_fallback_targets`
+    /// discovery cycle, so size stays linear in actively-failing candidates.
+    unhealthy_candidates: Mutex<HashMap<(String, u16), CooldownEntry>>,
 
     pool_name: String,
     discovery_urls: Vec<String>,
@@ -74,6 +166,7 @@ impl FallbackState {
             whitelisted_host: Mutex::new(None),
             inflight: tokio::sync::Mutex::new(None),
             blacklist_logged: AtomicBool::new(false),
+            unhealthy_candidates: Mutex::new(HashMap::new()),
             pool_name,
             discovery_urls,
             blacklist_duration,
@@ -127,7 +220,7 @@ impl FallbackState {
         !self.blacklist_logged.swap(true, Ordering::Relaxed)
     }
 
-    /// Reset blacklist, whitelist, and metrics.
+    /// Reset blacklist, whitelist, candidate cooldowns, and metrics.
     pub fn clear(&self) {
         {
             let mut guard = self.blacklisted_until.lock();
@@ -144,13 +237,30 @@ impl FallbackState {
                 &port.to_string(),
             ]);
         }
+        self.unhealthy_candidates.lock().clear();
         self.blacklist_logged.store(false, Ordering::Relaxed);
         crate::prometheus::FALLBACK_ACTIVE
             .with_label_values(&[&self.pool_name])
             .set(0.0);
     }
 
-    /// Clear whitelist cache so the next `get_fallback_target` re-runs discovery.
+    /// True iff a whitelisted host is currently cached. Lets the fallback
+    /// caller distinguish "whitelist round failed" (which warrants a single
+    /// retry with fresh discovery) from "discovery round failed" (where a
+    /// retry would just repeat the same query).
+    pub fn is_whitelisted(&self) -> bool {
+        self.whitelisted_host.lock().is_some()
+    }
+
+    /// `fallback_connect_timeout` — used both as the per-startup deadline on
+    /// fallback connections and as the per-candidate cooldown window after a
+    /// failed startup. Kept as one parameter for now: same scale, same
+    /// "candidate looks unresponsive" semantics.
+    pub fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
+    }
+
+    /// Clear whitelist cache so the next `get_fallback_targets` re-runs discovery.
     pub fn clear_whitelist(&self) {
         let old = {
             let mut guard = self.whitelisted_host.lock();
@@ -165,34 +275,171 @@ impl FallbackState {
         }
     }
 
-    pub async fn get_fallback_target(&self) -> Result<FallbackTarget, String> {
-        // 1. Check whitelist — return cached host immediately
+    /// Mark a candidate unhealthy. The next `get_fallback_targets` call will
+    /// skip this `(host, port)` until the cooldown window elapses.
+    ///
+    /// Cooldown grows exponentially on consecutive failures: base for the
+    /// first miss, then doubles each subsequent failure while the cooldown
+    /// is still active, capped at `COOLDOWN_MAX`. Once the cooldown expires
+    /// (lazily cleaned on `is_unhealthy` miss or on `prune_expired_unhealthy`
+    /// at the start of discovery), the counter resets — a candidate that
+    /// came back healthy and failed again later starts fresh, not at its
+    /// old penalty.
+    ///
+    /// Also records the failure reason in the per-pool Prometheus counter.
+    /// The map is unbounded: realistic Patroni clusters have under a dozen
+    /// members, expired entries are pruned at every discovery cycle, and
+    /// `COOLDOWN_MAX = 60s` puts a hard ceiling on how long any one entry
+    /// stays active.
+    pub fn mark_unhealthy(&self, host: &str, port: u16, reason: FailureReason) {
+        crate::prometheus::FALLBACK_CANDIDATE_FAILURES_TOTAL
+            .with_label_values(&[self.pool_name.as_str(), reason.as_str()])
+            .inc();
+
+        let now = Instant::now();
+        let base = self.connect_timeout;
+        let mut guard = self.unhealthy_candidates.lock();
+
+        let key = (host.to_string(), port);
+        let entry = guard.entry(key).or_insert(CooldownEntry {
+            until: now,
+            attempts: 0,
+            last_warn_at: None,
+        });
+
+        let still_active = entry.until > now;
+        entry.attempts = if still_active {
+            entry.attempts.saturating_add(1)
+        } else {
+            // Cooldown lapsed before we got around to noticing — start fresh.
+            1
+        };
+
+        // Grow cooldown as `base * 2^(attempts-1)`. Cap the shift at 20 because
+        // `2^20 * 5s ≈ 60 days` already overshoots `COOLDOWN_MAX = 60s` by
+        // many orders of magnitude — any further shift is wasted arithmetic
+        // and risks `1u32 << shift` overflowing for `shift >= 32`.
+        let shift = entry.attempts.saturating_sub(1).min(20);
+        let multiplier = 1u32 << shift;
+        let next = base
+            .checked_mul(multiplier)
+            .unwrap_or(COOLDOWN_MAX)
+            .min(COOLDOWN_MAX);
+        entry.until = now + next;
+    }
+
+    /// Drop every expired entry from `unhealthy_candidates`. Called at the
+    /// start of each discovery cycle so memory stays linear in the number of
+    /// recently-failing candidates rather than accumulating dead k8s pod
+    /// IPs forever.
+    pub fn prune_expired_unhealthy(&self) {
+        let now = Instant::now();
+        self.unhealthy_candidates
+            .lock()
+            .retain(|_, entry| entry.until > now);
+    }
+
+    /// True if `(host, port)` is currently within its cooldown window.
+    /// Performs lazy cleanup of an expired entry on miss so the map does
+    /// not retain dead members of churning clusters forever.
+    pub fn is_unhealthy(&self, host: &str, port: u16) -> bool {
+        let now = Instant::now();
+        let mut guard = self.unhealthy_candidates.lock();
+        let key = (host.to_string(), port);
+        match guard.get(&key) {
+            Some(entry) if entry.until > now => true,
+            Some(_) => {
+                guard.remove(&key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// True if a WARN-level log line for `(host, port)` is allowed right now;
+    /// returns false if we already emitted one within `COOLDOWN_LOG_RATE`.
+    /// Side-effect: on a true return, records `now` so the next call within
+    /// the window is suppressed. The candidate must already have a cooldown
+    /// entry — call this immediately after `mark_unhealthy`, never before.
+    pub fn should_log_unhealthy(&self, host: &str, port: u16) -> bool {
+        let now = Instant::now();
+        let mut guard = self.unhealthy_candidates.lock();
+        let key = (host.to_string(), port);
+        match guard.get_mut(&key) {
+            Some(entry) => match entry.last_warn_at {
+                Some(prev) if now.duration_since(prev) < COOLDOWN_LOG_RATE => false,
+                _ => {
+                    entry.last_warn_at = Some(now);
+                    true
+                }
+            },
+            None => true,
+        }
+    }
+
+    /// Build the candidate list the caller must race when establishing a
+    /// fallback connection. Returns the list together with its source so the
+    /// caller can distinguish a (potentially stale) whitelist hit from a
+    /// fresh discovery — only the former warrants a single retry round.
+    ///
+    /// On whitelist hit returns a single-element vector with the cached host
+    /// (skipping discovery) — unless that host is currently in cooldown, in
+    /// which case the whitelist is bypassed and full discovery runs.
+    ///
+    /// Otherwise: prune expired cooldown entries (memory hygiene), fetch
+    /// `/cluster`, drop unhealthy candidates, sort the rest by priority
+    /// (sync_standby > replica > leader). No TCP probing — the caller will
+    /// race `Server::startup` against every member in parallel under the
+    /// per-candidate startup deadline; a refused TCP simply yields a fast
+    /// `ConnectError` that the caller treats like any other failure.
+    pub async fn get_fallback_targets(
+        &self,
+    ) -> Result<(Vec<FallbackTarget>, TargetSource), String> {
+        // 1. Check whitelist — return cached host immediately, unless it just
+        // got marked unhealthy (in which case we skip the cache and rediscover).
         {
             let guard = self.whitelisted_host.lock();
             if let Some((ref host, port, ref role)) = *guard {
-                debug!(
-                    "[pool: {}] fallback: returning whitelisted host {}:{}",
-                    self.pool_name, host, port
-                );
-                crate::prometheus::FALLBACK_CACHE_HITS_TOTAL
-                    .with_label_values(&[&self.pool_name])
-                    .inc();
-                return Ok(FallbackTarget {
-                    host: host.clone(),
-                    port,
-                    role: role.clone(),
-                    lifetime_ms: self.server_lifetime_ms,
-                });
+                let host_owned = host.clone();
+                let role_owned = role.clone();
+                drop(guard);
+                if !self.is_unhealthy(&host_owned, port) {
+                    debug!(
+                        "[pool: {}] fallback: returning whitelisted host {}:{}",
+                        self.pool_name, host_owned, port
+                    );
+                    crate::prometheus::FALLBACK_CACHE_HITS_TOTAL
+                        .with_label_values(&[&self.pool_name])
+                        .inc();
+                    return Ok((
+                        vec![FallbackTarget {
+                            host: host_owned,
+                            port,
+                            role: role_owned,
+                            lifetime_ms: self.server_lifetime_ms,
+                        }],
+                        TargetSource::WhitelistCache,
+                    ));
+                }
             }
         }
 
-        // 2. Fetch /cluster via coalesced request
+        // 2. Drop expired cooldown entries before fresh discovery — keeps
+        // the map size linear in actively-failing candidates rather than
+        // accumulating dead pod IPs from past k8s rollouts.
+        self.prune_expired_unhealthy();
+
+        // 3. Fetch /cluster via coalesced request.
         let cluster = self.fetch_cluster_coalesced().await?;
 
-        // 3-4. Filter and sort candidates
-        let candidates = select_candidates(&cluster.members);
+        // 4. Filter and sort candidates, then drop those still in cooldown.
+        let raw_candidates = select_candidates(&cluster.members);
+        let candidates: Vec<(String, u16, Role)> = raw_candidates
+            .into_iter()
+            .filter(|(host, port, _)| !self.is_unhealthy(host, *port))
+            .collect();
         info!(
-            "[pool: {}] fallback: discovered {} members, {} candidates: {}",
+            "[pool: {}] fallback: discovered {} members, {} live candidate(s) after cooldown filter: {}",
             self.pool_name,
             cluster.members.len(),
             candidates.len(),
@@ -206,14 +453,43 @@ impl FallbackState {
             return Err("no eligible members in /cluster response".to_string());
         }
 
-        // 5-7. Parallel TCP connect to all candidates
-        let timeout = self.connect_timeout;
-        let (host, port, role) = self.try_connect_candidates(&candidates, timeout).await?;
+        Ok((
+            candidates
+                .into_iter()
+                .map(|(host, port, role)| FallbackTarget {
+                    host,
+                    port,
+                    role,
+                    lifetime_ms: self.server_lifetime_ms,
+                })
+                .collect(),
+            TargetSource::Discovery,
+        ))
+    }
 
-        // 8. Whitelist the successful host
-        {
+    /// Record a successful fallback host so subsequent calls hit
+    /// `get_fallback_targets`'s whitelist branch and skip discovery.
+    /// Called from `server_pool` after `Server::startup` returns Ok.
+    ///
+    /// If an older whitelist entry existed under a different `(host, port)`,
+    /// its Prometheus `FALLBACK_HOST` label is removed atomically — without
+    /// this, after a switchover both `(old, 1.0)` and `(new, 1.0)` would
+    /// remain visible, suggesting fallback is active on two hosts at once.
+    pub fn set_whitelisted(&self, host: String, port: u16, role: Role) {
+        let old = {
             let mut guard = self.whitelisted_host.lock();
+            let old = guard.take();
             *guard = Some((host.clone(), port, role.clone()));
+            old
+        };
+        if let Some((old_host, old_port, _)) = old {
+            if (old_host.as_str(), old_port) != (host.as_str(), port) {
+                let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
+                    &self.pool_name,
+                    &old_host,
+                    &old_port.to_string(),
+                ]);
+            }
         }
         info!(
             "[pool: {}] fallback: whitelisted {}:{} (role: {:?})",
@@ -222,14 +498,6 @@ impl FallbackState {
         crate::prometheus::FALLBACK_HOST
             .with_label_values(&[&self.pool_name, &host, &port.to_string()])
             .set(1.0);
-
-        // 9. Return FallbackTarget
-        Ok(FallbackTarget {
-            host,
-            port,
-            role,
-            lifetime_ms: self.server_lifetime_ms,
-        })
     }
 
     async fn fetch_cluster_coalesced(&self) -> Result<ClusterResponse, String> {
@@ -288,85 +556,6 @@ impl FallbackState {
         let client = self.patroni_client.clone();
         let fut = async move { client.fetch_cluster(&urls).await.map_err(|e| e.to_string()) };
         fut.boxed().shared()
-    }
-
-    /// Parallel TCP-connect; returns the highest-priority responder
-    /// (sync_standby > replica > leader). Pinned futures over `tokio::spawn`
-    /// so cancellation propagates when `rest` is dropped.
-    async fn try_connect_candidates(
-        &self,
-        candidates: &[(String, u16, Role)],
-        timeout: Duration,
-    ) -> Result<(String, u16, Role), String> {
-        type ConnectFuture = Pin<Box<dyn Future<Output = Option<(String, u16, Role)>> + Send>>;
-        let mut futs: Vec<ConnectFuture> = Vec::with_capacity(candidates.len());
-
-        let pool_name = self.pool_name.clone();
-        for (host, port, role) in candidates {
-            let addr = format!("{}:{}", host, port);
-            let host = host.clone();
-            let port = *port;
-            let role = role.clone();
-            let pn = pool_name.clone();
-            let fut = Box::pin(async move {
-                match tokio::time::timeout(timeout, TcpStream::connect(&addr)).await {
-                    Ok(Ok(_stream)) => {
-                        debug!(
-                            "[pool: {}] fallback: TCP connect ok to {} (role: {:?})",
-                            pn, addr, role
-                        );
-                        Some((host, port, role))
-                    }
-                    Ok(Err(e)) => {
-                        warn!(
-                            "[pool: {}] fallback: TCP connect failed to {}: {}",
-                            pn, addr, e
-                        );
-                        None
-                    }
-                    Err(_) => {
-                        warn!("[pool: {}] fallback: TCP connect timeout to {}", pn, addr);
-                        None
-                    }
-                }
-            });
-            futs.push(fut);
-        }
-
-        let mut best: Option<(String, u16, Role)> = None;
-        let mut remaining = futs;
-
-        while !remaining.is_empty() {
-            let (result, _idx, rest) = futures::future::select_all(remaining).await;
-
-            if let Some((host, port, role)) = result {
-                let priority = role_priority(&role);
-                if priority == 0 {
-                    // sync_standby found — return now; dropping `rest` cancels in-flight probes.
-                    return Ok((host, port, role));
-                }
-                let dominated = best
-                    .as_ref()
-                    .is_none_or(|(_, _, ref r)| priority < role_priority(r));
-                if dominated {
-                    best = Some((host, port, role));
-                }
-            }
-
-            remaining = rest;
-        }
-
-        match best {
-            Some((h, p, r)) => Ok((h, p, r)),
-            None => {
-                warn!(
-                    "[pool: {}] fallback: all {} candidates unreachable",
-                    self.pool_name,
-                    candidates.len()
-                );
-                Err("all candidates unreachable".to_string())
-            }
-        }
     }
 }
 
@@ -437,6 +626,319 @@ mod tests {
 
         state.clear();
         assert_eq!(state.check_blacklist(), BlacklistCheck::NotBlacklisted);
+    }
+
+    #[test]
+    fn mark_unhealthy_lifecycle() {
+        let state = FallbackState::new(
+            "test_pool_unhealthy_lifecycle".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            // Short cooldown so the test does not stall.
+            Duration::from_millis(50),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        assert!(!state.is_unhealthy("10.0.0.1", 5432));
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        assert!(state.is_unhealthy("10.0.0.1", 5432));
+
+        // Wait past the cooldown window; the next call must report healthy
+        // again and lazy-clean the entry.
+        std::thread::sleep(Duration::from_millis(70));
+        assert!(!state.is_unhealthy("10.0.0.1", 5432));
+
+        // Marking the same host again restarts the window.
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        assert!(state.is_unhealthy("10.0.0.1", 5432));
+    }
+
+    #[test]
+    fn mark_unhealthy_is_per_host_port() {
+        let state = FallbackState::new(
+            "test_pool_unhealthy_per_host".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        assert!(state.is_unhealthy("10.0.0.1", 5432));
+        // Different host — still healthy.
+        assert!(!state.is_unhealthy("10.0.0.2", 5432));
+        // Same host, different port — also independent.
+        assert!(!state.is_unhealthy("10.0.0.1", 5433));
+    }
+
+    #[test]
+    fn clear_drops_unhealthy_entries() {
+        let state = FallbackState::new(
+            "test_pool_unhealthy_clear".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        state.mark_unhealthy("10.0.0.2", 5432, FailureReason::Other);
+        state.clear();
+        assert!(!state.is_unhealthy("10.0.0.1", 5432));
+        assert!(!state.is_unhealthy("10.0.0.2", 5432));
+    }
+
+    #[test]
+    fn mark_unhealthy_exponential_backoff() {
+        let base_ms = 50;
+        let state = FallbackState::new(
+            "test_pool_backoff".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_millis(base_ms),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        // First mark — base cooldown.
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        let attempts1 = {
+            let g = state.unhealthy_candidates.lock();
+            g.get(&("10.0.0.1".to_string(), 5432)).unwrap().attempts
+        };
+        assert_eq!(attempts1, 1);
+
+        // Second mark while still active — attempts grows, cooldown extends.
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        let attempts2 = {
+            let g = state.unhealthy_candidates.lock();
+            g.get(&("10.0.0.1".to_string(), 5432)).unwrap().attempts
+        };
+        assert_eq!(attempts2, 2);
+
+        // Third — attempts=3 → cooldown = base * 4. Verify > 2*base to confirm
+        // doubling actually applied.
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        let entry = {
+            let g = state.unhealthy_candidates.lock();
+            g.get(&("10.0.0.1".to_string(), 5432)).unwrap().clone()
+        };
+        assert_eq!(entry.attempts, 3);
+        let remaining = entry.until.saturating_duration_since(Instant::now());
+        assert!(
+            remaining > Duration::from_millis(2 * base_ms),
+            "remaining {:?} should reflect 4x base ({}ms)",
+            remaining,
+            base_ms
+        );
+    }
+
+    #[test]
+    fn mark_unhealthy_caps_at_max() {
+        // base = 1s; after enough doublings the result must clamp at COOLDOWN_MAX (60s).
+        let state = FallbackState::new(
+            "test_pool_cap".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        for _ in 0..20 {
+            state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        }
+        let until = {
+            let g = state.unhealthy_candidates.lock();
+            g.get(&("10.0.0.1".to_string(), 5432)).unwrap().until
+        };
+        let remaining = until.saturating_duration_since(Instant::now());
+        assert!(
+            remaining <= COOLDOWN_MAX + Duration::from_millis(50),
+            "remaining {:?} must not exceed COOLDOWN_MAX={:?}",
+            remaining,
+            COOLDOWN_MAX
+        );
+    }
+
+    #[test]
+    fn mark_unhealthy_resets_after_lazy_clean() {
+        // After cooldown expires, attempts must reset to 1 — a candidate
+        // that recovered and failed again is at base, not at its old penalty.
+        let state = FallbackState::new(
+            "test_pool_reset".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_millis(20),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        std::thread::sleep(Duration::from_millis(100));
+        // Trigger lazy clean.
+        assert!(!state.is_unhealthy("10.0.0.1", 5432));
+        // Fresh mark.
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        let attempts = {
+            let g = state.unhealthy_candidates.lock();
+            g.get(&("10.0.0.1".to_string(), 5432)).unwrap().attempts
+        };
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn prune_expired_unhealthy_drops_only_lapsed_entries() {
+        let state = FallbackState::new(
+            "test_pool_prune_expired".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_millis(20),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        // One short-lived entry that will lapse, one long-lived entry that
+        // must survive. Sleep just long enough to expire the short one.
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        // Override second entry to a hand-set long-lived `until` so it can't
+        // race the sleep.
+        {
+            let mut g = state.unhealthy_candidates.lock();
+            g.insert(
+                ("10.0.0.2".to_string(), 5432),
+                CooldownEntry {
+                    until: Instant::now() + Duration::from_secs(60),
+                    attempts: 1,
+                    last_warn_at: None,
+                },
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
+
+        state.prune_expired_unhealthy();
+        let g = state.unhealthy_candidates.lock();
+        assert!(
+            g.get(&("10.0.0.1".to_string(), 5432)).is_none(),
+            "expired entry must be dropped"
+        );
+        assert!(
+            g.get(&("10.0.0.2".to_string(), 5432)).is_some(),
+            "active entry must survive prune"
+        );
+    }
+
+    #[test]
+    fn should_log_unhealthy_rate_limits_per_host_port() {
+        let state = FallbackState::new(
+            "test_pool_log_rate".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        // First call after mark — must be allowed.
+        assert!(state.should_log_unhealthy("10.0.0.1", 5432));
+        // Within rate-limit window — suppressed.
+        assert!(!state.should_log_unhealthy("10.0.0.1", 5432));
+        // Different host:port has its own counter.
+        state.mark_unhealthy("10.0.0.2", 5432, FailureReason::Other);
+        assert!(state.should_log_unhealthy("10.0.0.2", 5432));
+    }
+
+    #[test]
+    fn failure_reason_from_error_maps_correctly() {
+        use crate::errors::ServerIdentifier;
+        let id = ServerIdentifier::new("u".to_string(), "d", "p");
+
+        assert_eq!(
+            FailureReason::from(&Error::ConnectError("tcp refused".into())),
+            FailureReason::ConnectError
+        );
+        assert_eq!(
+            FailureReason::from(&Error::ConnectError(
+                "server startup timed out to 1.2.3.4:5432 after 3000ms".into()
+            )),
+            FailureReason::Timeout
+        );
+        assert_eq!(
+            FailureReason::from(&Error::ServerStartupError("auth fail".into(), id.clone())),
+            FailureReason::StartupError
+        );
+        assert_eq!(
+            FailureReason::from(&Error::ServerUnavailableError(
+                "starting up".into(),
+                id.clone(),
+            )),
+            FailureReason::ServerUnavailable
+        );
+    }
+
+    #[test]
+    fn set_whitelisted_replaces_old_metric_label() {
+        let pool = "test_pool_label_swap";
+        let state = FallbackState::new(
+            pool.to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        state.set_whitelisted("10.0.0.1".to_string(), 5432, Role::SyncStandby);
+        let v1 = crate::prometheus::FALLBACK_HOST
+            .with_label_values(&[pool, "10.0.0.1", "5432"])
+            .get();
+        assert_eq!(v1, 1.0);
+
+        state.set_whitelisted("10.0.0.2".to_string(), 5432, Role::SyncStandby);
+        // Old label cleared during overwrite.
+        let v_old = crate::prometheus::FALLBACK_HOST
+            .with_label_values(&[pool, "10.0.0.1", "5432"])
+            .get();
+        // remove_label_values drops the metric entirely; reading again
+        // recreates it at default 0.0. Either way, never 1.0 here.
+        assert_eq!(v_old, 0.0);
+        let v_new = crate::prometheus::FALLBACK_HOST
+            .with_label_values(&[pool, "10.0.0.2", "5432"])
+            .get();
+        assert_eq!(v_new, 1.0);
+    }
+
+    #[test]
+    fn is_whitelisted_reflects_state() {
+        let state = FallbackState::new(
+            "test_pool_is_whitelisted".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            30_000,
+        )
+        .unwrap();
+
+        assert!(!state.is_whitelisted());
+        state.set_whitelisted("10.0.0.1".to_string(), 5432, Role::SyncStandby);
+        assert!(state.is_whitelisted());
+        state.clear_whitelist();
+        assert!(!state.is_whitelisted());
     }
 
     #[test]
@@ -707,6 +1209,104 @@ mod tests {
             }
         });
         port
+    }
+
+    /// Bind a TCP listener that just accepts and drops connections, simulating
+    /// a postgres TCP listener that's alive at L4. Lives until the runtime
+    /// shuts down.
+    async fn start_alive_listener() -> u16 {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while listener.accept().await.is_ok() {
+                // accept and drop — only the L4 handshake matters for probes
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn get_fallback_targets_skips_unhealthy_in_discovery() {
+        let port_alive = start_alive_listener().await;
+        let port_marked = start_alive_listener().await;
+
+        let body = format!(
+            r#"{{"members":[
+                {{"name":"a","host":"127.0.0.1","port":{port_marked},"role":"replica","state":"streaming"}},
+                {{"name":"b","host":"127.0.0.1","port":{port_alive},"role":"replica","state":"streaming"}}
+            ]}}"#
+        );
+        let api_port = start_mock_patroni_success(body).await;
+
+        let state = FallbackState::new(
+            "test_pool_skip_unhealthy".to_string(),
+            vec![format!("http://127.0.0.1:{api_port}/cluster")],
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+            30_000,
+        )
+        .unwrap();
+
+        // Mark one member's host:port as unhealthy. Discovery must drop it.
+        state.mark_unhealthy("127.0.0.1", port_marked, FailureReason::Other);
+
+        let (targets, source) = state.get_fallback_targets().await.unwrap();
+        assert_eq!(source, TargetSource::Discovery);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].port, port_alive);
+    }
+
+    #[tokio::test]
+    async fn get_fallback_targets_returns_whitelist_cache_source_when_set() {
+        let state = FallbackState::new(
+            "test_pool_whitelist_source".to_string(),
+            vec![],
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+            30_000,
+        )
+        .unwrap();
+
+        state.set_whitelisted("10.0.0.1".to_string(), 5432, Role::SyncStandby);
+
+        let (targets, source) = state.get_fallback_targets().await.unwrap();
+        assert_eq!(source, TargetSource::WhitelistCache);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].host, "10.0.0.1");
+        assert_eq!(targets[0].port, 5432);
+    }
+
+    #[tokio::test]
+    async fn get_fallback_targets_bypasses_whitelist_when_unhealthy() {
+        // If the whitelisted host has been marked unhealthy in the meantime,
+        // the cache must be ignored and discovery re-run. Source must reflect
+        // the actual fetch path.
+        let port_alive = start_alive_listener().await;
+        let body = format!(
+            r#"{{"members":[{{"name":"a","host":"127.0.0.1","port":{port_alive},"role":"replica","state":"streaming"}}]}}"#
+        );
+        let api_port = start_mock_patroni_success(body).await;
+
+        let state = FallbackState::new(
+            "test_pool_whitelist_unhealthy".to_string(),
+            vec![format!("http://127.0.0.1:{api_port}/cluster")],
+            Duration::from_secs(10),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+            30_000,
+        )
+        .unwrap();
+
+        state.set_whitelisted("10.0.0.1".to_string(), 5432, Role::SyncStandby);
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+
+        let (targets, source) = state.get_fallback_targets().await.unwrap();
+        assert_eq!(source, TargetSource::Discovery);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].port, port_alive);
     }
 
     #[tokio::test]

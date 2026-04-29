@@ -1,6 +1,7 @@
 mod auth_query_helper;
 mod doorman_helper;
 mod extended;
+mod fallback_helper;
 mod fuzz_client;
 mod fuzz_helper;
 mod generate_helper;
