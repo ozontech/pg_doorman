@@ -85,9 +85,11 @@ Fallback:
    replica/leader is considered, even if a replica would have answered
    sooner — the goal is to preserve write traffic, and the sync_standby
    is the lowest-data-loss promotion target.
-6. **Wave 2 (first-success race).** Only entered if every sync_standby
+6. **Wave 2 (no sub-priority).** Only entered if every sync_standby
    failed (or none exists). Doorman races startup against the rest in
-   parallel under the same per-candidate timeout; first success wins.
+   parallel under the same per-candidate timeout; whichever candidate
+   completes startup first wins — replica and leader compete on equal
+   footing.
 7. **Exhaustion.** If both waves finish with no winner, the doorman log
    records `all fallback candidates rejected (3 startup_error, 1 timeout)`
    with a deterministic per-reason breakdown. The client always sees
