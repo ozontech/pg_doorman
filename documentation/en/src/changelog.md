@@ -1,15 +1,15 @@
 # Changelog
 
-### 3.6.4 <small>Apr 28, 2026</small>
+### 3.6.4 <small>Apr 29, 2026</small>
 
 #### Fallback resilience
 
-Patroni-assisted fallback now bounds wait time, iterates through candidates on startup failure, and skips recently-failed hosts. See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md) for operator-level details.
+Patroni-assisted fallback now races `Server::startup` against every alive cluster member in parallel, with a strict sync_standby priority that protects write traffic during a local-backend outage. See [Patroni-assisted fallback](tutorials/patroni-assisted-fallback.md) for operator-level details.
 
-- **Startup deadline.** `Server::startup` runs under `tokio::time::timeout`. Main path: `connect_timeout` (default `3s`), now also covers StartupMessage round-trip. Fallback path: `fallback_connect_timeout` (default `5s`) per candidate. Raise `connect_timeout` if your backend startup exceeds 3s (large WAL replay after restart).
-- **Iteration.** Fallback walks every TCP-alive candidate in priority order (`sync_standby > replica > leader`). On exhaustion pg_doorman logs `all fallback candidates rejected (3 startup_error, 1 timeout)` aggregated by reason. The client sees the sanitized `Unable to retrieve server parameters … may be unavailable or misconfigured` FATAL pg_doorman uses for any startup-time failure — drill into the log for the breakdown.
-- **Per-host cooldown with exponential backoff.** Failed candidate is marked unhealthy for `fallback_connect_timeout`, doubling on consecutive failures up to `60s`; resets to base after the window elapses. Map bounded at 256 entries.
-- **Outer deadline.** Full fallback path runs under `query_wait_timeout` (default `5s`). pg_doorman logs `fallback total deadline {ms}ms exceeded` when no candidate succeeds in the window; the client sees the same sanitized FATAL.
+- **Startup deadline per candidate.** `Server::startup` runs under `tokio::time::timeout`. Main path: `connect_timeout` (default `3s`), now also covers the StartupMessage round-trip. Fallback path: `fallback_connect_timeout` (default `5s`) per candidate. Raise `connect_timeout` if local startup legitimately exceeds 3s (large WAL replay after restart).
+- **Two-wave parallel race.** Wave 1 races startup against every `sync_standby` in parallel and takes the first success; wave 2 (replica + leader) runs only if every sync_standby failed or none existed. While any sync_standby is still in-flight, a replica that already finished startup is intentionally not used — the user-facing requirement is "sync wins if it's alive at all", because the sync_standby is the lowest-data-loss promotion target. On full exhaustion the doorman log records `all fallback candidates rejected (3 startup_error, 1 timeout)` with a deterministic per-reason breakdown; the client always sees the sanitized `Unable to retrieve server parameters … may be unavailable or misconfigured` FATAL — read the doorman log for the wave/winner trace.
+- **Per-host cooldown with exponential backoff.** Failed candidate is marked unhealthy for `fallback_connect_timeout`, doubling on consecutive failures up to `60s`; resets to base after the window elapses. The cooldown map is pruned of expired entries at the start of each discovery cycle, so its size stays linear in actively-failing candidates rather than accumulating dead pod IPs.
+- **Soft outer deadline.** The full fallback path runs under `query_wait_timeout` (default `5s`). If it fires, pg_doorman aborts cleanly with `fallback: outer deadline {ms}ms exceeded` in the log and returns the sanitized FATAL to the client. Per-candidate timeouts are the hard guarantee against hangs; the outer deadline is a soft cap on how long the client itself is willing to wait.
 - **Whitelist post-failure rediscovery.** Stale cached host failure clears the cache and runs one extra discovery round.
 - **Log rate-limit.** Per-candidate `WARN` rate-limited to 1 per 10s per `(pool, host:port)`; suppressed lines log at DEBUG.
 - **`pg_doorman_fallback_host` cleanup on switchover.** Old `(host, port)` label removed when whitelist changes.

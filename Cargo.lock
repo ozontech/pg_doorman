@@ -1915,6 +1915,7 @@ dependencies = [
  "prometheus",
  "quanta",
  "rand 0.9.1",
+ "regex",
  "reqwest",
  "scopeguard",
  "sd-notify",

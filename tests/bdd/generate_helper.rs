@@ -109,7 +109,7 @@ pub async fn start_doorman_with_generated_config(world: &mut DoormanWorld) {
     // Keep the patched config file alive
     world.doorman_config_file = Some(patched_file);
 
-    wait_for_doorman_ready(doorman_port, world.doorman_process.as_mut().unwrap()).await;
+    wait_for_doorman_ready(doorman_port, world.doorman_process.as_mut().unwrap(), None).await;
 }
 
 /// Patch a TOML config: replace port and add pg_hba trust rule

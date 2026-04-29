@@ -124,6 +124,10 @@ pub struct DoormanWorld {
     pub mock_patroni_names: HashMap<String, u16>,
     /// Mock Patroni server response holders: server name -> shared JSON string
     pub mock_patroni_responses: HashMap<String, Arc<RwLock<String>>>,
+    /// Path to file capturing pg_doorman stderr (set by `pg_doorman log capture enabled`).
+    /// When `Some`, `start_doorman_with_config` redirects the child's stderr there
+    /// so scenarios can assert on log content via `pg_doorman log contains`.
+    pub doorman_log_path: Option<PathBuf>,
 }
 
 impl DoormanWorld {

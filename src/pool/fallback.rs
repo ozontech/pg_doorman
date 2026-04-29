@@ -6,9 +6,8 @@ use std::time::{Duration, Instant};
 
 use futures::future::Shared;
 use futures::FutureExt;
-use log::{debug, info, warn};
+use log::{debug, info};
 use parking_lot::Mutex;
-use tokio::net::TcpStream;
 
 use crate::errors::Error;
 use crate::patroni::client::PatroniClient;
@@ -103,13 +102,6 @@ struct CooldownEntry {
 /// recovered isn't ignored for an absurd window.
 const COOLDOWN_MAX: Duration = Duration::from_secs(60);
 
-/// Hard cap on `unhealthy_candidates` size. When `mark_unhealthy` is about
-/// to insert and we're at this cap, we prune expired entries first.
-/// Realistic Patroni clusters have <10 members; this leaves headroom for
-/// churn (autoscaling, k8s pod recreation) without unbounded growth from
-/// stale entries that never get re-queried.
-const COOLDOWN_MAX_ENTRIES: usize = 256;
-
 /// Per-candidate WARN log rate-limit. Under a failure storm with N pools
 /// and M clients each retrying, naive per-attempt logging spams the log
 /// with thousands of identical lines per second; this throttles it to
@@ -142,7 +134,8 @@ pub struct FallbackState {
     /// Per-candidate cooldown set after a failed startup. The entry tracks
     /// the active deadline, the consecutive-failure count for exponential
     /// backoff, and the last warn-log timestamp for log rate-limiting.
-    /// Bounded by `COOLDOWN_MAX_ENTRIES` via lazy prune in `mark_unhealthy`.
+    /// Pruned of expired entries at the start of each `get_fallback_targets`
+    /// discovery cycle, so size stays linear in actively-failing candidates.
     unhealthy_candidates: Mutex<HashMap<(String, u16), CooldownEntry>>,
 
     pool_name: String,
@@ -288,13 +281,16 @@ impl FallbackState {
     /// Cooldown grows exponentially on consecutive failures: base for the
     /// first miss, then doubles each subsequent failure while the cooldown
     /// is still active, capped at `COOLDOWN_MAX`. Once the cooldown expires
-    /// naturally (entry is lazily cleaned on `is_unhealthy` miss), the
-    /// counter resets — a candidate that came back healthy and failed again
-    /// later starts fresh, not at its old penalty.
+    /// (lazily cleaned on `is_unhealthy` miss or on `prune_expired_unhealthy`
+    /// at the start of discovery), the counter resets — a candidate that
+    /// came back healthy and failed again later starts fresh, not at its
+    /// old penalty.
     ///
     /// Also records the failure reason in the per-pool Prometheus counter.
-    /// When `unhealthy_candidates` is at `COOLDOWN_MAX_ENTRIES`, prunes
-    /// expired entries one-shot before insert to keep the map bounded.
+    /// The map is unbounded: realistic Patroni clusters have under a dozen
+    /// members, expired entries are pruned at every discovery cycle, and
+    /// `COOLDOWN_MAX = 60s` puts a hard ceiling on how long any one entry
+    /// stays active.
     pub fn mark_unhealthy(&self, host: &str, port: u16, reason: FailureReason) {
         crate::prometheus::FALLBACK_CANDIDATE_FAILURES_TOTAL
             .with_label_values(&[self.pool_name.as_str(), reason.as_str()])
@@ -303,11 +299,6 @@ impl FallbackState {
         let now = Instant::now();
         let base = self.connect_timeout;
         let mut guard = self.unhealthy_candidates.lock();
-
-        // Bounded growth: if at capacity, drop expired entries first.
-        if guard.len() >= COOLDOWN_MAX_ENTRIES {
-            guard.retain(|_, entry| entry.until > now);
-        }
 
         let key = (host.to_string(), port);
         let entry = guard.entry(key).or_insert(CooldownEntry {
@@ -324,7 +315,10 @@ impl FallbackState {
             1
         };
 
-        // 2^(attempts-1) * base, with overflow guard.
+        // Grow cooldown as `base * 2^(attempts-1)`. Cap the shift at 20 because
+        // `2^20 * 5s ≈ 60 days` already overshoots `COOLDOWN_MAX = 60s` by
+        // many orders of magnitude — any further shift is wasted arithmetic
+        // and risks `1u32 << shift` overflowing for `shift >= 32`.
         let shift = entry.attempts.saturating_sub(1).min(20);
         let multiplier = 1u32 << shift;
         let next = base
@@ -332,6 +326,17 @@ impl FallbackState {
             .unwrap_or(COOLDOWN_MAX)
             .min(COOLDOWN_MAX);
         entry.until = now + next;
+    }
+
+    /// Drop every expired entry from `unhealthy_candidates`. Called at the
+    /// start of each discovery cycle so memory stays linear in the number of
+    /// recently-failing candidates rather than accumulating dead k8s pod
+    /// IPs forever.
+    pub fn prune_expired_unhealthy(&self) {
+        let now = Instant::now();
+        self.unhealthy_candidates
+            .lock()
+            .retain(|_, entry| entry.until > now);
     }
 
     /// True if `(host, port)` is currently within its cooldown window.
@@ -372,7 +377,7 @@ impl FallbackState {
         }
     }
 
-    /// Build the candidate list the caller must iterate when establishing a
+    /// Build the candidate list the caller must race when establishing a
     /// fallback connection. Returns the list together with its source so the
     /// caller can distinguish a (potentially stale) whitelist hit from a
     /// fresh discovery — only the former warrants a single retry round.
@@ -381,11 +386,12 @@ impl FallbackState {
     /// (skipping discovery) — unless that host is currently in cooldown, in
     /// which case the whitelist is bypassed and full discovery runs.
     ///
-    /// Otherwise: fetch `/cluster`, drop unhealthy candidates, run parallel
-    /// TCP-probe, and return all alive candidates ordered by priority
-    /// (sync_standby > replica > leader). Caller iterates the list and is
-    /// responsible for `set_whitelisted` on the first successful startup and
-    /// `mark_unhealthy` on each failure.
+    /// Otherwise: prune expired cooldown entries (memory hygiene), fetch
+    /// `/cluster`, drop unhealthy candidates, sort the rest by priority
+    /// (sync_standby > replica > leader). No TCP probing — the caller will
+    /// race `Server::startup` against every member in parallel under the
+    /// per-candidate startup deadline; a refused TCP simply yields a fast
+    /// `ConnectError` that the caller treats like any other failure.
     pub async fn get_fallback_targets(
         &self,
     ) -> Result<(Vec<FallbackTarget>, TargetSource), String> {
@@ -418,17 +424,22 @@ impl FallbackState {
             }
         }
 
-        // 2. Fetch /cluster via coalesced request.
+        // 2. Drop expired cooldown entries before fresh discovery — keeps
+        // the map size linear in actively-failing candidates rather than
+        // accumulating dead pod IPs from past k8s rollouts.
+        self.prune_expired_unhealthy();
+
+        // 3. Fetch /cluster via coalesced request.
         let cluster = self.fetch_cluster_coalesced().await?;
 
-        // 3. Filter and sort candidates, then drop those in cooldown.
+        // 4. Filter and sort candidates, then drop those still in cooldown.
         let raw_candidates = select_candidates(&cluster.members);
         let candidates: Vec<(String, u16, Role)> = raw_candidates
             .into_iter()
             .filter(|(host, port, _)| !self.is_unhealthy(host, *port))
             .collect();
         info!(
-            "[pool: {}] fallback: discovered {} members, {} candidates: {}",
+            "[pool: {}] fallback: discovered {} members, {} live candidate(s) after cooldown filter: {}",
             self.pool_name,
             cluster.members.len(),
             candidates.len(),
@@ -442,21 +453,8 @@ impl FallbackState {
             return Err("no eligible members in /cluster response".to_string());
         }
 
-        // 4. Parallel TCP-probe; collect every alive candidate sorted by priority.
-        let alive = self
-            .try_connect_candidates(&candidates, self.connect_timeout)
-            .await;
-        if alive.is_empty() {
-            warn!(
-                "[pool: {}] fallback: all {} candidates unreachable",
-                self.pool_name,
-                candidates.len()
-            );
-            return Err("all candidates unreachable".to_string());
-        }
-
         Ok((
-            alive
+            candidates
                 .into_iter()
                 .map(|(host, port, role)| FallbackTarget {
                     host,
@@ -558,60 +556,6 @@ impl FallbackState {
         let client = self.patroni_client.clone();
         let fut = async move { client.fetch_cluster(&urls).await.map_err(|e| e.to_string()) };
         fut.boxed().shared()
-    }
-
-    /// Parallel TCP-probe across all candidates. Returns every alive one
-    /// sorted by priority (sync_standby > replica > leader); empty vec means
-    /// nothing answered.
-    ///
-    /// We wait for all probes to complete instead of returning on first
-    /// sync_standby: `create_fallback_connection` iterates this list when a
-    /// startup fails on the best candidate, so it needs the lower-priority
-    /// alternatives ready.
-    async fn try_connect_candidates(
-        &self,
-        candidates: &[(String, u16, Role)],
-        timeout: Duration,
-    ) -> Vec<(String, u16, Role)> {
-        type ConnectFuture = Pin<Box<dyn Future<Output = Option<(String, u16, Role)>> + Send>>;
-        let mut futs: Vec<ConnectFuture> = Vec::with_capacity(candidates.len());
-
-        let pool_name = self.pool_name.clone();
-        for (host, port, role) in candidates {
-            let addr = format!("{}:{}", host, port);
-            let host = host.clone();
-            let port = *port;
-            let role = role.clone();
-            let pn = pool_name.clone();
-            let fut = Box::pin(async move {
-                match tokio::time::timeout(timeout, TcpStream::connect(&addr)).await {
-                    Ok(Ok(_stream)) => {
-                        debug!(
-                            "[pool: {}] fallback: TCP connect ok to {} (role: {:?})",
-                            pn, addr, role
-                        );
-                        Some((host, port, role))
-                    }
-                    Ok(Err(e)) => {
-                        warn!(
-                            "[pool: {}] fallback: TCP connect failed to {}: {}",
-                            pn, addr, e
-                        );
-                        None
-                    }
-                    Err(_) => {
-                        warn!("[pool: {}] fallback: TCP connect timeout to {}", pn, addr);
-                        None
-                    }
-                }
-            });
-            futs.push(fut);
-        }
-
-        let results = futures::future::join_all(futs).await;
-        let mut alive: Vec<(String, u16, Role)> = results.into_iter().flatten().collect();
-        alive.sort_by_key(|(_, _, role)| role_priority(role));
-        alive
     }
 }
 
@@ -854,9 +798,9 @@ mod tests {
     }
 
     #[test]
-    fn mark_unhealthy_prunes_when_at_capacity() {
+    fn prune_expired_unhealthy_drops_only_lapsed_entries() {
         let state = FallbackState::new(
-            "test_pool_prune".to_string(),
+            "test_pool_prune_expired".to_string(),
             vec![],
             Duration::from_secs(10),
             Duration::from_millis(20),
@@ -865,22 +809,33 @@ mod tests {
         )
         .unwrap();
 
-        // Fill past capacity with short-lived entries, then wait them out.
-        for port in 0..(COOLDOWN_MAX_ENTRIES as u16) {
-            state.mark_unhealthy("10.0.0.1", port, FailureReason::Other);
+        // One short-lived entry that will lapse, one long-lived entry that
+        // must survive. Sleep just long enough to expire the short one.
+        state.mark_unhealthy("10.0.0.1", 5432, FailureReason::Other);
+        // Override second entry to a hand-set long-lived `until` so it can't
+        // race the sleep.
+        {
+            let mut g = state.unhealthy_candidates.lock();
+            g.insert(
+                ("10.0.0.2".to_string(), 5432),
+                CooldownEntry {
+                    until: Instant::now() + Duration::from_secs(60),
+                    attempts: 1,
+                    last_warn_at: None,
+                },
+            );
         }
-        assert_eq!(
-            state.unhealthy_candidates.lock().len(),
-            COOLDOWN_MAX_ENTRIES
-        );
-        std::thread::sleep(Duration::from_millis(60));
+        std::thread::sleep(Duration::from_millis(50));
 
-        // Adding one more triggers prune of expired entries before insert.
-        state.mark_unhealthy("10.0.0.2", 5432, FailureReason::Other);
-        let len = state.unhealthy_candidates.lock().len();
+        state.prune_expired_unhealthy();
+        let g = state.unhealthy_candidates.lock();
         assert!(
-            len < COOLDOWN_MAX_ENTRIES,
-            "after prune len must drop below cap, got {len}"
+            g.get(&("10.0.0.1".to_string(), 5432)).is_none(),
+            "expired entry must be dropped"
+        );
+        assert!(
+            g.get(&("10.0.0.2".to_string(), 5432)).is_some(),
+            "active entry must survive prune"
         );
     }
 
@@ -1269,39 +1224,6 @@ mod tests {
             }
         });
         port
-    }
-
-    #[tokio::test]
-    async fn try_connect_candidates_returns_full_sorted_list() {
-        // Three alive TCP listeners — order in `candidates` is intentionally
-        // not by priority, so the result must be sorted by `role_priority`.
-        let port_a = start_alive_listener().await;
-        let port_b = start_alive_listener().await;
-        let port_c = start_alive_listener().await;
-
-        let state = FallbackState::new(
-            "test_pool_full_sorted".to_string(),
-            vec![],
-            Duration::from_secs(10),
-            Duration::from_millis(500),
-            Duration::from_millis(500),
-            30_000,
-        )
-        .unwrap();
-
-        let candidates = vec![
-            ("127.0.0.1".to_string(), port_a, Role::Leader),
-            ("127.0.0.1".to_string(), port_b, Role::Replica),
-            ("127.0.0.1".to_string(), port_c, Role::SyncStandby),
-        ];
-
-        let alive = state
-            .try_connect_candidates(&candidates, Duration::from_millis(500))
-            .await;
-        assert_eq!(alive.len(), 3);
-        assert_eq!(alive[0].2, Role::SyncStandby);
-        assert_eq!(alive[1].2, Role::Replica);
-        assert_eq!(alive[2].2, Role::Leader);
     }
 
     #[tokio::test]

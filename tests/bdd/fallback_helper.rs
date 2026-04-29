@@ -1,6 +1,5 @@
 //! BDD helpers for the fallback path.
 //!
-//! Two pieces:
 //! - `we start hung TCP listener as '{name}'`: binds a random free port and
 //!   accepts inbound TCP, but never replies. Used to simulate a postgres
 //!   that opened its TCP listener but never gets past StartupMessage —
@@ -10,6 +9,11 @@
 //!   of the existing unix-socket error-message matcher; lets scenarios
 //!   assert the exact `"all fallback candidates rejected (...)"` text that
 //!   `create_fallback_connection` returns on exhaustion.
+//! - `pg_doorman log capture enabled`: redirects pg_doorman stderr (where
+//!   logs go) to a tempfile so subsequent assertions can read it. Must be
+//!   set BEFORE `pg_doorman started with config:`.
+//! - `pg_doorman log contains/matches`: substring or regex assertion against
+//!   the captured log file.
 use crate::postgres_helper::build_psql_via_doorman;
 use crate::world::DoormanWorld;
 use cucumber::{given, then};
@@ -78,5 +82,53 @@ pub async fn psql_connection_fails_with_error(
     assert!(
         stderr.contains(&needle),
         "psql stderr did not contain {needle:?}. Full stderr:\n{stderr}"
+    );
+}
+
+/// Allocate a tempfile for pg_doorman stderr and store its path in the world.
+/// `start_doorman_with_config` reads this and redirects the child stderr
+/// there so subsequent log-content assertions have something to read.
+#[given("pg_doorman log capture enabled")]
+pub async fn enable_log_capture(world: &mut DoormanWorld) {
+    let tmp = tempfile::Builder::new()
+        .prefix("doorman-log-")
+        .suffix(".log")
+        .tempfile()
+        .expect("failed to create doorman log capture file");
+    // Persist the path; tempfile cleanup happens at scenario end via Drop on
+    // the World — but here we keep the path string instead of NamedTempFile
+    // because Stdio::from(File) takes ownership of the file handle.
+    let (_, path) = tmp.keep().expect("failed to persist log capture tempfile");
+    world.doorman_log_path = Some(path);
+}
+
+/// Substring assertion on captured pg_doorman log.
+#[then(expr = "pg_doorman log contains {string}")]
+pub async fn pg_doorman_log_contains(world: &mut DoormanWorld, needle: String) {
+    let path = world
+        .doorman_log_path
+        .as_ref()
+        .expect("log capture not enabled — add `Given pg_doorman log capture enabled`");
+    let body = std::fs::read_to_string(path).expect("failed to read doorman log file");
+    assert!(
+        body.contains(&needle),
+        "pg_doorman log did not contain {needle:?}. Full log:\n{body}"
+    );
+}
+
+/// Regex assertion on captured pg_doorman log. Pattern is whatever `regex`
+/// crate accepts; multiline (`(?m)`) is on by default.
+#[then(expr = "pg_doorman log matches {string}")]
+pub async fn pg_doorman_log_matches(world: &mut DoormanWorld, pattern: String) {
+    let path = world
+        .doorman_log_path
+        .as_ref()
+        .expect("log capture not enabled — add `Given pg_doorman log capture enabled`");
+    let body = std::fs::read_to_string(path).expect("failed to read doorman log file");
+    let re = regex::Regex::new(&format!("(?m){}", pattern))
+        .unwrap_or_else(|e| panic!("invalid regex {pattern:?}: {e}"));
+    assert!(
+        re.is_match(&body),
+        "pg_doorman log did not match /{pattern}/. Full log:\n{body}"
     );
 }

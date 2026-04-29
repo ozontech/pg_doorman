@@ -13,6 +13,7 @@ use tokio::sync::{Notify, Semaphore};
 
 use crate::config::{Address, User};
 use crate::errors::Error;
+use crate::patroni::types::Role;
 use crate::server::Server;
 use crate::stats::ServerStats;
 use crate::utils::format_duration_ms;
@@ -334,13 +335,32 @@ impl ServerPool {
     /// next one. Hard-bounded by `query_wait_timeout`: there is no point
     /// spending more time here than the client itself is willing to wait.
     async fn create_fallback_connection(&self) -> Result<Server, Error> {
+        // `query_wait_timeout` is a soft outer deadline: it bounds how long
+        // the client waits, but per-candidate `startup_with_timeout` already
+        // guarantees we cannot block on a single hung node. If the outer
+        // deadline fires we still return a clean `ConnectError` so the
+        // client gets a sanitized FATAL rather than a hang.
         let deadline = self.query_wait_timeout;
+        info!(
+            "[{}@{}] fallback: local backend unavailable, entering fallback path (deadline={}ms)",
+            self.address.username,
+            self.address.pool_name,
+            deadline.as_millis()
+        );
         match tokio::time::timeout(deadline, self.create_fallback_connection_inner()).await {
             Ok(result) => result,
-            Err(_) => Err(Error::ConnectError(format!(
-                "fallback total deadline {}ms exceeded",
-                deadline.as_millis()
-            ))),
+            Err(_) => {
+                warn!(
+                    "[{}@{}] fallback: outer deadline {}ms exceeded — aborting",
+                    self.address.username,
+                    self.address.pool_name,
+                    deadline.as_millis()
+                );
+                Err(Error::ConnectError(format!(
+                    "fallback total deadline {}ms exceeded",
+                    deadline.as_millis()
+                )))
+            }
         }
     }
 
@@ -363,6 +383,10 @@ impl ServerPool {
                 // Cached host was stale; wipe it and try with full discovery
                 // exactly once more. Bounded retry — discovery round failure
                 // surfaces directly without a third try.
+                info!(
+                    "[{}@{}] fallback: whitelist round failed ({err}), retrying with fresh discovery",
+                    self.address.username, self.address.pool_name,
+                );
                 fallback.clear_whitelist();
                 let (retry_result, _) = self.run_fallback_round(fallback).await;
                 retry_result.map_err(|e2| {
@@ -375,11 +399,31 @@ impl ServerPool {
         }
     }
 
-    /// Run a single fallback round (whitelist hit or discovery) and try every
-    /// alive candidate in priority order. Returns the first successful
-    /// connection; on exhaustion returns a `ConnectError` summarising the
-    /// failure mix by reason ("3 startup_error, 1 timeout"). Returned
-    /// `TargetSource` lets the caller decide whether to retry once more.
+    /// Run a single fallback round and produce a connection.
+    ///
+    /// **Two-wave priority race.** Discovery returns every alive member
+    /// from `/cluster`; we partition by role and run two waves serially:
+    /// 1. **Wave 1 — sync_standby.** Race `Server::startup` against every
+    ///    sync_standby in parallel under per-candidate
+    ///    `fallback_connect_timeout`. The first Ok wins immediately. The
+    ///    user-facing requirement is "sync wins if it's alive at all";
+    ///    we do not consider replica/leader while any sync candidate is
+    ///    still in-flight, even if a replica would have answered faster.
+    /// 2. **Wave 2 — replica + leader.** Only entered if every sync_standby
+    ///    failed (or none existed). Race the rest in parallel; first Ok
+    ///    wins. Among non-sync candidates we do not preserve replica >
+    ///    leader sub-priority — under fallback the system is already in
+    ///    a degraded state, fastest live answer is more useful than
+    ///    role-based ordering.
+    ///
+    /// Whitelist-cache hits (`source = WhitelistCache`) skip the wave
+    /// machinery and run a single startup against the cached host, since
+    /// there's nothing to race against.
+    ///
+    /// On exhaustion: returns `ConnectError("all fallback candidates
+    /// rejected (...)")` with a deterministic per-reason summary. Each
+    /// failed candidate is also marked unhealthy (with exponential
+    /// backoff) and logged at WARN (rate-limited) or DEBUG.
     async fn run_fallback_round(
         &self,
         fallback: &super::fallback::FallbackState,
@@ -407,30 +451,157 @@ impl ServerPool {
             }
         };
 
-        let mut summary = FailureSummary::default();
-        for target in &targets {
+        // Whitelist-cache hit: single target, race-of-one is just a startup.
+        if matches!(source, super::fallback::TargetSource::WhitelistCache) {
+            let target = match targets.into_iter().next() {
+                Some(t) => t,
+                None => {
+                    return (
+                        Err(Error::ConnectError(
+                            "whitelist round produced no target".into(),
+                        )),
+                        source,
+                    )
+                }
+            };
             info!(
-                "[{}@{}] fallback: connecting to {}:{} (role: {:?})",
+                "[{}@{}] fallback: whitelist hit, starting up {}:{} (role={:?})",
                 self.address.username,
                 self.address.pool_name,
                 target.host,
                 target.port,
-                target.role,
+                target.role
             );
             crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
                 .with_label_values(&[&self.address.pool_name])
                 .inc();
-            match self.try_fallback_target(target).await {
-                Ok(conn) => {
-                    fallback.set_whitelisted(target.host.clone(), target.port, target.role.clone());
-                    return (Ok(conn), source);
+            return match self.try_fallback_target(&target).await {
+                Ok(server) => {
+                    fallback.set_whitelisted(target.host, target.port, target.role);
+                    (Ok(server), source)
                 }
                 Err(err) => {
                     let reason = super::fallback::FailureReason::from(&err);
                     fallback.mark_unhealthy(&target.host, target.port, reason);
+                    (Err(err), source)
+                }
+            };
+        }
+
+        // Discovery: partition candidates into wave 1 (sync_standby) and
+        // wave 2 (everything else, in discovery order).
+        let (sync_targets, other_targets): (Vec<_>, Vec<_>) = targets
+            .into_iter()
+            .partition(|t| matches!(t.role, Role::SyncStandby));
+
+        let mut summary = FailureSummary::default();
+
+        // Wave 1.
+        if !sync_targets.is_empty() {
+            info!(
+                "[{}@{}] fallback: wave 1 — racing {} sync_standby candidate(s) ({})",
+                self.address.username,
+                self.address.pool_name,
+                sync_targets.len(),
+                format_target_list(&sync_targets),
+            );
+            if let Some(server) = self
+                .race_wave(fallback, &sync_targets, &mut summary, source)
+                .await
+            {
+                return (Ok(server), source);
+            }
+            info!(
+                "[{}@{}] fallback: wave 1 exhausted ({} sync_standby), advancing to wave 2",
+                self.address.username,
+                self.address.pool_name,
+                sync_targets.len(),
+            );
+        } else {
+            info!(
+                "[{}@{}] fallback: no sync_standby in cluster, going straight to wave 2",
+                self.address.username, self.address.pool_name,
+            );
+        }
+
+        // Wave 2.
+        if !other_targets.is_empty() {
+            info!(
+                "[{}@{}] fallback: wave 2 — racing {} candidate(s) ({})",
+                self.address.username,
+                self.address.pool_name,
+                other_targets.len(),
+                format_target_list(&other_targets),
+            );
+            if let Some(server) = self
+                .race_wave(fallback, &other_targets, &mut summary, source)
+                .await
+            {
+                return (Ok(server), source);
+            }
+        }
+
+        let summary_str = summary.format();
+        warn!(
+            "[{}@{}] fallback: all fallback candidates rejected ({summary_str})",
+            self.address.username, self.address.pool_name,
+        );
+        (
+            Err(Error::ConnectError(format!(
+                "all fallback candidates rejected ({summary_str})"
+            ))),
+            source,
+        )
+    }
+
+    /// Race `Server::startup` against `targets` in parallel. On first Ok
+    /// return `Some(server)` (winner is whitelisted as a side effect). On
+    /// full exhaustion mark every loser unhealthy, record reasons into
+    /// `summary`, and return `None` — the caller advances to the next wave
+    /// or surfaces the aggregate.
+    async fn race_wave(
+        &self,
+        fallback: &super::fallback::FallbackState,
+        targets: &[super::fallback::FallbackTarget],
+        summary: &mut FailureSummary,
+        source: super::fallback::TargetSource,
+    ) -> Option<Server> {
+        // We only count "we attempted to use fallback" once per wave, on
+        // entry — not per candidate. The metric measures fallback usage
+        // pressure, not per-host attempt counts (those live in
+        // `_candidate_failures_total`).
+        crate::prometheus::FALLBACK_CONNECTIONS_TOTAL
+            .with_label_values(&[&self.address.pool_name])
+            .inc();
+        let _ = source; // reserved for future wave-source-specific logic
+
+        let futures: Vec<futures::future::BoxFuture<'_, Result<Server, Error>>> = targets
+            .iter()
+            .map(|t| Box::pin(self.try_fallback_target(t)) as _)
+            .collect();
+
+        match race_first_success(futures).await {
+            Ok((server, idx)) => {
+                let winner = &targets[idx];
+                info!(
+                    "[{}@{}] fallback: winner {}:{} (role={:?}) — startup ok",
+                    self.address.username,
+                    self.address.pool_name,
+                    winner.host,
+                    winner.port,
+                    winner.role,
+                );
+                fallback.set_whitelisted(winner.host.clone(), winner.port, winner.role.clone());
+                Some(server)
+            }
+            Err(errors) => {
+                for (idx, err) in errors {
+                    let target = &targets[idx];
+                    let reason = super::fallback::FailureReason::from(&err);
+                    fallback.mark_unhealthy(&target.host, target.port, reason);
                     if fallback.should_log_unhealthy(&target.host, target.port) {
                         warn!(
-                            "[{}@{}] fallback: {}:{} rejected ({}), trying next",
+                            "[{}@{}] fallback: {}:{} rejected ({})",
                             self.address.username,
                             self.address.pool_name,
                             target.host,
@@ -439,7 +610,7 @@ impl ServerPool {
                         );
                     } else {
                         debug!(
-                            "[{}@{}] fallback: {}:{} rejected ({}), trying next",
+                            "[{}@{}] fallback: {}:{} rejected ({}, suppressed)",
                             self.address.username,
                             self.address.pool_name,
                             target.host,
@@ -449,16 +620,9 @@ impl ServerPool {
                     }
                     summary.record(err, reason);
                 }
+                None
             }
         }
-
-        let summary_str = summary.format();
-        (
-            Err(Error::ConnectError(format!(
-                "all fallback candidates rejected ({summary_str})"
-            ))),
-            source,
-        )
     }
 
     /// Attempt a single fallback target with optional sslmode=allow TLS retry.
@@ -698,6 +862,17 @@ impl ServerPool {
     }
 }
 
+/// Compact "host:port(role)" list for log lines that summarise a wave's
+/// candidate set. Keeps the message readable when the wave has 5+
+/// candidates without splitting into multiple lines.
+fn format_target_list(targets: &[super::fallback::FallbackTarget]) -> String {
+    targets
+        .iter()
+        .map(|t| format!("{}:{}({:?})", t.host, t.port, t.role))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn is_backend_unreachable(err: &Error) -> bool {
     matches!(
         err,
@@ -736,6 +911,45 @@ impl FailureSummary {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+/// Race `futures` and return the first `Ok`, together with its index in the
+/// input slice. If every future yields `Err`, return all errors with their
+/// original indices — the caller decides how to surface them (per-host
+/// cooldown, log aggregation). Pending futures are dropped on first
+/// success, which cancels the in-flight `Server::startup` for the losing
+/// candidates: their TCP sockets go away under us; the kernel finishes the
+/// half-open handshake asynchronously. This is intentional — the
+/// user-facing requirement is "first successful sync wins", and chasing
+/// graceful disconnect on every loser would gate the winner on the slowest
+/// loser.
+async fn race_first_success<'a, T: 'a, E: 'a>(
+    futures: Vec<futures::future::BoxFuture<'a, Result<T, E>>>,
+) -> Result<(T, usize), Vec<(usize, E)>> {
+    if futures.is_empty() {
+        return Err(Vec::new());
+    }
+
+    // Bake the original index into each future's output so `select_all`'s
+    // own ephemeral index — which renumbers as `rest` shrinks — is not
+    // load-bearing.
+    let mut indexed: Vec<futures::future::BoxFuture<'a, (usize, Result<T, E>)>> = futures
+        .into_iter()
+        .enumerate()
+        .map(|(i, f)| Box::pin(async move { (i, f.await) }) as _)
+        .collect();
+
+    let mut errors: Vec<(usize, E)> = Vec::new();
+    while !indexed.is_empty() {
+        let ((idx, result), _, rest) = futures::future::select_all(indexed).await;
+        match result {
+            Ok(value) => return Ok((value, idx)),
+            Err(e) => errors.push((idx, e)),
+        }
+        indexed = rest;
+    }
+
+    Err(errors)
 }
 
 /// Wraps a `Server::startup` call in a hard deadline. On timeout returns
@@ -902,5 +1116,80 @@ mod tests {
             }
             other => panic!("expected pass-through ConnectError, got: {other:?}"),
         }
+    }
+
+    // -- race_first_success --------------------------------------------------
+
+    use futures::future::BoxFuture;
+
+    #[tokio::test]
+    async fn race_first_success_returns_first_ok_with_index() {
+        // The early candidate yields a slow Err, the second yields Ok
+        // immediately. Winner index must be 1, value must come from the
+        // second future. Pending third future is dropped — required so the
+        // test does not stall the runtime for a minute.
+        let f0: BoxFuture<'static, Result<&str, &str>> = Box::pin(async {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            Err("late err")
+        });
+        let f1: BoxFuture<'static, Result<&str, &str>> = Box::pin(async { Ok("won") });
+        let f2: BoxFuture<'static, Result<&str, &str>> = Box::pin(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok("never reached")
+        });
+
+        let (val, idx) = race_first_success(vec![f0, f1, f2])
+            .await
+            .expect("expected Ok");
+        assert_eq!(val, "won");
+        assert_eq!(idx, 1);
+    }
+
+    #[tokio::test]
+    async fn race_first_success_collects_all_errors_when_all_fail() {
+        // Every candidate errors. All errors must be collected with their
+        // original indices so the caller can mark each candidate unhealthy
+        // and aggregate the reasons in the exhaustion log.
+        let f0: BoxFuture<'static, Result<&str, &str>> = Box::pin(async { Err("e0") });
+        let f1: BoxFuture<'static, Result<&str, &str>> = Box::pin(async { Err("e1") });
+        let f2: BoxFuture<'static, Result<&str, &str>> = Box::pin(async { Err("e2") });
+
+        let errs = race_first_success(vec![f0, f1, f2])
+            .await
+            .expect_err("expected Err");
+        assert_eq!(errs.len(), 3);
+        let mut indices: Vec<usize> = errs.iter().map(|(i, _)| *i).collect();
+        indices.sort();
+        assert_eq!(indices, vec![0, 1, 2]);
+        // Errors stay attached to their original index, regardless of the
+        // order they completed in.
+        for (idx, err) in &errs {
+            assert_eq!(*err, ["e0", "e1", "e2"][*idx]);
+        }
+    }
+
+    #[tokio::test]
+    async fn race_first_success_empty_input() {
+        // Vacuous case: caller must not get a panic on a zero-candidate
+        // wave (happens when wave 1 has no sync_standby members).
+        let errs: Vec<(usize, &str)> = race_first_success::<&str, &str>(vec![])
+            .await
+            .expect_err("expected Err");
+        assert!(errs.is_empty(), "no candidates → no errors");
+    }
+
+    #[tokio::test]
+    async fn race_first_success_first_ok_immediately() {
+        // First-completed future is the winner even when the second would
+        // also have succeeded later.
+        let f0: BoxFuture<'static, Result<&str, &str>> = Box::pin(async { Ok("first") });
+        let f1: BoxFuture<'static, Result<&str, &str>> = Box::pin(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok("late")
+        });
+
+        let (val, idx) = race_first_success(vec![f0, f1]).await.expect("expected Ok");
+        assert_eq!(val, "first");
+        assert_eq!(idx, 0);
     }
 }

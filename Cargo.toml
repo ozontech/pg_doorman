@@ -86,6 +86,7 @@ tokio-postgres = "0.7"
 criterion = "0.5"
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
 serial_test = "3"
+regex = "1"
 
 [[bin]]
 name = "pg_doorman"
