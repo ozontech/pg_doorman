@@ -2,7 +2,7 @@
 name = "pg_doorman"
 version = "3.6.3"
 edition = "2021"
-rust-version = "1.87.0"
+rust-version = "1.95.0"
 license = "MIT"
 
 
@@ -30,7 +30,7 @@ quanta = "0.12"
 arc-swap = "1.7.1"
 toml = "0.8"
 prometheus = "0.14.0"
-tokio = { version = "1.48.4", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal", "time"] }
+tokio = { version = "1.52.1", features = ["rt-multi-thread", "fs", "parking_lot", "sync", "io-util", "net", "macros", "signal", "time"] }
 exitcode = "1.1.2"
 pin-project = "1"
 bytes = "1.10.1"
