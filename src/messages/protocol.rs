@@ -1,5 +1,6 @@
 // Standard library imports
 use std::collections::HashMap;
+use std::io::Write;
 use std::mem;
 // External crate imports
 use crate::messages::constants::SCRAM_SHA_256;
@@ -295,10 +296,10 @@ pub fn md5_hash_second_pass(hash: &str, salt: &[u8]) -> Vec<u8> {
     md5.update(hash);
     md5.update(salt);
 
-    let mut password = format!("md5{:x}", md5.finalize())
-        .chars()
-        .map(|x| x as u8)
-        .collect::<Vec<u8>>();
+    // 3 ("md5") + 32 (hex SHA-128 of MD5 output) + 1 (NUL terminator) = 36 bytes,
+    // exact size — no realloc.
+    let mut password = Vec::with_capacity(36);
+    write!(&mut password, "md5{:x}", md5.finalize()).expect("write to Vec is infallible");
     password.push(0);
 
     password
@@ -360,11 +361,13 @@ pub fn error_message(message: &str, code: &str) -> BytesMut {
 
     // Error code: not sure how much this matters.
     error.put_u8(b'C');
-    error.put_slice(format!("{code}\0").as_bytes());
+    error.put_slice(code.as_bytes());
+    error.put_u8(0);
 
     // The short error message.
     error.put_u8(b'M');
-    error.put_slice(format!("{message}\0").as_bytes());
+    error.put_slice(message.as_bytes());
+    error.put_u8(0);
 
     // No more fields follow.
     error.put_u8(0);
@@ -410,7 +413,9 @@ where
 
     // The short error message.
     error.put_u8(b'M');
-    error.put_slice(format!("password authentication failed for user \"{user}\"\0").as_bytes());
+    error.put_slice(b"password authentication failed for user \"");
+    error.put_slice(user.as_bytes());
+    error.put_slice(b"\"\0");
 
     // No more fields follow.
     error.put_u8(0);
@@ -436,7 +441,8 @@ pub fn row_description(columns: &Vec<(&str, DataType)>) -> BytesMut {
 
     for (name, data_type) in columns {
         // Column name
-        row_desc.put_slice(format!("{name}\0").as_bytes());
+        row_desc.put_slice(name.as_bytes());
+        row_desc.put_u8(0);
 
         // Doesn't belong to any table
         row_desc.put_i32(0);
