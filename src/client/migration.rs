@@ -60,7 +60,7 @@ const MAX_RECV_BUF: usize = 64 * 1024;
 // Only available with the tls-migration feature (vendored patched OpenSSL).
 #[cfg(feature = "tls-migration")]
 #[allow(dead_code)]
-extern "C" {
+unsafe extern "C" {
     fn SSL_export_migration_state(ssl: *mut c_void, out: *mut *mut u8, out_len: *mut usize) -> i32;
 
     fn SSL_import_migration_state(
