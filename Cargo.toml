@@ -1,6 +1,6 @@
 [package]
 name = "pg_doorman"
-version = "3.6.3"
+version = "3.7.0"
 edition = "2024"
 rust-version = "1.95.0"
 license = "MIT"
