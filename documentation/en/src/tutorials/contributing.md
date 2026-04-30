@@ -68,7 +68,7 @@ The test Docker image (built with Nix) includes:
 - Python 3 with asyncpg, psycopg2, aiopg, pytest
 - Node.js 22
 - .NET SDK 8
-- Rust 1.87.0
+- Rust 1.95.0
 
 ### Running Tests
 

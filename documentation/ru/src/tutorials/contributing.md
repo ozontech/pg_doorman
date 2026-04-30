@@ -68,7 +68,7 @@ PgDoorman использует BDD-тесты (Behavior-Driven Development) с �
 - Python 3 с asyncpg, psycopg2, aiopg, pytest
 - Node.js 22
 - .NET SDK 8
-- Rust 1.87.0
+- Rust 1.95.0
 
 ### Запуск тестов
 

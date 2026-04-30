@@ -103,12 +103,13 @@
             odyssey
             pgbouncer
 
-            # Node.js
+            # Node.js (npm is bundled with nodejs_22 since the 2026-04 nixpkgs bump
+            # which removed the nodePackages attribute set)
             nodejs_22
-            nodePackages.npm
 
-            # Go
-            go_1_24
+            # Go (1.24.0 minimum required by tests/go/go.mod; 2026-04 nixpkgs
+            # dropped go_1_24, so use the next available stable)
+            go_1_25
 
             # Python environment
             pythonEnv

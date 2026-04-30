@@ -14,7 +14,7 @@ env:
   # EPEL versions (RHEL/CentOS/Rocky/Alma)
   EPEL_VERSIONS: "8 9"
   COPR_PROJECT: "pg-doorman"
-  RUST_VERSION: "1.87.0"
+  RUST_VERSION: "1.95.0"
 
 jobs:
   verify-version:

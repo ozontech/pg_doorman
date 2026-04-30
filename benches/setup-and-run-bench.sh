@@ -93,9 +93,9 @@ install_rust() {
     log "Rust already present: $(cargo --version)"
     return
   fi
-  log "Installing rustup 1.87.0"
+  log "Installing rustup 1.95.0"
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain 1.87.0 --profile minimal
+    | sh -s -- -y --default-toolchain 1.95.0 --profile minimal
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 }
