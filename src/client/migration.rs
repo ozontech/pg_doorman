@@ -34,16 +34,16 @@ fn restore_backend_auth_if_pending(
     username: &str,
     pool_name: &str,
 ) {
-    if let (Some(p), Some(auth)) = (pool, migrated_auth) {
-        if let Some(ref ba_lock) = p.address.backend_auth {
-            let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
-            if needs_update {
-                *ba_lock.write() = auth.clone();
-                info!(
-                    "[{}@{}] restored backend auth from migrated client",
-                    username, pool_name
-                );
-            }
+    if let (Some(p), Some(auth)) = (pool, migrated_auth)
+        && let Some(ref ba_lock) = p.address.backend_auth
+    {
+        let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
+        if needs_update {
+            *ba_lock.write() = auth.clone();
+            info!(
+                "[{}@{}] restored backend auth from migrated client",
+                username, pool_name
+            );
         }
     }
 }
@@ -1028,14 +1028,16 @@ pub async fn migration_receiver_task(
                                 client.addr
                             );
                             let result = client.handle().await;
-                            if !client.is_admin() && result.is_err() {
+                            if !client.is_admin()
+                                && let Err(err) = result.as_ref()
+                            {
                                 warn!(
                                     "[{}@{} #c{}] migrated client {} error: {}",
                                     client.username,
                                     client.pool_name,
                                     client.connection_id,
                                     client.addr,
-                                    result.as_ref().unwrap_err()
+                                    err
                                 );
                                 client.disconnect_stats();
                             }

@@ -238,14 +238,12 @@ pub async fn client_entrypoint(
                             connection_id: client.connection_id,
                         };
                         let result = client.handle().await;
-                        if !client.is_admin() && result.is_err() {
+                        if !client.is_admin()
+                            && let Err(err) = result.as_ref()
+                        {
                             warn!(
                                 "[{}@{} #c{}] client {} disconnected with error: {}",
-                                client.username,
-                                client.pool_name,
-                                client.connection_id,
-                                addr,
-                                result.as_ref().unwrap_err()
+                                client.username, client.pool_name, client.connection_id, addr, err
                             );
                             client.disconnect_stats();
                         }

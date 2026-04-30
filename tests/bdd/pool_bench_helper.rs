@@ -284,7 +284,7 @@ async fn benchmark_pool_get_impl(
 
         // Sort by sample count
         let mut frame_times: Vec<(String, usize)> = func_samples.into_iter().collect();
-        frame_times.sort_by(|a, b| b.1.cmp(&a.1));
+        frame_times.sort_by_key(|f| std::cmp::Reverse(f.1));
 
         println!("Total CPU samples: {}", total_samples);
         println!("| Function | Samples | % |");

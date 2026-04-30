@@ -133,16 +133,16 @@ async fn check_db_has_pools<T>(
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    if let Some(db_name) = db {
-        if !pools.keys().any(|id| id.db == *db_name) {
-            admin_error_response(
-                stream,
-                &format!("No pool for database \"{}\"", db_name),
-                "3D000",
-            )
-            .await?;
-            return Ok(false);
-        }
+    if let Some(db_name) = db
+        && !pools.keys().any(|id| id.db == *db_name)
+    {
+        admin_error_response(
+            stream,
+            &format!("No pool for database \"{}\"", db_name),
+            "3D000",
+        )
+        .await?;
+        return Ok(false);
     }
     Ok(true)
 }
@@ -159,10 +159,10 @@ where
         return Ok(());
     }
     for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
+        if let Some(ref db_name) = db
+            && identifier.db != *db_name
+        {
+            continue;
         }
         pool.database.pause();
         info!("PAUSE: paused pool {}", identifier);
@@ -187,10 +187,10 @@ where
         return Ok(());
     }
     for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
+        if let Some(ref db_name) = db
+            && identifier.db != *db_name
+        {
+            continue;
         }
         pool.database.resume();
         info!("RESUME: resumed pool {}", identifier);
@@ -216,10 +216,10 @@ where
         return Ok(());
     }
     for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
+        if let Some(ref db_name) = db
+            && identifier.db != *db_name
+        {
+            continue;
         }
         let new_epoch = pool.database.reconnect();
         info!(

@@ -272,15 +272,15 @@ where
         .await?;
 
         // For static passthrough: promote ScramPending → ScramPassthrough
-        if let Some(ref client_key) = client_key {
-            if let Some(ref ba_lock) = pool.address.backend_auth {
-                let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
-                if needs_update {
-                    *ba_lock.write() = BackendAuthMethod::ScramPassthrough(client_key.clone());
-                    info!(
-                        "[{username_from_parameters}@{pool_name}] static passthrough: ClientKey stored after SCRAM auth"
-                    );
-                }
+        if let Some(ref client_key) = client_key
+            && let Some(ref ba_lock) = pool.address.backend_auth
+        {
+            let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
+            if needs_update {
+                *ba_lock.write() = BackendAuthMethod::ScramPassthrough(client_key.clone());
+                info!(
+                    "[{username_from_parameters}@{pool_name}] static passthrough: ClientKey stored after SCRAM auth"
+                );
             }
         }
     } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
@@ -736,18 +736,17 @@ where
         if expected != password_response {
             // Password mismatch — try re-fetch (password may have changed in PG)
             let mut auth_ok = false;
-            if let Ok(Some(new_entry)) = cache.refetch_on_failure(username).await {
-                if new_entry.password_hash != *pool_password
-                    && new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX)
-                {
-                    let new_expected = md5_hash_second_pass(
-                        new_entry.password_hash.strip_prefix("md5").unwrap(),
-                        &salt,
-                    );
-                    if new_expected == password_response {
-                        auth_ok = true;
-                        info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
-                    }
+            if let Ok(Some(new_entry)) = cache.refetch_on_failure(username).await
+                && new_entry.password_hash != *pool_password
+                && new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX)
+            {
+                let new_expected = md5_hash_second_pass(
+                    new_entry.password_hash.strip_prefix("md5").unwrap(),
+                    &salt,
+                );
+                if new_expected == password_response {
+                    auth_ok = true;
+                    info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
                 }
             }
             if !auth_ok {

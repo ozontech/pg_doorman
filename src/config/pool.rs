@@ -226,78 +226,78 @@ impl Pool {
 
     pub async fn validate(&mut self) -> Result<(), Error> {
         // Validate scaling_warm_pool_ratio
-        if let Some(ratio) = self.scaling_warm_pool_ratio {
-            if ratio > 100 {
-                return Err(Error::BadConfig(
-                    "scaling_warm_pool_ratio must be 0-100".into(),
-                ));
-            }
+        if let Some(ratio) = self.scaling_warm_pool_ratio
+            && ratio > 100
+        {
+            return Err(Error::BadConfig(
+                "scaling_warm_pool_ratio must be 0-100".into(),
+            ));
         }
 
         // Validate pool coordinator settings
-        if let Some(max) = self.max_db_connections {
-            if max > 0 {
-                let total_min: u32 = self.users.iter().filter_map(|u| u.min_pool_size).sum();
-                if total_min > max {
-                    return Err(Error::BadConfig(format!(
-                        "sum of min_pool_size ({}) exceeds max_db_connections ({}); \
+        if let Some(max) = self.max_db_connections
+            && max > 0
+        {
+            let total_min: u32 = self.users.iter().filter_map(|u| u.min_pool_size).sum();
+            if total_min > max {
+                return Err(Error::BadConfig(format!(
+                    "sum of min_pool_size ({}) exceeds max_db_connections ({}); \
                          not all minimums can be satisfied simultaneously",
-                        total_min, max
-                    )));
-                }
-                if let Some(reserve) = self.reserve_pool_size {
-                    if reserve > max {
-                        log::warn!(
-                            "reserve_pool_size ({}) exceeds max_db_connections ({}); \
+                    total_min, max
+                )));
+            }
+            if let Some(reserve) = self.reserve_pool_size
+                && reserve > max
+            {
+                log::warn!(
+                    "reserve_pool_size ({}) exceeds max_db_connections ({}); \
                              PostgreSQL may receive up to {} connections",
-                            reserve,
-                            max,
-                            max + reserve
-                        );
-                    }
-                }
+                    reserve,
+                    max,
+                    max + reserve
+                );
+            }
 
-                for user in &self.users {
-                    if user.pool_size > max {
-                        log::warn!(
-                            "user '{}' pool_size ({}) exceeds max_db_connections ({}); \
+            for user in &self.users {
+                if user.pool_size > max {
+                    log::warn!(
+                        "user '{}' pool_size ({}) exceeds max_db_connections ({}); \
                              effectively capped at {}",
-                            user.username,
-                            user.pool_size,
-                            max,
-                            max
-                        );
-                    }
+                        user.username,
+                        user.pool_size,
+                        max,
+                        max
+                    );
                 }
+            }
 
-                // min_connection_lifetime > idle_timeout: eviction will never trigger
-                // because idle connections are closed by idle_timeout first.
-                if let Some(min_lt) = self.min_connection_lifetime {
-                    if let Some(idle) = self.idle_timeout {
-                        if min_lt > idle && idle > 0 {
-                            log::warn!(
-                                "min_connection_lifetime ({}ms) > idle_timeout ({}ms); \
+            // min_connection_lifetime > idle_timeout: eviction will never trigger
+            // because idle connections are closed by idle_timeout first.
+            if let Some(min_lt) = self.min_connection_lifetime
+                && let Some(idle) = self.idle_timeout
+                && min_lt > idle
+                && idle > 0
+            {
+                log::warn!(
+                    "min_connection_lifetime ({}ms) > idle_timeout ({}ms); \
                                  idle connections will be closed before becoming evictable",
-                                min_lt,
-                                idle
-                            );
-                        }
-                    }
-                }
+                    min_lt,
+                    idle
+                );
+            }
 
-                // min_guaranteed_pool_size > any user's pool_size: user becomes
-                // immune to eviction but cannot reach the guaranteed minimum.
-                if let Some(guaranteed) = self.min_guaranteed_pool_size {
-                    if guaranteed > 0 {
-                        for user in &self.users {
-                            if guaranteed > user.pool_size {
-                                warn!(
-                                    "min_guaranteed_pool_size ({}) > pool_size ({}) for user '{}'; \
+            // min_guaranteed_pool_size > any user's pool_size: user becomes
+            // immune to eviction but cannot reach the guaranteed minimum.
+            if let Some(guaranteed) = self.min_guaranteed_pool_size
+                && guaranteed > 0
+            {
+                for user in &self.users {
+                    if guaranteed > user.pool_size {
+                        warn!(
+                            "min_guaranteed_pool_size ({}) > pool_size ({}) for user '{}'; \
                                      user is immune to eviction but cannot reach the guarantee",
-                                    guaranteed, user.pool_size, user.username
-                                );
-                            }
-                        }
+                            guaranteed, user.pool_size, user.username
+                        );
                     }
                 }
             }
@@ -350,39 +350,38 @@ impl Pool {
             }
         }
 
-        if let Some(ref dur) = self.patroni_api_timeout {
-            if dur.as_millis() == 0 {
-                return Err(Error::BadConfig("patroni_api_timeout must be > 0".into()));
-            }
+        if let Some(ref dur) = self.patroni_api_timeout
+            && dur.as_millis() == 0
+        {
+            return Err(Error::BadConfig("patroni_api_timeout must be > 0".into()));
         }
 
-        if let Some(ref dur) = self.fallback_connect_timeout {
-            if dur.as_millis() == 0 {
-                return Err(Error::BadConfig(
-                    "fallback_connect_timeout must be > 0".into(),
-                ));
-            }
+        if let Some(ref dur) = self.fallback_connect_timeout
+            && dur.as_millis() == 0
+        {
+            return Err(Error::BadConfig(
+                "fallback_connect_timeout must be > 0".into(),
+            ));
         }
 
-        if let Some(ref dur) = self.fallback_lifetime {
-            if dur.as_millis() == 0 {
-                return Err(Error::BadConfig("fallback_lifetime must be > 0".into()));
-            }
+        if let Some(ref dur) = self.fallback_lifetime
+            && dur.as_millis() == 0
+        {
+            return Err(Error::BadConfig("fallback_lifetime must be > 0".into()));
         }
 
         // Lifetime longer than the cooldown lets fallback connections outlive
         // the local-backend recovery, mixing primary and fallback in the pool.
         if let (Some(lifetime), Some(cooldown)) = (&self.fallback_lifetime, &self.fallback_cooldown)
+            && lifetime.as_millis() > cooldown.as_millis()
         {
-            if lifetime.as_millis() > cooldown.as_millis() {
-                log::warn!(
-                    "fallback_lifetime ({}ms) > fallback_cooldown ({}ms): \
+            log::warn!(
+                "fallback_lifetime ({}ms) > fallback_cooldown ({}ms): \
                      fallback connections will coexist with local-backend connections \
                      after the cooldown expires",
-                    lifetime.as_millis(),
-                    cooldown.as_millis()
-                );
-            }
+                lifetime.as_millis(),
+                cooldown.as_millis()
+            );
         }
 
         // Validate auth_query config

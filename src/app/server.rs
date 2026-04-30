@@ -301,8 +301,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         // Signal readiness to parent process (for binary upgrade in foreground mode)
         #[cfg(not(windows))]
-        if let Ok(ready_fd_str) = std::env::var("PG_DOORMAN_READY_FD") {
-            if let Ok(ready_fd) = ready_fd_str.parse::<i32>() {
+        if let Ok(ready_fd_str) = std::env::var("PG_DOORMAN_READY_FD")
+            && let Ok(ready_fd) = ready_fd_str.parse::<i32>() {
                 info!("Signaling readiness to parent process (fd={})", ready_fd);
                 let ready_signal: [u8; 1] = [1];
                 unsafe {
@@ -313,7 +313,6 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 // TODO: Audit that the environment access only happens in single-threaded code.
                 unsafe { std::env::remove_var("PG_DOORMAN_READY_FD") };
             }
-        }
 
         // Migration receiver is spawned below after tls_acceptor is available
 
@@ -360,8 +359,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         // Spawn migration receiver if parent passed a migration socket
         #[cfg(not(windows))]
-        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD") {
-            if let Ok(migration_fd) = fd_str.parse::<i32>() {
+        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD")
+            && let Ok(migration_fd) = fd_str.parse::<i32>() {
                 info!(
                     "Migration socket received from parent (fd={})",
                     migration_fd
@@ -374,7 +373,6 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     tls_acceptor.clone(),
                 ));
             }
-        }
 
         // Wrap listener in Option to allow dropping it during foreground binary upgrade
         // while still continuing the graceful shutdown process

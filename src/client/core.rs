@@ -475,10 +475,10 @@ impl<S, T> Drop for Client<S, T> {
             .remove(&(self.connection_id as i32, self.secret_key));
 
         // Update server stats if the client was connected to a server
-        if self.connected_to_server {
-            if let Some(stats) = self.last_server_stats.as_ref() {
-                stats.idle(0);
-            }
+        if self.connected_to_server
+            && let Some(stats) = self.last_server_stats.as_ref()
+        {
+            stats.idle(0);
         }
 
         // Ensure client is removed from stats tracking when dropped

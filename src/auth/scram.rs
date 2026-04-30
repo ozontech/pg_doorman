@@ -372,9 +372,8 @@ pub fn prepare_server_final_message(
 ) -> Result<(String, Vec<u8>), Error> {
     // checks.
     let mut gs_2_header = client_first.gs2_flag.to_string() + ",,";
-    if client_first.authzid.is_some() {
-        gs_2_header =
-            client_first.gs2_flag.to_string() + "," + client_first.authzid.unwrap().as_str() + ",";
+    if let Some(authzid) = client_first.authzid {
+        gs_2_header = client_first.gs2_flag.to_string() + "," + authzid.as_str() + ",";
     }
     if String::from_utf8_lossy(&client_final.channel_binding) != gs_2_header {
         return Err(Error::ScramClientError(

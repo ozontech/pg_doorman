@@ -162,23 +162,23 @@ impl PreparedStatementCache {
         }
 
         // Remove the oldest entry
-        if let Some(key) = oldest_key {
-            if let Some((_, entry)) = self.cache.remove(&key) {
-                let query = entry.parse.query().replace(['\n', '\r'], " ");
-                let truncated: String = query.chars().take(80).collect();
-                let ellipsis = if query.chars().count() > 80 {
-                    "..."
-                } else {
-                    ""
-                };
-                info!(
-                    "Pool cache eviction: hash={:#x}, name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
-                    key,
-                    entry.parse.name,
-                    self.cache.len(),
-                    self.max_size,
-                );
-            }
+        if let Some(key) = oldest_key
+            && let Some((_, entry)) = self.cache.remove(&key)
+        {
+            let query = entry.parse.query().replace(['\n', '\r'], " ");
+            let truncated: String = query.chars().take(80).collect();
+            let ellipsis = if query.chars().count() > 80 {
+                "..."
+            } else {
+                ""
+            };
+            info!(
+                "Pool cache eviction: hash={:#x}, name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
+                key,
+                entry.parse.name,
+                self.cache.len(),
+                self.max_size,
+            );
         }
     }
 }

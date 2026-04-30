@@ -446,15 +446,15 @@ impl Config {
                 }
             }
 
-            if let Some(tls_certificate) = self.general.tls_certificate.clone() {
-                if let Some(tls_private_key) = self.general.tls_private_key.clone() {
-                    match load_identity(Path::new(&tls_certificate), Path::new(&tls_private_key)) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            return Err(Error::BadConfig(format!(
-                                "tls is incorrectly configured: {err:?}"
-                            )));
-                        }
+            if let Some(tls_certificate) = self.general.tls_certificate.clone()
+                && let Some(tls_private_key) = self.general.tls_private_key.clone()
+            {
+                match load_identity(Path::new(&tls_certificate), Path::new(&tls_private_key)) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        return Err(Error::BadConfig(format!(
+                            "tls is incorrectly configured: {err:?}"
+                        )));
                     }
                 }
             };

@@ -509,20 +509,19 @@ impl ConnectionPool {
         for (pool_name, pool_config) in &config.pools {
             if let Some(ref aq_config) = pool_config.auth_query {
                 // RELOAD: reuse state when config unchanged (preserves cache, executor, stats)
-                if let Some(old_state) = old_aq_states_for_reuse.get(pool_name) {
-                    if old_state.config == *aq_config {
-                        info!("[pool: {pool_name}] auth_query config unchanged — reusing state");
-                        auth_query_states.insert(pool_name.clone(), old_state.clone());
-                        // Still need to ensure shared pool exists in new_pools
-                        if let Some(ref spid) = old_state.shared_pool_id {
-                            if !new_pools.contains_key(spid) {
-                                if let Some(pool) = POOLS.load().get(spid) {
-                                    new_pools.insert(spid.clone(), pool.clone());
-                                }
-                            }
-                        }
-                        continue;
+                if let Some(old_state) = old_aq_states_for_reuse.get(pool_name)
+                    && old_state.config == *aq_config
+                {
+                    info!("[pool: {pool_name}] auth_query config unchanged — reusing state");
+                    auth_query_states.insert(pool_name.clone(), old_state.clone());
+                    // Still need to ensure shared pool exists in new_pools
+                    if let Some(ref spid) = old_state.shared_pool_id
+                        && !new_pools.contains_key(spid)
+                        && let Some(pool) = POOLS.load().get(spid)
+                    {
+                        new_pools.insert(spid.clone(), pool.clone());
                     }
+                    continue;
                 }
 
                 let shared_pool_id = if aq_config.is_dedicated_mode() {

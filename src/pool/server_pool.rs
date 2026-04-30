@@ -303,18 +303,18 @@ impl ServerPool {
             Err(err) => {
                 active_stats.disconnect();
                 // Local backend unreachable + Patroni-assisted fallback configured: route via fallback.
-                if is_backend_unreachable(&err) {
-                    if let Some(ref fallback) = self.fallback_state {
-                        fallback.blacklist();
-                        crate::prometheus::FALLBACK_ACTIVE
-                            .with_label_values(&[&self.address.pool_name])
-                            .set(1.0);
-                        info!(
-                            "[{}@{}] fallback: routing through fallback (original error: {err})",
-                            self.address.username, self.address.pool_name,
-                        );
-                        return self.create_fallback_connection().await;
-                    }
+                if is_backend_unreachable(&err)
+                    && let Some(ref fallback) = self.fallback_state
+                {
+                    fallback.blacklist();
+                    crate::prometheus::FALLBACK_ACTIVE
+                        .with_label_values(&[&self.address.pool_name])
+                        .set(1.0);
+                    info!(
+                        "[{}@{}] fallback: routing through fallback (original error: {err})",
+                        self.address.username, self.address.pool_name,
+                    );
+                    return self.create_fallback_connection().await;
                 }
                 // Brief backoff on error to avoid hammering a failing server
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -837,23 +837,23 @@ impl ServerPool {
         }
 
         // Check if connection was idle too long and needs alive check
-        if self.idle_check_timeout_ms > 0 {
-            if let Some(recycled) = metrics.recycled {
-                let idle_time_ms = recycled.elapsed().as_millis() as u64;
-                if idle_time_ms > self.idle_check_timeout_ms {
-                    debug!(
-                        "Connection {} idle for {}ms, checking alive...",
-                        conn, idle_time_ms
-                    );
-                    if conn.check_alive(self.connect_timeout).await.is_err() {
-                        conn.close_reason = Some(format!(
-                            "failed alive check after {} idle",
-                            format_duration_ms(idle_time_ms),
-                        ));
-                        return Err(RecycleError::StaticMessage("Connection failed alive check"));
-                    }
-                    debug!("Connection {} passed alive check", conn);
+        if self.idle_check_timeout_ms > 0
+            && let Some(recycled) = metrics.recycled
+        {
+            let idle_time_ms = recycled.elapsed().as_millis() as u64;
+            if idle_time_ms > self.idle_check_timeout_ms {
+                debug!(
+                    "Connection {} idle for {}ms, checking alive...",
+                    conn, idle_time_ms
+                );
+                if conn.check_alive(self.connect_timeout).await.is_err() {
+                    conn.close_reason = Some(format!(
+                        "failed alive check after {} idle",
+                        format_duration_ms(idle_time_ms),
+                    ));
+                    return Err(RecycleError::StaticMessage("Connection failed alive check"));
                 }
+                debug!("Connection {} passed alive check", conn);
             }
         }
 

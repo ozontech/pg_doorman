@@ -17,10 +17,10 @@ pub(crate) fn add_to_cache(
     stats.prepared_cache_add();
 
     // If we evict something, we need to close it on the server
-    if let Some((evicted_name, _)) = cache.push(name.to_string(), ()) {
-        if evicted_name != name {
-            return Some(evicted_name);
-        }
+    if let Some((evicted_name, _)) = cache.push(name.to_string(), ())
+        && evicted_name != name
+    {
+        return Some(evicted_name);
     };
 
     None

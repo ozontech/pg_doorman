@@ -450,12 +450,11 @@ fn is_process_running(pid: u32) -> bool {
 #[given("pg_doorman started in daemon mode with config:")]
 pub async fn start_doorman_daemon_with_config(world: &mut DoormanWorld, step: &Step) {
     // Stop any previously running pg_doorman daemon by reading PID from file
-    if let Some(ref pid_path) = world.doorman_daemon_pid_file {
-        if let Ok(pid_content) = std::fs::read_to_string(pid_path) {
-            if let Ok(pid) = pid_content.trim().parse::<u32>() {
-                stop_doorman_daemon(pid);
-            }
-        }
+    if let Some(ref pid_path) = world.doorman_daemon_pid_file
+        && let Ok(pid_content) = std::fs::read_to_string(pid_path)
+        && let Ok(pid) = pid_content.trim().parse::<u32>()
+    {
+        stop_doorman_daemon(pid);
     }
     world.doorman_daemon_pid_file = None;
 
@@ -520,10 +519,10 @@ pub async fn start_doorman_daemon_with_config(world: &mut DoormanWorld, step: &S
 fn extract_daemon_pid_file(config: &str) -> Option<String> {
     for line in config.lines() {
         let line = line.trim();
-        if line.starts_with("daemon_pid_file") {
-            if let Some(value) = line.split('=').nth(1) {
-                return Some(value.trim().trim_matches('"').to_string());
-            }
+        if line.starts_with("daemon_pid_file")
+            && let Some(value) = line.split('=').nth(1)
+        {
+            return Some(value.trim().trim_matches('"').to_string());
         }
     }
     None

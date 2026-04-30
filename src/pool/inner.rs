@@ -56,12 +56,12 @@ pub struct Object {
 
 impl Drop for Object {
     fn drop(&mut self) {
-        if let Some(mut inner) = self.inner.take() {
-            if let Some(pool) = self.pool.upgrade() {
-                inner.metrics.recycled = Some(clock::now());
-                inner.metrics.recycle_count += 1;
-                pool.return_object(inner);
-            }
+        if let Some(mut inner) = self.inner.take()
+            && let Some(pool) = self.pool.upgrade()
+        {
+            inner.metrics.recycled = Some(clock::now());
+            inner.metrics.recycle_count += 1;
+            pool.return_object(inner);
         }
     }
 }
@@ -699,11 +699,10 @@ impl Pool {
             tokio::select! {
                 biased;
                 result = &mut rx => {
-                    if let Ok(inner) = result {
-                        if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
+                    if let Ok(inner) = result
+                        && let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
                             return BurstGateOutcome::Recycled(Box::new(inner));
                         }
-                    }
                 }
                 _ = on_create => {}
                 _ = tokio::time::sleep(BURST_BACKOFF) => {}
@@ -1219,7 +1218,7 @@ impl Pool {
                 }
 
                 // Sort by age descending (oldest first — highest age value)
-                candidates.sort_by(|a, b| b.1.cmp(&a.1));
+                candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
 
                 let to_close: std::collections::HashSet<usize> = candidates
                     .into_iter()
@@ -1632,11 +1631,9 @@ impl Pool {
             // Idle ratio: only pre-replace when < 25% of connections are idle.
             // If the pool has plenty of idle connections it can absorb the
             // loss of one to lifetime expiry without a spike.
-            let idle_pct = if slots.size > 0 {
-                slots.vec.len() * 100 / slots.size
-            } else {
-                100
-            };
+            let idle_pct = (slots.vec.len() * 100)
+                .checked_div(slots.size)
+                .unwrap_or(100);
             if idle_pct >= 25 {
                 return;
             }

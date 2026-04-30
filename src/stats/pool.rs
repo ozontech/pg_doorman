@@ -543,10 +543,12 @@ impl PoolStats {
                 .load(Ordering::Relaxed);
 
             // Calculate average wait time if there are transactions
-            if current.avg_xact_count > 0 {
-                current.avg_wait_time =
-                    address.averages.wait_time.load(Ordering::Relaxed) / current.avg_xact_count;
-            }
+            current.avg_wait_time = address
+                .averages
+                .wait_time
+                .load(Ordering::Relaxed)
+                .checked_div(current.avg_xact_count)
+                .unwrap_or(0);
 
             // Add the pool stats to the virtual map
             map.insert(identifier.clone(), current);

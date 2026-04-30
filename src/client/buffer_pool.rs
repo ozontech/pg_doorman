@@ -33,10 +33,10 @@ fn release_buffer(mut buffer: BytesMut) {
     buffer.clear();
 
     LOCAL_POOL.with(|pool| {
-        if let Ok(mut pool) = pool.try_borrow_mut() {
-            if pool.len() < MAX_POOL_SIZE {
-                pool.push(buffer);
-            }
+        if let Ok(mut pool) = pool.try_borrow_mut()
+            && pool.len() < MAX_POOL_SIZE
+        {
+            pool.push(buffer);
         }
         // If borrow fails or pool is full, just drop the buffer
     })

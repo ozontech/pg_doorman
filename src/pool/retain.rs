@@ -28,12 +28,11 @@ impl ConnectionPool {
         // Uses per-connection timeouts with jitter to prevent mass closures
         let should_close = |_: &crate::server::Server, metrics: &crate::pool::Metrics| -> bool {
             // Check idle timeout (per-connection with jitter, 0 = disabled)
-            if metrics.idle_timeout_ms > 0 {
-                if let Some(v) = metrics.recycled {
-                    if (v.elapsed().as_millis() as u64) > metrics.idle_timeout_ms {
-                        return true;
-                    }
-                }
+            if metrics.idle_timeout_ms > 0
+                && let Some(v) = metrics.recycled
+                && (v.elapsed().as_millis() as u64) > metrics.idle_timeout_ms
+            {
+                return true;
             }
             // Check server lifetime (per-connection with jitter, 0 = disabled)
             if metrics.lifetime_ms > 0 && (metrics.age().as_millis() as u64) > metrics.lifetime_ms {

@@ -645,12 +645,11 @@ where
             }
 
             // CopyData
-            'd' => {
+            'd'
                 // Don't flush yet, buffer until we reach limit
-                if server.buffer.len() >= BUFFER_FLUSH_THRESHOLD {
+                if server.buffer.len() >= BUFFER_FLUSH_THRESHOLD => {
                     break;
                 }
-            }
 
             // CopyDone
             // Buffer until ReadyForQuery shows up, so don't exit the loop yet.
@@ -658,68 +657,60 @@ where
 
             // ParseComplete
             // Response to Parse message in extended query protocol
-            '1' => {
-                if server.is_async() {
+            '1'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // BindComplete
             // Response to Bind message in extended query protocol
-            '2' => {
-                if server.is_async() {
+            '2'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // CloseComplete
             // Response to Close message in extended query protocol
-            '3' => {
-                if server.is_async() {
+            '3'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // ParameterDescription
             // Response to Describe message for a statement
-            't' => {
-                if server.is_async() {
+            't'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // PortalSuspended
             // Indicates that Execute completed but portal still has rows
-            's' => {
-                if server.is_async() {
+            's'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // NoData
             // Response to Describe when statement/portal produces no rows
             // https://www.postgresql.org/docs/current/protocol-flow.html
-            'n' => {
-                if server.is_async() {
+            'n'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // RowDescription
             // Response to Describe for a portal (or statement if it returns rows)
-            'T' => {
-                if server.is_async() {
+            'T'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // EmptyQueryResponse
             // Response to Execute with an empty query string
-            'I' => {
-                if server.is_async() {
+            'I'
+                if server.is_async() => {
                     server.decrement_expected();
                 }
-            }
 
             // Anything else, e.g. notices, etc.
             // Keep buffering until ReadyForQuery shows up.

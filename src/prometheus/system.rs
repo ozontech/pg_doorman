@@ -8,11 +8,11 @@ pub fn get_process_memory_usage() -> u64 {
         match std::fs::read_to_string("/proc/self/statm") {
             Ok(statm) => {
                 let values: Vec<&str> = statm.split_whitespace().collect();
-                if !values.is_empty() {
-                    if let Ok(pages) = values[0].parse::<u64>() {
-                        // Convert pages to bytes (page size is typically 4KB)
-                        return pages * 4096;
-                    }
+                if !values.is_empty()
+                    && let Ok(pages) = values[0].parse::<u64>()
+                {
+                    // Convert pages to bytes (page size is typically 4KB)
+                    return pages * 4096;
                 }
                 0
             }

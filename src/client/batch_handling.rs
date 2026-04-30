@@ -304,10 +304,10 @@ where
                     in_execute = false;
                     execute_count += 1;
                 }
-                'D' | 'n' | 'T' => {
+                'D' | 'n' | 'T'
                     // DataRow, NoData, or RowDescription can be first message of Execute
                     // Insert ParseComplete before first message of Execute if needed
-                    if !in_execute {
+                    if !in_execute => {
                         if let Some(count) = insertion_map_get(&relevant_execute, execute_count) {
                             for _ in 0..count {
                                 new_response.extend_from_slice(&PARSE_COMPLETE_MSG);
@@ -316,7 +316,6 @@ where
                         }
                         in_execute = true;
                     }
-                }
                 'E' => {
                     // ErrorResponse - if we have an error, the server will skip all subsequent commands in the batch.
                     // We must insert all remaining ParseComplete messages for skipped parses now,

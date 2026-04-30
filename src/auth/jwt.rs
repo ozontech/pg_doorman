@@ -48,10 +48,10 @@ impl PreferredUsernameClaims {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        if let Some(val) = self.default_claims.not_before {
-            if now < val {
-                return Err(Error::JWTValidate("not before".to_string()));
-            }
+        if let Some(val) = self.default_claims.not_before
+            && now < val
+        {
+            return Err(Error::JWTValidate("not before".to_string()));
         }
         if let Some(val) = self.default_claims.expiration {
             if now > val {

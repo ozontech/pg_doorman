@@ -86,12 +86,11 @@ impl ServerParameters {
         let mut diff = HashMap::new();
 
         for key in TRACKED_PARAMETERS.iter() {
-            if let Some(incoming_value) = incoming_parameters.parameters.get(key) {
-                if let Some(value) = self.parameters.get(key) {
-                    if value != incoming_value {
-                        diff.insert(key.to_string(), incoming_value.to_string());
-                    }
-                }
+            if let Some(incoming_value) = incoming_parameters.parameters.get(key)
+                && let Some(value) = self.parameters.get(key)
+                && value != incoming_value
+            {
+                diff.insert(key.to_string(), incoming_value.to_string());
             }
         }
 

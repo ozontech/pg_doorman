@@ -289,12 +289,12 @@ impl DebugMessageBuffer {
 
     /// Add a message to the buffer, grouping with the last message if identical
     fn add(&mut self, message: BufferedMessage) {
-        if let Some(last_group) = self.groups.back_mut() {
-            if last_group.message == message {
-                last_group.count += 1;
-                self.total_count += 1;
-                return;
-            }
+        if let Some(last_group) = self.groups.back_mut()
+            && last_group.message == message
+        {
+            last_group.count += 1;
+            self.total_count += 1;
+            return;
         }
 
         self.groups.push_back(MessageGroup { message, count: 1 });
@@ -472,15 +472,15 @@ pub fn log_server_to_client(client_addr: &str, server_pid: i32, buffer: &[u8]) {
 /// connection is closed or when ReadyForQuery resets the state.
 pub fn cleanup_protocol_state(client_addr: &str, server_pid: i32) {
     let states = PROTOCOL_STATES.lock();
-    if let Some(state) = states.get(&server_pid) {
-        if state.has_pending() {
-            warn!(
-                "Client {} disconnected with pending protocol state: {} (server [{}])",
-                client_addr,
-                state.pending_summary(),
-                server_pid
-            );
-        }
+    if let Some(state) = states.get(&server_pid)
+        && state.has_pending()
+    {
+        warn!(
+            "Client {} disconnected with pending protocol state: {} (server [{}])",
+            client_addr,
+            state.pending_summary(),
+            server_pid
+        );
     }
 }
 

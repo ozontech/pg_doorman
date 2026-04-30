@@ -125,12 +125,12 @@ impl TalosClaims {
             .as_secs();
 
         // Check not_before claim
-        if let Some(not_before) = self.default_claims.not_before {
-            if now < not_before {
-                return Err(Error::JWTValidate(format!(
-                    "Token not yet valid. Current time: {now}, valid from: {not_before}"
-                )));
-            }
+        if let Some(not_before) = self.default_claims.not_before
+            && now < not_before
+        {
+            return Err(Error::JWTValidate(format!(
+                "Token not yet valid. Current time: {now}, valid from: {not_before}"
+            )));
         }
 
         // Check expiration claim
@@ -223,11 +223,11 @@ async fn extract_talos_token_with_key(
     let mut string_roles = vec![];
     for (k, v) in claim.resource_access {
         // k = postgres.stg:pgstats
-        if let Some((_, resource_database)) = k.split_once(':') {
-            if databases.iter().any(|db| resource_database == db) {
-                string_roles.extend(v.roles);
-                // No need to continue checking other databases once we've found a match
-            }
+        if let Some((_, resource_database)) = k.split_once(':')
+            && databases.iter().any(|db| resource_database == db)
+        {
+            string_roles.extend(v.roles);
+            // No need to continue checking other databases once we've found a match
         }
     }
 

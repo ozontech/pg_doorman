@@ -182,12 +182,12 @@ where
             .stats
             .transaction(self.server_parameters.get_application_name());
 
-        if !self.transaction_mode {
-            if let Some(start) = self.session_xact_start.take() {
-                server
-                    .stats
-                    .add_xact_time_and_idle(start.elapsed().as_micros() as u64);
-            }
+        if !self.transaction_mode
+            && let Some(start) = self.session_xact_start.take()
+        {
+            server
+                .stats
+                .add_xact_time_and_idle(start.elapsed().as_micros() as u64);
         }
 
         if self.transaction_mode && !server.in_copy_mode() && (!check_async || !server.is_async()) {

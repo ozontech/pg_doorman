@@ -63,13 +63,13 @@ impl User {
                 "server_password requires server_username to be set".to_string(),
             ));
         }
-        if let Some(min_pool_size) = self.min_pool_size {
-            if min_pool_size > self.pool_size {
-                return Err(Error::BadConfig(format!(
-                    "min_pool_size of {} cannot be larger than pool_size of {}",
-                    min_pool_size, self.pool_size
-                )));
-            }
+        if let Some(min_pool_size) = self.min_pool_size
+            && min_pool_size > self.pool_size
+        {
+            return Err(Error::BadConfig(format!(
+                "min_pool_size of {} cannot be larger than pool_size of {}",
+                min_pool_size, self.pool_size
+            )));
         };
 
         Ok(())

@@ -372,10 +372,10 @@ fn update_coordinator_metrics() {
         }
         // Reset counters for databases where coordinator was replaced (new Arc)
         for (db, new_ptr) in &current {
-            if let Some(old_ptr) = prev.get(db) {
-                if old_ptr != new_ptr {
-                    reset_coordinator_counters(db);
-                }
+            if let Some(old_ptr) = prev.get(db)
+                && old_ptr != new_ptr
+            {
+                reset_coordinator_counters(db);
             }
         }
         *prev = current;
