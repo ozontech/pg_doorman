@@ -445,9 +445,9 @@ fn handle_parameter_status(
     server: &mut Server,
     message: &mut BytesMut,
     client_server_parameters: &mut Option<&mut ServerParameters>,
-) {
-    let key = message.read_string().unwrap();
-    let value = message.read_string().unwrap();
+) -> Result<(), Error> {
+    let key = message.read_string()?;
+    let value = message.read_string()?;
 
     // Update client parameters if tracking is enabled
     if let Some(client_server_parameters) = client_server_parameters.as_mut() {
@@ -464,6 +464,7 @@ fn handle_parameter_status(
 
     // Always update server parameters
     server.server_parameters.set_param(key, value, false);
+    Ok(())
 }
 
 /// Receive data from the server in response to a client request.
@@ -617,7 +618,7 @@ where
 
             // ParameterStatus - server parameter changed
             'S' => {
-                handle_parameter_status(server, &mut message, &mut client_server_parameters);
+                handle_parameter_status(server, &mut message, &mut client_server_parameters)?;
             }
 
             // DataRow

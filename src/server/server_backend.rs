@@ -914,8 +914,8 @@ impl Server {
                     let mut bytes = read_message_data(&mut stream, code as u8, len).await?;
                     let _ = bytes.get_u8();
                     let _ = bytes.get_i32();
-                    let key = bytes.read_string().unwrap();
-                    let value = bytes.read_string().unwrap();
+                    let key = bytes.read_string()?;
+                    let value = bytes.read_string()?;
 
                     // Save the parameter so we can pass it to the client later.
                     server_parameters.set_param(key, value, true);

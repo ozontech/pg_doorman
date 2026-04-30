@@ -527,7 +527,10 @@ where
     // md5 auth.
     let salt = md5_challenge(write).await?;
     let password_response = read_password(read).await?;
-    let except_md5_hash = md5_hash_second_pass(pool_password.strip_prefix("md5").unwrap(), &salt);
+    let pool_hash = pool_password
+        .strip_prefix(MD5_PASSWORD_PREFIX)
+        .ok_or_else(|| Error::AuthError("static MD5 entry missing 'md5' prefix".into()))?;
+    let except_md5_hash = md5_hash_second_pass(pool_hash, &salt);
     if except_md5_hash != password_response {
         error!(
             "[{username_from_parameters}@{}] MD5 authentication failed from {client_addr}",
@@ -727,23 +730,20 @@ where
 
     if hba_decision == CheckResult::Trust {
         // HBA trust — skip password check
-    } else if pool_password.starts_with(MD5_PASSWORD_PREFIX) {
+    } else if let Some(pool_hash) = pool_password.strip_prefix(MD5_PASSWORD_PREFIX) {
         // MD5 challenge-response
         let salt = md5_challenge(write).await?;
         let password_response = read_password(read).await?;
-        let expected = md5_hash_second_pass(pool_password.strip_prefix("md5").unwrap(), &salt);
+        let expected = md5_hash_second_pass(pool_hash, &salt);
 
         if expected != password_response {
             // Password mismatch — try re-fetch (password may have changed in PG)
             let mut auth_ok = false;
             if let Ok(Some(new_entry)) = cache.refetch_on_failure(username).await
                 && new_entry.password_hash != *pool_password
-                && new_entry.password_hash.starts_with(MD5_PASSWORD_PREFIX)
+                && let Some(new_hash) = new_entry.password_hash.strip_prefix(MD5_PASSWORD_PREFIX)
             {
-                let new_expected = md5_hash_second_pass(
-                    new_entry.password_hash.strip_prefix("md5").unwrap(),
-                    &salt,
-                );
+                let new_expected = md5_hash_second_pass(new_hash, &salt);
                 if new_expected == password_response {
                     auth_ok = true;
                     info!("[{username}@{pool_name}] auth_query: re-fetched password matched");
