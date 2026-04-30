@@ -16,7 +16,7 @@ use crate::utils::rate_limit::RateLimiter;
 use crate::transport::ClientTransport;
 
 use super::core::Client;
-use super::startup::{get_startup, startup_tls, ClientConnectionType};
+use super::startup::{ClientConnectionType, get_startup, startup_tls};
 
 /// Identity info returned from client_entrypoint for disconnect logging.
 pub struct ClientSessionInfo {

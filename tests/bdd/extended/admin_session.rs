@@ -220,7 +220,7 @@ pub async fn execute_admin_query_and_store_response(
                 // Format: process_id (4 bytes) + channel (null-terminated) + payload (null-terminated)
                 if data.len() >= 4 {
                     let mut pos = 4; // skip process_id
-                                     // Read channel name
+                    // Read channel name
                     if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
                         let channel = String::from_utf8_lossy(&data[pos..pos + null_pos]);
                         response_content.push_str(&channel);

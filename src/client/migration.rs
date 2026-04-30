@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use log::{error, info, warn};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
-use tokio::io::{split, BufReader};
+use tokio::io::{BufReader, split};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -12,11 +12,11 @@ use std::ffi::c_void;
 use crate::client::buffer_pool::PooledBuffer;
 use crate::client::core::{CachedStatement, Client, PreparedStatementKey};
 use crate::client::util::PREPARED_STATEMENT_COUNTER;
-use crate::config::{get_config, BackendAuthMethod};
+use crate::config::{BackendAuthMethod, get_config};
 use crate::errors::Error;
-use crate::messages::config_socket::configure_tcp_socket;
 use crate::messages::Parse;
-use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
+use crate::messages::config_socket::configure_tcp_socket;
+use crate::pool::{ClientServerMap, ConnectionPool, get_pool};
 use crate::server::ServerParameters;
 use crate::stats::ClientStats;
 
@@ -222,7 +222,7 @@ where
         // Backend auth state (v2): allows new process to skip ScramPending
         // fallback by receiving the ClientKey from the old process.
         if let Some(pool) = get_pool(&self.pool_name, &self.username) {
-            if let Some(ref ba_lock) = pool.address.backend_auth {
+            if let Some(ba_lock) = &pool.address.backend_auth {
                 match &*ba_lock.read() {
                     BackendAuthMethod::Md5PassTheHash(hash) => {
                         buf.put_u8(1);
@@ -1133,7 +1133,7 @@ mod tests {
         buf.put_u64(42); // connection_id
         buf.put_i32(1); // secret_key
         buf.put_u8(1); // transaction_mode
-                       // missing pool_name, username, etc.
+        // missing pool_name, username, etc.
         assert!(deserialize_state(buf).is_err());
     }
 

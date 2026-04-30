@@ -4,8 +4,8 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use futures::future::Shared;
 use futures::FutureExt;
+use futures::future::Shared;
 use log::{debug, info};
 use parking_lot::Mutex;
 

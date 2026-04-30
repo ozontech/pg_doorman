@@ -4,8 +4,8 @@
 //! server connections. It handles connect timeouts, lifetime checks, alive
 //! checks, pause/resume, and reconnect epoch management.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use log::{debug, info, warn};
@@ -18,9 +18,9 @@ use crate::server::Server;
 use crate::stats::ServerStats;
 use crate::utils::format_duration_ms;
 
+use super::ClientServerMap;
 use super::errors::{RecycleError, RecycleResult};
 use super::types::Metrics;
-use super::ClientServerMap;
 
 /// Wrapper for the connection pool.
 pub struct ServerPool {
@@ -254,8 +254,7 @@ impl ServerPool {
         let (result, active_stats) = if should_tls_retry {
             info!(
                 "plain connection rejected, retrying with tls, user={} pool={} host={} port={} server_tls_mode=allow",
-                self.address.username, self.address.pool_name,
-                self.address.host, self.address.port,
+                self.address.username, self.address.pool_name, self.address.host, self.address.port,
             );
             // Disconnect the plain-attempt stats before registering the TLS-retry stats.
             // Without this, both entries would remain in SERVER_STATS: the plain one
@@ -461,7 +460,7 @@ impl ServerPool {
                             "whitelist round produced no target".into(),
                         )),
                         source,
-                    )
+                    );
                 }
             };
             info!(

@@ -10,7 +10,7 @@ use log::{debug, info};
 use crate::utils::format_duration_ms;
 
 use super::pool_coordinator;
-use super::{get_pool, ConnectionPool, PoolIdentifier, POOLS};
+use super::{ConnectionPool, POOLS, PoolIdentifier, get_pool};
 
 /// Adapter bridging `PoolCoordinator`'s eviction callbacks to real pool state.
 ///

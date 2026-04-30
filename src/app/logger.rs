@@ -1,6 +1,6 @@
 extern crate log;
 
-use log::{info, LevelFilter, Log, Metadata, Record};
+use log::{LevelFilter, Log, Metadata, Record, info};
 use std::io::Write;
 use std::process;
 use syslog::{BasicLogger, Facility, Formatter3164};

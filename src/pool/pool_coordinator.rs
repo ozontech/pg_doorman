@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use log::{debug, info, warn};
-use tokio::sync::{mpsc, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore, mpsc};
 
 /// Source of eviction candidates and user state.
 /// Implemented by the pool layer when wired in; mocked in benchmarks.
@@ -2080,7 +2080,7 @@ mod tests {
                 let mut guard = self.permit.lock().unwrap();
                 if guard.is_some() {
                     *guard = None; // drops permit, frees slot
-                                   // Immediately grab the freed slot before the caller
+                    // Immediately grab the freed slot before the caller
                     let stolen = self.coord.try_acquire();
                     assert!(stolen.is_some(), "should steal the freed permit");
                     std::mem::forget(stolen); // leak to keep slot occupied for this test

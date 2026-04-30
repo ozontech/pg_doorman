@@ -1,7 +1,7 @@
-use super::{get_reporter, Reporter};
+use super::{Reporter, get_reporter};
 use iota::iota;
-use std::sync::atomic::*;
 use std::sync::Arc;
+use std::sync::atomic::*;
 
 use crate::utils::clock;
 

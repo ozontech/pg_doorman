@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
-use self::tls::{load_identity, TLSMode};
+use self::tls::{TLSMode, load_identity};
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};

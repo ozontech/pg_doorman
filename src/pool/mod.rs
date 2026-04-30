@@ -5,18 +5,18 @@ use once_cell::sync::{Lazy, OnceCell};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::{
-    get_config, tls, Address, BackendAuthMethod, General, Pool as ConfigPool, PoolMode, User,
+    Address, BackendAuthMethod, General, Pool as ConfigPool, PoolMode, User, get_config, tls,
 };
 use crate::errors::Error;
 use crate::messages::Parse;
 
 use crate::server::ServerParameters;
-use crate::stats::auth_query::AuthQueryStats;
 use crate::stats::AddressStats;
+use crate::stats::auth_query::AuthQueryStats;
 
 mod errors;
 mod inner;
@@ -705,7 +705,9 @@ impl ConnectionPool {
                 Some(new) => *new != old_state.config, // config changed
             };
             if changed {
-                info!("[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal");
+                info!(
+                    "[pool: {pool_name}] auth_query config changed — collecting dynamic pools for removal"
+                );
                 for id in DYNAMIC_POOLS.load().iter() {
                     if id.db == *pool_name {
                         pools_to_remove.push(id.clone());

@@ -3,8 +3,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::ffi::CString;
 use std::hash::Hasher;
 use std::mem;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 // External crate imports
 use bytes::{Buf, BufMut, BytesMut};

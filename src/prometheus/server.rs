@@ -1,15 +1,15 @@
 //! HTTP server for Prometheus metrics endpoint.
 
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use log::{error, info};
 use prometheus::{Encoder, TextEncoder};
 use std::io::Write;
 use std::net::SocketAddr;
 use tokio::net::TcpSocket;
 
-use super::metrics::update_metrics;
 use super::REGISTRY;
+use super::metrics::update_metrics;
 
 /// Handles HTTP requests for metrics
 pub async fn handle_metrics_request(stream: tokio::net::TcpStream) {

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tokio::io::BufReader;
 
 use crate::client::buffer_pool::PooledBuffer;
-use crate::messages::{error_response, Parse};
-use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
+use crate::messages::{Parse, error_response};
+use crate::pool::{ClientServerMap, ConnectionPool, get_pool};
 use crate::server::ServerParameters;
 use crate::stats::{ClientStats, ServerStats};
 

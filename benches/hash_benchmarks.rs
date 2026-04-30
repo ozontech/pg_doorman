@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use xxhash_rust::xxh3::Xxh3;

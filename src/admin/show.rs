@@ -6,20 +6,20 @@ use std::sync::atomic::Ordering;
 use bytes::{BufMut, BytesMut};
 
 use crate::app::log_level;
-use crate::config::{get_config, VERSION};
+use crate::config::{VERSION, get_config};
 use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::{get_all_pools, AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS};
+use crate::pool::{AUTH_QUERY_STATE, COORDINATORS, DYNAMIC_POOLS, get_all_pools};
 use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE};
 #[cfg(target_os = "linux")]
 use crate::stats::get_socket_states_count;
 use crate::stats::pool::PoolStats;
 use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE};
 use crate::stats::{
-    get_client_stats, get_server_stats, CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER,
-    TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
+    CANCEL_CONNECTION_COUNTER, PLAIN_CONNECTION_COUNTER, TLS_CONNECTION_COUNTER,
+    TOTAL_CONNECTION_COUNTER, get_client_stats, get_server_stats,
 };
 
 /// Column-oriented statistics.

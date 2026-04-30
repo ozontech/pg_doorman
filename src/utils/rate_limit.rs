@@ -1,4 +1,4 @@
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio::time::{Duration, Instant};

@@ -1,6 +1,6 @@
 //! Tests for authentication module.
 
-use super::mocks::{run_test, MockReader, MockWriter};
+use super::mocks::{MockReader, MockWriter, run_test};
 use super::*;
 
 // Mock for get_config and get_pool

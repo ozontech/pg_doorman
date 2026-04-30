@@ -4,8 +4,8 @@ use crate::errors::Error;
 use log::warn;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -294,9 +294,7 @@ impl Pool {
                                 warn!(
                                     "min_guaranteed_pool_size ({}) > pool_size ({}) for user '{}'; \
                                      user is immune to eviction but cannot reach the guarantee",
-                                    guaranteed,
-                                    user.pool_size,
-                                    user.username
+                                    guaranteed, user.pool_size, user.username
                                 );
                             }
                         }
@@ -374,8 +372,7 @@ impl Pool {
 
         // Lifetime longer than the cooldown lets fallback connections outlive
         // the local-backend recovery, mixing primary and fallback in the pool.
-        if let (Some(ref lifetime), Some(ref cooldown)) =
-            (&self.fallback_lifetime, &self.fallback_cooldown)
+        if let (Some(lifetime), Some(cooldown)) = (&self.fallback_lifetime, &self.fallback_cooldown)
         {
             if lifetime.as_millis() > cooldown.as_millis() {
                 log::warn!(

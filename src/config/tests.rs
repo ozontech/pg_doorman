@@ -167,7 +167,9 @@ async fn test_validate_hba_and_pg_hba_both_set() {
     let result = config.validate().await;
     assert!(result.is_err());
     if let Err(Error::BadConfig(msg)) = result {
-        assert!(msg.contains("general.hba and general.pg_hba cannot be specified at the same time"));
+        assert!(
+            msg.contains("general.hba and general.pg_hba cannot be specified at the same time")
+        );
     } else {
         panic!("Expected BadConfig error about hba and pg_hba");
     }

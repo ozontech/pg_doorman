@@ -7,12 +7,12 @@ mod stream;
 
 use api::start_http_server;
 use clap::Parser;
-use cluster_manager::{handle_config_changes, ClusterManager};
+use cluster_manager::{ClusterManager, handle_config_changes};
 use config::{ClusterDiff, ConfigDiff, ConfigRepository};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use log::Log;
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};

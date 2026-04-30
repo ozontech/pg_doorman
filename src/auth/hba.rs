@@ -45,7 +45,7 @@ impl NameMatcher {
     fn matches(&self, value: &str) -> bool {
         match self {
             NameMatcher::All => true,
-            NameMatcher::Name(ref n) => n == value,
+            NameMatcher::Name(n) => n == value,
         }
     }
 }

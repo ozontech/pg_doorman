@@ -24,7 +24,7 @@ use crate::auth::scram::{
     prepare_server_final_message, prepare_server_first_response,
 };
 use crate::config::BackendAuthMethod;
-use crate::config::{get_config, PoolMode};
+use crate::config::{PoolMode, get_config};
 use crate::errors::{ClientIdentifier, Error};
 use crate::messages::constants::{
     JWT_PUB_KEY_PASSWORD_PREFIX, MD5_PASSWORD_PREFIX, SASL_CONTINUE, SASL_FINAL, SCRAM_SHA_256,
@@ -35,8 +35,8 @@ use crate::messages::{
     scram_start_challenge, vec_to_string, wrong_password,
 };
 use crate::pool::{
-    create_dynamic_pool, get_auth_query_state, get_pool, get_pool_config, is_dynamic_pool,
-    ConnectionPool, PoolIdentifier,
+    ConnectionPool, PoolIdentifier, create_dynamic_pool, get_auth_query_state, get_pool,
+    get_pool_config, is_dynamic_pool,
 };
 use crate::server::ServerParameters;
 
@@ -243,9 +243,9 @@ where
     )
         .await?;
         return Err(Error::HbaForbiddenError(format!(
-        "Connection with scram not permitted by HBA configuration for client: {} from address: {:?}",
-        client_identifier, client_identifier.addr,
-    )));
+            "Connection with scram not permitted by HBA configuration for client: {} from address: {:?}",
+            client_identifier, client_identifier.addr,
+        )));
     }
 
     if client_identifier.is_talos || hba_decision == CheckResult::Trust {
@@ -325,7 +325,9 @@ where
     let server_parameters = match pool.get_server_parameters().await {
         Ok(params) => params,
         Err(err) => {
-            error!("[{username_from_parameters}@{pool_name}] failed to retrieve server parameters: {err}");
+            error!(
+                "[{username_from_parameters}@{pool_name}] failed to retrieve server parameters: {err}"
+            );
             error_response(
                 write,
                 &format!(
@@ -360,7 +362,9 @@ where
     let password_response = match vec_to_string(password_response) {
         Ok(p) => p,
         Err(err) => {
-            error!("[{username_from_parameters}@{pool_name}] PAM: failed to read password from {client_addr}: {err}");
+            error!(
+                "[{username_from_parameters}@{pool_name}] PAM: failed to read password from {client_addr}: {err}"
+            );
             error_response_terminal(
                 write,
                 "Invalid password format. Password must be valid UTF-8 text.",
@@ -413,7 +417,9 @@ where
     let server_secret = match parse_server_secret(pool_password) {
         Ok(server_secret) => server_secret,
         Err(err) => {
-            warn!("[{username_from_parameters}@{pool_name}] SCRAM: failed to parse server secret from {client_addr}: {err}");
+            warn!(
+                "[{username_from_parameters}@{pool_name}] SCRAM: failed to parse server secret from {client_addr}: {err}"
+            );
             error_response_terminal(
                 write,
                 "Server authentication configuration error. Please contact your database administrator.",
@@ -432,7 +438,9 @@ where
     )) {
         Ok(client_first_message) => client_first_message,
         Err(err) => {
-            warn!("[{username_from_parameters}@{pool_name}] SCRAM: client first message parse error from {client_addr}: {err}");
+            warn!(
+                "[{username_from_parameters}@{pool_name}] SCRAM: client first message parse error from {client_addr}: {err}"
+            );
             error_response_terminal(
                     write,
                     "Authentication protocol error. Your client may not support SCRAM authentication properly.",
@@ -558,7 +566,9 @@ where
     let jwt_token = match vec_to_string(jwt_token_response) {
         Ok(p) => p,
         Err(err) => {
-            error!("[{username_from_parameters}@{pool_name}] JWT: failed to parse token from {client_addr}: {err}");
+            error!(
+                "[{username_from_parameters}@{pool_name}] JWT: failed to parse token from {client_addr}: {err}"
+            );
             error_response_terminal(
                 write,
                 "Invalid JWT token format. Token must be valid UTF-8 text.",
@@ -573,7 +583,9 @@ where
     let jwt_user_name = match get_user_name_from_jwt(jwt_pub_key, jwt_token).await {
         Ok(u) => u,
         Err(err) => {
-            error!("[{username_from_parameters}@{pool_name}] JWT: validation failed from {client_addr}: {err}");
+            error!(
+                "[{username_from_parameters}@{pool_name}] JWT: validation failed from {client_addr}: {err}"
+            );
             error_response_terminal(
                 write,
                 "JWT token validation failed. Please provide a valid token.",
@@ -586,7 +598,9 @@ where
         }
     };
     if !jwt_user_name.eq(username_from_parameters) {
-        error!("[{username_from_parameters}@{pool_name}] JWT: username mismatch from {client_addr} (token={jwt_user_name})");
+        error!(
+            "[{username_from_parameters}@{pool_name}] JWT: username mismatch from {client_addr} (token={jwt_user_name})"
+        );
         error_response_terminal(
             write,
             format!("JWT token username mismatch. Token contains username '{jwt_user_name}' but you're trying to connect as '{username_from_parameters}'.").as_str(),
@@ -772,7 +786,9 @@ where
         let client_first = match parse_client_first_message(String::from_utf8_lossy(&first_msg)) {
             Ok(msg) => msg,
             Err(err) => {
-                warn!("[{username}@{pool_name}] auth_query: SCRAM client first message parse error: {err}");
+                warn!(
+                    "[{username}@{pool_name}] auth_query: SCRAM client first message parse error: {err}"
+                );
                 error_response_terminal(
                     write,
                     "Authentication protocol error. Your client may not support SCRAM authentication properly.",
@@ -797,7 +813,9 @@ where
         let client_final = match parse_client_final_message(String::from_utf8_lossy(&final_msg)) {
             Ok(msg) => msg,
             Err(err) => {
-                warn!("[{username}@{pool_name}] auth_query: SCRAM client final message parse error: {err}");
+                warn!(
+                    "[{username}@{pool_name}] auth_query: SCRAM client final message parse error: {err}"
+                );
                 error_response_terminal(
                     write,
                     "Authentication protocol error. Your client sent an invalid SCRAM final message.",

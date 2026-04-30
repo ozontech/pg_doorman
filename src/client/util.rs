@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 use once_cell::sync::Lazy;
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::{Arc, atomic::AtomicUsize};
 
 /// Incrementally count prepared statements
 /// to avoid random conflicts in places where the random number generator is weak.

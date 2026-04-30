@@ -19,9 +19,9 @@
 //! them private avoids leaking test/bench scaffolding into the public API
 //! surface, and the duplication is twenty trivial lines.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
 

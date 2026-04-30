@@ -3,8 +3,8 @@ use std::{
     fmt,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Weak,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -16,12 +16,12 @@ use crate::utils::clock;
 
 use parking_lot::Mutex;
 
-use tokio::sync::{oneshot, Notify, Semaphore, SemaphorePermit, TryAcquireError};
+use tokio::sync::{Notify, Semaphore, SemaphorePermit, TryAcquireError, oneshot};
 
+use super::ServerPool;
 use super::errors::{PoolError, RecycleError, TimeoutType};
 use super::pool_coordinator;
 use super::types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
-use super::ServerPool;
 use crate::server::Server;
 
 const MAX_FAST_RETRY: i32 = 10;
@@ -1054,8 +1054,10 @@ impl Pool {
                 let slots = self.inner.slots.lock();
                 warn!(
                     "[{}@{}] checkout timeout at phase=burst_gate elapsed={}ms size={} inflight={} waiters={}",
-                    self.inner.pool_name, self.inner.username,
-                    start.elapsed().as_millis(), slots.size,
+                    self.inner.pool_name,
+                    self.inner.username,
+                    start.elapsed().as_millis(),
+                    slots.size,
                     self.inner.inflight_creates.load(Ordering::Relaxed),
                     slots.waiters.len(),
                 );

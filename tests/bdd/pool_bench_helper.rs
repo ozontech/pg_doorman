@@ -6,8 +6,8 @@
 use cucumber::{given, then, when};
 use pprof::ProfilerGuardBuilder;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Check if pprof profiling is enabled via PPROF=1 environment variable

@@ -25,11 +25,11 @@ use tokio::time::timeout;
 use crate::config::get_config;
 use crate::errors::Error;
 use crate::errors::Error::MaxMessageSize;
-use crate::messages::PgErrorMsg;
 use crate::messages::MAX_MESSAGE_SIZE;
+use crate::messages::PgErrorMsg;
 use crate::messages::{
-    proxy_copy_data, proxy_copy_data_with_timeout, read_message_body_reuse, read_message_header,
-    write_all_flush, BytesMutReader,
+    BytesMutReader, proxy_copy_data, proxy_copy_data_with_timeout, read_message_body_reuse,
+    read_message_header, write_all_flush,
 };
 
 use super::parameters::ServerParameters;
@@ -232,11 +232,14 @@ fn handle_ready_for_query(server: &mut Server, message: &mut BytesMut) -> Result
         'E' => {
             server.in_transaction = true;
             if let Ok(msg) = PgErrorMsg::parse(message) {
-                let mut details =
-                    format!(
+                let mut details = format!(
                     "[{}@{}] transaction rolled back pid={}: severity={}, code={}, message=\"{}\"",
-                    server.address.username, server.address.pool_name, server.get_process_id(),
-                    msg.severity, msg.code, sanitize_for_log(&msg.message),
+                    server.address.username,
+                    server.address.pool_name,
+                    server.get_process_id(),
+                    msg.severity,
+                    msg.code,
+                    sanitize_for_log(&msg.message),
                 );
                 if let Some(ref hint) = msg.hint {
                     details.push_str(&format!(", hint=\"{}\"", sanitize_for_log(hint)));
@@ -282,9 +285,14 @@ fn handle_error_response(server: &mut Server, message: &mut BytesMut) {
     if let Ok(msg) = PgErrorMsg::parse(message) {
         let mut details = format!(
             "[{}@{}] server error pid={}: severity={}, code={}, message=\"{}\", in_transaction={}, in_copy={}",
-            server.address.username, server.address.pool_name, server.get_process_id(),
-            msg.severity, msg.code, sanitize_for_log(&msg.message),
-            server.in_transaction, server.in_copy_mode,
+            server.address.username,
+            server.address.pool_name,
+            server.get_process_id(),
+            msg.severity,
+            msg.code,
+            sanitize_for_log(&msg.message),
+            server.in_transaction,
+            server.in_copy_mode,
         );
         if let Some(ref hint) = msg.hint {
             details.push_str(&format!(", hint=\"{}\"", sanitize_for_log(hint)));
@@ -476,11 +484,11 @@ where
         match code_u8 as char {
             'D' => {
                 return handle_large_data_row(server, &mut client_stream, code_u8, message_len)
-                    .await
+                    .await;
             }
             'd' => {
                 return handle_large_copy_data(server, &mut client_stream, code_u8, message_len)
-                    .await
+                    .await;
             }
             _ => unreachable!("pending_large_message should only contain 'D' or 'd'"),
         }
@@ -752,7 +760,7 @@ mod tests {
     //! * `RESET ALL` is reported as `RESET\0`, not `RESET ALL\0`.
     //! * `CLOSE ALL` is reported as `CLOSE CURSOR ALL\0`, not `CLOSE ALL\0`.
 
-    use super::{classify_command_complete, CommandCompleteEffect};
+    use super::{CommandCompleteEffect, classify_command_complete};
 
     #[test]
     fn set_tag_arms_set_cleanup() {

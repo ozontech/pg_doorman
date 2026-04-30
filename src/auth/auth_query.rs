@@ -7,16 +7,16 @@
 //!   TTL-based expiration, negative caching, and rate-limited re-fetch.
 
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
 
 use crate::utils::format_elapsed;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
 
 use crate::config::{AuthQueryConfig, Duration};

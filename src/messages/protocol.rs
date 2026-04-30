@@ -113,7 +113,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Failed to read password message type identifier: {err}"
-            )))
+            )));
         }
     }
 
@@ -130,7 +130,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Failed to read password message length: {err}"
-            )))
+            )));
         }
     }
 
@@ -141,7 +141,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Failed to read password message content: {err}"
-            )))
+            )));
         }
     }
 

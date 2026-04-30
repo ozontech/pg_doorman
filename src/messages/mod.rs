@@ -1,8 +1,8 @@
 // Helper functions to send one-off protocol messages and handle TcpStream (TCP socket).
 
 // Standard library imports
-use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 
 // External crate imports
 use once_cell::sync::Lazy;
@@ -19,7 +19,7 @@ pub mod types;
 // Re-export public items
 pub use config_socket::{configure_tcp_socket, configure_unix_socket};
 pub use error::PgErrorMsg;
-pub use extended::{close_complete, Bind, Close, Describe, ExtendedProtocolData, Parse};
+pub use extended::{Bind, Close, Describe, ExtendedProtocolData, Parse, close_complete};
 pub use protocol::{
     check_query_response, command_complete, data_row, data_row_nullable, deallocate_response,
     error_message, error_response, error_response_terminal, flush,
@@ -35,7 +35,7 @@ pub use socket::{
     read_message_data, read_message_header, read_message_reuse, write_all, write_all_flush,
     write_all_half,
 };
-pub use types::{vec_to_string, BytesMutReader, DataType};
+pub use types::{BytesMutReader, DataType, vec_to_string};
 
 // Re-export protocol constants
 pub use constants::*;

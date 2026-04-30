@@ -15,20 +15,20 @@ use tokio::io::{AsyncReadExt, BufStream};
 
 // Internal crate imports
 use crate::auth::scram_client::ScramSha256;
-use crate::config::{get_config, tls, Address, BackendAuthMethod, User};
+use crate::config::{Address, BackendAuthMethod, User, get_config, tls};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::PgErrorMsg;
 use crate::messages::{
-    read_message_data, simple_query, startup, sync, BytesMutReader, Close, Parse,
+    BytesMutReader, Close, Parse, read_message_data, simple_query, startup, sync,
 };
-use crate::pool::{CancelTarget, ClientServerMap, CANCELED_PIDS};
+use crate::pool::{CANCELED_PIDS, CancelTarget, ClientServerMap};
 use crate::stats::ServerStats;
 
 use super::authentication::handle_authentication;
 use super::cleanup::CleanupState;
 use super::parameters::ServerParameters;
 use super::startup_error::handle_startup_error;
-use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
+use super::stream::{StreamInner, create_tcp_stream_inner, create_unix_stream_inner};
 use super::{prepared_statements, protocol_io, startup_cancel};
 
 /// Buffer flush threshold in bytes (8 KiB).
@@ -990,7 +990,15 @@ impl Server {
 
                 // We have an unexpected message from the server during this exchange.
                 _ => {
-                    error!("[{}@{}] unexpected message code '{}' (ASCII: {}) during server startup to {}:{}", server_identifier.username, server_identifier.pool_name, code, code as u8, address.host, address.port);
+                    error!(
+                        "[{}@{}] unexpected message code '{}' (ASCII: {}) during server startup to {}:{}",
+                        server_identifier.username,
+                        server_identifier.pool_name,
+                        code,
+                        code as u8,
+                        address.host,
+                        address.port
+                    );
                     return Err(Error::ProtocolSyncError(format!(
                         "Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.",
                         code, code as u8

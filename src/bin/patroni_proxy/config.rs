@@ -613,10 +613,11 @@ clusters:
         let config2 = Config::from_str(yaml2).unwrap();
         let diff = ConfigDiff::compute(&config1, &config2);
         assert!(diff.has_changes());
-        assert!(diff
-            .changes
-            .iter()
-            .any(|c| matches!(c, ClusterDiff::Added(name, _) if name == "two")));
+        assert!(
+            diff.changes
+                .iter()
+                .any(|c| matches!(c, ClusterDiff::Added(name, _) if name == "two"))
+        );
     }
 
     #[test]
@@ -655,10 +656,11 @@ clusters:
         let config2 = Config::from_str(yaml2).unwrap();
         let diff = ConfigDiff::compute(&config1, &config2);
         assert!(diff.has_changes());
-        assert!(diff
-            .changes
-            .iter()
-            .any(|c| matches!(c, ClusterDiff::Removed(name) if name == "two")));
+        assert!(
+            diff.changes
+                .iter()
+                .any(|c| matches!(c, ClusterDiff::Removed(name) if name == "two"))
+        );
     }
 
     #[test]
@@ -690,10 +692,11 @@ clusters:
         let config2 = Config::from_str(yaml2).unwrap();
         let diff = ConfigDiff::compute(&config1, &config2);
         assert!(diff.has_changes());
-        assert!(diff
-            .changes
-            .iter()
-            .any(|c| matches!(c, ClusterDiff::HostsChanged(name, _, _) if name == "one")));
+        assert!(
+            diff.changes
+                .iter()
+                .any(|c| matches!(c, ClusterDiff::HostsChanged(name, _, _) if name == "one"))
+        );
     }
 
     #[test]

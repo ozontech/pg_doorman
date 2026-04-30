@@ -13,7 +13,7 @@ pub use logger::init_logging;
 pub use panic::install_panic_hook;
 pub use server::run_server;
 
-pub use args::{parse, Args, Commands, GenerateConfig, LogFormat, OutputFormat};
+pub use args::{Args, Commands, GenerateConfig, LogFormat, OutputFormat, parse};
 
 pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
     use crate::config::ConfigFormat;
@@ -75,7 +75,7 @@ pub fn parse_args() -> Result<Args, Box<dyn std::error::Error>> {
                 ("prometheus.md", generate::docs::generate_prometheus_doc()),
             ];
 
-            if let Some(ref dir) = output_dir {
+            if let Some(dir) = output_dir {
                 std::fs::create_dir_all(dir)?;
                 for (name, content) in &docs {
                     let path = format!("{dir}/{name}");

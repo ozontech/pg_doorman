@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{PortConfig, Role};
 use crate::patroni::Member;
-use crate::stream::{spawn_proxy, StopHandle};
+use crate::stream::{StopHandle, spawn_proxy};
 
 /// Backend member with connection counter for load balancing
 #[derive(Debug)]
