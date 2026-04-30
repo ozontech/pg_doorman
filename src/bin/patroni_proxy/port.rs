@@ -685,7 +685,7 @@ mod tests {
             while let Ok((mut stream, _)) = backend_listener.accept().await {
                 // Keep connection open until it's closed
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(Duration::from_mins(1)).await;
                     let _ = stream.shutdown().await;
                 });
             }
@@ -775,7 +775,7 @@ mod tests {
         let backend1_task = tokio::spawn(async move {
             while let Ok((mut stream, _)) = backend1_listener.accept().await {
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(Duration::from_mins(1)).await;
                     let _ = stream.shutdown().await;
                 });
             }
@@ -784,7 +784,7 @@ mod tests {
         let backend2_task = tokio::spawn(async move {
             while let Ok((mut stream, _)) = backend2_listener.accept().await {
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(Duration::from_mins(1)).await;
                     let _ = stream.shutdown().await;
                 });
             }

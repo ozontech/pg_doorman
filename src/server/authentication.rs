@@ -129,7 +129,7 @@ pub(crate) async fn handle_authentication(
             }
 
             // Generate JWT token
-            let claims = new_claims(server_username, std::time::Duration::from_secs(120));
+            let claims = new_claims(server_username, std::time::Duration::from_mins(2));
             let token = sign_with_jwt_priv_key(
                 claims,
                 server_password

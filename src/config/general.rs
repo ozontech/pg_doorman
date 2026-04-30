@@ -262,7 +262,7 @@ impl General {
     }
 
     pub fn default_server_idle_check_timeout() -> Duration {
-        Duration::from_secs(60) // 60 seconds
+        Duration::from_mins(1)
     }
 
     pub fn default_connect_timeout() -> Duration {
