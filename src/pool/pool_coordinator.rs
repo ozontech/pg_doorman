@@ -518,7 +518,8 @@ impl PoolCoordinator {
     /// `server_lifetime` ages a connection out — the waiter would then
     /// timeout into Phase D even though the cross-pool system had headroom
     /// every few milliseconds.
-    pub(crate) fn notify_idle_returned(&self) {
+    #[doc(hidden)]
+    pub fn notify_idle_returned(&self) {
         self.connection_returned.notify_one();
     }
 
