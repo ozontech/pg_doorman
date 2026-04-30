@@ -432,7 +432,7 @@ where
 }
 
 /// Create a row description message.
-pub fn row_description(columns: &Vec<(&str, DataType)>) -> BytesMut {
+pub fn row_description(columns: &[(&str, DataType)]) -> BytesMut {
     let mut res = BytesMut::new();
     let mut row_desc = BytesMut::new();
 
@@ -503,7 +503,7 @@ pub fn data_row<S: AsRef<str>>(row: &[S]) -> BytesMut {
 }
 
 /// Create a data row message with nullable values.
-pub fn data_row_nullable(row: &Vec<Option<String>>) -> BytesMut {
+pub fn data_row_nullable(row: &[Option<String>]) -> BytesMut {
     let mut res = BytesMut::new();
     let mut data_row = BytesMut::new();
 

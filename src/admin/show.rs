@@ -91,7 +91,7 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let mut res = BytesMut::new();
-    res.put(row_description(&vec![("version", DataType::Text)]));
+    res.put(row_description(&[("version", DataType::Text)]));
     res.put(data_row(&[format!("PgDoorman {}", VERSION)]));
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
@@ -106,7 +106,7 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let mut res = BytesMut::new();
-    res.put(row_description(&vec![("log_level", DataType::Text)]));
+    res.put(row_description(&[("log_level", DataType::Text)]));
     res.put(data_row(&[log_level::get_log_level()]));
     res.put(command_complete("SHOW"));
     res.put_u8(b'Z');
@@ -508,7 +508,7 @@ where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let mut res = BytesMut::new();
-    res.put(row_description(&vec![
+    res.put(row_description(&[
         ("name", DataType::Text),
         ("pool_mode", DataType::Text),
     ]));

@@ -42,7 +42,7 @@ where
 {
     let mut res = BytesMut::new();
 
-    res.put(row_description(&vec![("success", DataType::Text)]));
+    res.put(row_description(&[("success", DataType::Text)]));
 
     let mut shutdown_success = "t";
 
@@ -71,7 +71,7 @@ where
 {
     let mut res = BytesMut::new();
 
-    res.put(row_description(&vec![("success", DataType::Text)]));
+    res.put(row_description(&[("success", DataType::Text)]));
 
     let mut upgrade_success = "t";
 
