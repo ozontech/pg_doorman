@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
 use log::{debug, error, info, warn};
-use std::future::{poll_fn, Future};
+use std::future::{Future, poll_fn};
 use std::ops::DerefMut;
 use std::sync::atomic::Ordering;
 use std::task::Poll;
@@ -14,7 +14,7 @@ use crate::app::server::{
 };
 use crate::client::batch_handling::PARSE_COMPLETE_MSG;
 use crate::client::core::{BatchOperation, Client, PreparedStatementKey};
-use crate::client::util::{is_standalone_begin, QUERY_DEALLOCATE};
+use crate::client::util::{QUERY_DEALLOCATE, is_standalone_begin};
 use crate::errors::Error;
 use crate::messages::{
     check_query_response, deallocate_response, error_response, error_response_terminal,
@@ -182,12 +182,12 @@ where
             .stats
             .transaction(self.server_parameters.get_application_name());
 
-        if !self.transaction_mode {
-            if let Some(start) = self.session_xact_start.take() {
-                server
-                    .stats
-                    .add_xact_time_and_idle(start.elapsed().as_micros() as u64);
-            }
+        if !self.transaction_mode
+            && let Some(start) = self.session_xact_start.take()
+        {
+            server
+                .stats
+                .add_xact_time_and_idle(start.elapsed().as_micros() as u64);
         }
 
         if self.transaction_mode && !server.in_copy_mode() && (!check_async || !server.is_async()) {
@@ -790,7 +790,8 @@ where
                         self.connection_id,
                         checkout_us / 1_000,
                         server.get_process_id(),
-                        status.size, status.max_size,
+                        status.size,
+                        status.max_size,
                         status.available,
                         status.waiting,
                         scaling.inflight_creates,
@@ -1020,7 +1021,12 @@ where
                         _ => {
                             error!(
                                 "[{}@{} #c{}] unexpected message code '{}' (ASCII: {}) from client {}",
-                                self.username, self.pool_name, self.connection_id, code, code as u8, self.addr
+                                self.username,
+                                self.pool_name,
+                                self.connection_id,
+                                code,
+                                code as u8,
+                                self.addr
                             );
                             TransactionAction::Continue
                         }

@@ -3,8 +3,8 @@ use std::{
     fmt,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Weak,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -16,12 +16,12 @@ use crate::utils::clock;
 
 use parking_lot::Mutex;
 
-use tokio::sync::{oneshot, Notify, Semaphore, SemaphorePermit, TryAcquireError};
+use tokio::sync::{Notify, Semaphore, SemaphorePermit, TryAcquireError, oneshot};
 
+use super::ServerPool;
 use super::errors::{PoolError, RecycleError, TimeoutType};
 use super::pool_coordinator;
 use super::types::{Metrics, PoolConfig, QueueMode, Status, Timeouts};
-use super::ServerPool;
 use crate::server::Server;
 
 const MAX_FAST_RETRY: i32 = 10;
@@ -56,12 +56,12 @@ pub struct Object {
 
 impl Drop for Object {
     fn drop(&mut self) {
-        if let Some(mut inner) = self.inner.take() {
-            if let Some(pool) = self.pool.upgrade() {
-                inner.metrics.recycled = Some(clock::now());
-                inner.metrics.recycle_count += 1;
-                pool.return_object(inner);
-            }
+        if let Some(mut inner) = self.inner.take()
+            && let Some(pool) = self.pool.upgrade()
+        {
+            inner.metrics.recycled = Some(clock::now());
+            inner.metrics.recycle_count += 1;
+            pool.return_object(inner);
         }
     }
 }
@@ -699,11 +699,10 @@ impl Pool {
             tokio::select! {
                 biased;
                 result = &mut rx => {
-                    if let Ok(inner) = result {
-                        if let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
+                    if let Ok(inner) = result
+                        && let Ok(inner) = self.recycle_handoff(inner, timeouts).await {
                             return BurstGateOutcome::Recycled(Box::new(inner));
                         }
-                    }
                 }
                 _ = on_create => {}
                 _ = tokio::time::sleep(BURST_BACKOFF) => {}
@@ -1054,8 +1053,10 @@ impl Pool {
                 let slots = self.inner.slots.lock();
                 warn!(
                     "[{}@{}] checkout timeout at phase=burst_gate elapsed={}ms size={} inflight={} waiters={}",
-                    self.inner.pool_name, self.inner.username,
-                    start.elapsed().as_millis(), slots.size,
+                    self.inner.pool_name,
+                    self.inner.username,
+                    start.elapsed().as_millis(),
+                    slots.size,
                     self.inner.inflight_creates.load(Ordering::Relaxed),
                     slots.waiters.len(),
                 );
@@ -1217,7 +1218,7 @@ impl Pool {
                 }
 
                 // Sort by age descending (oldest first — highest age value)
-                candidates.sort_by(|a, b| b.1.cmp(&a.1));
+                candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
 
                 let to_close: std::collections::HashSet<usize> = candidates
                     .into_iter()
@@ -1630,11 +1631,9 @@ impl Pool {
             // Idle ratio: only pre-replace when < 25% of connections are idle.
             // If the pool has plenty of idle connections it can absorb the
             // loss of one to lifetime expiry without a spike.
-            let idle_pct = if slots.size > 0 {
-                slots.vec.len() * 100 / slots.size
-            } else {
-                100
-            };
+            let idle_pct = (slots.vec.len() * 100)
+                .checked_div(slots.size)
+                .unwrap_or(100);
             if idle_pct >= 25 {
                 return;
             }

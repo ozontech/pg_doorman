@@ -24,11 +24,7 @@ pub(crate) struct I18n {
 
 impl I18n {
     pub(crate) fn get(&self, russian: bool) -> &str {
-        if russian {
-            &self.ru
-        } else {
-            &self.en
-        }
+        if russian { &self.ru } else { &self.en }
     }
 }
 
@@ -217,11 +213,7 @@ impl ConfigWriter {
 
     /// Select English or Russian text.
     fn t<'a>(&self, en: &'a str, ru: &'a str) -> &'a str {
-        if self.russian {
-            ru
-        } else {
-            en
-        }
+        if self.russian { ru } else { en }
     }
 
     /// Write a comment line with given indent level (2 spaces per level for YAML).
@@ -1346,8 +1338,12 @@ fn write_pool_users(w: &mut ConfigWriter, pool_name: &str, users: &[User]) {
     match w.format {
         ConfigFormat::Toml => {
             w.separator(fi, f.section_title("pool_users_toml").get(w.russian));
-            let en_msg = format!("Users are defined with numeric indices: [pools.{pool_name}.users.0], [pools.{pool_name}.users.1], etc.");
-            let ru_msg = format!("Пользователи задаются с числовыми индексами: [pools.{pool_name}.users.0], [pools.{pool_name}.users.1] и т.д.");
+            let en_msg = format!(
+                "Users are defined with numeric indices: [pools.{pool_name}.users.0], [pools.{pool_name}.users.1], etc."
+            );
+            let ru_msg = format!(
+                "Пользователи задаются с числовыми индексами: [pools.{pool_name}.users.0], [pools.{pool_name}.users.1] и т.д."
+            );
             w.comment(fi, w.t(&en_msg, &ru_msg));
             w.comment(fi, f.text("pool_users_unique").get(w.russian));
         }

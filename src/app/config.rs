@@ -1,7 +1,7 @@
 use log::error;
 use std::io::{self, IsTerminal, Write};
 
-use crate::config::{get_config, Config};
+use crate::config::{Config, get_config};
 use tokio::runtime::Builder;
 
 use crate::app::args::Args;

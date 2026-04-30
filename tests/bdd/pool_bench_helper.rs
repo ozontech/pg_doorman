@@ -6,8 +6,8 @@
 use cucumber::{given, then, when};
 use pprof::ProfilerGuardBuilder;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Check if pprof profiling is enabled via PPROF=1 environment variable
@@ -284,7 +284,7 @@ async fn benchmark_pool_get_impl(
 
         // Sort by sample count
         let mut frame_times: Vec<(String, usize)> = func_samples.into_iter().collect();
-        frame_times.sort_by(|a, b| b.1.cmp(&a.1));
+        frame_times.sort_by_key(|f| std::cmp::Reverse(f.1));
 
         println!("Total CPU samples: {}", total_samples);
         println!("| Function | Samples | % |");

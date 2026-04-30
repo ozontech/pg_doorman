@@ -123,7 +123,9 @@ impl Reporter {
         use std::collections::hash_map::Entry;
         match CLIENT_STATS.write().entry(client_id) {
             Entry::Occupied(_) => {
-                warn!("[#c{client_id}] duplicate stats registration, skipping (likely migrated client id collision)");
+                warn!(
+                    "[#c{client_id}] duplicate stats registration, skipping (likely migrated client id collision)"
+                );
             }
             Entry::Vacant(entry) => {
                 entry.insert(stats);

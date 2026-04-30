@@ -1,7 +1,7 @@
 use std::net::ToSocketAddrs;
 use std::process;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -9,18 +9,18 @@ use log::{error, info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpSocket;
 #[cfg(not(windows))]
-use tokio::signal::unix::{signal as unix_signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal as unix_signal};
 #[cfg(windows)]
 use tokio::signal::windows as win_signal;
 use tokio::{runtime::Builder, sync::mpsc};
 
 use crate::app::args::Args;
-use crate::config::{get_config, reload_config, Config};
+use crate::config::{Config, get_config, reload_config};
 use crate::daemon;
 use crate::messages::{configure_tcp_socket, configure_unix_socket};
-use crate::pool::{retain, ClientServerMap, ConnectionPool};
+use crate::pool::{ClientServerMap, ConnectionPool, retain};
 use crate::prometheus::start_prometheus_server;
-use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
+use crate::stats::{Collector, REPORTER, Reporter, TOTAL_CONNECTION_COUNTER};
 use crate::utils::core_affinity;
 use crate::utils::format_duration;
 use socket2::SockRef;
@@ -301,8 +301,8 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         // Signal readiness to parent process (for binary upgrade in foreground mode)
         #[cfg(not(windows))]
-        if let Ok(ready_fd_str) = std::env::var("PG_DOORMAN_READY_FD") {
-            if let Ok(ready_fd) = ready_fd_str.parse::<i32>() {
+        if let Ok(ready_fd_str) = std::env::var("PG_DOORMAN_READY_FD")
+            && let Ok(ready_fd) = ready_fd_str.parse::<i32>() {
                 info!("Signaling readiness to parent process (fd={})", ready_fd);
                 let ready_signal: [u8; 1] = [1];
                 unsafe {
@@ -310,9 +310,9 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                     libc::close(ready_fd);
                 }
                 // Remove the env var so it's not inherited by any future child processes
-                std::env::remove_var("PG_DOORMAN_READY_FD");
+                // TODO: Audit that the environment access only happens in single-threaded code.
+                unsafe { std::env::remove_var("PG_DOORMAN_READY_FD") };
             }
-        }
 
         // Migration receiver is spawned below after tls_acceptor is available
 
@@ -359,20 +359,20 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         // Spawn migration receiver if parent passed a migration socket
         #[cfg(not(windows))]
-        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD") {
-            if let Ok(migration_fd) = fd_str.parse::<i32>() {
+        if let Ok(fd_str) = std::env::var("PG_DOORMAN_MIGRATION_FD")
+            && let Ok(migration_fd) = fd_str.parse::<i32>() {
                 info!(
                     "Migration socket received from parent (fd={})",
                     migration_fd
                 );
-                std::env::remove_var("PG_DOORMAN_MIGRATION_FD");
+                // TODO: Audit that the environment access only happens in single-threaded code.
+                unsafe { std::env::remove_var("PG_DOORMAN_MIGRATION_FD") };
                 tokio::spawn(migration_receiver_task(
                     migration_fd,
                     client_server_map.clone(),
                     tls_acceptor.clone(),
                 ));
             }
-        }
 
         // Wrap listener in Option to allow dropping it during foreground binary upgrade
         // while still continuing the graceful shutdown process
@@ -904,7 +904,9 @@ async fn binary_upgrade_and_shutdown(
                                 false,
                                 &[sd_notify::NotifyState::MainPid(child_pid)],
                             ) {
-                                warn!("sd_notify MAINPID failed: {e}. systemd may restart the service after old process exits.");
+                                warn!(
+                                    "sd_notify MAINPID failed: {e}. systemd may restart the service after old process exits."
+                                );
                             }
                         } else {
                             warn!("Timeout waiting for new process readiness");
@@ -1132,7 +1134,9 @@ fn log_session_end(
         Err(err) => {
             // Pre-auth failures: identity unknown, only connection_id available.
             // Post-auth failures already logged with [user@pool #cN] inside entrypoint.
-            warn!("[#c{connection_id}] client {peer_label} disconnected with error: {err}, session={session}");
+            warn!(
+                "[#c{connection_id}] client {peer_label} disconnected with error: {err}, session={session}"
+            );
         }
     }
 }

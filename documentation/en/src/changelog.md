@@ -1,5 +1,16 @@
 # Changelog
 
+### 3.7.0 <small>Apr 30, 2026</small>
+
+#### Toolchain refresh — Rust 1.95, tokio 1.52, edition 2024
+
+Internal release. The project moves to current Rust toolchain and async-runtime defaults; no user-facing behavior changes. Operators upgrading from 3.6.x do not need any config or deployment changes.
+
+- **Rust toolchain**: 1.87.0 → 1.95.0. `rust-version` in Cargo.toml bumped accordingly.
+- **tokio**: 1.49 → 1.52.
+- **Edition 2024**. Source-level adjustments where 2024 changed defaults: `std::env::remove_var` is now wrapped in unsafe blocks (it can race with concurrent reads from other threads), `unsafe fn` bodies open explicit `unsafe { ... }` blocks, redundant `ref` bindings dropped from if-let patterns.
+- **Clippy lints surfaced under 1.95 + 2024 are resolved**. Bulk auto-rewrites collapsed nested `if`s into 2024 stable let-chains; manual fixes replaced `is_some + unwrap` with `if let`, manual zero-checked division with `checked_div().unwrap_or(default)`, and `sort_by(reverse-cmp)` with `sort_by_key(Reverse)`.
+
 ### 3.6.4 <small>Apr 29, 2026</small>
 
 #### Fallback resilience

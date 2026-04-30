@@ -1,10 +1,10 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use log::{debug, info};
 
-use super::{PoolIdentifier, AUTH_QUERY_STATE, DYNAMIC_POOLS, POOLS};
+use super::{AUTH_QUERY_STATE, DYNAMIC_POOLS, POOLS, PoolIdentifier};
 
 /// Spawn a background task that periodically removes idle dynamic pools.
 /// Dynamic pools are created by auth_query passthrough mode — one per user.

@@ -7,16 +7,16 @@
 //!   TTL-based expiration, negative caching, and rate-limited re-fetch.
 
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
 
 use crate::utils::format_elapsed;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::mpsc;
 use tokio_postgres::{Client, NoTls};
 
 use crate::config::{AuthQueryConfig, Duration};
@@ -475,15 +475,15 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         }
 
         // Fast path: check cache without lock
-        if let Some(entry) = self.entries.get(username) {
-            if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
-                self.inc(|s| &s.cache_hits);
-                return if entry.is_negative {
-                    Ok(None)
-                } else {
-                    Ok(Some(entry.clone()))
-                };
-            }
+        if let Some(entry) = self.entries.get(username)
+            && !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl)
+        {
+            self.inc(|s| &s.cache_hits);
+            return if entry.is_negative {
+                Ok(None)
+            } else {
+                Ok(Some(entry.clone()))
+            };
         }
 
         // Slow path: acquire per-username lock
@@ -496,15 +496,15 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         let _guard = lock.lock().await;
 
         // Double-check after acquiring lock
-        if let Some(entry) = self.entries.get(username) {
-            if !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl) {
-                self.inc(|s| &s.cache_hits);
-                return if entry.is_negative {
-                    Ok(None)
-                } else {
-                    Ok(Some(entry.clone()))
-                };
-            }
+        if let Some(entry) = self.entries.get(username)
+            && !entry.is_expired(&self.cache_ttl, &self.cache_failure_ttl)
+        {
+            self.inc(|s| &s.cache_hits);
+            return if entry.is_negative {
+                Ok(None)
+            } else {
+                Ok(Some(entry.clone()))
+            };
         }
 
         // Cache miss — fetch from PG
@@ -558,18 +558,17 @@ impl<F: PasswordFetcher> AuthQueryCache<F> {
         let _guard = lock.lock().await;
 
         // Check rate limit (under lock to avoid TOCTOU)
-        if let Some(entry) = self.entries.get(username) {
-            if let Some(last) = entry.last_refetch_at {
-                if last.elapsed() < self.min_interval.as_std() {
-                    self.inc(|s| &s.cache_rate_limited);
-                    warn!(
-                        "[{username}@{}] auth_query cache: refetch rate-limited ({} since last)",
-                        self.pool_name,
-                        format_elapsed(last.elapsed())
-                    );
-                    return Ok(None); // Rate limited
-                }
-            }
+        if let Some(entry) = self.entries.get(username)
+            && let Some(last) = entry.last_refetch_at
+            && last.elapsed() < self.min_interval.as_std()
+        {
+            self.inc(|s| &s.cache_rate_limited);
+            warn!(
+                "[{username}@{}] auth_query cache: refetch rate-limited ({} since last)",
+                self.pool_name,
+                format_elapsed(last.elapsed())
+            );
+            return Ok(None); // Rate limited
         }
 
         // Fetch fresh from PG

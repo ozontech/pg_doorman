@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tokio::io::BufReader;
 
 use crate::client::buffer_pool::PooledBuffer;
-use crate::messages::{error_response, Parse};
-use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
+use crate::messages::{Parse, error_response};
+use crate::pool::{ClientServerMap, ConnectionPool, get_pool};
 use crate::server::ServerParameters;
 use crate::stats::{ClientStats, ServerStats};
 
@@ -475,10 +475,10 @@ impl<S, T> Drop for Client<S, T> {
             .remove(&(self.connection_id as i32, self.secret_key));
 
         // Update server stats if the client was connected to a server
-        if self.connected_to_server {
-            if let Some(stats) = self.last_server_stats.as_ref() {
-                stats.idle(0);
-            }
+        if self.connected_to_server
+            && let Some(stats) = self.last_server_stats.as_ref()
+        {
+            stats.idle(0);
         }
 
         // Ensure client is removed from stats tracking when dropped

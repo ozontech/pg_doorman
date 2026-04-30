@@ -1,5 +1,5 @@
 use super::{
-    eval_hba_for_pool_password, JWT_PUB_KEY_PASSWORD_PREFIX, MD5_PASSWORD_PREFIX, SCRAM_SHA_256,
+    JWT_PUB_KEY_PASSWORD_PREFIX, MD5_PASSWORD_PREFIX, SCRAM_SHA_256, eval_hba_for_pool_password,
 };
 use crate::auth::hba::{CheckResult, PgHba};
 use crate::errors::ClientIdentifier;

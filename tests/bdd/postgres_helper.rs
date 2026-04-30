@@ -6,8 +6,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::sleep;
@@ -68,11 +68,10 @@ fn stream_log_file(log_path: PathBuf) -> Arc<AtomicBool> {
                         // Check if file size decreased (rotation)
                         if let (Ok(old_meta), Ok(new_meta)) =
                             (reader.get_ref().metadata(), new_file.metadata())
+                            && new_meta.len() < old_meta.len()
                         {
-                            if new_meta.len() < old_meta.len() {
-                                reader = BufReader::new(new_file);
-                                continue;
-                            }
+                            reader = BufReader::new(new_file);
+                            continue;
                         }
                     }
                 }
@@ -187,11 +186,11 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-        if let Ok(s) = check {
-            if s.success() {
-                success = true;
-                break;
-            }
+        if let Ok(s) = check
+            && s.success()
+        {
+            success = true;
+            break;
         }
         sleep(Duration::from_millis(500)).await;
     }
@@ -216,10 +215,10 @@ pub async fn start_postgres(world: &mut DoormanWorld) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-        if let Ok(s) = check_psql {
-            if s.success() {
-                success = true;
-            }
+        if let Ok(s) = check_psql
+            && s.success()
+        {
+            success = true;
         }
     }
     assert!(success, "Postgres failed to start");
@@ -376,11 +375,11 @@ async fn start_postgres_internal(world: &mut DoormanWorld, hba_content: &str, ex
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-        if let Ok(s) = check {
-            if s.success() {
-                success = true;
-                break;
-            }
+        if let Ok(s) = check
+            && s.success()
+        {
+            success = true;
+            break;
         }
         sleep(Duration::from_millis(500)).await;
     }
@@ -405,10 +404,10 @@ async fn start_postgres_internal(world: &mut DoormanWorld, hba_content: &str, ex
             ],
         )
         .status();
-        if let Ok(s) = check_psql {
-            if s.success() {
-                success = true;
-            }
+        if let Ok(s) = check_psql
+            && s.success()
+        {
+            success = true;
         }
     }
     assert!(success, "Postgres failed to start");

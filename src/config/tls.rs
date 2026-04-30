@@ -300,20 +300,20 @@ impl ServerTlsConfig {
 
         let cert_hash = {
             let mut hasher = Sha256::new();
-            if let Some(ca_path) = ca_cert {
-                if let Ok(data) = read_file(ca_path) {
-                    hasher.update(&data);
-                }
+            if let Some(ca_path) = ca_cert
+                && let Ok(data) = read_file(ca_path)
+            {
+                hasher.update(&data);
             }
-            if let Some(cert_path) = client_cert {
-                if let Ok(data) = read_file(cert_path) {
-                    hasher.update(&data);
-                }
+            if let Some(cert_path) = client_cert
+                && let Ok(data) = read_file(cert_path)
+            {
+                hasher.update(&data);
             }
-            if let Some(key_path) = client_key {
-                if let Ok(data) = read_file(key_path) {
-                    hasher.update(&data);
-                }
+            if let Some(key_path) = client_key
+                && let Ok(data) = read_file(key_path)
+            {
+                hasher.update(&data);
             }
             Some(hasher.finalize().into())
         };

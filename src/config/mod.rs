@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
-use self::tls::{load_identity, TLSMode};
+use self::tls::{TLSMode, load_identity};
 use crate::auth::hba::CheckResult;
 use crate::errors::Error;
 use crate::pool::{ClientServerMap, ConnectionPool};
@@ -446,15 +446,15 @@ impl Config {
                 }
             }
 
-            if let Some(tls_certificate) = self.general.tls_certificate.clone() {
-                if let Some(tls_private_key) = self.general.tls_private_key.clone() {
-                    match load_identity(Path::new(&tls_certificate), Path::new(&tls_private_key)) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            return Err(Error::BadConfig(format!(
-                                "tls is incorrectly configured: {err:?}"
-                            )));
-                        }
+            if let Some(tls_certificate) = self.general.tls_certificate.clone()
+                && let Some(tls_private_key) = self.general.tls_private_key.clone()
+            {
+                match load_identity(Path::new(&tls_certificate), Path::new(&tls_private_key)) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        return Err(Error::BadConfig(format!(
+                            "tls is incorrectly configured: {err:?}"
+                        )));
                     }
                 }
             };

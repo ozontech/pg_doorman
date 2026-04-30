@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use log::{info, warn};
 use rand::seq::SliceRandom;
@@ -7,7 +7,7 @@ use rand::seq::SliceRandom;
 use crate::config::get_config;
 use crate::utils::{format_duration_ms, format_elapsed};
 
-use super::{get_all_pools, ConnectionPool};
+use super::{ConnectionPool, get_all_pools};
 
 impl ConnectionPool {
     /// Retain pool connections based on idle timeout and lifetime settings.
@@ -28,12 +28,11 @@ impl ConnectionPool {
         // Uses per-connection timeouts with jitter to prevent mass closures
         let should_close = |_: &crate::server::Server, metrics: &crate::pool::Metrics| -> bool {
             // Check idle timeout (per-connection with jitter, 0 = disabled)
-            if metrics.idle_timeout_ms > 0 {
-                if let Some(v) = metrics.recycled {
-                    if (v.elapsed().as_millis() as u64) > metrics.idle_timeout_ms {
-                        return true;
-                    }
-                }
+            if metrics.idle_timeout_ms > 0
+                && let Some(v) = metrics.recycled
+                && (v.elapsed().as_millis() as u64) > metrics.idle_timeout_ms
+            {
+                return true;
             }
             // Check server lifetime (per-connection with jitter, 0 = disabled)
             if metrics.lifetime_ms > 0 && (metrics.age().as_millis() as u64) > metrics.lifetime_ms {
@@ -239,7 +238,8 @@ pub async fn retain_connections() {
                         if prev_failures > 0 {
                             info!(
                                 "[{}@{}] replenish recovered after {} failure{}: created {} server{} (min_pool_size={})",
-                                pool.address.username, pool.address.pool_name,
+                                pool.address.username,
+                                pool.address.pool_name,
                                 prev_failures,
                                 if prev_failures == 1 { "" } else { "s" },
                                 created,
@@ -266,8 +266,11 @@ pub async fn retain_connections() {
                         } else if failures % 20 == 0 {
                             warn!(
                                 "[{}@{}] replenish still failing: {} consecutive failures (deficit={}, min_pool_size={})",
-                                pool.address.username, pool.address.pool_name,
-                                failures, deficit, min,
+                                pool.address.username,
+                                pool.address.pool_name,
+                                failures,
+                                deficit,
+                                min,
                             );
                         }
                     }

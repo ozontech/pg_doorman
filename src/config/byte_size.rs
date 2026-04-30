@@ -7,7 +7,7 @@
 //! This provides backward compatibility with existing numeric configurations
 //! while allowing more readable string formats.
 
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::fmt;
 
 /// Byte size with human-readable parsing support.

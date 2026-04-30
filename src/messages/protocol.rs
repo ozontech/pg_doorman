@@ -1,5 +1,6 @@
 // Standard library imports
 use std::collections::HashMap;
+use std::io::Write;
 use std::mem;
 // External crate imports
 use crate::messages::constants::SCRAM_SHA_256;
@@ -113,7 +114,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Failed to read password message type identifier: {err}"
-            )))
+            )));
         }
     }
 
@@ -130,7 +131,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Failed to read password message length: {err}"
-            )))
+            )));
         }
     }
 
@@ -141,7 +142,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Failed to read password message content: {err}"
-            )))
+            )));
         }
     }
 
@@ -295,10 +296,10 @@ pub fn md5_hash_second_pass(hash: &str, salt: &[u8]) -> Vec<u8> {
     md5.update(hash);
     md5.update(salt);
 
-    let mut password = format!("md5{:x}", md5.finalize())
-        .chars()
-        .map(|x| x as u8)
-        .collect::<Vec<u8>>();
+    // 3 ("md5") + 32 (hex SHA-128 of MD5 output) + 1 (NUL terminator) = 36 bytes,
+    // exact size — no realloc.
+    let mut password = Vec::with_capacity(36);
+    write!(&mut password, "md5{:x}", md5.finalize()).expect("write to Vec is infallible");
     password.push(0);
 
     password
@@ -317,7 +318,7 @@ where
 {
     let password = md5_hash_password(user, password, salt);
 
-    let mut message = BytesMut::with_capacity(password.len() as usize + 5);
+    let mut message = BytesMut::with_capacity(password.len() + 5);
 
     message.put_u8(b'p');
     message.put_i32(password.len() as i32 + 4);
@@ -331,7 +332,7 @@ where
     S: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     let password = md5_hash_second_pass(hash, salt);
-    let mut message = BytesMut::with_capacity(password.len() as usize + 5);
+    let mut message = BytesMut::with_capacity(password.len() + 5);
 
     message.put_u8(b'p');
     message.put_i32(password.len() as i32 + 4);
@@ -360,11 +361,13 @@ pub fn error_message(message: &str, code: &str) -> BytesMut {
 
     // Error code: not sure how much this matters.
     error.put_u8(b'C');
-    error.put_slice(format!("{code}\0").as_bytes());
+    error.put_slice(code.as_bytes());
+    error.put_u8(0);
 
     // The short error message.
     error.put_u8(b'M');
-    error.put_slice(format!("{message}\0").as_bytes());
+    error.put_slice(message.as_bytes());
+    error.put_u8(0);
 
     // No more fields follow.
     error.put_u8(0);
@@ -410,7 +413,9 @@ where
 
     // The short error message.
     error.put_u8(b'M');
-    error.put_slice(format!("password authentication failed for user \"{user}\"\0").as_bytes());
+    error.put_slice(b"password authentication failed for user \"");
+    error.put_slice(user.as_bytes());
+    error.put_slice(b"\"\0");
 
     // No more fields follow.
     error.put_u8(0);
@@ -427,7 +432,7 @@ where
 }
 
 /// Create a row description message.
-pub fn row_description(columns: &Vec<(&str, DataType)>) -> BytesMut {
+pub fn row_description(columns: &[(&str, DataType)]) -> BytesMut {
     let mut res = BytesMut::new();
     let mut row_desc = BytesMut::new();
 
@@ -436,7 +441,8 @@ pub fn row_description(columns: &Vec<(&str, DataType)>) -> BytesMut {
 
     for (name, data_type) in columns {
         // Column name
-        row_desc.put_slice(format!("{name}\0").as_bytes());
+        row_desc.put_slice(name.as_bytes());
+        row_desc.put_u8(0);
 
         // Doesn't belong to any table
         row_desc.put_i32(0);
@@ -497,7 +503,7 @@ pub fn data_row<S: AsRef<str>>(row: &[S]) -> BytesMut {
 }
 
 /// Create a data row message with nullable values.
-pub fn data_row_nullable(row: &Vec<Option<String>>) -> BytesMut {
+pub fn data_row_nullable(row: &[Option<String>]) -> BytesMut {
     let mut res = BytesMut::new();
     let mut data_row = BytesMut::new();
 

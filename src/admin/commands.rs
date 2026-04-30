@@ -10,7 +10,7 @@ use crate::errors::Error;
 use crate::messages::protocol::{command_complete, data_row, row_description};
 use crate::messages::socket::write_all_half;
 use crate::messages::types::DataType;
-use crate::pool::{get_all_pools, ClientServerMap, PoolMap};
+use crate::pool::{ClientServerMap, PoolMap, get_all_pools};
 
 /// Reload the configuration file without restarting the process.
 pub async fn reload<T>(stream: &mut T, client_server_map: ClientServerMap) -> Result<(), Error>
@@ -42,7 +42,7 @@ where
 {
     let mut res = BytesMut::new();
 
-    res.put(row_description(&vec![("success", DataType::Text)]));
+    res.put(row_description(&[("success", DataType::Text)]));
 
     let mut shutdown_success = "t";
 
@@ -71,7 +71,7 @@ where
 {
     let mut res = BytesMut::new();
 
-    res.put(row_description(&vec![("success", DataType::Text)]));
+    res.put(row_description(&[("success", DataType::Text)]));
 
     let mut upgrade_success = "t";
 
@@ -133,16 +133,16 @@ async fn check_db_has_pools<T>(
 where
     T: tokio::io::AsyncWrite + std::marker::Unpin,
 {
-    if let Some(ref db_name) = db {
-        if !pools.keys().any(|id| id.db == *db_name) {
-            admin_error_response(
-                stream,
-                &format!("No pool for database \"{}\"", db_name),
-                "3D000",
-            )
-            .await?;
-            return Ok(false);
-        }
+    if let Some(db_name) = db
+        && !pools.keys().any(|id| id.db == *db_name)
+    {
+        admin_error_response(
+            stream,
+            &format!("No pool for database \"{}\"", db_name),
+            "3D000",
+        )
+        .await?;
+        return Ok(false);
     }
     Ok(true)
 }
@@ -159,10 +159,10 @@ where
         return Ok(());
     }
     for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
+        if let Some(ref db_name) = db
+            && identifier.db != *db_name
+        {
+            continue;
         }
         pool.database.pause();
         info!("PAUSE: paused pool {}", identifier);
@@ -187,10 +187,10 @@ where
         return Ok(());
     }
     for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
+        if let Some(ref db_name) = db
+            && identifier.db != *db_name
+        {
+            continue;
         }
         pool.database.resume();
         info!("RESUME: resumed pool {}", identifier);
@@ -216,10 +216,10 @@ where
         return Ok(());
     }
     for (identifier, pool) in pools.iter() {
-        if let Some(ref db_name) = db {
-            if identifier.db != *db_name {
-                continue;
-            }
+        if let Some(ref db_name) = db
+            && identifier.db != *db_name
+        {
+            continue;
         }
         let new_epoch = pool.database.reconnect();
         info!(

@@ -64,7 +64,7 @@ fn clear_for_current_helper() -> bool {
 mod linux {
     use std::mem;
 
-    use libc::{cpu_set_t, sched_getaffinity, sched_setaffinity, CPU_ISSET, CPU_SET, CPU_SETSIZE};
+    use libc::{CPU_ISSET, CPU_SET, CPU_SETSIZE, cpu_set_t, sched_getaffinity, sched_setaffinity};
 
     use super::CoreId;
 
@@ -130,11 +130,7 @@ mod linux {
             )
         };
 
-        if result == 0 {
-            Some(set)
-        } else {
-            None
-        }
+        if result == 0 { Some(set) } else { None }
     }
 
     fn new_cpu_set() -> cpu_set_t {

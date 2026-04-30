@@ -17,14 +17,14 @@ use log::{debug, error};
 use crate::{config::PoolMode, messages::DataType, pool::PoolIdentifier};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::atomic::*;
 use std::sync::Arc;
+use std::sync::atomic::*;
 
 use crate::pool::get_all_pools;
-use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE, CLIENT_STATE_WAITING};
-use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE, SERVER_STATE_LOGIN};
 use crate::stats::ClientStats;
 use crate::stats::ServerStats;
+use crate::stats::client::{CLIENT_STATE_ACTIVE, CLIENT_STATE_IDLE, CLIENT_STATE_WAITING};
+use crate::stats::server::{SERVER_STATE_ACTIVE, SERVER_STATE_IDLE, SERVER_STATE_LOGIN};
 
 #[derive(Debug, Clone)]
 /// Comprehensive statistics for a PostgreSQL connection pool.
@@ -543,10 +543,12 @@ impl PoolStats {
                 .load(Ordering::Relaxed);
 
             // Calculate average wait time if there are transactions
-            if current.avg_xact_count > 0 {
-                current.avg_wait_time =
-                    address.averages.wait_time.load(Ordering::Relaxed) / current.avg_xact_count;
-            }
+            current.avg_wait_time = address
+                .averages
+                .wait_time
+                .load(Ordering::Relaxed)
+                .checked_div(current.avg_xact_count)
+                .unwrap_or(0);
 
             // Add the pool stats to the virtual map
             map.insert(identifier.clone(), current);

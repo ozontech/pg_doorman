@@ -1,11 +1,11 @@
 use super::AddressStats;
-use super::{get_reporter, Reporter};
+use super::{Reporter, get_reporter};
 use crate::config::Address;
 use crate::utils::clock;
 use iota::iota;
 use parking_lot::Mutex;
-use std::sync::atomic::*;
 use std::sync::Arc;
+use std::sync::atomic::*;
 
 // Server state constants used to track the current activity state of a server connection.
 //

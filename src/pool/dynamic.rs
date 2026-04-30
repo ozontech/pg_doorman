@@ -5,21 +5,21 @@
 //! and garbage-collected when idle. On RELOAD, dynamic pools are dropped and recreated
 //! on the next client connection with fresh settings.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use log::{debug, info, warn};
 
-use crate::config::{get_config, BackendAuthMethod, PoolMode, User};
+use crate::config::{BackendAuthMethod, PoolMode, User, get_config};
 use crate::errors::Error;
 use crate::server::ServerParameters;
 use crate::stats::AddressStats;
 
 use super::types::{PoolConfig, QueueMode, Timeouts};
 use super::{
-    build_server_tls_for_pool, get_auth_query_state, get_coordinator, get_pool,
-    register_dynamic_pool, Address, ConnectionPool, Pool, PoolIdentifier, PoolSettings,
-    PreparedStatementCache, ServerPool, POOLS,
+    Address, ConnectionPool, POOLS, Pool, PoolIdentifier, PoolSettings, PreparedStatementCache,
+    ServerPool, build_server_tls_for_pool, get_auth_query_state, get_coordinator, get_pool,
+    register_dynamic_pool,
 };
 
 /// Create a dynamic data pool for auth_query passthrough mode.
@@ -36,7 +36,7 @@ pub fn create_dynamic_pool(
     // Fast path: pool already exists
     if let Some(existing) = get_pool(pool_name, username) {
         // Update backend_auth (credentials may have changed)
-        if let (Some(ref ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
+        if let (Some(ba_lock), Some(new_ba)) = (&existing.address.backend_auth, &backend_auth) {
             debug!(
                 "[{username}@{pool_name}] auth_query: dynamic pool already exists, updating backend_auth"
             );
@@ -197,7 +197,7 @@ pub fn create_dynamic_pool(
 
     // Re-check after clone (another thread may have created it)
     if let Some(existing) = new_pools.get(&identifier) {
-        if let (Some(ref ba_lock), Some(ref new_ba)) = (
+        if let (Some(ba_lock), Some(new_ba)) = (
             &existing.address.backend_auth,
             &conn_pool.address.backend_auth,
         ) {

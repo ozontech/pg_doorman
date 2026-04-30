@@ -4,8 +4,8 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use futures::future::Shared;
 use futures::FutureExt;
+use futures::future::Shared;
 use log::{debug, info};
 use parking_lot::Mutex;
 
@@ -482,14 +482,14 @@ impl FallbackState {
             *guard = Some((host.clone(), port, role.clone()));
             old
         };
-        if let Some((old_host, old_port, _)) = old {
-            if (old_host.as_str(), old_port) != (host.as_str(), port) {
-                let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
-                    &self.pool_name,
-                    &old_host,
-                    &old_port.to_string(),
-                ]);
-            }
+        if let Some((old_host, old_port, _)) = old
+            && (old_host.as_str(), old_port) != (host.as_str(), port)
+        {
+            let _ = crate::prometheus::FALLBACK_HOST.remove_label_values(&[
+                &self.pool_name,
+                &old_host,
+                &old_port.to_string(),
+            ]);
         }
         info!(
             "[pool: {}] fallback: whitelisted {}:{} (role: {:?})",

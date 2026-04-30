@@ -107,7 +107,9 @@ pub(crate) async fn handle_authentication(
 
         // Clear password authentication
         AUTHENTICATION_CLEAR_PASSWORD => {
-            if user.server_username.is_none() || user.server_password.is_none() {
+            let (Some(server_username), Some(server_password)) =
+                (user.server_username.as_ref(), user.server_password.as_ref())
+            else {
                 error!(
                     "[{}@{}] clear password authentication requested by server but not configured",
                     server_identifier.username, server_identifier.pool_name,
@@ -116,29 +118,23 @@ pub(crate) async fn handle_authentication(
                     "server wants clear password authentication, but auth for this server is not configured".into(),
                     server_identifier.clone(),
                 ));
-            }
+            };
 
-            let server_password = user.server_password.as_ref().unwrap().clone();
-            let server_username = user.server_username.as_ref().unwrap().clone();
-
-            if !server_password.starts_with(JWT_PRIV_KEY_PASSWORD_PREFIX) {
+            let Some(jwt_priv_key) = server_password.strip_prefix(JWT_PRIV_KEY_PASSWORD_PREFIX)
+            else {
                 return Err(Error::ServerAuthError(
                     "plain password is not supported".into(),
                     server_identifier.clone(),
                 ));
-            }
+            };
 
             // Generate JWT token
-            let claims = new_claims(server_username, std::time::Duration::from_secs(120));
-            let token = sign_with_jwt_priv_key(
-                claims,
-                server_password
-                    .strip_prefix(JWT_PRIV_KEY_PASSWORD_PREFIX)
-                    .unwrap()
-                    .to_string(),
-            )
-            .await
-            .map_err(|err| Error::ServerAuthError(err.to_string(), server_identifier.clone()))?;
+            let claims = new_claims(server_username.clone(), std::time::Duration::from_mins(2));
+            let token = sign_with_jwt_priv_key(claims, jwt_priv_key.to_string())
+                .await
+                .map_err(|err| {
+                    Error::ServerAuthError(err.to_string(), server_identifier.clone())
+                })?;
 
             let mut password_response = BytesMut::new();
             password_response.put_u8(b'p');

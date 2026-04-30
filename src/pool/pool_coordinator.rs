@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use log::{debug, info, warn};
-use tokio::sync::{mpsc, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore, mpsc};
 
 /// Source of eviction candidates and user state.
 /// Implemented by the pool layer when wired in; mocked in benchmarks.
@@ -301,18 +301,18 @@ impl PoolCoordinator {
         // check matches what the arbiter will itself try — a lock-free
         // peek on the semaphore, no extra atomics compared to the Phase D
         // path below.
-        if self.config.reserve_pool_size > 0 && self.reserve_semaphore.available_permits() > 0 {
-            if let Some(permit) = self
+        if self.config.reserve_pool_size > 0
+            && self.reserve_semaphore.available_permits() > 0
+            && let Some(permit) = self
                 .try_grant_reserve(database, user, eviction_source)
                 .await
-            {
-                return Ok(permit);
-            }
-            // Reserve grant failed (arbiter raced another caller or
-            // oneshot timed out). Fall through to the eviction/wait path —
-            // the caller still has a budget to spend on peer eviction and
-            // Phase C wakes before we end up back at the Phase D retry.
+        {
+            return Ok(permit);
         }
+        // Reserve grant failed (arbiter raced another caller or
+        // oneshot timed out). Fall through to the eviction/wait path —
+        // the caller still has a budget to spend on peer eviction and
+        // Phase C wakes before we end up back at the Phase D retry.
 
         // Phase B: try eviction — close an idle connection from another user
         let evicted = eviction_source.try_evict_one(user);
@@ -518,7 +518,8 @@ impl PoolCoordinator {
     /// `server_lifetime` ages a connection out — the waiter would then
     /// timeout into Phase D even though the cross-pool system had headroom
     /// every few milliseconds.
-    pub(crate) fn notify_idle_returned(&self) {
+    #[doc(hidden)]
+    pub fn notify_idle_returned(&self) {
         self.connection_returned.notify_one();
     }
 
@@ -560,24 +561,23 @@ impl PoolCoordinator {
             })
             .await
             .is_ok()
+            && let Ok(Ok(grant)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await
         {
-            if let Ok(Ok(grant)) = tokio::time::timeout(ARBITER_RESPONSE_TIMEOUT, rx).await {
-                self.total_connections.fetch_add(1, Ordering::Relaxed);
-                self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
-                self.reserve_acquisitions_total
-                    .fetch_add(1, Ordering::Relaxed);
-                info!(
-                    "[{}@{}] coordinator: reserve permit granted \
+            self.total_connections.fetch_add(1, Ordering::Relaxed);
+            self.reserve_in_use.fetch_add(1, Ordering::Relaxed);
+            self.reserve_acquisitions_total
+                .fetch_add(1, Ordering::Relaxed);
+            info!(
+                "[{}@{}] coordinator: reserve permit granted \
                      (active={}/{}, reserve_in_use={}/{})",
-                    user,
-                    database,
-                    self.total_connections.load(Ordering::Relaxed),
-                    max,
-                    self.reserve_in_use.load(Ordering::Relaxed),
-                    self.config.reserve_pool_size,
-                );
-                return Some(grant.into_permit());
-            }
+                user,
+                database,
+                self.total_connections.load(Ordering::Relaxed),
+                max,
+                self.reserve_in_use.load(Ordering::Relaxed),
+                self.config.reserve_pool_size,
+            );
+            return Some(grant.into_permit());
         }
 
         debug!(
@@ -2079,7 +2079,7 @@ mod tests {
                 let mut guard = self.permit.lock().unwrap();
                 if guard.is_some() {
                     *guard = None; // drops permit, frees slot
-                                   // Immediately grab the freed slot before the caller
+                    // Immediately grab the freed slot before the caller
                     let stolen = self.coord.try_acquire();
                     assert!(stolen.is_some(), "should steal the freed permit");
                     std::mem::forget(stolen); // leak to keep slot occupied for this test

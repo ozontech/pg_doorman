@@ -34,10 +34,10 @@ pub fn pam_auth(service: &str, username: &str, password: &str) -> Result<(), Err
         Err(err) => {
             return auth_error(
                 &format!(
-                "Failed to initialize PAM context for service '{service}' and user '{username}'"
-            ),
+                    "Failed to initialize PAM context for service '{service}' and user '{username}'"
+                ),
                 err,
-            )
+            );
         }
     };
 

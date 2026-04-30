@@ -2,9 +2,9 @@ use bytes::{Buf, BufMut, BytesMut};
 use log::error;
 use std::ffi::CStr;
 use std::str;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::io::{split, AsyncReadExt, BufReader, ReadHalf, WriteHalf};
+use std::sync::atomic::Ordering;
+use tokio::io::{AsyncReadExt, BufReader, ReadHalf, WriteHalf, split};
 use tokio::net::TcpStream;
 
 use crate::auth::authenticate;
@@ -19,7 +19,7 @@ use crate::messages::{
 };
 use crate::pool::ClientServerMap;
 use crate::server::ServerParameters;
-use crate::stats::{ClientStats, CANCEL_CONNECTION_COUNTER};
+use crate::stats::{CANCEL_CONNECTION_COUNTER, ClientStats};
 use crate::transport::ClientTransport;
 
 use super::buffer_pool::PooledBuffer;

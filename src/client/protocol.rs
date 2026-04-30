@@ -4,15 +4,15 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use crate::errors::Error;
-use crate::messages::{error_response, Bind, Close, Describe, Parse};
+use crate::messages::{Bind, Close, Describe, Parse, error_response};
 use crate::pool::ConnectionPool;
 use crate::server::Server;
 
+use super::PREPARED_STATEMENT_COUNTER;
 use super::core::{
     BatchOperation, CachedStatement, Client, ParseCompleteTarget, PreparedStatementKey,
     SkippedParse,
 };
-use super::PREPARED_STATEMENT_COUNTER;
 
 impl<S, T> Client<S, T>
 where
@@ -67,7 +67,10 @@ where
                     Ok(_) => (),
                     Err(err) => match err {
                         Error::PreparedStatementError => {
-                            warn!("[{}@{} #c{}] server rejected prepared statement {:?}, evicting from client cache", self.username, self.pool_name, self.connection_id, key);
+                            warn!(
+                                "[{}@{} #c{}] server rejected prepared statement {:?}, evicting from client cache",
+                                self.username, self.pool_name, self.connection_id, key
+                            );
                             self.prepared.cache.pop(&key);
                         }
 
@@ -81,7 +84,7 @@ where
             None => {
                 return Err(Error::ClientError(format!(
                     "prepared statement `{key:?}` not found"
-                )))
+                )));
             }
         };
 
@@ -166,7 +169,7 @@ where
             None => {
                 return Err(Error::ClientError(format!(
                     "Could not store Prepared statement `{client_given_name}`"
-                )))
+                )));
             }
         };
 
@@ -247,8 +250,11 @@ where
                 // Track this skipped Parse - ParseComplete will be inserted before BindComplete in response
                 debug!(
                     "[{}@{} #c{}] parse skipped for `{}`: already on server pid={}, synthetic ParseComplete queued",
-                    self.username, self.pool_name, self.connection_id,
-                    server_stmt_name, server.get_process_id()
+                    self.username,
+                    self.pool_name,
+                    self.connection_id,
+                    server_stmt_name,
+                    server.get_process_id()
                 );
                 // insert_at_beginning starts as false. It will be set to true later
                 // if a new Parse is sent to server AFTER this skipped Parse.

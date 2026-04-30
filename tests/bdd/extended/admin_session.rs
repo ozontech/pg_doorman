@@ -183,8 +183,8 @@ pub async fn execute_admin_query_and_store_response(
         let (msg_type, data) = conn.read_message().await.expect("Failed to read message");
 
         match msg_type {
-            'T' => {
-                if data.len() >= 2 {
+            'T'
+                if data.len() >= 2 => {
                     let field_count = i16::from_be_bytes([data[0], data[1]]) as usize;
                     let mut pos = 2;
                     for _ in 0..field_count {
@@ -198,7 +198,6 @@ pub async fn execute_admin_query_and_store_response(
                     response_content.push_str(&headers.join("|"));
                     response_content.push('\n');
                 }
-            }
             'D' => {
                 let row_values = super::helpers::parse_datarow_fields(&data);
                 if !is_first_row {
@@ -215,12 +214,12 @@ pub async fn execute_admin_query_and_store_response(
                     response_content.push_str(&tag);
                 }
             }
-            'A' => {
+            'A'
                 // NotificationResponse (Async notification) - this is what show help returns
                 // Format: process_id (4 bytes) + channel (null-terminated) + payload (null-terminated)
-                if data.len() >= 4 {
+                if data.len() >= 4 => {
                     let mut pos = 4; // skip process_id
-                                     // Read channel name
+                    // Read channel name
                     if let Some(null_pos) = data[pos..].iter().position(|&b| b == 0) {
                         let channel = String::from_utf8_lossy(&data[pos..pos + null_pos]);
                         response_content.push_str(&channel);
@@ -234,7 +233,6 @@ pub async fn execute_admin_query_and_store_response(
                         }
                     }
                 }
-            }
             'Z' => {
                 // ReadyForQuery - done
                 break;

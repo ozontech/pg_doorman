@@ -86,7 +86,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Error reading message code from socket - Error {err:?}"
-            )))
+            )));
         }
     };
     let len = match stream.read_i32().await {
@@ -94,7 +94,7 @@ where
         Err(err) => {
             return Err(Error::SocketError(format!(
                 "Error reading message len from socket - Code: {code:?}, Error: {err:?}"
-            )))
+            )));
         }
     };
 
@@ -265,7 +265,7 @@ where
     W: tokio::io::AsyncWrite + std::marker::Unpin,
 {
     const MAX_BUFFER_CHUNK: usize = 4096; // гарантия того что вызовы read из
-                                          // буфферизированного stream 8kb будет быстрым.
+    // буфферизированного stream 8kb будет быстрым.
     let mut bytes_remained = len;
     let mut bytes_readed: usize;
     let mut buffer_size: usize = MAX_BUFFER_CHUNK;
@@ -280,7 +280,7 @@ where
             Err(err) => {
                 return Err(Error::SocketError(format!(
                     "Error reading from socket: {err:?}"
-                )))
+                )));
             }
         };
         if bytes_readed == 0 {
@@ -295,7 +295,7 @@ where
             Err(err) => {
                 return Err(Error::SocketError(format!(
                     "Error writing to socket: {err:?}"
-                )))
+                )));
             }
         };
 
@@ -811,7 +811,9 @@ mod tests {
         let _bytes = buffer.split();
         let cap_after = buffer.capacity();
 
-        assert!(cap_after < cap_before,
-            "split() leaves remainder capacity ({cap_after}) much less than original ({cap_before})");
+        assert!(
+            cap_after < cap_before,
+            "split() leaves remainder capacity ({cap_after}) much less than original ({cap_before})"
+        );
     }
 }

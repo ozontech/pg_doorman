@@ -15,8 +15,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use crate::errors::Error;
 use crate::messages::protocol::row_description;
 use crate::messages::{
-    data_row, data_row_nullable, error_message, parse_startup, ready_for_query, DataType,
-    PgErrorMsg,
+    DataType, PgErrorMsg, data_row, data_row_nullable, error_message, parse_startup,
+    ready_for_query,
 };
 
 // Mock implementation for AsyncReadExt

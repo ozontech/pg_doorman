@@ -45,7 +45,7 @@ impl NameMatcher {
     fn matches(&self, value: &str) -> bool {
         match self {
             NameMatcher::All => true,
-            NameMatcher::Name(ref n) => n == value,
+            NameMatcher::Name(n) => n == value,
         }
     }
 }
@@ -386,10 +386,10 @@ impl PgHba {
                     if !rule.host_type.matches_ssl(transport.is_tls()) {
                         continue;
                     }
-                    if let Some(net) = &rule.address {
-                        if !net.contains(&transport.hba_ip()) {
-                            continue;
-                        }
+                    if let Some(net) = &rule.address
+                        && !net.contains(&transport.hba_ip())
+                    {
+                        continue;
                     }
                 }
             }

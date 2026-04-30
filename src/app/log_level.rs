@@ -166,7 +166,7 @@ fn parse_filter(s: &str) -> Result<(LevelFilter, Vec<(String, LevelFilter)>), St
     }
 
     // Sort modules by prefix length descending (longest match first)
-    modules.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    modules.sort_by_key(|m| std::cmp::Reverse(m.0.len()));
 
     Ok((base.unwrap_or(LevelFilter::Info), modules))
 }

@@ -140,8 +140,10 @@ fn run_command_with_timeout(
                             && !streaming_started.load(std::sync::atomic::Ordering::Relaxed)
                         {
                             streaming_started.store(true, std::sync::atomic::Ordering::Relaxed);
-                            eprintln!("\n=== Command running for more than {} seconds, streaming output ===", 
-                                     STREAMING_THRESHOLD_SECS);
+                            eprintln!(
+                                "\n=== Command running for more than {} seconds, streaming output ===",
+                                STREAMING_THRESHOLD_SECS
+                            );
                         }
 
                         // Check timeout

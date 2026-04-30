@@ -1,7 +1,7 @@
 use crate::errors::Error;
 use crate::messages::constants;
-use base64::engine::general_purpose;
 use base64::Engine;
+use base64::engine::general_purpose;
 use hmac::{Hmac, Mac};
 use rand::Rng;
 use sha1::Digest as Digest1;
@@ -191,7 +191,7 @@ pub fn parse_server_secret(data: &str) -> Result<ServerSecret, Error> {
         _ => {
             return Err(Error::ScramServerError(
                 "password secret is not scram".to_string(),
-            ))
+            ));
         }
     }
     // <salt>$<storedkey>:<serverkey>.
@@ -216,7 +216,7 @@ pub fn parse_server_secret(data: &str) -> Result<ServerSecret, Error> {
         _ => {
             return Err(Error::ScramServerError(
                 "password secret is not scram".to_string(),
-            ))
+            ));
         }
     }
     match keys.split_once(':') {
@@ -232,7 +232,7 @@ pub fn parse_server_secret(data: &str) -> Result<ServerSecret, Error> {
                 _ => {
                     return Err(Error::ScramServerError(
                         "password secret is not scram".to_string(),
-                    ))
+                    ));
                 }
             };
             match general_purpose::STANDARD.decode(server_key_str) {
@@ -240,7 +240,7 @@ pub fn parse_server_secret(data: &str) -> Result<ServerSecret, Error> {
                 _ => {
                     return Err(Error::ScramServerError(
                         "password secret is not scram".to_string(),
-                    ))
+                    ));
                 }
             };
             Ok(result)
@@ -298,7 +298,7 @@ pub fn parse_client_final_message(data: Cow<str>) -> Result<ClientFinalMessage, 
         _ => {
             return Err(Error::ScramClientError(
                 "compare channel binding settings".to_string(),
-            ))
+            ));
         }
     }
 
@@ -353,7 +353,7 @@ pub fn parse_client_final_message(data: Cow<str>) -> Result<ClientFinalMessage, 
         _ => {
             return Err(Error::ScramClientError(
                 "decode channel binding".to_string(),
-            ))
+            ));
         }
     };
     match general_purpose::STANDARD.decode(proof) {
@@ -372,9 +372,8 @@ pub fn prepare_server_final_message(
 ) -> Result<(String, Vec<u8>), Error> {
     // checks.
     let mut gs_2_header = client_first.gs2_flag.to_string() + ",,";
-    if client_first.authzid.is_some() {
-        gs_2_header =
-            client_first.gs2_flag.to_string() + "," + client_first.authzid.unwrap().as_str() + ",";
+    if let Some(authzid) = client_first.authzid {
+        gs_2_header = client_first.gs2_flag.to_string() + "," + authzid.as_str() + ",";
     }
     if String::from_utf8_lossy(&client_final.channel_binding) != gs_2_header {
         return Err(Error::ScramClientError(

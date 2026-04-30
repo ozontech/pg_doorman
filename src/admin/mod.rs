@@ -174,21 +174,21 @@ where
 
     if query_lower.contains("unnest(enumvals)") {
         // SET log_level = <TAB> — return enum values for the parameter
-        res.put(row_description(&vec![("val", DataType::Text)]));
+        res.put(row_description(&[("val", DataType::Text)]));
         for val in &["error", "warn", "info", "debug", "trace", "off", "default"] {
             res.put(data_row(&[val.to_string()]));
         }
     } else if query_lower.contains("vartype") {
         // Type lookup — psql checks if parameter is enum/bool/string
-        res.put(row_description(&vec![("vartype", DataType::Text)]));
+        res.put(row_description(&[("vartype", DataType::Text)]));
         res.put(data_row(&["enum".to_string()]));
     } else if query_lower.contains("context") {
         // SET <TAB> — return settable parameters (filtered by context)
-        res.put(row_description(&vec![("name", DataType::Text)]));
+        res.put(row_description(&[("name", DataType::Text)]));
         res.put(data_row(&["log_level".to_string()]));
     } else {
         // SHOW <TAB> — return all SHOW subcommands from the canonical list
-        res.put(row_description(&vec![("name", DataType::Text)]));
+        res.put(row_description(&[("name", DataType::Text)]));
         for name in SHOW_SUBCOMMANDS {
             res.put(data_row(&[name.to_string()]));
         }

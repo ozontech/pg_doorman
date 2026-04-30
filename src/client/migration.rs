@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use log::{error, info, warn};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
-use tokio::io::{split, BufReader};
+use tokio::io::{BufReader, split};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -12,11 +12,11 @@ use std::ffi::c_void;
 use crate::client::buffer_pool::PooledBuffer;
 use crate::client::core::{CachedStatement, Client, PreparedStatementKey};
 use crate::client::util::PREPARED_STATEMENT_COUNTER;
-use crate::config::{get_config, BackendAuthMethod};
+use crate::config::{BackendAuthMethod, get_config};
 use crate::errors::Error;
-use crate::messages::config_socket::configure_tcp_socket;
 use crate::messages::Parse;
-use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
+use crate::messages::config_socket::configure_tcp_socket;
+use crate::pool::{ClientServerMap, ConnectionPool, get_pool};
 use crate::server::ServerParameters;
 use crate::stats::ClientStats;
 
@@ -34,16 +34,16 @@ fn restore_backend_auth_if_pending(
     username: &str,
     pool_name: &str,
 ) {
-    if let (Some(p), Some(auth)) = (pool, migrated_auth) {
-        if let Some(ref ba_lock) = p.address.backend_auth {
-            let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
-            if needs_update {
-                *ba_lock.write() = auth.clone();
-                info!(
-                    "[{}@{}] restored backend auth from migrated client",
-                    username, pool_name
-                );
-            }
+    if let (Some(p), Some(auth)) = (pool, migrated_auth)
+        && let Some(ref ba_lock) = p.address.backend_auth
+    {
+        let needs_update = matches!(*ba_lock.read(), BackendAuthMethod::ScramPending);
+        if needs_update {
+            *ba_lock.write() = auth.clone();
+            info!(
+                "[{}@{}] restored backend auth from migrated client",
+                username, pool_name
+            );
         }
     }
 }
@@ -60,7 +60,7 @@ const MAX_RECV_BUF: usize = 64 * 1024;
 // Only available with the tls-migration feature (vendored patched OpenSSL).
 #[cfg(feature = "tls-migration")]
 #[allow(dead_code)]
-extern "C" {
+unsafe extern "C" {
     fn SSL_export_migration_state(ssl: *mut c_void, out: *mut *mut u8, out_len: *mut usize) -> i32;
 
     fn SSL_import_migration_state(
@@ -222,7 +222,7 @@ where
         // Backend auth state (v2): allows new process to skip ScramPending
         // fallback by receiving the ClientKey from the old process.
         if let Some(pool) = get_pool(&self.pool_name, &self.username) {
-            if let Some(ref ba_lock) = pool.address.backend_auth {
+            if let Some(ba_lock) = &pool.address.backend_auth {
                 match &*ba_lock.read() {
                     BackendAuthMethod::Md5PassTheHash(hash) => {
                         buf.put_u8(1);
@@ -1028,14 +1028,16 @@ pub async fn migration_receiver_task(
                                 client.addr
                             );
                             let result = client.handle().await;
-                            if !client.is_admin() && result.is_err() {
+                            if !client.is_admin()
+                                && let Err(err) = result.as_ref()
+                            {
                                 warn!(
                                     "[{}@{} #c{}] migrated client {} error: {}",
                                     client.username,
                                     client.pool_name,
                                     client.connection_id,
                                     client.addr,
-                                    result.as_ref().unwrap_err()
+                                    err
                                 );
                                 client.disconnect_stats();
                             }
@@ -1133,7 +1135,7 @@ mod tests {
         buf.put_u64(42); // connection_id
         buf.put_i32(1); // secret_key
         buf.put_u8(1); // transaction_mode
-                       // missing pool_name, username, etc.
+        // missing pool_name, username, etc.
         assert!(deserialize_state(buf).is_err());
     }
 

@@ -15,20 +15,20 @@ use tokio::io::{AsyncReadExt, BufStream};
 
 // Internal crate imports
 use crate::auth::scram_client::ScramSha256;
-use crate::config::{get_config, tls, Address, BackendAuthMethod, User};
+use crate::config::{Address, BackendAuthMethod, User, get_config, tls};
 use crate::errors::{Error, ServerIdentifier};
 use crate::messages::PgErrorMsg;
 use crate::messages::{
-    read_message_data, simple_query, startup, sync, BytesMutReader, Close, Parse,
+    BytesMutReader, Close, Parse, read_message_data, simple_query, startup, sync,
 };
-use crate::pool::{CancelTarget, ClientServerMap, CANCELED_PIDS};
+use crate::pool::{CANCELED_PIDS, CancelTarget, ClientServerMap};
 use crate::stats::ServerStats;
 
 use super::authentication::handle_authentication;
 use super::cleanup::CleanupState;
 use super::parameters::ServerParameters;
 use super::startup_error::handle_startup_error;
-use super::stream::{create_tcp_stream_inner, create_unix_stream_inner, StreamInner};
+use super::stream::{StreamInner, create_tcp_stream_inner, create_unix_stream_inner};
 use super::{prepared_statements, protocol_io, startup_cancel};
 
 /// Buffer flush threshold in bytes (8 KiB).
@@ -471,13 +471,13 @@ impl Server {
             if self.cleanup_state.needs_cleanup_prepare {
                 // flush prepared.
                 self.registering_prepared_statement.clear();
-                if self.prepared_statement_cache.is_some() {
-                    let cache_size = self.prepared_statement_cache.as_ref().unwrap().len();
+                if let Some(cache) = self.prepared_statement_cache.as_mut() {
+                    let cache_size = cache.len();
                     info!(
                         "[{}@{}] clearing prepared statement cache pid={}: session state reset ({} entries)",
                         self.address.username, self.address.pool_name, self.process_id, cache_size
                     );
-                    self.prepared_statement_cache.as_mut().unwrap().clear();
+                    cache.clear();
                 }
             }
             self.cleanup_state.reset();
@@ -914,8 +914,8 @@ impl Server {
                     let mut bytes = read_message_data(&mut stream, code as u8, len).await?;
                     let _ = bytes.get_u8();
                     let _ = bytes.get_i32();
-                    let key = bytes.read_string().unwrap();
-                    let value = bytes.read_string().unwrap();
+                    let key = bytes.read_string()?;
+                    let value = bytes.read_string()?;
 
                     // Save the parameter so we can pass it to the client later.
                     server_parameters.set_param(key, value, true);
@@ -990,7 +990,15 @@ impl Server {
 
                 // We have an unexpected message from the server during this exchange.
                 _ => {
-                    error!("[{}@{}] unexpected message code '{}' (ASCII: {}) during server startup to {}:{}", server_identifier.username, server_identifier.pool_name, code, code as u8, address.host, address.port);
+                    error!(
+                        "[{}@{}] unexpected message code '{}' (ASCII: {}) during server startup to {}:{}",
+                        server_identifier.username,
+                        server_identifier.pool_name,
+                        code,
+                        code as u8,
+                        address.host,
+                        address.port
+                    );
                     return Err(Error::ProtocolSyncError(format!(
                         "Received unexpected message code '{}' (ASCII: {}) during server startup. This may indicate an incompatible PostgreSQL server version or protocol.",
                         code, code as u8

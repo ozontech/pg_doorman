@@ -174,7 +174,7 @@ pub async fn send_sighup_to_proxy(world: &mut PatroniProxyWorld) {
     let pid = child.id();
 
     // Send SIGHUP signal using nix crate
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
 
     kill(Pid::from_raw(pid as i32), Signal::SIGHUP).expect("Failed to send SIGHUP");

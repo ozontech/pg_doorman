@@ -429,15 +429,12 @@ impl AddressStats {
         );
 
         // Calculate average time per transaction (or 0 if no transactions)
-        if current_xact_count == 0 {
-            self.averages
-                .xact_time_microseconds
-                .store(0, Ordering::Relaxed);
-        } else {
-            self.averages
-                .xact_time_microseconds
-                .store(current_xact_time / current_xact_count, Ordering::Relaxed);
-        }
+        self.averages.xact_time_microseconds.store(
+            current_xact_time
+                .checked_div(current_xact_count)
+                .unwrap_or(0),
+            Ordering::Relaxed,
+        );
     }
 
     /// Helper method to update query-related averages
@@ -452,15 +449,12 @@ impl AddressStats {
         );
 
         // Calculate average time per query (or 0 if no queries)
-        if current_query_count == 0 {
-            self.averages
-                .query_time_microseconds
-                .store(0, Ordering::Relaxed);
-        } else {
-            self.averages
-                .query_time_microseconds
-                .store(current_query_time / current_query_count, Ordering::Relaxed);
-        }
+        self.averages.query_time_microseconds.store(
+            current_query_time
+                .checked_div(current_query_count)
+                .unwrap_or(0),
+            Ordering::Relaxed,
+        );
     }
 
     /// Helper method to update throughput averages

@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{PortConfig, Role};
 use crate::patroni::Member;
-use crate::stream::{spawn_proxy, StopHandle};
+use crate::stream::{StopHandle, spawn_proxy};
 
 /// Backend member with connection counter for load balancing
 #[derive(Debug)]
@@ -194,10 +194,10 @@ impl Port {
         }
 
         // Check noloadbalance tag
-        if let Some(ref tags) = member.tags {
-            if tags.noloadbalance == Some(true) {
-                return false;
-            }
+        if let Some(ref tags) = member.tags
+            && tags.noloadbalance == Some(true)
+        {
+            return false;
         }
 
         // Check role
@@ -218,28 +218,27 @@ impl Port {
         }
 
         // Check lag (only for replicas, leader has no lag)
-        if let Some(max_lag) = self.max_lag_in_bytes {
-            if !matches!(member_role, crate::patroni::Role::Leader) {
-                if let Some(ref lag_value) = member.lag {
-                    // Lag can be a number or string
-                    let lag: Option<u64> = if lag_value.is_u64() {
-                        lag_value.as_u64()
-                    } else if lag_value.is_i64() {
-                        lag_value
-                            .as_i64()
-                            .and_then(|v| if v >= 0 { Some(v as u64) } else { None })
-                    } else if lag_value.is_string() {
-                        lag_value.as_str().and_then(|s| s.parse().ok())
-                    } else {
-                        None
-                    };
+        if let Some(max_lag) = self.max_lag_in_bytes
+            && !matches!(member_role, crate::patroni::Role::Leader)
+            && let Some(ref lag_value) = member.lag
+        {
+            // Lag can be a number or string
+            let lag: Option<u64> = if lag_value.is_u64() {
+                lag_value.as_u64()
+            } else if lag_value.is_i64() {
+                lag_value
+                    .as_i64()
+                    .and_then(|v| if v >= 0 { Some(v as u64) } else { None })
+            } else if lag_value.is_string() {
+                lag_value.as_str().and_then(|s| s.parse().ok())
+            } else {
+                None
+            };
 
-                    if let Some(lag) = lag {
-                        if lag > max_lag {
-                            return false;
-                        }
-                    }
-                }
+            if let Some(lag) = lag
+                && lag > max_lag
+            {
+                return false;
             }
         }
 
@@ -686,7 +685,7 @@ mod tests {
             while let Ok((mut stream, _)) = backend_listener.accept().await {
                 // Keep connection open until it's closed
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(Duration::from_mins(1)).await;
                     let _ = stream.shutdown().await;
                 });
             }
@@ -776,7 +775,7 @@ mod tests {
         let backend1_task = tokio::spawn(async move {
             while let Ok((mut stream, _)) = backend1_listener.accept().await {
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(Duration::from_mins(1)).await;
                     let _ = stream.shutdown().await;
                 });
             }
@@ -785,7 +784,7 @@ mod tests {
         let backend2_task = tokio::spawn(async move {
             while let Ok((mut stream, _)) = backend2_listener.accept().await {
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    tokio::time::sleep(Duration::from_mins(1)).await;
                     let _ = stream.shutdown().await;
                 });
             }

@@ -96,18 +96,13 @@ impl Timeouts {
 }
 
 /// Mode for dequeuing objects from a pool.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub enum QueueMode {
     /// Dequeue the object that was least recently added (first in first out).
+    #[default]
     Fifo,
     /// Dequeue the object that was most recently added (last in first out).
     Lifo,
-}
-
-impl Default for QueueMode {
-    fn default() -> Self {
-        Self::Fifo
-    }
 }
 
 /// The current pool status.

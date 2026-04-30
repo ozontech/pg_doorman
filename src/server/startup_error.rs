@@ -4,8 +4,8 @@ use log::error;
 use tokio::io::AsyncReadExt;
 
 use crate::errors::{Error, ServerIdentifier};
-use crate::messages::constants::MESSAGE_TERMINATOR;
 use crate::messages::PgErrorMsg;
+use crate::messages::constants::MESSAGE_TERMINATOR;
 
 use super::stream::StreamInner;
 

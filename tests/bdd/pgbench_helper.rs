@@ -308,10 +308,10 @@ fn parse_progress_tps(output: &str) -> Option<f64> {
                 // Find the last comma before tps
                 if let Some(comma_pos) = before_tps.rfind(", ") {
                     let num_str = before_tps[comma_pos + 2..].trim();
-                    if let Ok(tps) = num_str.parse::<f64>() {
-                        if tps > 0.0 {
-                            tps_values.push(tps);
-                        }
+                    if let Ok(tps) = num_str.parse::<f64>()
+                        && tps > 0.0
+                    {
+                        tps_values.push(tps);
                     }
                 }
             }
