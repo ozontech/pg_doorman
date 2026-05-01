@@ -5388,6 +5388,7 @@ competitor and absolute per-transaction latency.</p>
 <li><strong>vs odyssey</strong> — pg_doorman wins by <strong>+40%</strong> at most (extended protocol, 120 clients).</li>
 <li><strong>Tail spread at 10 000 simple-protocol clients</strong> (<code>p99/p50</code>, lower = more predictable) — pg_doorman 1.1× (59.9→64.5ms), pgbouncer 1.4× (276→387ms), odyssey 11× (17.9→204ms).</li>
 </ul>
+<p><img src="images/benchmarks/tldr_tail_spread.svg" alt="Tail spread at 10,000 simple-protocol clients" /></p>
 <h3 id="environment"><a class="header" href="#environment">Environment</a></h3>
 <ul>
 <li><strong>Provider</strong>: Ubicloud <code>standard-60</code> (eu-central-h1)</li>
@@ -5439,6 +5440,7 @@ the client count grows. Full p95 series ships in the raw
 <code>pgbench --log</code> files in the artifact tarball.</p>
 <hr />
 <h2 id="simple-protocol"><a class="header" href="#simple-protocol">Simple protocol</a></h2>
+<p><img src="images/benchmarks/simple_latency.svg" alt="Simple protocol: latency p50 (solid) and p99 (dashed)" /></p>
 <h3 id="throughput"><a class="header" href="#throughput">Throughput</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Test</th><th>vs pgbouncer</th><th>vs odyssey</th></tr></thead><tbody>
 <tr><td>1 client</td><td>≈0%</td><td>≈0%</td></tr>
@@ -5489,6 +5491,7 @@ the client count grows. Full p95 series ships in the raw
 </div>
 <hr />
 <h2 id="extended-protocol"><a class="header" href="#extended-protocol">Extended protocol</a></h2>
+<p><img src="images/benchmarks/extended_latency.svg" alt="Extended protocol: latency p50 (solid) and p99 (dashed)" /></p>
 <h3 id="throughput-1"><a class="header" href="#throughput-1">Throughput</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Test</th><th>vs pgbouncer</th><th>vs odyssey</th></tr></thead><tbody>
 <tr><td>1 client</td><td>≈0%</td><td>x1.6</td></tr>
@@ -5529,6 +5532,7 @@ the client count grows. Full p95 series ships in the raw
 </div>
 <hr />
 <h2 id="prepared-protocol"><a class="header" href="#prepared-protocol">Prepared protocol</a></h2>
+<p><img src="images/benchmarks/prepared_latency.svg" alt="Prepared protocol: latency p50 (solid) and p99 (dashed)" /></p>
 <h3 id="throughput-2"><a class="header" href="#throughput-2">Throughput</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Test</th><th>vs pgbouncer</th><th>vs odyssey</th></tr></thead><tbody>
 <tr><td>1 client</td><td>≈0%</td><td>≈0%</td></tr>
