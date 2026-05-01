@@ -17,6 +17,8 @@ _Last updated: 2026-04-27 12:00 UTC._
 - **vs odyssey** — pg_doorman wins by **+40%** at most (extended protocol, 120 clients).
 - **Tail spread at 10 000 simple-protocol clients** (`p99/p50`, lower = more predictable) — pg_doorman 1.1× (59.9→64.5ms), pgbouncer 1.4× (276→387ms), odyssey 11× (17.9→204ms).
 
+![Tail spread at 10,000 simple-protocol clients](images/benchmarks/tldr_tail_spread.svg)
+
 ### Environment
 
 - **Provider**: Ubicloud `standard-60` (eu-central-h1)
@@ -75,6 +77,8 @@ the client count grows. Full p95 series ships in the raw
 
 ## Simple protocol
 
+![Simple protocol: latency p50 (solid) and p99 (dashed)](images/benchmarks/simple_latency.svg)
+
 ### Throughput
 
 | Test | vs pgbouncer | vs odyssey |
@@ -129,6 +133,8 @@ the client count grows. Full p95 series ships in the raw
 
 ## Extended protocol
 
+![Extended protocol: latency p50 (solid) and p99 (dashed)](images/benchmarks/extended_latency.svg)
+
 ### Throughput
 
 | Test | vs pgbouncer | vs odyssey |
@@ -172,6 +178,8 @@ the client count grows. Full p95 series ships in the raw
 ---
 
 ## Prepared protocol
+
+![Prepared protocol: latency p50 (solid) and p99 (dashed)](images/benchmarks/prepared_latency.svg)
 
 ### Throughput
 

@@ -232,11 +232,16 @@ jobs:
         if: steps.download.outputs.got_tarball == 'true'
         run: |
           set -euo pipefail
-          mkdir -p documentation/en/src
+          mkdir -p documentation/en/src/images/benchmarks
+          # matplotlib/seaborn/numpy power benches/render_charts.py; install
+          # quietly so the runner output stays focused on the bench results.
+          pip install --quiet --user matplotlib seaborn numpy
           python3 benches/parse-bench-logs.py \
             artifacts/bench-results.tar.gz \
-            documentation/en/src/benchmarks.md
+            documentation/en/src/benchmarks.md \
+            --images-dir documentation/en/src/images/benchmarks
           head -60 documentation/en/src/benchmarks.md
+          ls -la documentation/en/src/images/benchmarks
 
       - name: Upload artifacts
         if: always()
@@ -256,6 +261,8 @@ jobs:
 
           # Save benchmark results to a temporary location before switching branches
           cp documentation/en/src/benchmarks.md /tmp/benchmarks.md.tmp
+          rm -rf /tmp/benchmark-images.tmp
+          cp -r documentation/en/src/images/benchmarks /tmp/benchmark-images.tmp
 
           # Create a unique branch name with timestamp
           BRANCH_NAME="ubicloud-benchmark-results-$(date +%Y%m%d-%H%M%S)"
@@ -266,9 +273,14 @@ jobs:
 
           # Restore benchmark results to the new branch
           mv /tmp/benchmarks.md.tmp documentation/en/src/benchmarks.md
+          mkdir -p documentation/en/src/images
+          rm -rf documentation/en/src/images/benchmarks
+          mv /tmp/benchmark-images.tmp documentation/en/src/images/benchmarks
 
-          # Check if there are any changes to commit
+          # Check if there are any changes to commit. `git add -A` so deletions
+          # of charts that no longer have data behind them also get staged.
           git add documentation/en/src/benchmarks.md
+          git add -A documentation/en/src/images/benchmarks
           if git diff --staged --quiet; then
             echo "No changes to benchmark results, skipping PR creation"
             exit 0
