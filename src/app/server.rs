@@ -92,6 +92,7 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
     runtime_builder
         .worker_threads(config.general.worker_threads)
         .enable_all()
+        .enable_eager_driver_handoff()
         .thread_name("worker-pg-doorman");
 
     // Apply optional tokio runtime parameters only if explicitly configured.
