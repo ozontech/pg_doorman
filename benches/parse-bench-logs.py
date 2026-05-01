@@ -8,12 +8,16 @@ p50/p95/p99 latency table) + caveats.
 Latency percentiles come from pgbench `--log` files (column 3 = µs) — same
 nearest-rank convention as tests/bdd/pgbench_helper.rs::compute_latency_percentiles.
 
-stdlib only (Python 3.10+).
+When called with ``--images-dir``, also renders SVG charts via
+``benches/render_charts.py`` (requires matplotlib/seaborn/numpy) and embeds
+them in the markdown output. Without ``--images-dir`` the script keeps its
+stdlib-only behaviour and emits markdown tables only.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import sys
@@ -22,6 +26,10 @@ import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Allow `import render_charts` from the same directory regardless of how
+# parse-bench-logs.py is invoked (the hyphen rules out a package import).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 TPS_RE = re.compile(r"^tps = ([\d.]+)", re.MULTILINE)
 LAT_AVG_RE = re.compile(r"^latency average = ([\d.]+)", re.MULTILINE)
@@ -45,6 +53,12 @@ PROTO_ORDER = ("simple", "extended", "prepared")
 # (ssl, connect) tuples in the same row order as the existing benchmarks.md.
 MODE_ORDER = ((False, False), (False, True), (True, False), (True, True))
 CLIENT_ORDER = (1, 40, 120, 500, 10000)
+
+# Filenames render_charts.render_all may produce. Kept here so render() knows
+# which ![]() links to inject without importing render_charts (it is optional).
+TLDR_CHART = "tldr_tail_spread.svg"
+LATENCY_CHART = {p: f"{p}_latency.svg" for p in PROTO_ORDER}
+IMAGES_REL_DIR = "images/benchmarks"
 
 
 # ---------- pure helpers (covered by tests/test_parse_bench_logs.py) ----------
@@ -468,7 +482,12 @@ def _emit_latency_table(proto_groups: dict[tuple, dict]) -> list[str]:
     return out
 
 
-def render(results: dict[str, dict], meta: dict | None) -> str:
+def build_groups(results: dict[str, dict]) -> tuple[dict, list[str]]:
+    """Pivot {test_name: data} into {(proto, ssl, conn, clients): {pooler: data}}.
+
+    Returns the groups dict plus a list of test names that did not match the
+    expected naming convention (so the caller can surface a warning).
+    """
     groups: dict[tuple, dict[str, dict]] = defaultdict(dict)
     unmatched: list[str] = []
     for name, data in results.items():
@@ -478,6 +497,18 @@ def render(results: dict[str, dict], meta: dict | None) -> str:
             continue
         key = (n["proto"], n["ssl"], n["connect"], n["clients"])
         groups[key][n["pooler"]] = data
+    return dict(groups), unmatched
+
+
+def render(results: dict[str, dict], meta: dict | None,
+           chart_names: frozenset[str] = frozenset()) -> str:
+    """Build the markdown page.
+
+    ``chart_names`` lists SVG filenames that already exist under
+    ``IMAGES_REL_DIR`` next to the output. Each known name triggers a
+    matching ``![]()`` link in the right section; unknown names are ignored.
+    """
+    groups, unmatched = build_groups(results)
 
     if unmatched:
         print(f"warning: {len(unmatched)} unmatched test name(s) ignored: "
@@ -502,6 +533,12 @@ def render(results: dict[str, dict], meta: dict | None) -> str:
     tldr = compute_tldr(groups)
     if tldr:
         out += ["## TL;DR", ""] + tldr + [""]
+        if TLDR_CHART in chart_names:
+            out += [
+                f"![Tail spread at 10,000 simple-protocol clients]"
+                f"({IMAGES_REL_DIR}/{TLDR_CHART})",
+                "",
+            ]
 
     out += emit_metadata(meta)
     out += METHODOLOGY
@@ -521,6 +558,13 @@ def render(results: dict[str, dict], meta: dict | None) -> str:
             f"## {proto.capitalize()} protocol",
             "",
         ]
+        chart = LATENCY_CHART[proto]
+        if chart in chart_names:
+            out += [
+                f"![{proto.capitalize()} protocol: latency p50 (solid) and p99 (dashed)]"
+                f"({IMAGES_REL_DIR}/{chart})",
+                "",
+            ]
         out += _emit_throughput_table(proto_groups)
         out.append("")
         out += _emit_latency_table(proto_groups)
@@ -536,6 +580,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("tarball", help="bench-results.tar.gz")
     ap.add_argument("output", help="output markdown file")
+    ap.add_argument("--images-dir",
+                    help="If set, render SVG charts here and embed ![]() links "
+                         "in the markdown. Requires matplotlib/seaborn/numpy.")
     args = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -559,7 +606,20 @@ def main() -> None:
                 continue
             results[name] = parse_test(name, src)
 
-        Path(args.output).write_text(render(results, meta))
+        chart_names: frozenset[str] = frozenset()
+        if args.images_dir:
+            try:
+                render_charts = importlib.import_module("render_charts")
+            except ImportError as exc:
+                sys.exit(f"--images-dir requires {exc.name} "
+                         f"(install matplotlib/seaborn/numpy)")
+            groups, _ = build_groups(results)
+            chart_names = frozenset(
+                render_charts.render_all(groups, Path(args.images_dir))
+            )
+            print(f"rendered {len(chart_names)} chart(s) into {args.images_dir}")
+
+        Path(args.output).write_text(render(results, meta, chart_names))
         print(f"wrote {args.output} with {len(results)} tests")
 
 

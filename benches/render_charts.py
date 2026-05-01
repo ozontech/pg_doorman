@@ -224,7 +224,16 @@ def _latency_headline(p50_series: dict, p99_series: dict) -> str | None:
 
 def render_all(groups: dict, images_dir: Path) -> list[str]:
     """Generate every chart we currently know how to draw. Returns the list of
-    relative filenames produced (so the markdown step can build ![]() links)."""
+    relative filenames produced (so the markdown step can build ![]() links).
+
+    Existing .svg files in ``images_dir`` are removed before rendering so a
+    chart that no longer has data behind it disappears from the docs instead
+    of silently going stale.
+    """
+    images_dir.mkdir(parents=True, exist_ok=True)
+    for stale in images_dir.glob("*.svg"):
+        stale.unlink()
+
     rendered: list[str] = []
 
     name = "tldr_tail_spread.svg"

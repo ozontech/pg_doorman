@@ -342,5 +342,77 @@ class ParseTestPercentilesSource(unittest.TestCase):
             self.assertEqual(rec["samples"], 0)
 
 
+class BuildGroups(unittest.TestCase):
+    def test_pivots_test_names_into_tuple_keys(self):
+        results = {
+            "pg_doorman_simple_c40":   {"tps": 100},
+            "pgbouncer_simple_c40":    {"tps": 50},
+            "pg_doorman_ssl_extended_c500": {"tps": 200},
+        }
+        groups, unmatched = P.build_groups(results)
+        self.assertEqual(unmatched, [])
+        self.assertEqual(groups[("simple",   False, False, 40)],
+                         {"pg_doorman": {"tps": 100}, "pgbouncer": {"tps": 50}})
+        self.assertEqual(groups[("extended", True,  False, 500)],
+                         {"pg_doorman": {"tps": 200}})
+
+    def test_reports_unmatched_names(self):
+        results = {
+            "pg_doorman_simple_c1": {"tps": 1},
+            "garbage":              {"tps": 0},
+            "doorman":              {"tps": 0},  # service log stem
+        }
+        _, unmatched = P.build_groups(results)
+        self.assertEqual(sorted(unmatched), ["doorman", "garbage"])
+
+    def test_empty_input(self):
+        self.assertEqual(P.build_groups({}), ({}, []))
+
+
+class RenderChartLinkInjection(unittest.TestCase):
+    """render() embeds ![]() lines for the SVGs whose names are passed in."""
+
+    @staticmethod
+    def _results_with_one_cell():
+        # Minimum input that makes render() emit a TL;DR bullet (`>= 40
+        # clients`, no SSL, no Reconnect) and at least one protocol section.
+        return {
+            "pg_doorman_simple_c40": {"tps": 200, "p50_ms": 1, "p95_ms": 2, "p99_ms": 3},
+            "pgbouncer_simple_c40":  {"tps": 100, "p50_ms": 2, "p95_ms": 4, "p99_ms": 6},
+            "odyssey_simple_c40":    {"tps": 180, "p50_ms": 1, "p95_ms": 2, "p99_ms": 4},
+        }
+
+    def test_no_charts_means_no_image_lines(self):
+        md = P.render(self._results_with_one_cell(), meta=None, chart_names=frozenset())
+        self.assertNotIn("![", md)
+
+    def test_tldr_chart_lands_after_bullets(self):
+        md = P.render(
+            self._results_with_one_cell(), meta=None,
+            chart_names=frozenset({P.TLDR_CHART}),
+        )
+        # Image line must appear inside the TL;DR block, before the next
+        # heading (Environment / Methodology).
+        self.assertIn(f"({P.IMAGES_REL_DIR}/{P.TLDR_CHART})", md)
+        head, _, _ = md.partition("### Environment")
+        self.assertIn(P.TLDR_CHART, head)
+
+    def test_per_protocol_chart_lands_under_its_section(self):
+        md = P.render(
+            self._results_with_one_cell(), meta=None,
+            chart_names=frozenset({P.LATENCY_CHART["simple"]}),
+        )
+        section, _, _ = md.partition("### Throughput")
+        self.assertIn(f"## Simple protocol", section)
+        self.assertIn(P.LATENCY_CHART["simple"], section)
+
+    def test_unknown_chart_name_is_ignored(self):
+        md = P.render(
+            self._results_with_one_cell(), meta=None,
+            chart_names=frozenset({"unknown.svg"}),
+        )
+        self.assertNotIn("![", md)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

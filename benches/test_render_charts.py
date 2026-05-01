@@ -168,6 +168,48 @@ class LatencyHeadline(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_RENDER, "matplotlib/seaborn not installed")
+class RenderAllCleanup(unittest.TestCase):
+    """render_all() purges stale SVGs so charts that lost their data go away."""
+
+    def test_existing_svg_files_are_removed_before_render(self):
+        import tempfile
+        groups = {
+            ("simple", False, False, 10000): {
+                "pg_doorman": _cell(60.0, 65.0),
+                "pgbouncer":  _cell(280.0, 390.0),
+                "odyssey":    _cell(18.0, 200.0),
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "ghost.svg").write_text("<svg/>")
+            (d / "another_ghost.svg").write_text("<svg/>")
+            (d / "keep.txt").write_text("not an svg, must survive")
+            R.render_all(groups, d)
+            survivors = sorted(p.name for p in d.iterdir())
+        self.assertNotIn("ghost.svg", survivors)
+        self.assertNotIn("another_ghost.svg", survivors)
+        self.assertIn("keep.txt", survivors)
+        # tldr_tail_spread is the only chart we produced (no per-protocol
+        # data passed in), so the live output is exactly that one file.
+        self.assertIn("tldr_tail_spread.svg", survivors)
+
+    def test_creates_images_dir_if_missing(self):
+        import tempfile
+        groups = {
+            ("simple", False, False, 10000): {
+                "pg_doorman": _cell(1.0, 2.0),
+                "pgbouncer":  _cell(2.0, 4.0),
+            },
+        }
+        with tempfile.TemporaryDirectory() as parent:
+            d = Path(parent) / "nested" / "images"
+            self.assertFalse(d.exists())
+            R.render_all(groups, d)
+            self.assertTrue(d.exists())
+
+
+@unittest.skipUnless(HAVE_RENDER, "matplotlib/seaborn not installed")
 class DecodeGroups(unittest.TestCase):
     def test_round_trip(self):
         raw = {
