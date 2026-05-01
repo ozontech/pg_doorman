@@ -62,6 +62,11 @@ EOF
 # Set jemalloc configuration
 export JEMALLOC_SYS_WITH_MALLOC_CONF="dirty_decay_ms:30000,muzzy_decay_ms:30000,background_thread:true,metadata_thp:auto"
 
+# Required by tokio::runtime::Builder::enable_eager_driver_handoff (unstable API).
+# The .cargo/config.toml shipped in the source tree is overwritten above to point
+# at vendored sources, so we re-deliver the cfg via RUSTFLAGS here.
+export RUSTFLAGS="--cfg tokio_unstable"
+
 # Build release binaries
 cargo build --release
 
