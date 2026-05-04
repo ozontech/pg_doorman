@@ -30,6 +30,9 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
       worker_threads = 1
       log_client_connections = true
       log_client_disconnections = true
+      # Cap proxy timeout so cleanup after RST/cancel completes within
+      # the test's wait windows (default 15s would exceed our 5s sleeps).
+      proxy_copy_data_timeout = 2000
 
       [pools.example_db]
       server_host = "127.0.0.1"
@@ -463,6 +466,9 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
       worker_threads = 1
       log_client_connections = true
       log_client_disconnections = true
+      # Cap proxy timeout so cleanup after RST/cancel completes within
+      # the test's wait windows (default 15s would exceed our 5s sleeps).
+      proxy_copy_data_timeout = 2000
       query_wait_timeout = 5000
 
       [pools.example_db]
