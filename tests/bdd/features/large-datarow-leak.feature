@@ -222,6 +222,7 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
       prepared_statements_cache_size = 100
       worker_threads = 1
       query_wait_timeout = 5000
+      proxy_copy_data_timeout = 2000
 
       [pools.example_db]
       server_host = "${PG_TEMP_DIR}"
@@ -629,6 +630,7 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
       prepared_statements_cache_size = 300
       worker_threads = 3
       query_wait_timeout = 5000
+      proxy_copy_data_timeout = 2000
 
       [pools.example_db]
       server_host = "${PG_TEMP_DIR}"
@@ -684,6 +686,7 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
       prepared_statements_cache_size = 300
       worker_threads = 3
       query_wait_timeout = 5000
+      proxy_copy_data_timeout = 2000
 
       [pools.example_db]
       server_host = "${PG_TEMP_DIR}"
