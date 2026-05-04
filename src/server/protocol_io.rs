@@ -472,18 +472,19 @@ where
     // When recv() encounters a large DataRow/CopyData but the buffer already has
     // accumulated messages, it returns the buffer first (for response reordering)
     // and saves the large message header here for the next call.
-    if let Some((code_u8, message_len)) = server.pending_large_message.take() {
-        match code_u8 as char {
-            'D' => {
-                return handle_large_data_row(server, &mut client_stream, code_u8, message_len)
-                    .await
-            }
-            'd' => {
-                return handle_large_copy_data(server, &mut client_stream, code_u8, message_len)
-                    .await
-            }
+    if let Some((code_u8, message_len)) = server.pending_large_message {
+        let result = match code_u8 as char {
+            'D' => handle_large_data_row(server, &mut client_stream, code_u8, message_len).await,
+            'd' => handle_large_copy_data(server, &mut client_stream, code_u8, message_len).await,
             _ => unreachable!("pending_large_message should only contain 'D' or 'd'"),
+        };
+        if result.is_ok() {
+            // Clear deferred header only after successful handling.
+            // On error we must keep it, otherwise the next recv() call
+            // starts from the middle of a large frame and breaks protocol sync.
+            server.pending_large_message = None;
         }
+        return result;
     }
 
     loop {
