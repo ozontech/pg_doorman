@@ -1,5 +1,13 @@
 # Changelog
 
+### 3.6.5 <small>May 4, 2026</small>
+
+#### Fix: stuck `cl_active/sv_active` after large DataRow client disconnect under pressure
+
+When a large `DataRow` was deferred via `pending_large_message`, `recv()` cleared the deferred header before streaming. If the client disconnected during streaming write, the next drain/read path lost frame boundaries and could block in `wait_available()`. Under full pressure, this left `cl_active`/`sv_active` pinned at pool size and prevented normal `server_lifetime` recycling.
+
+`recv()` now keeps `pending_large_message` until large-message handling succeeds and clears it only on `Ok`. On error, the next `recv()` still has correct frame context, allowing cleanup to complete and active counters to drop as expected.
+
 ### 3.6.4 <small>Apr 29, 2026</small>
 
 #### Fallback resilience
