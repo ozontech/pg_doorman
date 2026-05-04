@@ -58,9 +58,27 @@ impl Drop for Object {
     fn drop(&mut self) {
         if let Some(mut inner) = self.inner.take() {
             if let Some(pool) = self.pool.upgrade() {
-                inner.metrics.recycled = Some(clock::now());
-                inner.metrics.recycle_count += 1;
-                pool.return_object(inner);
+                if inner.obj.is_bad() {
+                    // Server is poisoned (mark_bad called somewhere in the
+                    // request path: protocol desync, large-frame error, drain
+                    // failure, etc). Skip return_object entirely so the bad
+                    // server never lands in the idle queue or gets handed off
+                    // to a waiter. Keep the pool accounting honest in the same
+                    // tick: shrink slots.size, free the semaphore permit and
+                    // wake coordinator observers. The actual socket close
+                    // happens via Server::drop when `inner` falls off scope at
+                    // end of this function.
+                    {
+                        let mut slots = pool.slots.lock();
+                        slots.size = slots.size.saturating_sub(1);
+                    }
+                    pool.semaphore.add_permits(1);
+                    pool.notify_return_observers();
+                } else {
+                    inner.metrics.recycled = Some(clock::now());
+                    inner.metrics.recycle_count += 1;
+                    pool.return_object(inner);
+                }
             }
         }
     }
