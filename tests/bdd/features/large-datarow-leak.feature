@@ -125,6 +125,91 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
     Then admin session "admin" column "cl_active" for row with "user" = "example_user_1" should be between 0 and 0
     And admin session "admin" column "sv_active" for row with "user" = "example_user_1" should be between 0 and 0
 
+  @large-datarow-leak-timeout-clean-handoff
+  Scenario: proxy_copy_data timeout fires, next client on the same pool sees clean state
+    # Client A sends a large SELECT and never reads. The send buffer fills,
+    # proxy_copy_data blocks on writes to client A, then fires the configured
+    # timeout (proxy_copy_data_timeout = 2000 in this feature's Background).
+    # handle_large_data_row marks the server bad and returns Err. Object::drop
+    # must evict the connection so the leftover body bytes never reach client B.
+    When we create session "slow_a" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT repeat('X', 50000000)::text" to session "slow_a" without waiting
+
+    # 2s proxy timeout + cleanup margin.
+    And we sleep 4000ms
+
+    When we close session "slow_a"
+    And we sleep 1000ms
+
+    # Pool releases the bad server: counters back to zero.
+    When we create admin session "admin-mid" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOLS" on admin session "admin-mid" and store response
+    Then admin session "admin-mid" column "cl_active" for row with "user" = "example_user_1" should be between 0 and 0
+    And admin session "admin-mid" column "sv_active" for row with "user" = "example_user_1" should be between 0 and 0
+
+    # Client B picks up a fresh connection. It must see exactly its own result,
+    # not leftover bytes from the abandoned 50 MB DataRow.
+    When we create session "client_b" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 'CLEAN_HANDOFF'::text" to session "client_b" and store response
+    Then session "client_b" should receive DataRow with "CLEAN_HANDOFF"
+
+  @large-datarow-leak-timeout-then-many-clients
+  Scenario: After 5 timeout episodes, 5 fresh clients all get clean results
+    # Hits five timeout-poisoned servers in sequence, then verifies a fresh
+    # client always sees its own query result without garbage from any of the
+    # five abandoned 50 MB streams.
+    When we create session "p1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT repeat('X', 50000000)::text" to session "p1" without waiting
+    And we sleep 3500ms
+    When we close session "p1"
+    And we sleep 500ms
+
+    When we create session "p2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT repeat('Y', 50000000)::text" to session "p2" without waiting
+    And we sleep 3500ms
+    When we close session "p2"
+    And we sleep 500ms
+
+    When we create session "p3" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT repeat('Z', 50000000)::text" to session "p3" without waiting
+    And we sleep 3500ms
+    When we close session "p3"
+    And we sleep 500ms
+
+    # Five fresh clients in a row. Every result must be its own.
+    When we create session "v1" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 'V1'::text" to session "v1" and store response
+    Then session "v1" should receive DataRow with "V1"
+
+    When we create session "v2" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 'V2'::text" to session "v2" and store response
+    Then session "v2" should receive DataRow with "V2"
+
+    When we create session "v3" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 'V3'::text" to session "v3" and store response
+    Then session "v3" should receive DataRow with "V3"
+
+    When we create session "v4" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 'V4'::text" to session "v4" and store response
+    Then session "v4" should receive DataRow with "V4"
+
+    When we create session "v5" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 'V5'::text" to session "v5" and store response
+    Then session "v5" should receive DataRow with "V5"
+
+    # Pool stays bounded after the storm.
+    When we close session "v1"
+    And we close session "v2"
+    And we close session "v3"
+    And we close session "v4"
+    And we close session "v5"
+    And we sleep 1000ms
+
+    When we create admin session "admin-end" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOLS" on admin session "admin-end" and store response
+    Then admin session "admin-end" column "cl_active" for row with "user" = "example_user_1" should be between 0 and 0
+    And admin session "admin-end" column "sv_active" for row with "user" = "example_user_1" should be between 0 and 0
+
   @large-datarow-leak-stress
   Scenario: Stress 100 episodes of RST mid-stream — accumulated leak detection
     # 20 rounds × 5 parallel clients = 100 RST episodes.
