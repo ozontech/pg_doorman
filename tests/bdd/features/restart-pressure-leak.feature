@@ -20,6 +20,9 @@ Feature: Client restart under full pool pressure should release active counters
       prepared_statements_cache_size = 300
       worker_threads = 3
       query_wait_timeout = 5000
+      # Cap proxy timeout so cleanup after client close completes within
+      # the test's wait window instead of relying on the 15s default.
+      proxy_copy_data_timeout = 2000
 
       [pools.example_db]
       server_host = "${PG_TEMP_DIR}"
@@ -44,7 +47,8 @@ Feature: Client restart under full pool pressure should release active counters
     And admin session "admin-pre" column "sv_active" for row with "user" = "example_user_1" should be between 40 and 40
 
     When we close 40 sessions with prefix "rpl"
-    And we sleep 70000ms
+    # 8s pg_sleep finishes + 2s proxy timeout + cleanup margin.
+    And we sleep 12000ms
 
     When we create admin session "admin-post" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW POOLS" on admin session "admin-post" and store response
