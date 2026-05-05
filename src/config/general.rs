@@ -235,6 +235,24 @@ pub struct General {
     #[serde(default, alias = "client_prepared_statements_cache_size")]
     pub client_anonymous_prepared_cache_size: Option<usize>,
 
+    /// How often (seconds) the query interner runs its mark-and-sweep GC.
+    /// The actual sweep ticks at `gc_interval / 4` so an entry marked on
+    /// one cycle has a quarter-interval to be touched (and unmarked)
+    /// before the next eviction pass. Setting this to 0 is rejected at
+    /// startup; lower values increase CPU but shrink the interner faster
+    /// after disconnect waves.
+    #[serde(default = "General::default_query_interner_gc_interval_seconds")]
+    pub query_interner_gc_interval_seconds: u64,
+
+    /// Idle time (seconds) after which an anonymous interner entry
+    /// becomes eligible for eviction. Bounds the upper memory cost of
+    /// pg_doorman remembering the SQL text of an anonymous prepared
+    /// statement after the last Bind or Parse referencing the same hash.
+    /// `0` disables TTL eviction entirely (entries kept until process
+    /// restart) — matches pre-3.7 behaviour.
+    #[serde(default = "General::default_query_interner_anon_idle_ttl_seconds")]
+    pub query_interner_anon_idle_ttl_seconds: u64,
+
     #[serde(default = "General::default_daemon_pid_file")]
     pub daemon_pid_file: String, // can be enabled only in daemon mode.
 
@@ -428,6 +446,14 @@ impl General {
         true
     }
 
+    pub fn default_query_interner_gc_interval_seconds() -> u64 {
+        60
+    }
+
+    pub fn default_query_interner_anon_idle_ttl_seconds() -> u64 {
+        60
+    }
+
     pub fn default_daemon_pid_file() -> String {
         "/tmp/pg_doorman.pid".to_string()
     }
@@ -537,6 +563,9 @@ impl Default for General {
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
             server_prepared_statements_cache_size: None,
             client_anonymous_prepared_cache_size: None,
+            query_interner_gc_interval_seconds: Self::default_query_interner_gc_interval_seconds(),
+            query_interner_anon_idle_ttl_seconds:
+                Self::default_query_interner_anon_idle_ttl_seconds(),
             hba: Self::default_hba(),
             pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),

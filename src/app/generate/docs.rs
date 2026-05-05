@@ -245,6 +245,8 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "prepared_statements_cache_size",
         "server_prepared_statements_cache_size",
         "client_anonymous_prepared_cache_size",
+        "query_interner_gc_interval_seconds",
+        "query_interner_anon_idle_ttl_seconds",
         "message_size_to_be_stream",
         "scaling_warm_pool_ratio",
         "scaling_fast_retries",

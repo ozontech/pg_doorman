@@ -477,6 +477,14 @@ impl Config {
             return Err(Error::BadConfig("The value of prepared_statements_cache should be greater than 0 if prepared_statements are enabled".to_string()));
         }
 
+        // Validate query interner GC interval. The spawn divides this by 4 to
+        // get the sweep tick, so 0 would deadlock the timer.
+        if self.general.query_interner_gc_interval_seconds == 0 {
+            return Err(Error::BadConfig(
+                "general.query_interner_gc_interval_seconds must be > 0".to_string(),
+            ));
+        }
+
         // Validate TLS
         {
             if self.general.tls_certificate.is_none() && self.general.tls_private_key.is_some() {

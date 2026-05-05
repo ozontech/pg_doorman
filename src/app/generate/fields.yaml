@@ -824,6 +824,51 @@ fields:
         cached for the lifetime of the client connection.
       default: "not set (inherits prepared_statements_cache_size)"
 
+    query_interner_gc_interval_seconds:
+      config:
+        en: |
+          How often (seconds) the query interner runs its mark-and-sweep GC.
+          The sweep tick is gc_interval / 4 so a marked entry has a quarter-interval
+          to be touched (and unmarked) before the next eviction pass.
+        ru: |
+          Как часто (в секундах) интернер запросов запускает mark-and-sweep GC.
+          Реальный sweep тикает gc_interval / 4, чтобы помеченная запись имела
+          четверть интервала на touch и снятие пометки до следующего eviction.
+      doc: |
+        The query interner runs a two-cycle mark-and-sweep collector. Named entries
+        are evicted when nothing outside the interner holds the `Arc<str>`; anonymous
+        entries are evicted when idle longer than `query_interner_anon_idle_ttl_seconds`.
+
+        This knob controls how often the collector wakes up. The actual sweep tick
+        is `gc_interval / 4`, so an entry marked on cycle N has roughly a
+        quarter-interval before cycle N+1 evicts it; any access during that window
+        clears the mark.
+
+        Lower values shrink the interner faster after disconnect waves at the cost
+        of more CPU. Setting this to `0` is rejected at startup.
+      default: "60"
+
+    query_interner_anon_idle_ttl_seconds:
+      config:
+        en: |
+          Idle time (seconds) after which an anonymous interner entry becomes
+          eligible for eviction. 0 disables TTL eviction entirely.
+        ru: |
+          Время бездействия (секунды), после которого запись в анонимном интернере
+          становится кандидатом на вытеснение. 0 полностью отключает TTL.
+      doc: |
+        Bounds the upper memory cost of pg_doorman remembering the SQL text of an
+        anonymous prepared statement after the last Bind or Parse referencing the
+        same hash. Once an anonymous entry has been idle longer than this many
+        seconds it is marked, then evicted on the next sweep that still sees it
+        as idle.
+
+        Setting this to `0` disables TTL eviction entirely. Anonymous entries
+        live until the process restarts. This matches the pre-3.7 behaviour and
+        is the right choice for legacy deployments that rely on cross-batch
+        unnamed prepared statements; everywhere else, leave the default.
+      default: "60"
+
     patroni_api_urls:
       config:
         en: "Default Patroni REST API endpoints. Pools inherit this unless they set their own patroni_api_urls."

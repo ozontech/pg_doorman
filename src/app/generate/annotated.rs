@@ -872,6 +872,22 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     }
     w.blank();
 
+    write_field_comment(w, fi, "general", "query_interner_gc_interval_seconds");
+    w.kv(
+        fi,
+        "query_interner_gc_interval_seconds",
+        &w.num_val(g.query_interner_gc_interval_seconds),
+    );
+    w.blank();
+
+    write_field_comment(w, fi, "general", "query_interner_anon_idle_ttl_seconds");
+    w.kv(
+        fi,
+        "query_interner_anon_idle_ttl_seconds",
+        &w.num_val(g.query_interner_anon_idle_ttl_seconds),
+    );
+    w.blank();
+
     // --- Admin Console ---
     w.separator(fi, f.section_title("admin").get(w.russian));
     w.blank();

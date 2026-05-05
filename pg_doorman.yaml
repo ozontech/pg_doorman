@@ -303,6 +303,17 @@ general:
   # Default: not set (inherits prepared_statements_cache_size)
   # client_anonymous_prepared_cache_size: 8192
 
+  # How often (seconds) the query interner runs its mark-and-sweep GC.
+  # The sweep tick is gc_interval / 4 so a marked entry has a quarter-interval
+  # to be touched (and unmarked) before the next eviction pass.
+  # Default: 60
+  query_interner_gc_interval_seconds: 60
+
+  # Idle time (seconds) after which an anonymous interner entry becomes
+  # eligible for eviction. 0 disables TTL eviction entirely.
+  # Default: 60
+  query_interner_anon_idle_ttl_seconds: 60
+
   # --------------------------------------------------------------------------
   # Admin Console
   # --------------------------------------------------------------------------
