@@ -1295,6 +1295,50 @@ mod tests {
         assert_eq!(state.addr.port(), 5433);
     }
 
+    /// Mirrors the call-site in PreparedStatementCache::get_or_insert at
+    /// the slow path: an Anonymous entry rebuilt by reconstruct_prepared_state
+    /// goes through `parse.clone().intern_query(hash, is_anonymous)` with
+    /// is_anonymous=true, so the text must land in ANON_INTERNER, not NAMED.
+    #[test]
+    fn migration_path_routes_anonymous_to_anon_interner() {
+        use crate::server::{anon_entry_for_test, named_entry_for_test, reset_interners_for_test};
+
+        reset_interners_for_test();
+        let parse = Parse::from_parts("select 99::int", &[]);
+        let hash: u64 = 0xCAFE;
+        let _interned = parse.clone().intern_query(hash, true);
+
+        assert!(
+            anon_entry_for_test(hash).is_some(),
+            "must land in ANON_INTERNER"
+        );
+        assert!(
+            named_entry_for_test(hash).is_none(),
+            "must NOT land in NAMED_INTERNER"
+        );
+    }
+
+    /// Mirror for the named branch: Named entry from migration goes into
+    /// NAMED_INTERNER.
+    #[test]
+    fn migration_path_routes_named_to_named_interner() {
+        use crate::server::{anon_entry_for_test, named_entry_for_test, reset_interners_for_test};
+
+        reset_interners_for_test();
+        let parse = Parse::from_parts("select 100::int", &[]);
+        let hash: u64 = 0xBEEF;
+        let _interned = parse.clone().intern_query(hash, false);
+
+        assert!(
+            named_entry_for_test(hash).is_some(),
+            "must land in NAMED_INTERNER"
+        );
+        assert!(
+            anon_entry_for_test(hash).is_none(),
+            "must NOT land in ANON_INTERNER"
+        );
+    }
+
     #[test]
     fn serialize_deserialize_anonymous_prepared() {
         let mut buf = BytesMut::new();

@@ -7,24 +7,180 @@ use std::sync::Arc;
 use crate::messages::Parse;
 use crate::utils::dashmap::new_dashmap_with_capacity;
 
-/// Global query string interner.
-/// This ensures that identical query texts share the same Arc<str> allocation,
-/// even when Arc<Parse> is evicted from the pool cache.
-/// The interner never evicts entries - they are kept as long as any client holds a reference.
-static QUERY_INTERNER: Lazy<DashMap<u64, Arc<str>>> = Lazy::new(|| DashMap::with_capacity(8192));
+/// GC bookkeeping flag. Two-cycle mark-and-sweep: a candidate entry is
+/// flipped to `MARKED` on one sweep and removed on the next sweep that
+/// still sees it as a candidate. Any access between the two sweeps
+/// switches the state back to `ACTIVE`, so cold-but-still-needed entries
+/// survive the cycle.
+const GC_STATE_ACTIVE: u8 = 0;
+// Used by `gc_sweep_named` / `gc_sweep_anon` in the follow-up commit.
+#[allow(dead_code)]
+const GC_STATE_MARKED: u8 = 1;
 
-/// Interns a query string, returning a shared Arc<str>.
-/// If the query was already interned, returns the existing Arc<str>.
-/// This is used to ensure query texts are shared between all Parse instances.
-pub fn intern_query(query: &str, hash: u64) -> Arc<str> {
-    // Fast path: check if already interned
-    if let Some(existing) = QUERY_INTERNER.get(&hash) {
-        return existing.clone();
+/// Entry in the named interner. Bounded by passive GC over
+/// `Arc::strong_count(text)` — kept as long as any pool/client cache
+/// holds a strong reference to the underlying text.
+pub struct NamedEntry {
+    text: Arc<str>,
+    gc_state: AtomicU8,
+}
+
+impl NamedEntry {
+    fn new(text: Arc<str>) -> Self {
+        Self {
+            text,
+            gc_state: AtomicU8::new(GC_STATE_ACTIVE),
+        }
     }
 
-    // Slow path: intern the query
+    fn touch(&self) {
+        self.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
+    }
+
+    pub fn text(&self) -> &Arc<str> {
+        &self.text
+    }
+}
+
+/// Entry in the anonymous interner. Bounded by per-entry TTL over
+/// `last_used`; same two-cycle grace period as the named side.
+pub struct AnonEntry {
+    text: Arc<str>,
+    last_used: AtomicU64,
+    gc_state: AtomicU8,
+}
+
+impl AnonEntry {
+    fn new(text: Arc<str>, now_ms: u64) -> Self {
+        Self {
+            text,
+            last_used: AtomicU64::new(now_ms),
+            gc_state: AtomicU8::new(GC_STATE_ACTIVE),
+        }
+    }
+
+    fn touch(&self, now_ms: u64) {
+        self.last_used.store(now_ms, Ordering::Relaxed);
+        self.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
+    }
+
+    pub fn text(&self) -> &Arc<str> {
+        &self.text
+    }
+
+    pub fn idle_ms(&self, now_ms: u64) -> u64 {
+        now_ms.saturating_sub(self.last_used.load(Ordering::Relaxed))
+    }
+
+    #[cfg(test)]
+    pub fn last_used_for_test(&self) -> u64 {
+        self.last_used.load(Ordering::Relaxed)
+    }
+}
+
+/// Global query string interners. Split by `is_anonymous` so the two halves
+/// can run different eviction policies (passive `strong_count` GC for named,
+/// per-entry TTL for anonymous). The same hash interned both as named and
+/// anonymous lives in both maps with independent `Arc<str>` allocations —
+/// dedup loss in this rare case is accepted.
+static NAMED_INTERNER: Lazy<DashMap<u64, Arc<NamedEntry>>> =
+    Lazy::new(|| DashMap::with_capacity(8192));
+static ANON_INTERNER: Lazy<DashMap<u64, Arc<AnonEntry>>> =
+    Lazy::new(|| DashMap::with_capacity(8192));
+
+/// Monotonic millisecond clock anchored at the first call. Used by
+/// `AnonEntry::last_used` so wall-clock jumps don't perturb TTL decisions.
+pub fn now_monotonic_ms() -> u64 {
+    use std::time::Instant;
+    static START: Lazy<Instant> = Lazy::new(Instant::now);
+    START.elapsed().as_millis() as u64
+}
+
+/// Interns the query string into the matching half of the interner.
+/// `is_anonymous` reflects how *this* Parse uses the hash — empty Parse
+/// name = anonymous.
+pub fn intern_query(query: &str, hash: u64, is_anonymous: bool) -> Arc<str> {
+    if is_anonymous {
+        intern_anon(query, hash)
+    } else {
+        intern_named(query, hash)
+    }
+}
+
+fn intern_named(query: &str, hash: u64) -> Arc<str> {
+    if let Some(entry) = NAMED_INTERNER.get(&hash) {
+        entry.touch();
+        return entry.text.clone();
+    }
     let arc_str: Arc<str> = Arc::from(query);
-    QUERY_INTERNER.entry(hash).or_insert(arc_str).clone()
+    let new_entry = Arc::new(NamedEntry::new(arc_str.clone()));
+    NAMED_INTERNER.entry(hash).or_insert(new_entry).text.clone()
+}
+
+fn intern_anon(query: &str, hash: u64) -> Arc<str> {
+    let now = now_monotonic_ms();
+    if let Some(entry) = ANON_INTERNER.get(&hash) {
+        entry.touch(now);
+        return entry.text.clone();
+    }
+    let arc_str: Arc<str> = Arc::from(query);
+    let new_entry = Arc::new(AnonEntry::new(arc_str.clone(), now));
+    ANON_INTERNER.entry(hash).or_insert(new_entry).text.clone()
+}
+
+/// Snapshot of the named interner. Cloning `Arc<NamedEntry>` is cheap;
+/// the snapshot is point-in-time and sees concurrent inserts only by luck.
+pub fn named_snapshot() -> Vec<(u64, Arc<NamedEntry>)> {
+    NAMED_INTERNER
+        .iter()
+        .map(|e| (*e.key(), e.value().clone()))
+        .collect()
+}
+
+pub fn anon_snapshot() -> Vec<(u64, Arc<AnonEntry>)> {
+    ANON_INTERNER
+        .iter()
+        .map(|e| (*e.key(), e.value().clone()))
+        .collect()
+}
+
+pub fn named_len() -> usize {
+    NAMED_INTERNER.len()
+}
+
+pub fn anon_len() -> usize {
+    ANON_INTERNER.len()
+}
+
+pub fn named_remove(hash: u64) -> bool {
+    NAMED_INTERNER.remove(&hash).is_some()
+}
+
+pub fn anon_remove(hash: u64) -> bool {
+    ANON_INTERNER.remove(&hash).is_some()
+}
+
+/// Force-clear both interners. Used by the `RESET INTERNER` admin command
+/// added in a follow-up commit; exposed now so the split refactor is
+/// self-contained in tests.
+pub fn reset_interners_force() {
+    NAMED_INTERNER.clear();
+    ANON_INTERNER.clear();
+}
+
+#[cfg(test)]
+pub fn reset_interners_for_test() {
+    reset_interners_force();
+}
+
+#[cfg(test)]
+pub fn named_entry_for_test(hash: u64) -> Option<Arc<NamedEntry>> {
+    NAMED_INTERNER.get(&hash).map(|e| e.value().clone())
+}
+
+#[cfg(test)]
+pub fn anon_entry_for_test(hash: u64) -> Option<Arc<AnonEntry>> {
+    ANON_INTERNER.get(&hash).map(|e| e.value().clone())
 }
 
 /// Bit set when at least one client has Parse'd this hash with a non-empty name.
@@ -185,7 +341,7 @@ impl PreparedStatementCache {
         // Slow path: insert new entry
         // First intern the query string so it's shared across all clients,
         // then rewrite the statement name
-        let new_parse = Arc::new(parse.clone().intern_query(hash).rewrite());
+        let new_parse = Arc::new(parse.clone().intern_query(hash, is_anonymous).rewrite());
 
         let initial_kind = if is_anonymous {
             CacheEntryKind::Anonymous
@@ -407,5 +563,59 @@ mod tests {
         let entries = cache.get_entries();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].3, CacheEntryKind::Named);
+    }
+
+    #[test]
+    fn intern_query_named_lands_in_named_interner() {
+        reset_interners_for_test();
+        let arc = intern_query("select 1", 0xAA, false);
+        assert!(named_entry_for_test(0xAA).is_some());
+        assert!(anon_entry_for_test(0xAA).is_none());
+        assert_eq!(&*arc, "select 1");
+    }
+
+    #[test]
+    fn intern_query_anonymous_lands_in_anon_interner() {
+        reset_interners_for_test();
+        let _arc = intern_query("select 2", 0xBB, true);
+        assert!(anon_entry_for_test(0xBB).is_some());
+        assert!(named_entry_for_test(0xBB).is_none());
+    }
+
+    /// Same hash routed both as named and anonymous lives in both maps with
+    /// independent allocations. The dedup loss in this rare mixed case is
+    /// the documented trade-off of the split refactor.
+    #[test]
+    fn intern_query_same_hash_in_both_interners_independent() {
+        reset_interners_for_test();
+        let a_named = intern_query("select 3", 0xCC, false);
+        let a_anon = intern_query("select 3", 0xCC, true);
+        assert!(!Arc::ptr_eq(&a_named, &a_anon));
+        assert!(named_entry_for_test(0xCC).is_some());
+        assert!(anon_entry_for_test(0xCC).is_some());
+    }
+
+    /// Within a single kind, repeated intern of the same hash returns the
+    /// same `Arc<str>` — the dedup property the interner exists for.
+    #[test]
+    fn intern_query_returns_same_arc_for_same_hash_within_kind() {
+        reset_interners_for_test();
+        let a = intern_query("select 4", 0xDD, false);
+        let b = intern_query("select 4", 0xDD, false);
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn anon_entry_tracks_last_used() {
+        reset_interners_for_test();
+        let _ = intern_query("select 5", 0xEE, true);
+        let t0 = anon_entry_for_test(0xEE).unwrap().last_used_for_test();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let _ = intern_query("select 5", 0xEE, true);
+        let t1 = anon_entry_for_test(0xEE).unwrap().last_used_for_test();
+        assert!(
+            t1 > t0,
+            "last_used must advance on access (t0={t0}, t1={t1})"
+        );
     }
 }

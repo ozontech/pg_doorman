@@ -13,6 +13,15 @@ mod prepared_statement_cache;
 mod server_backend;
 
 pub use parameters::ServerParameters;
-pub use prepared_statement_cache::{intern_query, CacheEntryKind, PreparedStatementCache};
+pub use prepared_statement_cache::{
+    anon_len, anon_remove, anon_snapshot, intern_query, named_len, named_remove, named_snapshot,
+    now_monotonic_ms, reset_interners_force, AnonEntry, CacheEntryKind, NamedEntry,
+    PreparedStatementCache,
+};
+
+#[cfg(test)]
+pub use prepared_statement_cache::{
+    anon_entry_for_test, named_entry_for_test, reset_interners_for_test,
+};
 pub use server_backend::Server;
 pub use stream::StreamInner;
