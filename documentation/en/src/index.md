@@ -32,6 +32,14 @@ PgBouncer's online restart (`-R`, deprecated since 1.20; or `so_reuseport` rolli
 [Read more →](tutorials/binary-upgrade.md)
 ```
 
+```admonish success title="Anonymous Prepared Statement Caching"
+PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-name `Parse` most drivers send for one-shot parameterised queries) — every `Bind` re-runs the planner from scratch. PgDoorman transparently rewrites the empty name to an internal `DOORMAN_<N>` on the backend, so the plan lands in the backend's named prepared registry and gets reused across `Bind`s of the same client and across clients sharing the pool.
+
+PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for **named** statements; an anonymous `Parse` is forwarded as-is and re-planned on every call. PgDoorman is the only pooler that caches the plan for anonymous prepared traffic.
+
+[Read more →](tutorials/prepared-statements.md)
+```
+
 ## Why PgDoorman
 
 - **Prepared statements in transaction mode.** PgDoorman remaps client statement names to `DOORMAN_N` and tracks the cache per pool, per client, and per backend. Drivers see their own names; backends see the remapped ones. No app-level `DEALLOCATE`, no `DISCARD ALL`.
