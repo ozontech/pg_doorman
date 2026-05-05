@@ -161,6 +161,12 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<h3 id="365-may-4-2026"><a class="header" href="#365-may-4-2026">3.6.5 <small>May 4, 2026</small></a></h3>
+<h4 id="fix-stuck-cl_activesv_active-after-large-datarow-client-disconnect-under-pressure"><a class="header" href="#fix-stuck-cl_activesv_active-after-large-datarow-client-disconnect-under-pressure">Fix: stuck <code>cl_active/sv_active</code> after large DataRow client disconnect under pressure</a></h4>
+<p>When a large <code>DataRow</code> was deferred via <code>pending_large_message</code>, <code>recv()</code> cleared the deferred header before streaming. If the client disconnected during streaming write, the next drain/read path lost frame boundaries and could block in <code>wait_available()</code>. Under full pressure, this left <code>cl_active</code>/<code>sv_active</code> pinned at pool size and prevented normal <code>server_lifetime</code> recycling.</p>
+<p><code>recv()</code> now keeps <code>pending_large_message</code> until large-message handling succeeds and clears it only on <code>Ok</code>. On error, the next <code>recv()</code> still has correct frame context, allowing cleanup to complete and active counters to drop as expected.</p>
+<h4 id="observability-oldest_active_age_ms-per-pool"><a class="header" href="#observability-oldest_active_age_ms-per-pool">Observability: <code>oldest_active_age_ms</code> per pool</a></h4>
+<p><code>SHOW POOLS</code> exposes a new <code>oldest_active_age_ms</code> column and Prometheus exports <code>pg_doorman_pools_oldest_active_age_ms{user, database}</code>. The gauge reports the maximum age in milliseconds among ACTIVE servers in each pool, taken at snapshot time, and falls back to <code>0</code> when no server is currently ACTIVE. Sustained non-zero values flag stuck checkouts before pool exhaustion.</p>
 <h3 id="364-apr-29-2026"><a class="header" href="#364-apr-29-2026">3.6.4 <small>Apr 29, 2026</small></a></h3>
 <h4 id="fallback-resilience"><a class="header" href="#fallback-resilience">Fallback resilience</a></h4>
 <p>Patroni-assisted fallback now races <code>Server::startup</code> against every alive cluster member in parallel, with a strict sync_standby priority that protects write traffic during a local-backend outage. See <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a> for operator-level details.</p>
