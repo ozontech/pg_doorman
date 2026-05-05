@@ -74,11 +74,79 @@ fn parse_config_content<T: serde::de::DeserializeOwned>(
     contents: &str,
     format: ConfigFormat,
 ) -> Result<T, Error> {
+    warn_on_deprecated_general_keys(contents, format);
     match format {
         ConfigFormat::Toml => toml::from_str(contents)
             .map_err(|err| Error::BadConfig(format!("TOML parse error: {err}"))),
         ConfigFormat::Yaml => serde_yaml::from_str(contents)
             .map_err(|err| Error::BadConfig(format!("YAML parse error: {err}"))),
+    }
+}
+
+/// Pure helper: returns the deprecated keys present under `general`
+/// in the parsed YAML value.
+///
+/// Each returned `&'static str` is the deprecated field name. New
+/// deprecations are added to `DEPRECATED_GENERAL_KEYS` and need no
+/// further wiring.
+fn find_deprecated_general_keys_yaml(value: &serde_yaml::Value) -> Vec<&'static str> {
+    let general = value.get("general").unwrap_or(value);
+    let Some(map) = general.as_mapping() else {
+        return Vec::new();
+    };
+    DEPRECATED_GENERAL_KEYS
+        .iter()
+        .copied()
+        .filter(|key| map.contains_key(serde_yaml::Value::String((*key).to_string())))
+        .collect()
+}
+
+/// Pure helper: returns the deprecated keys present under `general`
+/// in the parsed TOML value.
+fn find_deprecated_general_keys_toml(value: &toml::Value) -> Vec<&'static str> {
+    let general = value.get("general").unwrap_or(value);
+    let Some(table) = general.as_table() else {
+        return Vec::new();
+    };
+    DEPRECATED_GENERAL_KEYS
+        .iter()
+        .copied()
+        .filter(|key| table.contains_key(*key))
+        .collect()
+}
+
+/// Deprecated keys under `[general]`. The corresponding live field
+/// must carry `#[serde(alias = "...")]` so the value still flows
+/// through; this list only exists to drive the parser-level warning.
+const DEPRECATED_GENERAL_KEYS: &[&str] = &["client_prepared_statements_cache_size"];
+
+/// Detect deprecated keys in raw config content and emit a `log::warn!`
+/// for each one found. Failures to parse the raw value are silent —
+/// the main parser produces the user-facing error.
+fn warn_on_deprecated_general_keys(contents: &str, format: ConfigFormat) {
+    let deprecated = match format {
+        ConfigFormat::Yaml => match serde_yaml::from_str::<serde_yaml::Value>(contents) {
+            Ok(value) => find_deprecated_general_keys_yaml(&value),
+            Err(_) => return,
+        },
+        ConfigFormat::Toml => match contents.parse::<toml::Value>() {
+            Ok(value) => find_deprecated_general_keys_toml(&value),
+            Err(_) => return,
+        },
+    };
+    for key in deprecated {
+        match key {
+            "client_prepared_statements_cache_size" => warn!(
+                "configuration uses deprecated field 'client_prepared_statements_cache_size'; \
+                 the value has been mapped to 'client_anonymous_prepared_cache_size' for \
+                 backward compatibility. Update your config; the alias may be removed in a \
+                 future release."
+            ),
+            other => warn!(
+                "configuration uses deprecated field '{other}'; \
+                 update your config — the alias may be removed in a future release."
+            ),
+        }
     }
 }
 

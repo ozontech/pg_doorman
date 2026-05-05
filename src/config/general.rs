@@ -214,7 +214,16 @@ pub struct General {
     /// of the per-client cache is always unbounded; this knob only
     /// constrains Anonymous entries. `0` disables the LRU and uses an
     /// unlimited map. Default: 256.
-    #[serde(default = "General::default_client_anonymous_prepared_cache_size")]
+    ///
+    /// The `client_prepared_statements_cache_size` alias preserves
+    /// backward compatibility for configs written before the field was
+    /// renamed; the value is mapped onto this field on parse. The parser
+    /// also emits a `log::warn!` when the deprecated name is used so
+    /// operators have a visible signal to update their configuration.
+    #[serde(
+        alias = "client_prepared_statements_cache_size",
+        default = "General::default_client_anonymous_prepared_cache_size"
+    )]
     pub client_anonymous_prepared_cache_size: usize,
 
     #[serde(default = "General::default_daemon_pid_file")]
@@ -626,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn old_field_is_silently_ignored_in_yaml() {
+    fn old_field_is_aliased_to_new_field() {
         let yaml = r#"
 host: "0.0.0.0"
 port: 6432
@@ -635,7 +644,22 @@ admin_password: "x"
 client_prepared_statements_cache_size: 1024
 "#;
         let parsed: serde_yaml::Result<General> = serde_yaml::from_str(yaml);
-        assert!(parsed.is_ok(), "should parse with unknown field");
-        assert_eq!(parsed.unwrap().client_anonymous_prepared_cache_size, 256);
+        assert!(parsed.is_ok(), "should parse with deprecated field name");
+        // The alias should map the value into the new field.
+        assert_eq!(parsed.unwrap().client_anonymous_prepared_cache_size, 1024);
+    }
+
+    #[test]
+    fn old_field_is_aliased_to_new_field_in_toml() {
+        let toml_input = r#"
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "x"
+client_prepared_statements_cache_size = 2048
+"#;
+        let parsed: Result<General, _> = toml::from_str(toml_input);
+        assert!(parsed.is_ok(), "should parse with deprecated field name");
+        assert_eq!(parsed.unwrap().client_anonymous_prepared_cache_size, 2048);
     }
 }
