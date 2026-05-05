@@ -480,7 +480,7 @@ pub async fn reconstruct_client(
         state.async_client,
         &state.prepared_entries,
         pool.as_ref(),
-        config.general.client_prepared_statements_cache_size,
+        config.general.client_anonymous_prepared_cache_size,
     );
 
     let application_name = state
@@ -585,7 +585,7 @@ pub async fn reconstruct_tls_client(
         state.async_client,
         &state.prepared_entries,
         pool.as_ref(),
-        config.general.client_prepared_statements_cache_size,
+        config.general.client_anonymous_prepared_cache_size,
     );
 
     let application_name = state

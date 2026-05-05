@@ -782,27 +782,27 @@ fields:
         This cache stores the mapping from query hash to rewritten prepared statement name.
       default: "8192"
 
-    client_prepared_statements_cache_size:
+    client_anonymous_prepared_cache_size:
       config:
         en: |
-          Maximum prepared statements cached per client connection.
-          Protection against malicious clients that don't call DEALLOCATE.
-          Set to 0 for unlimited (relies on client calling DEALLOCATE).
+          Per-client Anonymous prepared-statement LRU size.
+          Bounds the Anonymous part of the per-client cache; the Named part is always unbounded.
+          Set to 0 to disable the LRU and use an unlimited map.
         ru: |
-          Максимум подготовленных запросов в кеше для одного клиентского соединения.
-          Защита от вредоносных клиентов, которые не вызывают DEALLOCATE.
-          0 — без ограничений (полагается на вызов DEALLOCATE клиентом).
+          Размер LRU-кеша Anonymous prepared-запросов на каждого клиента.
+          Ограничивает Anonymous-часть клиентского кеша; Named-часть всегда без ограничений.
+          0 — отключить LRU и использовать неограниченную карту.
       doc: |
-        Maximum number of prepared statements cached per client connection. This is a protection mechanism against
-        malicious or misbehaving clients that don't call `DEALLOCATE` and could cause memory exhaustion by creating
-        unlimited prepared statements over long-running connections.
+        Bounds the Anonymous part of the per-client prepared-statement cache. Anonymous statements are issued
+        without an explicit name and are typically short-lived; the LRU caps how many of them a single client
+        can accumulate before the oldest one is evicted.
 
-        When the limit is reached, the oldest entry is evicted from the client's cache. The evicted statement
-        can still be re-used later because the pool-level cache (`prepared_statements_cache_size`) retains the
-        query-to-server-name mapping.
+        The Named part of the per-client cache (statements created with an explicit name via `PREPARE` or the
+        extended-query Parse) is **always unbounded** — this knob does not affect it. Named statements stay
+        cached for the lifetime of the client connection.
 
-        Set to `0` to disable the limit (unlimited cache size, relies on client calling `DEALLOCATE`).
-      default: "0 (unlimited)"
+        Set to `0` to disable the LRU and fall back to an unlimited map for Anonymous entries.
+      default: "256"
 
     patroni_api_urls:
       config:

@@ -855,11 +855,11 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     );
     w.blank();
 
-    write_field_comment(w, fi, "general", "client_prepared_statements_cache_size");
+    write_field_comment(w, fi, "general", "client_anonymous_prepared_cache_size");
     w.kv(
         fi,
-        "client_prepared_statements_cache_size",
-        &w.num_val(g.client_prepared_statements_cache_size),
+        "client_anonymous_prepared_cache_size",
+        &w.num_val(g.client_anonymous_prepared_cache_size),
     );
     w.blank();
 

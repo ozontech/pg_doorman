@@ -424,7 +424,7 @@ where
             server_parameters,
             prepared: PreparedStatementState::new(
                 prepared_statements_enabled,
-                config.general.client_prepared_statements_cache_size,
+                config.general.client_anonymous_prepared_cache_size,
             ),
             client_last_messages_in_tx: PooledBuffer::new(),
             max_memory_usage: config.general.max_memory_usage.as_bytes(),

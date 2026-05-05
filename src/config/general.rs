@@ -208,13 +208,14 @@ pub struct General {
     #[serde(default = "General::default_prepared_statements_cache_size")]
     pub prepared_statements_cache_size: usize,
 
-    /// Maximum number of prepared statements cached per client connection.
-    /// This is a protection against malicious clients that don't call DEALLOCATE
-    /// and could cause memory exhaustion by creating unlimited prepared statements.
-    /// When the limit is reached, the oldest (least recently added) statement is evicted.
-    /// Default: 0 (unlimited - no protection, relies on client calling DEALLOCATE)
-    #[serde(default = "General::default_client_prepared_statements_cache_size")]
-    pub client_prepared_statements_cache_size: usize,
+    /// Per-client Anonymous prepared statement LRU size.
+    ///
+    /// Bounds the Anonymous part of the per-client cache. The Named part
+    /// of the per-client cache is always unbounded; this knob only
+    /// constrains Anonymous entries. `0` disables the LRU and uses an
+    /// unlimited map. Default: 256.
+    #[serde(default = "General::default_client_anonymous_prepared_cache_size")]
+    pub client_anonymous_prepared_cache_size: usize,
 
     #[serde(default = "General::default_daemon_pid_file")]
     pub daemon_pid_file: String, // can be enabled only in daemon mode.
@@ -408,9 +409,9 @@ impl General {
     pub fn default_prepared_statements() -> bool {
         true
     }
-    /// Default: 0 (unlimited - no protection against malicious clients)
-    pub fn default_client_prepared_statements_cache_size() -> usize {
-        0
+    /// Default per-client Anonymous LRU size.
+    pub fn default_client_anonymous_prepared_cache_size() -> usize {
+        256
     }
 
     pub fn default_daemon_pid_file() -> String {
@@ -520,8 +521,8 @@ impl Default for General {
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
-            client_prepared_statements_cache_size:
-                Self::default_client_prepared_statements_cache_size(),
+            client_anonymous_prepared_cache_size:
+                Self::default_client_anonymous_prepared_cache_size(),
             hba: Self::default_hba(),
             pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),
@@ -616,5 +617,25 @@ mod tests {
     fn parse_unix_socket_mode_rejects_whitespace_only() {
         let err = General::parse_unix_socket_mode("   ").unwrap_err();
         assert!(err.contains("empty"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn anonymous_prepared_cache_default_is_256() {
+        let g = General::default();
+        assert_eq!(g.client_anonymous_prepared_cache_size, 256);
+    }
+
+    #[test]
+    fn old_field_is_silently_ignored_in_yaml() {
+        let yaml = r#"
+host: "0.0.0.0"
+port: 6432
+admin_username: "admin"
+admin_password: "x"
+client_prepared_statements_cache_size: 1024
+"#;
+        let parsed: serde_yaml::Result<General> = serde_yaml::from_str(yaml);
+        assert!(parsed.is_ok(), "should parse with unknown field");
+        assert_eq!(parsed.unwrap().client_anonymous_prepared_cache_size, 256);
     }
 }
