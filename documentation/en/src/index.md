@@ -37,7 +37,7 @@ PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-
 
 PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for **named** statements; an anonymous `Parse` is forwarded as-is and re-planned on every call. PgDoorman is the one that rewrites it.
 
-3.7.0 makes the cache bounded and observable. The query interner that holds `Parse` text is split into NAMED (passive `Arc::strong_count` GC) and ANON (per-entry idle TTL, default 60 s); the per-client cache is split into Named (unbounded) and Anonymous (LRU, `client_anonymous_prepared_cache_size`). `SHOW INTERNER`, `SHOW INTERNER N`, and `RESET INTERNER` expose contents and reclaim; five `pg_doorman_query_interner_*` metrics cover entries, bytes, evictions per kind, synthetic misses, and GC duration. `Bind` against an expired anonymous statement now returns SQLSTATE `26000` (matching PostgreSQL), so standard drivers re-`Parse` transparently.
+The cache is bounded and observable. Anonymous entries time out on idle, named entries reclaim once nothing references them, and `SHOW INTERNER` plus matching Prometheus metrics make the footprint live — so a workload built on dynamically generated SQL can't pin pooler memory forever.
 
 [Read more →](tutorials/prepared-statements.md)
 ```
