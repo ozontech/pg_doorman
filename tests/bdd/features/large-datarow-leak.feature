@@ -191,9 +191,9 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
     And we execute "SHOW POOLS" on admin session "admin-age" and store response
     Then admin session "admin-age" column "oldest_active_age_ms" for row with "user" = "example_user_1" should be between 200 and 5000
 
-    And we sleep 2000ms
     When we close session "age_a"
-    And we sleep 800ms
+    # 2.5s ≥ remaining pg_sleep(2) + EOF detection + cleanup margin.
+    And we sleep 2500ms
 
     When we create admin session "admin-age2" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW POOLS" on admin session "admin-age2" and store response
