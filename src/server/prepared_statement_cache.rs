@@ -156,13 +156,20 @@ impl PreparedStatementCache {
     /// if it already exists will give you the existing parse
     ///
     /// Pass the hash to this so that we can do the compute before acquiring the lock.
-    /// `client_given_name` is the original Parse name from the client; an empty
-    /// string indicates an anonymous prepared statement. The corresponding bit in
-    /// the entry's `kind_flags` bitmask is set on every call (the test-and-set
-    /// guard skips the atomic write when the bit is already set).
-    pub fn get_or_insert(&self, parse: &Parse, hash: u64, client_given_name: &str) -> Arc<Parse> {
+    /// `client_given_name` is the original Parse name from the client. `None`
+    /// indicates an anonymous prepared statement (PostgreSQL's empty Parse
+    /// name); `Some(name)` carries the client-supplied identifier. The
+    /// corresponding bit in the entry's `kind_flags` bitmask is set on every
+    /// call (the test-and-set guard skips the atomic write when the bit is
+    /// already set).
+    pub fn get_or_insert(
+        &self,
+        parse: &Parse,
+        hash: u64,
+        client_given_name: Option<&str>,
+    ) -> Arc<Parse> {
         let timestamp = self.counter.fetch_add(1, Ordering::Relaxed);
-        let is_anonymous = client_given_name.is_empty();
+        let is_anonymous = client_given_name.is_none();
 
         // Fast path: check if already exists
         if let Some(mut entry) = self.cache.get_mut(&hash) {
@@ -333,7 +340,7 @@ mod tests {
                         let query = format!("SELECT {} FROM t{}", i, t);
                         let hash = hash_query(&query);
                         let parse = make_parse("stmt", &query);
-                        cache.get_or_insert(&parse, hash, "stmt");
+                        cache.get_or_insert(&parse, hash, Some("stmt"));
                     }
                 })
             })
@@ -361,7 +368,7 @@ mod tests {
     fn flags_named_only_on_named_register() {
         let cache = PreparedStatementCache::new(8, 1);
         let parse = make_parse("stmt_one", "SELECT 1");
-        cache.get_or_insert(&parse, 1, "stmt_one");
+        cache.get_or_insert(&parse, 1, Some("stmt_one"));
         let entries = cache.get_entries();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].3, CacheEntryKind::Named);
@@ -371,7 +378,7 @@ mod tests {
     fn flags_anonymous_only_on_anonymous_register() {
         let cache = PreparedStatementCache::new(8, 1);
         let parse = make_parse("", "SELECT 1");
-        cache.get_or_insert(&parse, 1, "");
+        cache.get_or_insert(&parse, 1, None);
         let entries = cache.get_entries();
         assert_eq!(entries[0].3, CacheEntryKind::Anonymous);
     }
@@ -380,9 +387,9 @@ mod tests {
     fn flags_mixed_when_both_seen() {
         let cache = PreparedStatementCache::new(8, 1);
         let p1 = make_parse("stmt_one", "SELECT 1");
-        cache.get_or_insert(&p1, 1, "stmt_one");
+        cache.get_or_insert(&p1, 1, Some("stmt_one"));
         let p2 = make_parse("", "SELECT 1");
-        cache.get_or_insert(&p2, 1, "");
+        cache.get_or_insert(&p2, 1, None);
         let entries = cache.get_entries();
         assert_eq!(entries[0].3, CacheEntryKind::Mixed);
     }
@@ -395,8 +402,8 @@ mod tests {
     fn flags_set_only_when_state_actually_changes() {
         let cache = PreparedStatementCache::new(8, 1);
         let parse = make_parse("stmt_one", "SELECT 1");
-        cache.get_or_insert(&parse, 1, "stmt_one"); // bits = FLAG_NAMED
-        cache.get_or_insert(&parse, 1, "stmt_one"); // hit, no real state change
+        cache.get_or_insert(&parse, 1, Some("stmt_one")); // bits = FLAG_NAMED
+        cache.get_or_insert(&parse, 1, Some("stmt_one")); // hit, no real state change
         let entries = cache.get_entries();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].3, CacheEntryKind::Named);

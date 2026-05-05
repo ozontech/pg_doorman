@@ -161,7 +161,12 @@ where
         let hash = parse.get_hash();
 
         // Always use pool cache to get shared Arc<Parse> (saves memory for async clients too)
-        let shared_parse = match pool.register_parse_to_cache(hash, &parse, &client_given_name) {
+        let name_arg = if client_given_name.is_empty() {
+            None
+        } else {
+            Some(client_given_name.as_str())
+        };
+        let shared_parse = match pool.register_parse_to_cache(hash, &parse, name_arg) {
             Some(parse) => parse,
             None => {
                 return Err(Error::ClientError(format!(
