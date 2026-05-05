@@ -314,7 +314,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
         )));
     }
     let version = buf.get_u16();
-    if version != 1 && version != MIGRATION_VERSION {
+    if version != MIGRATION_VERSION {
         return Err(Error::ClientError(format!(
             "migration: unsupported version {version}"
         )));
@@ -401,8 +401,9 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
     require(&buf, 1)?;
     let use_tls = buf.get_u8() != 0;
 
-    // v2: backend auth state (ScramPassthrough ClientKey, Md5 hash)
-    let backend_auth = if version >= 2 && buf.remaining() > 0 {
+    // Backend auth state (ScramPassthrough ClientKey, Md5 hash); absent when
+    // the migrating client never reached an authenticated backend.
+    let backend_auth = if buf.remaining() > 0 {
         let tag = buf.get_u8();
         match tag {
             1 => {
@@ -423,7 +424,7 @@ fn deserialize_state(mut buf: BytesMut) -> Result<DeserializedState, Error> {
             _ => None,
         }
     } else {
-        None // v1 format: no auth state
+        None
     };
 
     Ok(DeserializedState {
@@ -1142,6 +1143,24 @@ mod tests {
         buf.put_u16(99);
         buf.put_slice(&[0; 13]);
         assert!(deserialize_state(buf).is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_v1_format() {
+        // v1 used to be accepted alongside MIGRATION_VERSION; after dropping
+        // legacy support the validator must reject it explicitly.
+        let mut buf = BytesMut::new();
+        buf.put_u32(MIGRATION_MAGIC);
+        buf.put_u16(1);
+        buf.put_slice(&[0; 13]); // fill to HEADER_SIZE
+        let Err(err) = deserialize_state(buf) else {
+            panic!("expected v1 format to be rejected");
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unsupported version 1"),
+            "expected v1-rejection error, got: {msg}"
+        );
     }
 
     #[test]
