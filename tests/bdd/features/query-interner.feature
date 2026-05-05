@@ -82,3 +82,12 @@ Feature: Query interner admin surface and missing-anonymous SQLSTATE
     When we create session "no_anon" to pg_doorman as "example_user_1" with password "" and database "example_db"
     And we send Bind "" to "" with params "" to session "no_anon"
     Then session "no_anon" should receive ErrorResponse with SQLSTATE "26000"
+
+  Scenario: Bind on a non-existent named prepared statement returns SQLSTATE 26000
+    When we create session "bad_named" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    # Bind references a named prepared that the client never issued Parse for.
+    # This exercises the cache-miss branch in process_bind_immediate where
+    # client_given_name is non-empty; pg_doorman now mirrors native PG and
+    # returns SQLSTATE 26000 instead of the previous 58000.
+    And we send Bind "" to "no_such_stmt" with params "" to session "bad_named"
+    Then session "bad_named" should receive ErrorResponse with SQLSTATE "26000"

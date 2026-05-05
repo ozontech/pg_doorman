@@ -2,6 +2,26 @@
 
 ### Unreleased
 
+#### ACTION REQUIRED before upgrading to 3.7.0
+
+- **SQLSTATE for missing prepared statements changed from `58000` to
+  `26000`.** Any `Bind` or `Describe` referencing a prepared statement
+  that pg_doorman cannot resolve now returns SQLSTATE `26000`
+  (`invalid_sql_statement_name`), matching native PostgreSQL.
+  Audit dashboards, log searches, alert rules, and retry middleware
+  that filter on `58000` for this condition (Splunk saved searches,
+  Grafana log alerts, custom retry policies). Drivers that auto-retry
+  on `26000` (pgjdbc, pgx with `cache_describe`) now do so;
+  drivers that closed the connection on `58000` will no longer.
+- **Migration format v1 is no longer accepted.** Upgrades from a
+  pg_doorman that emitted v1 (3.5.0–3.5.x) must hop through
+  3.6.x first; from 3.4 and earlier no migration support existed,
+  so the upgrade is unaffected.
+- **`client_prepared_statements_cache_size` is deprecated.** It
+  remains a serde alias of `client_anonymous_prepared_cache_size`,
+  with a `WARN` at startup. Planned for removal in 3.9; rename in
+  configs now.
+
 #### Added
 
 - The query interner is split into NAMED (passive `Arc::strong_count`

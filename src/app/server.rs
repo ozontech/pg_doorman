@@ -293,10 +293,17 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         // marked on cycle N has roughly a quarter-interval to be touched and
         // unmarked before cycle N+1 evicts it. anon_idle_ttl_seconds = 0 maps
         // to u64::MAX milliseconds — disables TTL eviction entirely.
+        // gc_interval_seconds = 0 is rejected by Config::validate, so we can
+        // assume a strictly positive interval here.
         {
             let gc_interval =
-                Duration::from_secs(config.general.query_interner_gc_interval_seconds.max(1));
+                Duration::from_secs(config.general.query_interner_gc_interval_seconds);
             let sweep_interval = gc_interval / 4;
+            assert!(
+                !sweep_interval.is_zero(),
+                "query_interner_gc_interval_seconds must produce a non-zero sweep interval; \
+                 Config::validate should have caught a value of 0"
+            );
             let anon_ttl_secs = config.general.query_interner_anon_idle_ttl_seconds;
             let anon_ttl_ms = if anon_ttl_secs == 0 {
                 u64::MAX

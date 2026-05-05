@@ -1,12 +1,34 @@
 use bytes::{BufMut, BytesMut};
 use log::{debug, warn};
 use std::convert::TryInto;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::errors::Error;
 use crate::messages::{error_response, Bind, Close, Describe, Parse};
 use crate::pool::ConnectionPool;
-use crate::server::Server;
+use crate::server::{now_monotonic_ms, Server};
+
+/// Throttle for the synthetic-miss WARN line. Without rate-limiting a
+/// driver hammering the pooler at 10k RPS would write 10k WARN lines per
+/// second, drowning the log pipeline. One line per 10 seconds is enough
+/// for an operator to notice; the rest fall to DEBUG so they can still
+/// be reconstructed under elevated log level. Counter
+/// `pg_doorman_query_interner_synthetic_misses_total` increments on
+/// every miss regardless.
+const SYNTHETIC_MISS_WARN_INTERVAL_MS: u64 = 10_000;
+static SYNTHETIC_MISS_LAST_WARN_MS: AtomicU64 = AtomicU64::new(0);
+
+fn synthetic_miss_should_warn() -> bool {
+    let now = now_monotonic_ms();
+    let last = SYNTHETIC_MISS_LAST_WARN_MS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= SYNTHETIC_MISS_WARN_INTERVAL_MS {
+        SYNTHETIC_MISS_LAST_WARN_MS.store(now, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
 
 use super::core::{
     BatchOperation, CachedStatement, Client, ParseCompleteTarget, PreparedStatementKey, PutOutcome,
@@ -335,10 +357,20 @@ where
             match self.prepared.last_anonymous_hash {
                 Some(hash) => Ok(PreparedStatementKey::Anonymous(hash)),
                 None => {
-                    warn!(
-                        "[{}@{} #c{}] anonymous prepared statement referenced but none registered",
-                        self.username, self.pool_name, self.connection_id,
-                    );
+                    if synthetic_miss_should_warn() {
+                        warn!(
+                            "[{}@{} #c{}] anonymous prepared statement referenced but none registered (suppressing further WARNs for {}s)",
+                            self.username,
+                            self.pool_name,
+                            self.connection_id,
+                            SYNTHETIC_MISS_WARN_INTERVAL_MS / 1000,
+                        );
+                    } else {
+                        debug!(
+                            "[{}@{} #c{}] anonymous prepared statement referenced but none registered",
+                            self.username, self.pool_name, self.connection_id,
+                        );
+                    }
                     crate::prometheus::record_synthetic_miss();
                     // SQLSTATE 26000 (invalid_sql_statement_name) matches the
                     // error native PostgreSQL raises for the same condition;
@@ -433,17 +465,45 @@ where
                 Ok(())
             }
             None => {
-                warn!(
-                    "[{}@{} #c{}] Bind references unknown prepared statement {client_given_name:?}",
-                    self.username, self.pool_name, self.connection_id,
-                );
-
-                error_response(
-                    &mut self.write,
-                    &format!("prepared statement \"{client_given_name}\" does not exist"),
-                    "58000",
-                )
-                .await?;
+                if client_given_name.is_empty() {
+                    // Bind "" landed after the anonymous entry was evicted from
+                    // the per-client LRU or expired from the interner. Mirror
+                    // native PostgreSQL: SQLSTATE 26000 with the canonical
+                    // "unnamed prepared statement does not exist" message so
+                    // drivers can re-Parse transparently.
+                    if synthetic_miss_should_warn() {
+                        warn!(
+                            "[{}@{} #c{}] Bind \"\" but anonymous prepared no longer cached (suppressing further WARNs for {}s)",
+                            self.username,
+                            self.pool_name,
+                            self.connection_id,
+                            SYNTHETIC_MISS_WARN_INTERVAL_MS / 1000,
+                        );
+                    } else {
+                        debug!(
+                            "[{}@{} #c{}] Bind \"\" but anonymous prepared no longer cached",
+                            self.username, self.pool_name, self.connection_id,
+                        );
+                    }
+                    crate::prometheus::record_synthetic_miss();
+                    error_response(
+                        &mut self.write,
+                        "unnamed prepared statement does not exist",
+                        "26000",
+                    )
+                    .await?;
+                } else {
+                    warn!(
+                        "[{}@{} #c{}] Bind references unknown prepared statement {client_given_name:?}",
+                        self.username, self.pool_name, self.connection_id,
+                    );
+                    error_response(
+                        &mut self.write,
+                        &format!("prepared statement \"{client_given_name}\" does not exist"),
+                        "26000",
+                    )
+                    .await?;
+                }
 
                 Err(Error::ClientError(format!(
                     "Prepared statement `{client_given_name}` doesn't exist"
@@ -564,17 +624,40 @@ where
             }
 
             None => {
-                warn!(
-                    "[{}@{} #c{}] Describe references unknown prepared statement `{}`",
-                    self.username, self.pool_name, self.connection_id, client_given_name
-                );
-
-                error_response(
-                    &mut self.write,
-                    &format!("prepared statement \"{client_given_name}\" does not exist"),
-                    "58000",
-                )
-                .await?;
+                if client_given_name.is_empty() {
+                    if synthetic_miss_should_warn() {
+                        warn!(
+                            "[{}@{} #c{}] Describe \"\" but anonymous prepared no longer cached (suppressing further WARNs for {}s)",
+                            self.username,
+                            self.pool_name,
+                            self.connection_id,
+                            SYNTHETIC_MISS_WARN_INTERVAL_MS / 1000,
+                        );
+                    } else {
+                        debug!(
+                            "[{}@{} #c{}] Describe \"\" but anonymous prepared no longer cached",
+                            self.username, self.pool_name, self.connection_id,
+                        );
+                    }
+                    crate::prometheus::record_synthetic_miss();
+                    error_response(
+                        &mut self.write,
+                        "unnamed prepared statement does not exist",
+                        "26000",
+                    )
+                    .await?;
+                } else {
+                    warn!(
+                        "[{}@{} #c{}] Describe references unknown prepared statement `{}`",
+                        self.username, self.pool_name, self.connection_id, client_given_name
+                    );
+                    error_response(
+                        &mut self.write,
+                        &format!("prepared statement \"{client_given_name}\" does not exist"),
+                        "26000",
+                    )
+                    .await?;
+                }
 
                 Err(Error::ClientError(format!(
                     "Prepared statement `{client_given_name}` doesn't exist"
