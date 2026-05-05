@@ -4,6 +4,25 @@
 
 #### Added
 
+- The global query interner is split into NAMED and ANON halves. NAMED
+  is bounded by passive `Arc::strong_count` GC; ANON is bounded by
+  per-entry idle TTL (`query_interner_anon_idle_ttl_seconds`,
+  default 60). Both use a two-cycle mark-and-sweep grace so an entry
+  touched between cycles survives. Set `query_interner_anon_idle_ttl_seconds`
+  to `0` to disable TTL — matches the pre-3.7 unbounded behaviour.
+- Two new general-level config knobs control the GC:
+  `query_interner_gc_interval_seconds` (default 60),
+  `query_interner_anon_idle_ttl_seconds` (default 60).
+- Three new admin commands: `SHOW INTERNER` (count + bytes per
+  kind), `SHOW INTERNER N` (top N entries by interned text length
+  with hash, kind, bytes, idle_ms, 120-character preview),
+  `RESET INTERNER` (clear both halves; diagnostics-only).
+- Five new Prometheus metrics:
+    - `pg_doorman_query_interner_entries{kind}`
+    - `pg_doorman_query_interner_bytes{kind}`
+    - `pg_doorman_query_interner_evictions_total{kind, reason}`
+    - `pg_doorman_query_interner_synthetic_misses_total`
+    - `pg_doorman_query_interner_gc_duration_seconds`
 - New `server_prepared_statements_cache_size` config knob (general +
   per-pool). Sizes the per-backend server-level prepared statement
   LRU independently of the pool-level cache. When unset, inherits
@@ -25,6 +44,19 @@
 #### Changed
 
 - The per-client prepared-statement cache is split into two maps: Named (unbounded) and Anonymous (LRU). This fixes a bug where the previous combined LRU could evict a Named entry and cause the next `Bind` to fail with `prepared statement does not exist`.
+- `Bind` referencing an anonymous prepared statement that is no longer
+  in any cache (interner, pool, client) now returns SQLSTATE `26000`
+  (`invalid_sql_statement_name`) with the message "unnamed prepared
+  statement does not exist", matching what native PostgreSQL emits
+  for the same condition (previously SQLSTATE `58000`). Standard
+  drivers handle `26000` transparently by re-issuing `Parse`.
+
+#### Removed
+
+- Migration format v1 is no longer accepted. `deserialize_state`
+  returns `unsupported version 1` for any incoming v1 payload.
+  Upgrades from pg_doorman versions that emitted v1 (3.4 and earlier)
+  must hop through a 3.5–3.6 binary first.
 
 #### Deprecated
 

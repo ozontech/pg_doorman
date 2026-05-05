@@ -477,12 +477,67 @@ accumulate for a long time. Lowering either knob releases the
 plan-memory pressure, at the cost of more frequent re-parses on the
 backend.
 
+## Bounded query interner
+
+The pool-level interner that deduplicates Parse query texts is split
+into two halves:
+
+- **NAMED** — text for named prepared statements. An entry stays alive
+  as long as any pool or client cache holds an `Arc<str>` reference.
+  The GC task collects entries when nothing outside the interner
+  holds a reference any more, with a two-cycle grace period to avoid
+  thrash on cold-but-still-needed hashes.
+- **ANON** — text for anonymous prepared statements. An entry expires
+  after `query_interner_anon_idle_ttl_seconds` of idle time (default
+  60 seconds). Setting the knob to `0` disables TTL eviction — the
+  pre-3.7 unbounded behaviour, kept as an escape hatch for legacy
+  deployments.
+
+If both the interner and the pool/client caches drop the text for an
+anonymous prepared statement before the next `Bind`, pg_doorman
+returns `ERROR: unnamed prepared statement does not exist`
+(SQLSTATE `26000`). This is the same error native PostgreSQL raises
+for the same condition; standard drivers handle it transparently by
+re-issuing `Parse`.
+
+Binary upgrade (`SIGUSR2`) carries both NAMED and ANON entries to
+the new process. Anonymous entries land in the new ANON interner
+with a fresh `last_used` timestamp, so the TTL clock starts over at
+the upgrade moment.
+
+### Operator surface
+
+`SHOW INTERNER` (admin SQL) prints aggregate counts and bytes per
+kind:
+
+```
+kind      | entries | bytes
+named     |     420 |    87654
+anonymous |    1337 |   234567
+```
+
+`SHOW INTERNER N` returns the top N entries by interned text length
+with `hash`, `kind`, `bytes`, `idle_ms` (`-1` for named — the named
+half tracks GC state, not last-used timestamps), and a 120-character
+preview of the SQL.
+
+`RESET INTERNER` clears both halves. In-flight clients re-Parse on
+next reuse — diagnostics-only.
+
+The Prometheus surface mirrors `SHOW INTERNER` plus a histogram for
+sweep duration and a counter for the synthetic `26000`s. Tune
+`query_interner_anon_idle_ttl_seconds` upward when
+`pg_doorman_query_interner_synthetic_misses_total` shows a sustained
+non-zero rate.
+
 ## Reference
 
 - [Pool Modes](../concepts/pool-modes.md) — transaction mode, where
   prepared-statement remapping is enabled.
 - [General Settings](../reference/general.md) — `prepared_statements_cache_size`,
-  `client_anonymous_prepared_cache_size`.
+  `client_anonymous_prepared_cache_size`,
+  `query_interner_gc_interval_seconds`,
+  `query_interner_anon_idle_ttl_seconds`.
 - [Admin Commands](../observability/admin-commands.md) — `SHOW PREPARED_STATEMENTS`,
-  `SHOW POOLS_MEMORY`.
+  `SHOW POOLS_MEMORY`, `SHOW INTERNER`, `RESET INTERNER`.
 - [Prometheus](../reference/prometheus.md) — full metric list.

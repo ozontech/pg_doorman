@@ -485,13 +485,68 @@ SELECT count(*) FROM pg_prepared_statements;
 ослабляет давление на память планов ценой более частых перепарсингов
 на backend.
 
+## Ограниченный query interner
+
+Глобальный interner, который дедуплицирует тексты Parse, разделён на
+две независимые карты:
+
+- **NAMED** — тексты для named prepared statements. Запись жива, пока
+  хоть один pool- или client-кэш держит `Arc<str>`-ссылку. GC-таска
+  убирает запись, когда кроме самого interner-а её больше никто не
+  держит, с двухтактовым grace-периодом, чтобы не выбросить запись,
+  на которую ссылку взяли между сменами цикла.
+- **ANON** — тексты для анонимных prepared. Запись истекает после
+  `query_interner_anon_idle_ttl_seconds` бездействия (по умолчанию
+  60 секунд). Значение `0` отключает TTL — это поведение pg_doorman
+  до 3.7, оставленное как escape-hatch для legacy-инсталляций.
+
+Если interner и pool/client-кэши перестали держать текст для
+анонимного prepared до следующего `Bind`, pg_doorman возвращает
+`ERROR: unnamed prepared statement does not exist` (SQLSTATE
+`26000`). Это та же ошибка, которую отдаёт нативный PostgreSQL
+в аналогичной ситуации; стандартные драйверы прозрачно реагируют
+повторным `Parse`.
+
+Бинарный апгрейд (`SIGUSR2`) переносит обе ветви — и NAMED, и ANON —
+в новый процесс. Анонимные записи попадают в новый ANON interner
+со свежим `last_used`, поэтому отсчёт TTL начинается заново в
+момент апгрейда.
+
+### Operator-инструменты
+
+`SHOW INTERNER` (admin SQL) выводит количество и байты по каждой
+половине:
+
+```
+kind      | entries | bytes
+named     |     420 |    87654
+anonymous |    1337 |   234567
+```
+
+`SHOW INTERNER N` возвращает топ N записей по длине текста с
+колонками `hash`, `kind`, `bytes`, `idle_ms` (`-1` для named —
+named-половина отслеживает GC-state, а не last-used) и 120-символьный
+preview SQL.
+
+`RESET INTERNER` чистит обе половины. Активные клиенты делают
+повторный Parse при следующем использовании — команда диагностическая.
+
+Prometheus-поверхность отражает `SHOW INTERNER` плюс гистограмму
+длительности sweep'а и счётчик синтетических `26000`. Поднимайте
+`query_interner_anon_idle_ttl_seconds`, если
+`pg_doorman_query_interner_synthetic_misses_total` показывает
+устойчивую ненулевую скорость.
+
 ## Справочник
 
 - [Режимы пула](../concepts/pool-modes.md) — transaction mode, где
   работает подмена prepared statements.
 - [Общие настройки](../reference/general.md) —
   `prepared_statements_cache_size`,
-  `client_anonymous_prepared_cache_size`.
+  `client_anonymous_prepared_cache_size`,
+  `query_interner_gc_interval_seconds`,
+  `query_interner_anon_idle_ttl_seconds`.
 - [Admin-команды](../observability/admin-commands.md) —
-  `SHOW PREPARED_STATEMENTS`, `SHOW POOLS_MEMORY`.
+  `SHOW PREPARED_STATEMENTS`, `SHOW POOLS_MEMORY`,
+  `SHOW INTERNER`, `RESET INTERNER`.
 - [Prometheus](../reference/prometheus.md) — полный список метрик.
