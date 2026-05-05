@@ -135,15 +135,22 @@ PgDoorman держит состояние prepared statements на трёх ур
                 Размер:    prepared_statements_cache_size (default 8192).
                 Выселение: approximate LRU.
 
-  Client-level  AHashMap или LruCache, на клиента.
-                Маппит Named(client_name) | Anonymous(hash) → CachedStatement.
-                Размер:   client_prepared_statements_cache_size
-                          (default 0 = unlimited).
+  Client-level  Named:     AHashMap<String, CachedStatement>, без лимита.
+                Anonymous: LruCache<u64, CachedStatement> ограничен
+                           client_anonymous_prepared_cache_size (default 256),
+                           или AHashMap при размере 0.
+                Выселение Anonymous локальное: Arc<Parse> дропается,
+                DOORMAN_<N> на бекенде остаётся.
 
   Server-level  LruCache<String, ()>, на backend-соединение.
                 Запоминает, какие DOORMAN_N этот backend уже держит.
                 True LRU; при выселении отправляет Close на backend.
 ```
+
+При выселении записи из Anonymous LRU PgDoorman дропает локальную
+ссылку и не отправляет `Close` на бекенд. Соответствующий
+`DOORMAN_<N>` будет переиспользован server-level LRU или закроется по
+`server_lifetime` (default 20 минут) — что наступит раньше.
 
 Текст запроса интернируется через `Arc<str>`: десять клиентов с
 одним и тем же анонимным запросом делят одну аллокацию в памяти.
@@ -205,10 +212,13 @@ statement; на анонимный трафик он не влияет. PgCat в
 
 ## Конфигурация
 
-| Параметр                                 | Default | Эффект                                                  |
-| ---------------------------------------- | :-----: | ------------------------------------------------------- |
-| `prepared_statements_cache_size`         | 8192    | Размер pool-level кеша в записях. 0 отключает подмену.  |
-| `client_prepared_statements_cache_size`  | 0       | Размер per-client кеша. 0 = unlimited (LRU выключен).   |
+| Параметр                                 | Default | Эффект                                                                  |
+| ---------------------------------------- | :-----: | ----------------------------------------------------------------------- |
+| `prepared_statements_cache_size`         | 8192    | Размер pool-level кеша в записях. 0 отключает подмену.                  |
+| `client_anonymous_prepared_cache_size`   | 256     | Размер per-client Anonymous LRU. 0 = unlimited. Named всегда без лимита.|
+
+Named-часть per-client кеша всегда без лимита и не зависит от
+`client_anonymous_prepared_cache_size`.
 
 Полностью отключить подмену анонимных (редко, для OLAP-only):
 
@@ -266,7 +276,7 @@ Prometheus-метрики (полный список в [Prometheus](../referenc
   работает подмена prepared statements.
 - [Общие настройки](../reference/general.md) —
   `prepared_statements_cache_size`,
-  `client_prepared_statements_cache_size`.
+  `client_anonymous_prepared_cache_size`.
 - [Admin-команды](../observability/admin-commands.md) —
   `SHOW PREPARED_STATEMENTS`, `SHOW POOLS_MEMORY`.
 - [Prometheus](../reference/prometheus.md) — полный список метрик.

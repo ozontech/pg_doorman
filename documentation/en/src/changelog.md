@@ -1,5 +1,25 @@
 # Changelog
 
+### Unreleased
+
+#### Added
+
+- `client_anonymous_prepared_cache_size` (default `256`) bounds the Anonymous part of the per-client prepared-statement cache. Named statements remain unbounded.
+- `kind` column in `SHOW PREPARED_STATEMENTS` (`named` / `anonymous` / `mixed`) reflects how clients have used each pool entry.
+- `client_named_count`, `client_anonymous_count`, and `client_anonymous_evictions` columns in `SHOW POOLS_MEMORY`.
+- New Prometheus metrics:
+    - `pg_doorman_clients_prepared_named_entries`
+    - `pg_doorman_clients_prepared_anonymous_entries`
+    - `pg_doorman_clients_prepared_anonymous_evictions_total`
+
+#### Changed
+
+- The per-client prepared-statement cache is split into two maps: Named (unbounded) and Anonymous (LRU). This fixes a bug where the previous combined LRU could evict a Named entry and cause the next `Bind` to fail with `prepared statement does not exist`.
+
+#### Removed
+
+- `client_prepared_statements_cache_size` is removed. The setting is silently ignored if it is still present in user configs (the new field takes its place). Operators who tuned that value should migrate to `client_anonymous_prepared_cache_size`.
+
 ### 3.6.5 <small>May 4, 2026</small>
 
 #### Fix: stuck `cl_active/sv_active` after large DataRow client disconnect under pressure

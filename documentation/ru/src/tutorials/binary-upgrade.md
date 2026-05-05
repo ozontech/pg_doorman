@@ -178,9 +178,9 @@ Shutdown timer опрашивает `CURRENT_CLIENT_COUNT` каждые 250 мс
 
 **Ограничения:**
 
-- Если `client_prepared_statements_cache_size` нового конфига меньше,
-  чем количество entries у клиента -- лишние вытесняются (LRU).
-  Оставшиеся работают нормально.
+- Если `client_anonymous_prepared_cache_size` нового конфига меньше --
+  лишние Anonymous-записи вытесняются (LRU). Named-часть без лимита и
+  переживает миграцию полностью. Оставшиеся entries работают нормально.
 - Anonymous prepared statements (`Parse` с пустым именем) переживают
   миграцию, но требуют повторного `Parse` перед `Bind` в новом процессе.
 - `DEALLOCATE ALL` после миграции очищает переданный кэш. Повторный
@@ -373,11 +373,12 @@ Pool-level кэш prepared statements. Напрямую на миграцию н
 влияет, но pool cache в новом процессе должен быть достаточного
 размера для entries от мигрированных клиентов.
 
-### `client_prepared_statements_cache_size`
+### `client_anonymous_prepared_cache_size`
 
-Per-client кэш prepared statements. Клиентский кэш сериализуется
-полностью при миграции. Если новый конфиг имеет меньшее значение --
-LRU вытесняет лишние записи.
+Per-client Anonymous LRU. Клиентский кэш (и Named, и Anonymous)
+сериализуется полностью при миграции. Если новый конфиг имеет
+меньшее значение -- LRU вытесняет лишние Anonymous-записи; Named без
+лимита и мигрирует целиком.
 
 ## Мониторинг
 

@@ -134,15 +134,23 @@ PgDoorman keeps prepared-statement state at three levels:
                 Size:    prepared_statements_cache_size (default 8192).
                 Eviction: approximate LRU.
 
-  Client-level  AHashMap or LruCache, per client.
-                Maps Named(client_name) | Anonymous(hash) → CachedStatement.
-                Size:    client_prepared_statements_cache_size
-                         (default 0 = unlimited).
+  Client-level  Named:     AHashMap<String, CachedStatement>, unbounded.
+                Anonymous: LruCache<u64, CachedStatement> bounded by
+                           client_anonymous_prepared_cache_size (default 256),
+                           or AHashMap if size = 0.
+                Eviction of an Anonymous entry is local: the Arc<Parse>
+                is dropped, the underlying DOORMAN_<N> on the backend
+                stays.
 
   Server-level  LruCache<String, ()>, per backend connection.
                 Tracks which DOORMAN_N this backend already holds.
                 True LRU; on eviction issues Close to the backend.
 ```
+
+When the Anonymous LRU evicts an entry, PgDoorman drops the local
+reference and does not send `Close` to the backend. The underlying
+`DOORMAN_<N>` is recycled by the server-level LRU or `server_lifetime`
+(default 20 min), whichever comes first.
 
 The query text itself is interned via `Arc<str>`: ten clients sending
 the same anonymous query share one allocation in memory.
@@ -202,10 +210,13 @@ provides.
 
 ## Configuration
 
-| Setting                                  | Default | Effect                                                |
-| ---------------------------------------- | :-----: | ----------------------------------------------------- |
-| `prepared_statements_cache_size`         | 8192    | Pool-level cache size in entries. 0 disables remap.   |
-| `client_prepared_statements_cache_size`  | 0       | Per-client cache size. 0 = unlimited (LRU disabled).  |
+| Setting                                  | Default | Effect                                                            |
+| ---------------------------------------- | :-----: | ----------------------------------------------------------------- |
+| `prepared_statements_cache_size`         | 8192    | Pool-level cache size in entries. 0 disables remap.               |
+| `client_anonymous_prepared_cache_size`   | 256     | Per-client Anonymous LRU size. 0 = unlimited. Named is unbounded. |
+
+The Named part of the per-client cache is always unlimited and is not
+affected by `client_anonymous_prepared_cache_size`.
 
 To disable anonymous remap entirely (rare, for OLAP-only deployments):
 
@@ -262,7 +273,7 @@ Prometheus metrics (full list in [Prometheus](../reference/prometheus.md)):
 - [Pool Modes](../concepts/pool-modes.md) — transaction mode, where
   prepared-statement remapping is enabled.
 - [General Settings](../reference/general.md) — `prepared_statements_cache_size`,
-  `client_prepared_statements_cache_size`.
+  `client_anonymous_prepared_cache_size`.
 - [Admin Commands](../observability/admin-commands.md) — `SHOW PREPARED_STATEMENTS`,
   `SHOW POOLS_MEMORY`.
 - [Prometheus](../reference/prometheus.md) — full metric list.

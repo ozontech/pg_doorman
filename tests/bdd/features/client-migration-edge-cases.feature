@@ -339,7 +339,7 @@ Feature: Client migration edge cases during binary upgrade
       pool_mode = "transaction"
       shutdown_timeout = 5000
       prepared_statements_cache_size = 100
-      client_prepared_statements_cache_size = 3
+      client_anonymous_prepared_cache_size = 3
       [pools.example_db]
       server_host = "127.0.0.1"
       server_port = ${PG_PORT}
