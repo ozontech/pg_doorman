@@ -108,8 +108,8 @@ PgCat намеренно опущен: у него центр тяжести —
 | Управление уровнем логов в рантайме (`SET log_level`) | Да | Нет | Нет |
 | `SHOW POOL_COORDINATOR` / `SHOW POOL_SCALING` / `SHOW SOCKETS` | Да | Нет | Нет |
 | `SHOW PREPARED_STATEMENTS` | Да | Нет | Нет |
-| `SHOW INTERNER` (записи / байты / preview по половинам) | Да | Нет | Нет |
-| Ограниченный prepared-кеш (TTL у анонимных, per-client LRU split) | Да | Нет (только named, неограниченный `max_prepared_statements`) | Нет |
+| `SHOW INTERNER` (записи / байты / предпросмотр по половинам) | Да | Нет | Нет |
+| Ограниченный prepared-кеш (TTL у анонимных, клиентский LRU с разделением Named/Anonymous) | Да | Нет (только named, неограниченный `max_prepared_statements`) | Нет |
 | `SHOW HOSTS` (CPU/память хоста) | Нет | Нет | Да |
 | `SHOW RULES` (дамп активной маршрутизации) | Нет | Нет | Да |
 | Метрики server-side TLS-соединений (длительность handshake, ошибки, активные) | Да | Нет | Нет |
