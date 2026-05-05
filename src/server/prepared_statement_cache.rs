@@ -1,11 +1,31 @@
 use dashmap::DashMap;
 use log::info;
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::messages::Parse;
 use crate::utils::dashmap::new_dashmap_with_capacity;
+
+/// Worker-thread hint for the lazy interner DashMaps. `run_server` calls
+/// `set_interner_worker_threads(config.general.worker_threads)` before any
+/// client can reach `intern_query`, so the first `Lazy::deref` picks the
+/// right shard count via `new_dashmap_with_capacity` (same helper the rest
+/// of the project uses to dodge the dashmap-default-cgroup mismatch in
+/// k8s deployments). Initialised to 0 so `Lazy::new` outside `run_server`
+/// (tests, fallback paths) still gets the helper's `max(1)` floor.
+static INTERNER_WORKER_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+/// Setter for the interner shard hint; call once at startup, before any
+/// client traffic. Subsequent calls are ignored once the lazy maps have
+/// initialised.
+pub fn set_interner_worker_threads(worker_threads: usize) {
+    INTERNER_WORKER_THREADS.store(worker_threads, Ordering::SeqCst);
+}
+
+fn interner_worker_threads() -> usize {
+    INTERNER_WORKER_THREADS.load(Ordering::SeqCst).max(1)
+}
 
 /// GC bookkeeping flag. Two-cycle mark-and-sweep: a candidate entry is
 /// flipped to `MARKED` on one sweep and removed on the next sweep that
@@ -82,9 +102,9 @@ impl AnonEntry {
 /// anonymous lives in both maps with independent `Arc<str>` allocations —
 /// dedup loss in this rare case is accepted.
 static NAMED_INTERNER: Lazy<DashMap<u64, Arc<NamedEntry>>> =
-    Lazy::new(|| DashMap::with_capacity(8192));
+    Lazy::new(|| new_dashmap_with_capacity(8192, interner_worker_threads()));
 static ANON_INTERNER: Lazy<DashMap<u64, Arc<AnonEntry>>> =
-    Lazy::new(|| DashMap::with_capacity(8192));
+    Lazy::new(|| new_dashmap_with_capacity(8192, interner_worker_threads()));
 
 /// Monotonic millisecond clock anchored at the first call. Used by
 /// `AnonEntry::last_used` so wall-clock jumps don't perturb TTL decisions.
@@ -183,40 +203,65 @@ pub struct GcStats {
     pub bytes: u64,
 }
 
-/// Mark-and-sweep over `NAMED_INTERNER`. A named entry is a candidate when
-/// `Arc::strong_count(text) == 1` — only the interner itself holds the
-/// `Arc<str>`. The candidate is marked on cycle N; if it's still a
-/// candidate on cycle N+1 (no `intern_query` touched it in between), it
-/// is removed. The grace cycle prevents thrash on cold-but-still-needed
-/// hashes that would otherwise be reallocated on the very next Parse.
+/// Apply one mark-and-sweep step to a single entry. Returns the byte
+/// length the caller should fold into the live-bytes total.
 ///
 /// Race invariant (do not collapse the two-cycle grace into a single
-/// cycle): between the `strong_count` read and the `swap(MARKED)` a
+/// cycle): between the candidacy check and the `swap(MARKED)` a
 /// concurrent `intern_query` may clone an Arc and call `touch()`,
 /// writing ACTIVE. This sweep then overwrites ACTIVE with MARKED. The
-/// next sweep observes either `strong_count > 1` (touch path holds the
-/// Arc) and stores ACTIVE, sparing the entry, or the Arc has dropped
-/// and eviction is correct. Removing the grace cycle would let this
-/// race evict a freshly-touched entry on the very next allocation.
+/// next sweep observes either the entry is no longer a candidate (touch
+/// path holds the Arc / refreshed last_used) and stores ACTIVE, sparing
+/// the entry, or the candidacy still holds and eviction is correct.
+/// Removing the grace cycle would let this race evict a freshly-touched
+/// entry on the very next allocation.
+fn sweep_entry<F>(
+    is_candidate: bool,
+    gc_state: &AtomicU8,
+    text_len: u64,
+    stats: &mut GcStats,
+    remove: F,
+) -> bool
+where
+    F: FnOnce() -> bool,
+{
+    if !is_candidate {
+        gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
+        stats.bytes += text_len;
+        return false;
+    }
+    let prev = gc_state.swap(GC_STATE_MARKED, Ordering::Relaxed);
+    if prev == GC_STATE_MARKED && remove() {
+        stats.evicted += 1;
+        true
+    } else if prev == GC_STATE_ACTIVE {
+        stats.marked += 1;
+        stats.bytes += text_len;
+        false
+    } else {
+        // Already MARKED but `remove` lost the race to a concurrent
+        // remove. The entry will not appear in the next snapshot.
+        stats.bytes += text_len;
+        false
+    }
+}
+
+/// Mark-and-sweep over `NAMED_INTERNER`. A named entry is a candidate
+/// when `Arc::strong_count(text) == 1` — only the interner itself holds
+/// the `Arc<str>`. The candidate is marked on cycle N; if it's still a
+/// candidate on cycle N+1 (no `intern_query` touched it in between),
+/// it's removed. The grace cycle prevents thrash on cold-but-still-needed
+/// hashes that would otherwise be reallocated on the very next Parse.
 pub fn gc_sweep_named() -> GcStats {
     let mut stats = GcStats::default();
     for (hash, entry) in named_snapshot() {
-        if Arc::strong_count(&entry.text) > 1 {
-            entry.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
-            stats.bytes += entry.text.len() as u64;
-            continue;
-        }
-        let prev = entry.gc_state.swap(GC_STATE_MARKED, Ordering::Relaxed);
-        if prev == GC_STATE_MARKED && NAMED_INTERNER.remove(&hash).is_some() {
-            stats.evicted += 1;
-        } else if prev == GC_STATE_ACTIVE {
-            stats.marked += 1;
-            stats.bytes += entry.text.len() as u64;
-        } else {
-            // Already MARKED but not removed (concurrent remove won the
-            // race). Entry will not be in the next snapshot.
-            stats.bytes += entry.text.len() as u64;
-        }
+        sweep_entry(
+            Arc::strong_count(&entry.text) == 1,
+            &entry.gc_state,
+            entry.text.len() as u64,
+            &mut stats,
+            || NAMED_INTERNER.remove(&hash).is_some(),
+        );
     }
     stats
 }
@@ -230,20 +275,13 @@ pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
     let now = now_monotonic_ms();
     let mut stats = GcStats::default();
     for (hash, entry) in anon_snapshot() {
-        if entry.idle_ms(now) <= anon_idle_ttl_ms {
-            entry.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
-            stats.bytes += entry.text.len() as u64;
-            continue;
-        }
-        let prev = entry.gc_state.swap(GC_STATE_MARKED, Ordering::Relaxed);
-        if prev == GC_STATE_MARKED && ANON_INTERNER.remove(&hash).is_some() {
-            stats.evicted += 1;
-        } else if prev == GC_STATE_ACTIVE {
-            stats.marked += 1;
-            stats.bytes += entry.text.len() as u64;
-        } else {
-            stats.bytes += entry.text.len() as u64;
-        }
+        sweep_entry(
+            entry.idle_ms(now) > anon_idle_ttl_ms,
+            &entry.gc_state,
+            entry.text.len() as u64,
+            &mut stats,
+            || ANON_INTERNER.remove(&hash).is_some(),
+        );
     }
     stats
 }
@@ -501,8 +539,12 @@ impl PreparedStatementCache {
                     ""
                 };
                 info!(
-                    "Pool cache eviction: hash={:#x}, name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
-                    key, entry.parse.name, self.cache.len(), self.max_size,
+                    "Pool cache eviction: hash={:#x}, kind={}, name={}, query=\"{truncated}{ellipsis}\", size={}/{}",
+                    key,
+                    entry.kind().as_str(),
+                    entry.parse.name,
+                    self.cache.len(),
+                    self.max_size,
                 );
             }
         }

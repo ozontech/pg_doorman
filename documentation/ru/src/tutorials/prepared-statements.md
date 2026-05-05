@@ -418,9 +418,11 @@ Admin-команды:
   `client_prepared_count`, `pool_prepared_bytes`,
   `client_prepared_bytes` плюс разбивка по kind:
   `client_named_count`, `client_anonymous_count`,
-  `client_anonymous_evictions_total`. Суффикс `_total` отмечает
-  последнюю колонку как счётчик (нарастающий с момента старта пула)
-  в отличие от gauge-колонок слева.
+  `client_anonymous_evictions_alive`. Последняя колонка суммирует
+  счётчики вытеснений только по подключённым сейчас клиентам —
+  отключившиеся клиенты выпадают из суммы, поэтому колонка не
+  монотонна. Для накопительного счётчика читайте Prometheus-метрику
+  `pg_doorman_clients_prepared_anonymous_evictions_total`.
 
 Prometheus-метрики (полный список в [Prometheus](../reference/prometheus.md)):
 

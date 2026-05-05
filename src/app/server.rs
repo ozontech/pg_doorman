@@ -257,6 +257,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
 
         config.show();
 
+        // Pin the shard count of the global query interners before any
+        // client traffic can reach `intern_query`. The lazy DashMaps pick
+        // this up on first deref via `new_dashmap_with_capacity`, matching
+        // the rest of the project's k8s-safe sharding policy.
+        crate::server::set_interner_worker_threads(config.general.worker_threads);
+
         // Tracks which client is connected to which server for query cancellation.
         let client_server_map: ClientServerMap =
             Arc::new(crate::utils::dashmap::new_dashmap(config.general.worker_threads));

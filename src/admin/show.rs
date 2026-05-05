@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
 
@@ -255,18 +256,36 @@ where
     res.put(row_description(&columns));
 
     let now = now_monotonic_ms();
-    let mut combined: Vec<(u64, &'static str, usize, i64, String)> = Vec::new();
+    // Collect bytes and idle metadata only; preview is built lazily for
+    // the surviving N entries so a `SHOW INTERNER N` against a 100k-entry
+    // interner doesn't allocate 100k previews just to discard most of
+    // them after sorting.
+    enum InternerHandle {
+        Named(Arc<crate::server::NamedEntry>),
+        Anon(Arc<crate::server::AnonEntry>),
+    }
+    let mut combined: Vec<(u64, &'static str, usize, i64, InternerHandle)> = Vec::new();
     for (hash, entry) in named_snapshot() {
-        let preview: String = entry.text().chars().take(120).collect();
-        combined.push((hash, "named", entry.text().len(), -1, preview));
+        combined.push((
+            hash,
+            "named",
+            entry.text().len(),
+            -1,
+            InternerHandle::Named(entry),
+        ));
     }
     for (hash, entry) in anon_snapshot() {
-        let preview: String = entry.text().chars().take(120).collect();
         let idle = entry.idle_ms(now) as i64;
-        combined.push((hash, "anonymous", entry.text().len(), idle, preview));
+        let bytes = entry.text().len();
+        combined.push((hash, "anonymous", bytes, idle, InternerHandle::Anon(entry)));
     }
     combined.sort_by_key(|r| std::cmp::Reverse(r.2));
-    for (hash, kind, bytes, idle, preview) in combined.into_iter().take(n) {
+    for (hash, kind, bytes, idle, handle) in combined.into_iter().take(n) {
+        let text = match handle {
+            InternerHandle::Named(e) => e.text().clone(),
+            InternerHandle::Anon(e) => e.text().clone(),
+        };
+        let preview: String = text.chars().take(120).collect();
         res.put(data_row(&[
             format!("{hash:#x}"),
             kind.to_string(),

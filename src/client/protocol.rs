@@ -680,7 +680,13 @@ where
         // Track Close operation for correct ParseComplete insertion order
         self.prepared.batch_operations.push(BatchOperation::Close);
 
-        // Remove from prepared statements cache if it's a named prepared statement
+        // Remove from the per-client cache only for named statements.
+        // Anonymous Close (`Close S ''`) is rare in real driver traffic
+        // — drivers either reuse the unnamed slot or send a fresh Parse
+        // — and `last_anonymous_hash` is overwritten by the next
+        // anonymous Parse anyway, so dropping the cache entry on Close
+        // would race against in-flight Bind targets that point at the
+        // same hash. Leave the entry to expire via the per-client LRU.
         if self.prepared.enabled && close.is_prepared_statement() && !close.anonymous() {
             let key = PreparedStatementKey::Named(close.name.clone());
             self.prepared.cache.pop(&key);

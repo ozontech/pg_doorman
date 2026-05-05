@@ -411,9 +411,12 @@ Admin commands:
   `client_prepared_count`, `pool_prepared_bytes`,
   `client_prepared_bytes`, plus the breakdown by kind:
   `client_named_count`, `client_anonymous_count`,
-  `client_anonymous_evictions_total`. The `_total` suffix marks the
-  last column as a counter (cumulative since pool start), distinct
-  from the gauge columns to its left.
+  `client_anonymous_evictions_alive`. The last column sums the
+  per-client eviction counters across the currently connected
+  clients only — disconnected clients drop out of the sum, so this
+  column is *not* monotonic. For the cumulative counter, scrape
+  `pg_doorman_clients_prepared_anonymous_evictions_total` from the
+  Prometheus surface instead.
 
 Prometheus metrics (full list in [Prometheus](../reference/prometheus.md)):
 

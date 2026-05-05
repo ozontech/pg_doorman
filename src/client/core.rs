@@ -47,6 +47,15 @@ pub enum PreparedStatementKeyRef<'a> {
     Anonymous(u64),
 }
 
+impl<'a> From<&'a PreparedStatementKey> for PreparedStatementKeyRef<'a> {
+    fn from(key: &'a PreparedStatementKey) -> Self {
+        match key {
+            PreparedStatementKey::Named(name) => PreparedStatementKeyRef::Named(name.as_str()),
+            PreparedStatementKey::Anonymous(hash) => PreparedStatementKeyRef::Anonymous(*hash),
+        }
+    }
+}
+
 /// Per-client prepared statement cache, split into two parts:
 ///   - `named`: AHashMap of client-provided statement names. Never evicted
 ///     by the pooler; lifecycle is owned by the client (Close, DEALLOCATE,

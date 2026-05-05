@@ -49,10 +49,12 @@
 - `kind` column appended to `SHOW PREPARED_STATEMENTS`
   (`named` / `anonymous` / `mixed`).
 - `SHOW POOLS_MEMORY` gains `client_named_count`,
-  `client_anonymous_count`, and `client_anonymous_evictions_total`,
-  with matching Prometheus gauges and counter
-  (`pg_doorman_clients_prepared_named_entries`,
-  `..._anonymous_entries`, `..._anonymous_evictions_total`).
+  `client_anonymous_count`, and `client_anonymous_evictions_alive`
+  (a gauge of evictions across currently connected clients; the
+  authoritative cumulative counter lives in Prometheus as
+  `pg_doorman_clients_prepared_anonymous_evictions_total`). The
+  matching gauges `pg_doorman_clients_prepared_named_entries` /
+  `..._anonymous_entries` round out the surface.
 
 #### Changed
 

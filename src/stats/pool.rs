@@ -157,9 +157,12 @@ pub struct PoolStats {
     /// Total number of Anonymous entries across all clients' prepared statement caches
     pub client_anonymous_count: u64,
 
-    /// Cumulative count of Anonymous LRU evictions across all clients' caches.
-    /// A sustained non-zero rate indicates `client_anonymous_prepared_cache_size`
-    /// is too small for the workload.
+    /// Anonymous LRU evictions summed only across the currently alive
+    /// clients in the pool. Disconnected clients drop out of the sum,
+    /// so this column is *not* monotonic over time. The authoritative
+    /// cumulative counter is the
+    /// `pg_doorman_clients_prepared_anonymous_evictions_total`
+    /// Prometheus metric, which keeps history past disconnect.
     pub client_anonymous_evictions: u64,
 
     /// Number of async clients (using Flush instead of Sync)
@@ -413,7 +416,7 @@ impl PoolStats {
             ("client_prepared_bytes", DataType::Numeric),
             ("client_named_count", DataType::Numeric),
             ("client_anonymous_count", DataType::Numeric),
-            ("client_anonymous_evictions_total", DataType::Numeric),
+            ("client_anonymous_evictions_alive", DataType::Numeric),
             ("async_clients", DataType::Numeric),
         ]
     }
