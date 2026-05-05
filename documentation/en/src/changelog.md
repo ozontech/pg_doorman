@@ -2,6 +2,15 @@
 
 ### Unreleased
 
+3.7.0 makes the prepared-statement cache bounded and observable: the
+query interner is split into NAMED (passive GC) and ANON (idle TTL),
+the per-client cache is split into Named (unbounded) and Anonymous
+(LRU), and `SHOW INTERNER` plus five `pg_doorman_query_interner_*`
+metrics expose entries, bytes, evictions, and GC duration. `Bind`
+against an expired anonymous statement now returns SQLSTATE `26000`
+(was `58000`), matching PostgreSQL so standard drivers re-`Parse`
+transparently.
+
 #### Added
 
 - The global query interner is split into NAMED and ANON halves. NAMED
