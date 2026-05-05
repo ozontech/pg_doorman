@@ -11,7 +11,7 @@ use crate::client::buffer_pool::PooledBuffer;
 use crate::messages::{error_response, Parse};
 use crate::pool::{get_pool, ClientServerMap, ConnectionPool};
 use crate::server::ServerParameters;
-use crate::stats::{ClientStats, ServerStats};
+use crate::stats::{ClientStats, PreparedCacheSnapshot, ServerStats};
 
 /// Key for prepared statement cache - avoids string allocations for anonymous statements
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -433,12 +433,6 @@ impl PreparedStatementState {
         self.processed_response_counts.clear();
     }
 
-    /// Returns the total number of entries (Named + Anonymous) in the cache.
-    #[inline(always)]
-    pub fn cache_count(&self) -> usize {
-        self.cache.len()
-    }
-
     /// Returns the number of Named entries in the cache.
     /// Used by SHOW POOLS_MEMORY and Prometheus to break down per-client cache.
     #[inline(always)]
@@ -625,13 +619,13 @@ where
     /// Should be called after any modification to prepared.cache.
     #[inline(always)]
     pub(crate) fn update_prepared_cache_stats(&self) {
-        self.stats.set_prepared_cache_stats(
-            self.prepared.cache_count() as u64,
-            self.prepared.cache_memory_usage() as u64,
-            self.prepared.named_count() as u64,
-            self.prepared.anonymous_count() as u64,
-            self.prepared.anonymous_evictions(),
-        );
+        self.stats
+            .set_prepared_cache_stats(PreparedCacheSnapshot::new(
+                self.prepared.cache_memory_usage() as u64,
+                self.prepared.named_count() as u64,
+                self.prepared.anonymous_count() as u64,
+                self.prepared.anonymous_evictions(),
+            ));
     }
 
     /// Number of Named entries in this client's prepared statement cache.

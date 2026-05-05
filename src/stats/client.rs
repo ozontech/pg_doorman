@@ -29,6 +29,46 @@ iota! {
         , CLIENT_WAIT_WRITE
 }
 
+/// Snapshot of per-client prepared cache state pushed from the
+/// client into ClientStats atomics.
+///
+/// Use `PreparedCacheSnapshot::new` to build instances; the constructor
+/// computes `total_count` as `named_count + anonymous_count`, ensuring the
+/// invariant the setter relies on. Hand-built literals are caught by a
+/// `debug_assert!` in `ClientStats::set_prepared_cache_stats`.
+#[derive(Debug, Clone, Copy)]
+pub struct PreparedCacheSnapshot {
+    /// Total entries in the client cache. Must equal `named_count + anonymous_count`.
+    pub total_count: u64,
+    /// Approximate memory footprint of the cache in bytes.
+    pub total_bytes: u64,
+    /// Entries created via Named Parse (have a non-empty statement name).
+    pub named_count: u64,
+    /// Entries created via Anonymous Parse (empty statement name) and held in LRU.
+    pub anonymous_count: u64,
+    /// Monotonic counter of Anonymous LRU evictions for this client.
+    pub anonymous_evictions: u64,
+}
+
+impl PreparedCacheSnapshot {
+    /// Builds a snapshot whose `total_count` equals `named_count + anonymous_count`
+    /// by construction.
+    pub fn new(
+        total_bytes: u64,
+        named_count: u64,
+        anonymous_count: u64,
+        anonymous_evictions: u64,
+    ) -> Self {
+        Self {
+            total_count: named_count + anonymous_count,
+            total_bytes,
+            named_count,
+            anonymous_count,
+            anonymous_evictions,
+        }
+    }
+}
+
 /// Statistics and state information for a client connection.
 ///
 /// This struct tracks various metrics and state information for a client connection
@@ -395,25 +435,30 @@ impl ClientStats {
 
     /// Updates the prepared statement cache metrics.
     /// Called when adding or removing entries from the client's prepared statement cache.
-    /// `count` must equal `named + anonymous`; we still store all three so SHOW
-    /// POOLS_MEMORY can read the breakdown atomically without recomputing the sum.
-    /// `evictions` is the monotonic per-client Anonymous LRU eviction counter.
+    /// The snapshot stores `total_count`, `named_count`, and `anonymous_count`
+    /// so SHOW POOLS_MEMORY can read the breakdown atomically without recomputing the sum.
+    /// `anonymous_evictions` is the monotonic per-client Anonymous LRU eviction counter.
+    ///
+    /// Building the snapshot via `PreparedCacheSnapshot::new` guarantees the
+    /// `total_count == named_count + anonymous_count` invariant by construction.
+    /// A `debug_assert!` guards against hand-built snapshots that skip the constructor.
     #[inline(always)]
-    pub fn set_prepared_cache_stats(
-        &self,
-        count: u64,
-        bytes: u64,
-        named: u64,
-        anonymous: u64,
-        evictions: u64,
-    ) {
-        self.prepared_cache_count.store(count, Ordering::Relaxed);
-        self.prepared_cache_bytes.store(bytes, Ordering::Relaxed);
-        self.prepared_named_count.store(named, Ordering::Relaxed);
+    pub fn set_prepared_cache_stats(&self, snap: PreparedCacheSnapshot) {
+        debug_assert_eq!(
+            snap.total_count,
+            snap.named_count + snap.anonymous_count,
+            "PreparedCacheSnapshot.total_count must equal named_count + anonymous_count",
+        );
+        self.prepared_cache_count
+            .store(snap.total_count, Ordering::Relaxed);
+        self.prepared_cache_bytes
+            .store(snap.total_bytes, Ordering::Relaxed);
+        self.prepared_named_count
+            .store(snap.named_count, Ordering::Relaxed);
         self.prepared_anonymous_count
-            .store(anonymous, Ordering::Relaxed);
+            .store(snap.anonymous_count, Ordering::Relaxed);
         self.prepared_anonymous_evictions
-            .store(evictions, Ordering::Relaxed);
+            .store(snap.anonymous_evictions, Ordering::Relaxed);
     }
 
     /// Returns the number of entries in the client's prepared statement cache.
@@ -673,5 +718,36 @@ mod tests {
         assert_eq!(stats.ipaddr(), "127.0.0.1");
         assert_eq!(stats.connect_time(), now);
         assert!(stats.tls());
+    }
+
+    #[test]
+    fn prepared_cache_snapshot_total_count_is_sum() {
+        // PreparedCacheSnapshot::new must compute total_count as named + anonymous;
+        // this is the structural guarantee the setter relies on.
+        let snap = PreparedCacheSnapshot::new(1024, 5, 7, 0);
+        assert_eq!(snap.total_count, 12);
+        assert_eq!(snap.total_bytes, 1024);
+        assert_eq!(snap.named_count, 5);
+        assert_eq!(snap.anonymous_count, 7);
+        assert_eq!(snap.anonymous_evictions, 0);
+    }
+
+    // Hand-built snapshots that violate total_count == named + anonymous must
+    // trip the debug_assert! inside the setter. The check fires only in debug
+    // builds, so the test is gated on debug_assertions to stay green under
+    // `cargo test --release`.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "total_count must equal named_count + anonymous_count")]
+    fn snapshot_setter_rejects_inconsistent_count() {
+        let stats = ClientStats::default();
+        let bogus = PreparedCacheSnapshot {
+            total_count: 999,
+            total_bytes: 0,
+            named_count: 5,
+            anonymous_count: 7,
+            anonymous_evictions: 0,
+        };
+        stats.set_prepared_cache_stats(bogus);
     }
 }
