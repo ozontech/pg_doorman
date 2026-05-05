@@ -204,6 +204,19 @@
 <p><a href="tutorials/binary-upgrade.html">Подробнее →</a></p>
 </div>
 </div>
+<div id="admonition-Кеш-плана-для-анонимных-prepared-statements" class="admonition admonish-success" role="note" aria-labelledby="admonition-Кеш-плана-для-анонимных-prepared-statements-title">
+<div class="admonition-title">
+<div id="admonition-Кеш-плана-для-анонимных-prepared-statements-title">
+<p>Кеш плана для анонимных prepared statements</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-Кеш-плана-для-анонимных-prepared-statements"></a>
+</div>
+<div>
+<p>PostgreSQL не кеширует план анонимных prepared statements (<code>Parse</code> с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый <code>Bind</code> заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное <code>DOORMAN_&lt;N&gt;</code> на бекенде, и план попадает в named-registry бекенда — переиспользуется между <code>Bind</code>'ами одного клиента и между клиентами, делящими пул.</p>
+<p>PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для <strong>именованных</strong> statement; анонимный <code>Parse</code> пробрасывается без изменений и каждый раз перепланируется. PgDoorman — единственный пулер, который кеширует план анонимного трафика.</p>
+<p><a href="tutorials/prepared-statements.html">Подробнее →</a></p>
+</div>
+</div>
 <h2 id="Почему-pgdoorman"><a class="header" href="#Почему-pgdoorman">Почему PgDoorman</a></h2>
 <ul>
 <li><strong>Prepared statements в transaction mode.</strong> PgDoorman переименовывает клиентские statement names в <code>DOORMAN_N</code> и ведёт кеш на трёх уровнях — pool, client, backend. Драйверы видят свои имена, backend'ы — переименованные. Никаких прикладных <code>DEALLOCATE</code>, никаких <code>DISCARD ALL</code>.</li>

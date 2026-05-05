@@ -202,6 +202,19 @@
 <p><a href="tutorials/binary-upgrade.html">Read more →</a></p>
 </div>
 </div>
+<div id="admonition-anonymous-prepared-statement-caching" class="admonition admonish-success" role="note" aria-labelledby="admonition-anonymous-prepared-statement-caching-title">
+<div class="admonition-title">
+<div id="admonition-anonymous-prepared-statement-caching-title">
+<p>Anonymous Prepared Statement Caching</p>
+</div>
+<a class="admonition-anchor-link" href="index.html#admonition-anonymous-prepared-statement-caching"></a>
+</div>
+<div>
+<p>PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-name <code>Parse</code> most drivers send for one-shot parameterised queries) — every <code>Bind</code> re-runs the planner from scratch. PgDoorman transparently rewrites the empty name to an internal <code>DOORMAN_&lt;N&gt;</code> on the backend, so the plan lands in the backend's named prepared registry and gets reused across <code>Bind</code>s of the same client and across clients sharing the pool.</p>
+<p>PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for <strong>named</strong> statements; an anonymous <code>Parse</code> is forwarded as-is and re-planned on every call. PgDoorman is the only pooler that caches the plan for anonymous prepared traffic.</p>
+<p><a href="tutorials/prepared-statements.html">Read more →</a></p>
+</div>
+</div>
 <h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
 <ul>
 <li><strong>Prepared statements in transaction mode.</strong> PgDoorman remaps client statement names to <code>DOORMAN_N</code> and tracks the cache per pool, per client, and per backend. Drivers see their own names; backends see the remapped ones. No app-level <code>DEALLOCATE</code>, no <code>DISCARD ALL</code>.</li>
@@ -1902,6 +1915,235 @@ shared_db   | 80          | 78      | 16           | 2            | 142       | 
 <li>Reading admin output: <a href="concepts/../observability/admin-commands.html">Admin Commands → SHOW POOL_COORDINATOR</a>.</li>
 <li>Pool modes (transaction vs session): <a href="concepts/pool-modes.html">Pool Modes</a>.</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="anonymous-prepared-statement-caching"><a class="header" href="#anonymous-prepared-statement-caching">Anonymous Prepared Statement Caching</a></h1>
+<p>PostgreSQL doesn't cache plans for anonymous prepared statements:
+every <code>Bind</code> re-runs the planner from scratch. PgDoorman fills that
+gap by transparently remapping every anonymous <code>Parse</code> to an internal
+<code>DOORMAN_&lt;N&gt;</code> name on the backend, so the plan lands in the backend's
+named prepared statement registry and gets reused. The reuse spans
+<code>Bind</code>s of one client and <code>Bind</code>s of different clients sharing the
+same pool.</p>
+<p>The remap is transparent to the driver: clients send and receive
+empty statement names just as they would against a vanilla
+PostgreSQL.</p>
+<p>This is a feature unique to PgDoorman. PgBouncer (1.21+) and Odyssey
+support prepared statements in transaction mode, but only for
+<strong>named</strong> statements; anonymous <code>Parse</code> is forwarded unchanged and
+re-planned on every call.</p>
+<h2 id="the-postgresql-baseline"><a class="header" href="#the-postgresql-baseline">The PostgreSQL baseline</a></h2>
+<p>A <code>Parse</code> message carries a statement name. An empty name means
+<strong>anonymous</strong>, anything else means <strong>named</strong>:</p>
+<pre><code class="language-text">                          Lifetime in PG          Plan caching
+  ─────────────────────   ─────────────────       ─────────────────
+  Anonymous (name="")     Until next anonymous    None: planner runs
+                          Parse or session end    on every Bind
+  Named (name="stmt_42")  Until Close /           Generic at first,
+                          DEALLOCATE /            switches to custom
+                          session end             after 5 observations
+</code></pre>
+<p>Most modern drivers default to <strong>anonymous</strong> for one-shot
+parameterised queries: <code>lib/pq</code> (Go), <code>libpq</code> <code>PQexecParams</code> (C),
+some flows in pgjdbc and psycopg. The application code looks
+identical to a parameterised named-statement query, but the wire
+protocol carries an empty name.</p>
+<h2 id="why-this-is-a-problem-for-transaction-mode-pooling"><a class="header" href="#why-this-is-a-problem-for-transaction-mode-pooling">Why this is a problem for transaction-mode pooling</a></h2>
+<p>Transaction pooling rotates a backend among many clients. If the
+pooler forwards the empty <code>Parse</code> name as-is, every client's <code>Bind</code>
+runs against a backend that has no plan cached for that query. Hot
+OLTP paths pay the planner cost on every call.</p>
+<p>Named prepared statements solve plan caching, but they push the
+bookkeeping problem onto the pooler:</p>
+<ul>
+<li>The pooler must remember each client's named statements until the
+client disconnects, even if the pool-level shared cache evicts the
+entry.</li>
+<li>On every <code>Bind</code>, it must verify the current backend knows the
+name and re-<code>Parse</code> otherwise.</li>
+<li>On client disconnect, it must issue <code>Close</code> or <code>DEALLOCATE</code> to the
+right backend.</li>
+<li>Drivers that mint per-query names (<code>stmt_&lt;seq&gt;</code>) compound the
+per-client cache size: hundreds of entries per client times tens of
+thousands of clients.</li>
+</ul>
+<p>So the choice is: give up plan caching for anonymous traffic, or
+inherit the full cost of named-statement bookkeeping. PgDoorman
+takes a third option.</p>
+<h2 id="what-pgdoorman-does-1"><a class="header" href="#what-pgdoorman-does-1">What PgDoorman does</a></h2>
+<p>On every anonymous <code>Parse</code> from the client, PgDoorman:</p>
+<ol>
+<li>Hashes the query text plus parameter type OIDs.</li>
+<li>Looks up the hash in the <strong>pool-level</strong> cache (shared across all
+clients of this pool). On miss, it allocates a fresh
+<code>DOORMAN_&lt;counter&gt;</code> name and registers an <code>Arc&lt;Parse&gt;</code> entry.</li>
+<li>Stores a per-client cache entry keyed by <code>Anonymous(hash)</code> so the
+following <code>Bind</code> can locate the same <code>DOORMAN_&lt;N&gt;</code>.</li>
+<li>Forwards <code>Parse</code> to the backend with the rewritten name.</li>
+<li>On the matching <code>Bind</code> (with empty name), rewrites the statement
+name to <code>DOORMAN_&lt;N&gt;</code> and ensures the current backend already
+holds the named statement; sends a fresh <code>Parse</code> if not.</li>
+</ol>
+<p>The client never sees <code>DOORMAN_&lt;N&gt;</code>: the rewrite lives only on the
+leg between PgDoorman and the backend. When the backend already
+holds the name, PgDoorman synthesises <code>ParseComplete</code> itself and
+skips the round-trip.</p>
+<h3 id="wire-protocol-example"><a class="header" href="#wire-protocol-example">Wire-protocol example</a></h3>
+<p>A Go application running</p>
+<pre><code class="language-go">db.Query("SELECT * FROM t WHERE name = $1", "vasya")
+</code></pre>
+<p>through <code>lib/pq</code> produces this exchange:</p>
+<pre><code class="language-text">  Client                   PgDoorman                  Backend
+  ──────                   ─────────                  ───────
+  Parse("", q)        ────►│ hash, miss → DOORMAN_42
+                            │ pool_cache[hash] = Arc&lt;Parse&gt;
+                            │ client_cache[Anon(hash)] = ...
+                            │             Parse("DOORMAN_42") ────►
+                            │                    ◄── ParseComplete
+                       ◄────│ ParseComplete
+  Bind("", "vasya")   ────►│ rewrite "" → "DOORMAN_42"
+                            │             Bind("DOORMAN_42") ─────►
+                            │             Execute, Sync ──────────►
+                            │                ◄── BindComplete, ...
+                            │                ◄── ReadyForQuery
+                       ◄────│ BindComplete, ...
+</code></pre>
+<p>A second client running the same query in the same pool hits the
+pool cache and skips the backend <code>Parse</code> entirely:</p>
+<pre><code class="language-text">  Client B           PgDoorman                       Backend (same)
+  ────────           ─────────                       ──────────────
+  Parse("", q)  ───►│ hash hit → DOORMAN_42
+                     │ server_cache contains "DOORMAN_42"
+                ◄────│ synthetic ParseComplete       (no message sent)
+  Bind("", v)   ───►│ rewrite "" → "DOORMAN_42"
+                     │           Bind("DOORMAN_42") ────►
+                     │           ...
+</code></pre>
+<h2 id="cache-layers"><a class="header" href="#cache-layers">Cache layers</a></h2>
+<p>PgDoorman keeps prepared-statement state at three levels:</p>
+<pre><code class="language-text">  Pool-level    DashMap&lt;hash, CacheEntry&gt;
+                One per pool. Holds Arc&lt;Parse&gt; with name "DOORMAN_N".
+                Size:    prepared_statements_cache_size (default 8192).
+                Eviction: approximate LRU.
+
+  Client-level  AHashMap or LruCache, per client.
+                Maps Named(client_name) | Anonymous(hash) → CachedStatement.
+                Size:    client_prepared_statements_cache_size
+                         (default 0 = unlimited).
+
+  Server-level  LruCache&lt;String, ()&gt;, per backend connection.
+                Tracks which DOORMAN_N this backend already holds.
+                True LRU; on eviction issues Close to the backend.
+</code></pre>
+<p>The query text itself is interned via <code>Arc&lt;str&gt;</code>: ten clients sending
+the same anonymous query share one allocation in memory.</p>
+<h2 id="when-the-remap-helps"><a class="header" href="#when-the-remap-helps">When the remap helps</a></h2>
+<ul>
+<li><strong>API workloads with a small set of hot queries.</strong> A handful of
+unique <code>SELECT</code> / <code>INSERT</code> shapes shared across thousands of
+clients. Pool-cache hit rate near 100 %, planner runs once per
+backend per query, scales linearly with concurrency.</li>
+<li><strong>Drivers that pin to anonymous prepared.</strong> <code>lib/pq</code>, <code>libpq</code>
+<code>PQexecParams</code>, JDBC's <code>serverPreparedStatementType=NONE</code>. Without
+the remap they would re-plan on every call.</li>
+<li><strong>Mixed pools where named and anonymous coexist.</strong> Anonymous
+statements get the same plan-cache benefit as named ones, without
+growing the per-client client cache.</li>
+</ul>
+<h2 id="when-the-remap-doesnt-help"><a class="header" href="#when-the-remap-doesnt-help">When the remap doesn't help</a></h2>
+<ul>
+<li><strong>Ad-hoc / OLAP traffic.</strong> Each query is unique, so every insert
+triggers an eviction with an O(N) scan. Disable with
+<code>prepared_statements_cache_size = 0</code>.</li>
+<li><strong>Single-statement scripts.</strong> A connect → <code>Parse</code> → 1 <code>Bind</code> →
+disconnect pattern doesn't accumulate enough hits to repay the
+bookkeeping. The overhead per <code>Parse</code> is small (~700 ns) but
+measurable.</li>
+<li><strong>Async drivers in pipeline mode.</strong> Each session gets a unique
+<code>DOORMAN_async_&lt;N&gt;</code> name to avoid name collisions between
+in-flight operations, so the server cache can't reuse entries
+across sessions. The pool-level cache still shares the query text
+across sessions; the backend planner still runs once per session.</li>
+</ul>
+<p>Track effectiveness with the Prometheus counters
+<code>pg_doorman_servers_prepared_hits</code> and
+<code>pg_doorman_servers_prepared_misses</code>. A sustained miss rate above
+30 % means the remap is spending CPU and memory without delivering
+plan-cache reuse. Either disable it or raise
+<code>prepared_statements_cache_size</code>.</p>
+<h2 id="how-other-poolers-handle-this"><a class="header" href="#how-other-poolers-handle-this">How other poolers handle this</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Pooler</th><th style="text-align: left">Plan cache for anonymous Parse</th></tr></thead><tbody>
+<tr><td><strong>PgDoorman</strong></td><td style="text-align: left">Yes: transparent remap to <code>DOORMAN_&lt;N&gt;</code></td></tr>
+<tr><td>PgBouncer 1.21+</td><td style="text-align: left">No: named only, anonymous forwarded unchanged</td></tr>
+<tr><td>Odyssey</td><td style="text-align: left">No: named only, <code>pool_reserve_prepared_statement</code></td></tr>
+<tr><td>PgCat</td><td style="text-align: left">No: named only</td></tr>
+</tbody></table>
+</div>
+<p>PgBouncer added prepared-statement support in 1.21, but limited it
+to <strong>named</strong> statements: an anonymous <code>Parse</code> is forwarded as-is and
+each <code>Bind</code> re-runs the planner. Odyssey's
+<code>pool_reserve_prepared_statement</code> requires named statements; it does
+nothing for anonymous traffic. PgCat behaves the same way.</p>
+<p>This makes anonymous-prepared caching a feature only PgDoorman
+provides.</p>
+<h2 id="configuration-8"><a class="header" href="#configuration-8">Configuration</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Setting</th><th style="text-align: center">Default</th><th>Effect</th></tr></thead><tbody>
+<tr><td><code>prepared_statements_cache_size</code></td><td style="text-align: center">8192</td><td>Pool-level cache size in entries. 0 disables remap.</td></tr>
+<tr><td><code>client_prepared_statements_cache_size</code></td><td style="text-align: center">0</td><td>Per-client cache size. 0 = unlimited (LRU disabled).</td></tr>
+</tbody></table>
+</div>
+<p>To disable anonymous remap entirely (rare, for OLAP-only deployments):</p>
+<pre><code class="language-yaml">general:
+  prepared_statements_cache_size: 0
+</code></pre>
+<h2 id="differences-from-postgresql-semantics"><a class="header" href="#differences-from-postgresql-semantics">Differences from PostgreSQL semantics</a></h2>
+<p>The remap changes a few protocol-level behaviours that strict
+applications may rely on:</p>
+<ul>
+<li>The same anonymous <code>Parse</code> issued twice does <strong>not</strong> discard the
+previous one. Each <code>(query, param_types)</code> lives independently in
+the pool cache under a separate <code>DOORMAN_&lt;N&gt;</code>.</li>
+<li><code>Close</code> with an empty name is a no-op for PgDoorman's caches. The
+underlying <code>DOORMAN_&lt;N&gt;</code> lives until pool-level LRU evicts it or
+the pool shuts down.</li>
+<li>The plan stays generic longer. PostgreSQL switches a named
+statement from generic to custom plans after five observations; if
+different clients share the same <code>DOORMAN_&lt;N&gt;</code> and each contributes
+one or two <code>Bind</code>s, the threshold is reached faster — but the
+resulting shared plan may be a poor fit for a client with skewed
+data.</li>
+</ul>
+<p>Applications that depend on PostgreSQL's "anonymous Parse discards
+the previous one" semantics should switch to named statements with
+explicit <code>Close</code>.</p>
+<h2 id="observability-4"><a class="header" href="#observability-4">Observability</a></h2>
+<p>Admin commands:</p>
+<ul>
+<li><code>SHOW PREPARED_STATEMENTS</code> — pool, hash, name, query text,
+<code>count_used</code>. Top rows by <code>count_used</code> show the hot queries that
+benefit most from the cache.</li>
+<li><code>SHOW POOLS_MEMORY</code> — <code>pool_prepared_count</code>,
+<code>client_prepared_count</code>, <code>pool_prepared_bytes</code>,
+<code>client_prepared_bytes</code>.</li>
+</ul>
+<p>Prometheus metrics (full list in <a href="tutorials/../reference/prometheus.html">Prometheus</a>):</p>
+<ul>
+<li><code>pg_doorman_pool_prepared_cache_entries{user, database}</code></li>
+<li><code>pg_doorman_pool_prepared_cache_bytes</code></li>
+<li><code>pg_doorman_clients_prepared_cache_entries</code></li>
+<li><code>pg_doorman_clients_prepared_cache_bytes</code></li>
+<li><code>pg_doorman_servers_prepared_hits{user, database, backend_pid}</code></li>
+<li><code>pg_doorman_servers_prepared_misses</code></li>
+<li><code>pg_doorman_async_clients_count</code></li>
+</ul>
+<h2 id="reference-1"><a class="header" href="#reference-1">Reference</a></h2>
+<ul>
+<li><a href="tutorials/../concepts/pool-modes.html">Pool Modes</a> — transaction mode, where
+prepared-statement remapping is enabled.</li>
+<li><a href="tutorials/../reference/general.html">General Settings</a> — <code>prepared_statements_cache_size</code>,
+<code>client_prepared_statements_cache_size</code>.</li>
+<li><a href="tutorials/../observability/admin-commands.html">Admin Commands</a> — <code>SHOW PREPARED_STATEMENTS</code>,
+<code>SHOW POOLS_MEMORY</code>.</li>
+<li><a href="tutorials/../reference/prometheus.html">Prometheus</a> — full metric list.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="pool-pressure"><a class="header" href="#pool-pressure">Pool pressure</a></h1>
 <p>Pool pressure is how pg_doorman handles many clients asking for a backend
 connection at the same time when the idle pool is empty. Two mechanisms
@@ -2670,7 +2912,7 @@ client gives up first and you see <code>wait timeout</code> errors instead of
 the more diagnostic <code>all server connections to database 'X' are in use</code>. The coordinator's wait and reserve phases run their full course
 but no client is left to receive the result. The pg_doorman config
 validator emits a warning at startup; act on it.</p>
-<h2 id="observability-4"><a class="header" href="#observability-4">Observability</a></h2>
+<h2 id="observability-5"><a class="header" href="#observability-5">Observability</a></h2>
 <p>pg_doorman exposes pool pressure state through the admin console and
 through Prometheus. Both show the same counters; pick whichever fits
 your monitoring stack.</p>
@@ -3402,7 +3644,7 @@ is promoted before doorman even detects the failure, so most write
 queries succeed. Worst case, write errors last until the reduced
 lifetime expires (30 seconds) and the next connection attempt finds
 the new primary via a fresh <code>/cluster</code> call.</p>
-<h2 id="configuration-8"><a class="header" href="#configuration-8">Configuration</a></h2>
+<h2 id="configuration-9"><a class="header" href="#configuration-9">Configuration</a></h2>
 <p>Add <code>patroni_api_urls</code> to any pool that should use fallback.
 Without this setting, the feature is disabled and doorman behaves
 as before.</p>
@@ -3548,7 +3790,7 @@ backend dies, without affecting patroni_proxy routing.</p>
 <li><strong>patroni_proxy</strong> lives near the application. It routes TCP, owns the role-aware failover decision, and stays out of the pooler's way.</li>
 </ul>
 <p>If the application traffic is small enough that one pg_doorman per cluster is sufficient, you can collapse the diagram and run pg_doorman directly with <a href="tutorials/patroni-assisted-fallback.html">Patroni-assisted fallback</a> and skip <code>patroni_proxy</code> entirely.</p>
-<h2 id="configuration-9"><a class="header" href="#configuration-9">Configuration</a></h2>
+<h2 id="configuration-10"><a class="header" href="#configuration-10">Configuration</a></h2>
 <p>Example <code>patroni_proxy.yaml</code>:</p>
 <pre><code class="language-yaml"># Cluster update interval in seconds (default: 3)
 cluster_update_interval: 3
@@ -3950,7 +4192,7 @@ Type=simple
 ExecStart=/usr/bin/pg_doorman /etc/pg_doorman.yaml
 ExecReload=/bin/kill -SIGUSR2 $MAINPID
 </code></pre>
-<h2 id="configuration-10"><a class="header" href="#configuration-10">Configuration</a></h2>
+<h2 id="configuration-11"><a class="header" href="#configuration-11">Configuration</a></h2>
 <h3 id="shutdown_timeout"><a class="header" href="#shutdown_timeout"><code>shutdown_timeout</code></a></h3>
 <p>Maximum time to wait for in-transaction clients before force-closing
 connections. The old process exits after this timeout regardless of

@@ -204,6 +204,19 @@
 <p><a href="tutorials/binary-upgrade.html">Read more →</a></p>
 </div>
 </div>
+<div id="admonition-anonymous-prepared-statement-caching" class="admonition admonish-success" role="note" aria-labelledby="admonition-anonymous-prepared-statement-caching-title">
+<div class="admonition-title">
+<div id="admonition-anonymous-prepared-statement-caching-title">
+<p>Anonymous Prepared Statement Caching</p>
+</div>
+<a class="admonition-anchor-link" href="#admonition-anonymous-prepared-statement-caching"></a>
+</div>
+<div>
+<p>PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-name <code>Parse</code> most drivers send for one-shot parameterised queries) — every <code>Bind</code> re-runs the planner from scratch. PgDoorman transparently rewrites the empty name to an internal <code>DOORMAN_&lt;N&gt;</code> on the backend, so the plan lands in the backend's named prepared registry and gets reused across <code>Bind</code>s of the same client and across clients sharing the pool.</p>
+<p>PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for <strong>named</strong> statements; an anonymous <code>Parse</code> is forwarded as-is and re-planned on every call. PgDoorman is the only pooler that caches the plan for anonymous prepared traffic.</p>
+<p><a href="tutorials/prepared-statements.html">Read more →</a></p>
+</div>
+</div>
 <h2 id="why-pgdoorman"><a class="header" href="#why-pgdoorman">Why PgDoorman</a></h2>
 <ul>
 <li><strong>Prepared statements in transaction mode.</strong> PgDoorman remaps client statement names to <code>DOORMAN_N</code> and tracks the cache per pool, per client, and per backend. Drivers see their own names; backends see the remapped ones. No app-level <code>DEALLOCATE</code>, no <code>DISCARD ALL</code>.</li>

@@ -1,0 +1,450 @@
+<!DOCTYPE HTML>
+<html lang="ru" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Кеш плана для анонимных prepared statements - Документация PgDoorman</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../css/custom.css">
+        <link rel="stylesheet" href="../mdbook-admonish.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Документация PgDoorman</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/ozontech/pg_doorman/edit/master/documentation/ru/src/src/tutorials/prepared-statements.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="Кеш-плана-для-анонимных-prepared-statements"><a class="header" href="#Кеш-плана-для-анонимных-prepared-statements">Кеш плана для анонимных prepared statements</a></h1>
+<p>PostgreSQL не кеширует план анонимных prepared statements: каждый
+<code>Bind</code> запускает планировщик с нуля. PgDoorman кеширует план сам,
+прозрачно переписывая каждый анонимный <code>Parse</code> в служебное имя
+<code>DOORMAN_&lt;N&gt;</code> на бекенде. План попадает в named-registry бекенда и
+переиспользуется между <code>Bind</code>'ами одного клиента и между разными
+клиентами одного пула.</p>
+<p>Подмена прозрачна для драйвера: клиент шлёт и получает пустые имена
+точно так же, как при работе с обычным PostgreSQL.</p>
+<p>Это уникальная возможность PgDoorman. PgBouncer (1.21+) и Odyssey
+поддерживают prepared statements в transaction mode, но только для
+<strong>именованных</strong> statement; анонимный <code>Parse</code> пробрасывается без
+изменений и перепланируется при каждом обращении.</p>
+<h2 id="Базовая-модель-postgresql"><a class="header" href="#Базовая-модель-postgresql">Базовая модель PostgreSQL</a></h2>
+<p>В сообщении <code>Parse</code> имя prepared statement задаёт его тип: пустое
+имя соответствует <strong>анонимному</strong> statement, любое непустое —
+<strong>именованному</strong>:</p>
+<pre><code class="language-text">                          Время жизни в PG        Кеширование плана
+  ─────────────────────   ─────────────────       ──────────────────
+  Анонимный (name="")     До следующего           Нет: планировщик
+                          анонимного Parse        запускается на
+                          или конца сессии        каждый Bind
+  Именованный             До Close /              Generic вначале,
+   (name="stmt_42")       DEALLOCATE /            переключается в
+                          конца сессии            custom после 5
+                                                  наблюдений
+</code></pre>
+<p>Большинство современных драйверов по умолчанию используют
+<strong>анонимные</strong> prepared для разовых параметризованных запросов:
+<code>lib/pq</code> (Go), <code>libpq</code> <code>PQexecParams</code> (C), часть режимов в pgjdbc и
+psycopg. Прикладной код выглядит как обычный параметризованный
+запрос, но в wire protocol уходит пустое имя.</p>
+<h2 id="Почему-это-проблема-в-transaction-mode"><a class="header" href="#Почему-это-проблема-в-transaction-mode">Почему это проблема в transaction-mode</a></h2>
+<p>В transaction pooling один backend по очереди обслуживает разных
+клиентов. Если пулер пробрасывает пустой <code>Parse</code> как есть, каждый
+<code>Bind</code> клиента приходит на backend, у которого плана для этого
+запроса нет. Горячие OLTP-пути платят CPU планировщика на каждом
+обращении.</p>
+<p>Именованные prepared решают проблему кеширования плана, но
+перекладывают учёт на пулер:</p>
+<ul>
+<li>Пулер обязан помнить именованные statement каждого клиента до его
+дисконнекта, даже если pool-level shared cache уже выселил запись.</li>
+<li>На каждом <code>Bind</code> пулер обязан проверить, знает ли текущий backend
+это имя, и при необходимости заново сделать <code>Parse</code>.</li>
+<li>При дисконнекте клиента пулер обязан отправить <code>Close</code> или
+<code>DEALLOCATE</code> на правильный backend.</li>
+<li>Драйверы, которые генерируют отдельное имя <code>stmt_&lt;seq&gt;</code> под каждый
+уникальный запрос, раздувают per-client cache: сотни записей на
+клиента, при тысячах подключений превращающиеся в миллионы записей
+в памяти.</li>
+</ul>
+<p>Остаются два варианта: отказаться от кеширования плана для анонимных
+или взять на себя полную стоимость учёта именованных. PgDoorman
+выбирает третий путь.</p>
+<h2 id="Что-делает-pgdoorman"><a class="header" href="#Что-делает-pgdoorman">Что делает PgDoorman</a></h2>
+<p>На каждый анонимный <code>Parse</code> от клиента PgDoorman:</p>
+<ol>
+<li>Считает хеш по тексту запроса и OID типов параметров.</li>
+<li>Ищет хеш в <strong>pool-level</strong> кеше (общий между всеми клиентами
+пула). При miss выделяет новое имя <code>DOORMAN_&lt;counter&gt;</code> и
+регистрирует запись <code>Arc&lt;Parse&gt;</code>.</li>
+<li>Записывает в per-client кеш ключ <code>Anonymous(hash)</code>, чтобы
+следующий <code>Bind</code> нашёл тот же <code>DOORMAN_&lt;N&gt;</code>.</li>
+<li>Отправляет <code>Parse</code> на backend с переписанным именем.</li>
+<li>На соответствующем <code>Bind</code> (с пустым именем) переписывает имя
+statement в <code>DOORMAN_&lt;N&gt;</code> и проверяет, что текущий backend уже
+держит запись; если нет, отправляет <code>Parse</code> повторно.</li>
+</ol>
+<p>Клиент никогда не видит <code>DOORMAN_&lt;N&gt;</code>: имя живёт только на участке
+между PgDoorman и backend. Когда нужный backend уже держит запись,
+PgDoorman синтезирует <code>ParseComplete</code> сам и не делает round-trip.</p>
+<h3 id="Пример-wire-protocol"><a class="header" href="#Пример-wire-protocol">Пример wire-protocol</a></h3>
+<p>Go-приложение, выполняющее</p>
+<pre><code class="language-go">db.Query("SELECT * FROM t WHERE name = $1", "vasya")
+</code></pre>
+<p>через <code>lib/pq</code>, отправляет такой обмен:</p>
+<pre><code class="language-text">  Клиент                  PgDoorman                  Backend
+  ──────                  ─────────                  ───────
+  Parse("", q)        ───►│ hash, miss → DOORMAN_42
+                           │ pool_cache[hash] = Arc&lt;Parse&gt;
+                           │ client_cache[Anon(hash)] = ...
+                           │            Parse("DOORMAN_42") ─────►
+                           │                   ◄── ParseComplete
+                      ◄────│ ParseComplete
+  Bind("", "vasya")   ───►│ rewrite "" → "DOORMAN_42"
+                           │            Bind("DOORMAN_42") ──────►
+                           │            Execute, Sync ───────────►
+                           │               ◄── BindComplete, ...
+                           │               ◄── ReadyForQuery
+                      ◄────│ BindComplete, ...
+</code></pre>
+<p>Второй клиент с тем же запросом в том же пуле попадает в pool cache
+и не отправляет <code>Parse</code> на backend:</p>
+<pre><code class="language-text">  Клиент B           PgDoorman                       Backend (тот же)
+  ────────           ─────────                       ────────────────
+  Parse("", q)  ───►│ hash hit → DOORMAN_42
+                     │ server_cache содержит "DOORMAN_42"
+                ◄────│ синтетический ParseComplete   (на backend ничего)
+  Bind("", v)   ───►│ rewrite "" → "DOORMAN_42"
+                     │            Bind("DOORMAN_42") ────►
+                     │            ...
+</code></pre>
+<h2 id="Слои-кеша"><a class="header" href="#Слои-кеша">Слои кеша</a></h2>
+<p>PgDoorman держит состояние prepared statements на трёх уровнях:</p>
+<pre><code class="language-text">  Pool-level    DashMap&lt;hash, CacheEntry&gt;
+                Один на пул. Хранит Arc&lt;Parse&gt; с именем DOORMAN_N.
+                Размер:    prepared_statements_cache_size (default 8192).
+                Выселение: approximate LRU.
+
+  Client-level  AHashMap или LruCache, на клиента.
+                Маппит Named(client_name) | Anonymous(hash) → CachedStatement.
+                Размер:   client_prepared_statements_cache_size
+                          (default 0 = unlimited).
+
+  Server-level  LruCache&lt;String, ()&gt;, на backend-соединение.
+                Запоминает, какие DOORMAN_N этот backend уже держит.
+                True LRU; при выселении отправляет Close на backend.
+</code></pre>
+<p>Текст запроса интернируется через <code>Arc&lt;str&gt;</code>: десять клиентов с
+одним и тем же анонимным запросом делят одну аллокацию в памяти.</p>
+<h2 id="Когда-подмена-помогает"><a class="header" href="#Когда-подмена-помогает">Когда подмена помогает</a></h2>
+<ul>
+<li><strong>API-нагрузки с малым набором горячих запросов.</strong> Десяток
+уникальных форм <code>SELECT</code> / <code>INSERT</code> на тысячи клиентов. Hit rate
+в pool cache близок к 100 %, планировщик работает один раз на
+backend на каждый запрос, нагрузка линейно масштабируется по
+параллелизму.</li>
+<li><strong>Драйверы, привязанные к анонимным prepared.</strong> <code>lib/pq</code>, <code>libpq</code>
+<code>PQexecParams</code>, JDBC с <code>serverPreparedStatementType=NONE</code>. Без
+подмены они каждый раз перепланируют.</li>
+<li><strong>Смешанные пулы, где named и anonymous соседствуют.</strong> Анонимные
+получают тот же выигрыш от plan cache, что и именованные, без
+раздувания per-client cache.</li>
+</ul>
+<h2 id="Когда-подмена-не-помогает"><a class="header" href="#Когда-подмена-не-помогает">Когда подмена не помогает</a></h2>
+<ul>
+<li><strong>Ad-hoc / OLAP-трафик.</strong> Каждый запрос уникален: pool cache
+постоянно вытесняет записи, на каждом insert идёт O(N) скан.
+Отключите через <code>prepared_statements_cache_size = 0</code>.</li>
+<li><strong>Скрипты с одним statement.</strong> Паттерн connect → <code>Parse</code> →
+1 <code>Bind</code> → disconnect не накапливает достаточно hits, чтобы
+окупить учёт. Накладные расходы на <code>Parse</code> ~700 нс — небольшие, но
+измеримые.</li>
+<li><strong>Асинхронные драйверы в pipeline mode.</strong> Каждая сессия получает
+уникальное имя <code>DOORMAN_async_&lt;N&gt;</code>, чтобы избежать коллизий между
+одновременными in-flight операциями. Server cache между сессиями
+не переиспользуется. Pool-level кеш по-прежнему делит текст
+запроса между сессиями; планировщик на backend срабатывает раз
+в сессию.</li>
+</ul>
+<p>Эффективность измеряйте по Prometheus-счётчикам
+<code>pg_doorman_servers_prepared_hits</code> и
+<code>pg_doorman_servers_prepared_misses</code>. Устойчивый miss rate выше
+30 % означает, что подмена расходует CPU и память, а
+переиспользования плана не происходит. Тогда либо отключайте
+подмену, либо увеличивайте <code>prepared_statements_cache_size</code>.</p>
+<h2 id="Как-это-устроено-у-других-пулеров"><a class="header" href="#Как-это-устроено-у-других-пулеров">Как это устроено у других пулеров</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Пулер</th><th style="text-align: left">Кеш плана для анонимного Parse</th></tr></thead><tbody>
+<tr><td><strong>PgDoorman</strong></td><td style="text-align: left">Да: прозрачная подмена на <code>DOORMAN_&lt;N&gt;</code></td></tr>
+<tr><td>PgBouncer 1.21+</td><td style="text-align: left">Нет: только named, анонимный пробрасывается as-is</td></tr>
+<tr><td>Odyssey</td><td style="text-align: left">Нет: только named, <code>pool_reserve_prepared_statement</code></td></tr>
+<tr><td>PgCat</td><td style="text-align: left">Нет: только named</td></tr>
+</tbody></table>
+</div>
+<p>В PgBouncer поддержка prepared statements появилась в 1.21, но
+ограничена <strong>именованными</strong>: анонимный <code>Parse</code> пробрасывается без
+изменений, и каждый <code>Bind</code> запускает планировщик. Флаг
+<code>pool_reserve_prepared_statement</code> в Odyssey требует именованных
+statement; на анонимный трафик он не влияет. PgCat ведёт себя
+так же.</p>
+<p>Кешировать план анонимных prepared сегодня умеет только PgDoorman.</p>
+<h2 id="Конфигурация"><a class="header" href="#Конфигурация">Конфигурация</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Параметр</th><th style="text-align: center">Default</th><th>Эффект</th></tr></thead><tbody>
+<tr><td><code>prepared_statements_cache_size</code></td><td style="text-align: center">8192</td><td>Размер pool-level кеша в записях. 0 отключает подмену.</td></tr>
+<tr><td><code>client_prepared_statements_cache_size</code></td><td style="text-align: center">0</td><td>Размер per-client кеша. 0 = unlimited (LRU выключен).</td></tr>
+</tbody></table>
+</div>
+<p>Полностью отключить подмену анонимных (редко, для OLAP-only):</p>
+<pre><code class="language-yaml">general:
+  prepared_statements_cache_size: 0
+</code></pre>
+<h2 id="Отличия-от-семантики-postgresql"><a class="header" href="#Отличия-от-семантики-postgresql">Отличия от семантики PostgreSQL</a></h2>
+<p>Подмена меняет несколько протокольных деталей, на которые могут
+полагаться строгие приложения:</p>
+<ul>
+<li>Один и тот же анонимный <code>Parse</code>, отправленный дважды, <strong>не</strong>
+стирает предыдущий. Каждая пара <code>(query, param_types)</code> живёт
+независимо в pool cache под своим <code>DOORMAN_&lt;N&gt;</code>.</li>
+<li><code>Close</code> с пустым именем — no-op для кешей PgDoorman.
+Соответствующий <code>DOORMAN_&lt;N&gt;</code> живёт до выселения pool-level LRU
+или до закрытия пула.</li>
+<li>План остаётся generic дольше. В чистом PostgreSQL именованный
+statement переключается с generic на custom после пяти
+наблюдений; если разные клиенты делят один <code>DOORMAN_&lt;N&gt;</code> и каждый
+даёт по одному-двум <code>Bind</code>'ам, порог достигается быстрее. Но
+получившийся общий план может оказаться неудачным для клиента
+с перекошенными данными.</li>
+</ul>
+<p>Приложения, которые опираются на PG-семантику "анонимный Parse
+стирает предыдущий", должны переключиться на именованные statement
+с явным <code>Close</code>.</p>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p>Admin-команды:</p>
+<ul>
+<li><code>SHOW PREPARED_STATEMENTS</code> — pool, hash, name, query, <code>count_used</code>.
+Топ записей по <code>count_used</code> показывает горячие запросы, на которых
+кеш окупается.</li>
+<li><code>SHOW POOLS_MEMORY</code> — <code>pool_prepared_count</code>,
+<code>client_prepared_count</code>, <code>pool_prepared_bytes</code>,
+<code>client_prepared_bytes</code>.</li>
+</ul>
+<p>Prometheus-метрики (полный список в <a href="../reference/prometheus.html">Prometheus</a>):</p>
+<ul>
+<li><code>pg_doorman_pool_prepared_cache_entries{user, database}</code></li>
+<li><code>pg_doorman_pool_prepared_cache_bytes</code></li>
+<li><code>pg_doorman_clients_prepared_cache_entries</code></li>
+<li><code>pg_doorman_clients_prepared_cache_bytes</code></li>
+<li><code>pg_doorman_servers_prepared_hits{user, database, backend_pid}</code></li>
+<li><code>pg_doorman_servers_prepared_misses</code></li>
+<li><code>pg_doorman_async_clients_count</code></li>
+</ul>
+<h2 id="Справочник"><a class="header" href="#Справочник">Справочник</a></h2>
+<ul>
+<li><a href="../concepts/pool-modes.html">Режимы пула</a> — transaction mode, где
+работает подмена prepared statements.</li>
+<li><a href="../reference/general.html">Общие настройки</a> —
+<code>prepared_statements_cache_size</code>,
+<code>client_prepared_statements_cache_size</code>.</li>
+<li><a href="../observability/admin-commands.html">Admin-команды</a> —
+<code>SHOW PREPARED_STATEMENTS</code>, <code>SHOW POOLS_MEMORY</code>.</li>
+<li><a href="../reference/prometheus.html">Prometheus</a> — полный список метрик.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../concepts/pool-coordinator.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../concepts/pool-coordinator.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../tutorials/pool-pressure.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-init.js"></script>
+        <script src="../mermaid.min.js"></script>
+        <script src="../lang-switcher.js"></script>
+
+
+    </div>
+    </body>
+</html>
