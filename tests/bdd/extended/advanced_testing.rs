@@ -409,6 +409,58 @@ pub async fn verify_error_response_on_flush_timeout(
     );
 }
 
+/// Verify that the client received an ErrorResponse with the given SQLSTATE
+/// code. Reads messages until an ErrorResponse ('E') is found, parses the
+/// field-tagged body, and asserts the 'C' (Code/SQLSTATE) field matches.
+#[then(regex = r#"^session "([^"]+)" should receive ErrorResponse with SQLSTATE "([^"]+)"$"#)]
+pub async fn verify_error_response_with_sqlstate(
+    world: &mut DoormanWorld,
+    session_name: String,
+    expected_sqlstate: String,
+) {
+    let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+
+    let mut got_error: Option<String> = None;
+    while let Ok(Ok((msg_type, data))) =
+        tokio::time::timeout(std::time::Duration::from_secs(2), conn.read_message()).await
+    {
+        if msg_type == 'E' {
+            // ErrorResponse body: repeated <field-byte><cstring> until null.
+            let mut i = 0;
+            while i < data.len() && data[i] != 0 {
+                let field_byte = data[i] as char;
+                i += 1;
+                let start = i;
+                while i < data.len() && data[i] != 0 {
+                    i += 1;
+                }
+                let value = String::from_utf8_lossy(&data[start..i]).to_string();
+                i += 1; // skip null terminator
+                if field_byte == 'C' {
+                    got_error = Some(value);
+                    break;
+                }
+            }
+            break;
+        }
+        if msg_type == 'Z' {
+            break;
+        }
+    }
+
+    let got = got_error.unwrap_or_else(|| {
+        panic!(
+            "Session '{}': expected ErrorResponse with SQLSTATE '{}' but no ErrorResponse received",
+            session_name, expected_sqlstate
+        )
+    });
+    assert_eq!(
+        got, expected_sqlstate,
+        "Session '{}': SQLSTATE mismatch (expected '{}', got '{}')",
+        session_name, expected_sqlstate, got
+    );
+}
+
 // =============================================================================
 // PostgreSQL server log inspection steps
 // =============================================================================
