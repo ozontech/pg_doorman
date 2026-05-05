@@ -247,16 +247,108 @@ Applications that depend on PostgreSQL's "anonymous Parse discards
 the previous one" semantics should switch to named statements with
 explicit `Close`.
 
+## Tuning
+
+### Default `client_anonymous_prepared_cache_size = 256`
+
+The default of 256 entries per client is chosen for the typical OLTP
+workload: a small set of hot anonymous queries shared across thousands
+of clients. Each entry holds a lightweight `(hash, async_name?, Arc<Parse>)`
+record — the `Arc<Parse>` is shared with the pool-level cache, so the
+per-client overhead is roughly `~80 bytes` of bookkeeping per entry.
+At 10 000 connected clients × 256 entries × ~80 bytes that adds up to
+about 200 MB of headroom on the pooler — predictable and bounded.
+
+Raise the cap when:
+
+- An ORM or generated SQL framework mints `stmt_<seq>` per query and
+  the `Anonymous` LRU keeps recycling entries (visible as a sustained
+  non-zero rate on `pg_doorman_clients_prepared_anonymous_evictions_total`).
+- The application has a known wide working set per session (more than
+  256 distinct anonymous queries) and the eviction rate matches that
+  pressure.
+
+Lower the cap or raise `max_memory_usage` for very large connection
+counts (50 000+ clients): at that scale even 256 × clients × 80 bytes
+crosses 1 GB of pooler bookkeeping, and trimming the cap halves it.
+
+### Named is unbounded by design
+
+The Named part of the per-client cache has no upper bound. PgDoorman
+holds the `Arc<Parse>` for every named statement the client created
+until the client disconnects or sends `DEALLOCATE` / `DEALLOCATE ALL`.
+This matches PostgreSQL's own contract — named statements live for the
+session — and avoids the failure mode where evicting a Named entry
+under pressure causes the next `Bind` to fail with
+`prepared statement does not exist`.
+
+The flip side: drivers that mint per-query named statements (some
+pgjdbc and Hibernate flows, some .NET Npgsql configurations) can grow
+the per-client Named map without limit. PgDoorman cannot bound this
+safely; the application is responsible for either reusing names or
+sending `DEALLOCATE` on names it no longer uses.
+
+The Anonymous LRU eviction counter
+(`pg_doorman_clients_prepared_anonymous_evictions_total`) is the only
+side that has a built-in pressure signal. The Named side has none —
+watch the `client_named_count` column in `SHOW POOLS_MEMORY` and
+`pg_doorman_clients_prepared_named_entries` for unexpected growth.
+
+### Backend memory creep window
+
+When the Anonymous LRU evicts an entry on the client side, PgDoorman
+drops only the local `Arc<Parse>`. The corresponding `DOORMAN_<N>`
+prepared statement stays alive on every PostgreSQL backend that ever
+served it. Two mechanisms eventually clean it up:
+
+- **Server-level LRU.** Each backend tracks its own
+  `LruCache<String, ()>` of `DOORMAN_<N>` names, capped at
+  `prepared_statements_cache_size` (default 8192). When the cap is
+  reached, the backend issues `Close` on the least recently used
+  name, releasing the plan.
+- **Backend rotation.** A backend reaches `server_lifetime`
+  (default 20 min) and pg_doorman closes it; the new backend starts
+  with an empty plan cache.
+
+The worst-case memory footprint per backend is therefore
+`prepared_statements_cache_size × ~100 KB` of plan memory ≈ 800 MB
+on the PostgreSQL side. To shrink the window:
+
+- Lower `prepared_statements_cache_size` so the server-level LRU
+  recycles plans sooner.
+- Lower `server_lifetime` so backends rotate faster.
+
+The PostgreSQL system view `pg_prepared_statements` reports the names
+held by the current backend. Counting rows there per backend tells
+you how close the backend is to the cap.
+
 ## Observability
 
 Admin commands:
 
 - `SHOW PREPARED_STATEMENTS` — pool, hash, name, query text,
-  `count_used`. Top rows by `count_used` show the hot queries that
-  benefit most from the cache.
+  `count_used`, `kind`. Top rows by `count_used` show the hot queries
+  that benefit most from the cache. The `kind` column is the last
+  column and reports `named`, `anonymous`, or `mixed` depending on
+  how clients have used the entry over its lifetime.
+
+  Example output:
+
+  ```text
+   pool         | hash               | name        | query             | count_used | kind
+  --------------+--------------------+-------------+-------------------+------------+-----------
+   sharded.user | 1234567890123456   | DOORMAN_1   | SELECT * FROM t1  |     150234 | anonymous
+   sharded.user | 2345678901234567   | DOORMAN_2   | INSERT INTO t2 .. |      87654 | named
+   sharded.user | 3456789012345678   | DOORMAN_3   | SELECT * FROM t3  |      45678 | mixed
+  ```
+
 - `SHOW POOLS_MEMORY` — `pool_prepared_count`,
   `client_prepared_count`, `pool_prepared_bytes`,
-  `client_prepared_bytes`.
+  `client_prepared_bytes`, plus the breakdown by kind:
+  `client_named_count`, `client_anonymous_count`,
+  `client_anonymous_evictions_total`. The `_total` suffix marks the
+  last column as a counter (cumulative since pool start), distinct
+  from the gauge columns to its left.
 
 Prometheus metrics (full list in [Prometheus](../reference/prometheus.md)):
 
@@ -264,9 +356,61 @@ Prometheus metrics (full list in [Prometheus](../reference/prometheus.md)):
 - `pg_doorman_pool_prepared_cache_bytes`
 - `pg_doorman_clients_prepared_cache_entries`
 - `pg_doorman_clients_prepared_cache_bytes`
+- `pg_doorman_clients_prepared_named_entries{user, database}`
+- `pg_doorman_clients_prepared_anonymous_entries{user, database}`
+- `pg_doorman_clients_prepared_anonymous_evictions_total{user, database}`
 - `pg_doorman_servers_prepared_hits{user, database, backend_pid}`
 - `pg_doorman_servers_prepared_misses`
 - `pg_doorman_async_clients_count`
+
+## Alerting
+
+### Anonymous LRU eviction rate
+
+A sustained non-zero rate on the Anonymous eviction counter means the
+LRU is recycling entries faster than the application reuses them.
+Alert template:
+
+```text
+rate(pg_doorman_clients_prepared_anonymous_evictions_total[5m]) > 10
+  for 10m
+```
+
+The threshold of 10 evictions/second per pool is a starting point —
+the right value depends on traffic shape and connection count. Treat
+the alert as "the cap is too tight or the application's working set
+is wider than expected", then either raise `client_anonymous_prepared_cache_size`
+or investigate whether the application is generating unique queries
+on the hot path.
+
+### `kind = mixed` interpretation
+
+Each pool-level cache entry remembers whether clients have used it
+under a Named statement name, an Anonymous one, or both. `kind = mixed`
+means the same `(query, param_types)` pair has been parsed by at
+least one client as named and at least one client as anonymous in its
+current lifetime. Most workloads do not see `mixed` rows; a pool
+dominated by `mixed` entries indicates a heterogeneous client base
+(different drivers or driver configurations against the same database)
+worth verifying — sometimes intentional, sometimes a sign that one of
+the clients is configured wrong.
+
+### Backend prepared statement count
+
+PostgreSQL exposes `pg_prepared_statements` per backend. If pooler
+memory is fine but PostgreSQL backend RSS keeps growing, count rows
+per backend:
+
+```sql
+SELECT count(*) FROM pg_prepared_statements;
+```
+
+Numbers near `prepared_statements_cache_size` (default 8192) per
+backend mean the server-level LRU is at its cap and rotation is the
+only way to release plan memory. If `server_lifetime` is long, plans
+accumulate for a long time. Lowering either knob releases the
+plan-memory pressure, at the cost of more frequent re-parses on the
+backend.
 
 ## Reference
 

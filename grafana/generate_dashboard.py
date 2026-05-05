@@ -385,6 +385,27 @@ p_hit_ratio = ts_panel(
     ], unit="percentunit", w=8,
     desc="Cache hits / total lookups. Below 90%: servers frequently re-parse after multiplexing. Ensure consistent statement names.",
 )
+p_client_named = ts_panel(
+    "Client Named Entries", [
+        prom(f'pg_doorman_clients_prepared_named_entries{{{S}}}', "{{user}}@{{database}}"),
+    ], w=8,
+    desc="Sum of Named entries across all clients in the pool. Named is unbounded — drivers that mint per-query named statements (some pgjdbc / Hibernate / Npgsql configurations) drive this up without limit. Application is responsible for DEALLOCATE or name reuse.",
+)
+p_client_anonymous = ts_panel(
+    "Client Anonymous Entries", [
+        prom(f'pg_doorman_clients_prepared_anonymous_entries{{{S}}}', "{{user}}@{{database}}"),
+    ], w=8,
+    desc="Sum of Anonymous entries across all clients. Bounded per client by client_anonymous_prepared_cache_size (default 256). Approaches at most connected_clients * cache_size.",
+)
+p_client_anonymous_evictions = ts_panel(
+    "Anonymous LRU Eviction Rate", [
+        prom(
+            f'rate(pg_doorman_clients_prepared_anonymous_evictions_total{{{S}}}[$__rate_interval])',
+            "{{user}}@{{database}}",
+        ),
+    ], unit="ops", w=8,
+    desc="Rate of evictions on the per-client Anonymous LRU. Sustained non-zero rate means client_anonymous_prepared_cache_size is too small for the workload, or the application generates unique queries on the hot path. Alert template: > 10/s for 10m.",
+)
 
 # ---------------------------------------------------------------------------
 # Row 10: Auth Query (collapsed)
@@ -547,6 +568,9 @@ d = (
     .with_panel(p_cache_entries)
     .with_panel(p_cache_bytes)
     .with_panel(p_hit_ratio)
+    .with_panel(p_client_named)
+    .with_panel(p_client_anonymous)
+    .with_panel(p_client_anonymous_evictions)
     # Row 10: Auth Query (collapsed)
     .with_row(row10)
     .with_panel(p_auth_cache)

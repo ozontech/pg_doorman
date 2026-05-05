@@ -460,6 +460,15 @@ fn write_prometheus_metrics_section(out: &mut String) {
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_hits` | Counter of prepared statement hits in databases backends by user and database. Helps track the effectiveness of prepared statements in reducing query parsing overhead. |");
     let _ = writeln!(out, "| `pg_doorman_servers_prepared_misses` | Counter of prepared statement misses in databases backends by user and database. Helps identify queries that could benefit from being prepared to improve performance. |\n");
 
+    // Per-Client Prepared Statement Cache Metrics
+    let _ = writeln!(out, "### Per-Client Prepared Statement Cache Metrics\n");
+    let _ = writeln!(out, "The per-client prepared statement cache is split into a Named map (unbounded) and an Anonymous LRU bounded by `client_anonymous_prepared_cache_size` (default 256). The three metrics below expose the size of each part and the eviction rate on the bounded part.\n");
+    let _ = writeln!(out, "| Metric | Description |");
+    let _ = writeln!(out, "|--------|-------------|");
+    let _ = writeln!(out, "| `pg_doorman_clients_prepared_named_entries` | Gauge by user and database. Sum of Named entries across every connected client's cache. Named statements have no upper bound and are kept until the client disconnects or sends `DEALLOCATE`. Sustained growth here indicates drivers that mint per-query named statements (some pgjdbc / Hibernate flows, some .NET Npgsql configurations) and may justify capping per-client memory at the application layer. |");
+    let _ = writeln!(out, "| `pg_doorman_clients_prepared_anonymous_entries` | Gauge by user and database. Sum of Anonymous entries across every connected client's cache. Each client's Anonymous part is capped at `client_anonymous_prepared_cache_size`, so this gauge approaches at most `connected_clients * cache_size`. |");
+    let _ = writeln!(out, "| `pg_doorman_clients_prepared_anonymous_evictions_total` | Counter by user and database. Cumulative count of Anonymous LRU evictions across all clients of the pool. A sustained non-zero rate signals that `client_anonymous_prepared_cache_size` is too small for the workload and the LRU is recycling entries faster than the application reuses them. The counter is monotonic per pool; an upgrade restarts it from zero. |\n");
+
     // Grafana Dashboard
     let _ = writeln!(out, "## Grafana Dashboard\n");
     let _ = writeln!(out, "You can create a Grafana dashboard to visualize these metrics. Here's a simple example of panels you might want to include:\n");

@@ -5,8 +5,8 @@
 #### Added
 
 - `client_anonymous_prepared_cache_size` (default `256`) bounds the Anonymous part of the per-client prepared-statement cache. Named statements remain unbounded.
-- `kind` column in `SHOW PREPARED_STATEMENTS` (`named` / `anonymous` / `mixed`) reflects how clients have used each pool entry.
-- `client_named_count`, `client_anonymous_count`, and `client_anonymous_evictions` columns in `SHOW POOLS_MEMORY`.
+- `kind` column appended to `SHOW PREPARED_STATEMENTS` as the last column (`named` / `anonymous` / `mixed`); reflects how clients have used each pool entry.
+- `client_named_count`, `client_anonymous_count`, and `client_anonymous_evictions_total` columns in `SHOW POOLS_MEMORY`. The `_total` suffix on the counter column distinguishes it from the gauge columns to its left.
 - New Prometheus metrics:
     - `pg_doorman_clients_prepared_named_entries`
     - `pg_doorman_clients_prepared_anonymous_entries`
@@ -16,9 +16,9 @@
 
 - The per-client prepared-statement cache is split into two maps: Named (unbounded) and Anonymous (LRU). This fixes a bug where the previous combined LRU could evict a Named entry and cause the next `Bind` to fail with `prepared statement does not exist`.
 
-#### Removed
+#### Deprecated
 
-- `client_prepared_statements_cache_size` is removed. The setting is silently ignored if it is still present in user configs (the new field takes its place). Operators who tuned that value should migrate to `client_anonymous_prepared_cache_size`.
+- `client_prepared_statements_cache_size` is renamed to `client_anonymous_prepared_cache_size`. The old name is kept as a serde alias so existing configs continue to load; a `WARN` is logged at startup when the deprecated name is used. Operators who tuned that value should rename it.
 
 ### 3.6.5 <small>May 4, 2026</small>
 

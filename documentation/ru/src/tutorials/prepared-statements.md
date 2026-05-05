@@ -249,16 +249,109 @@ general:
 стирает предыдущий", должны переключиться на именованные statement
 с явным `Close`.
 
+## Тюнинг
+
+### Дефолт `client_anonymous_prepared_cache_size = 256`
+
+Лимит в 256 записей на клиента подобран под типичную OLTP-нагрузку:
+небольшой набор горячих анонимных запросов делится между тысячами
+клиентов. Каждая запись хранит лёгкую структуру
+`(hash, async_name?, Arc<Parse>)` — сам `Arc<Parse>` шарится с
+pool-level кешем, поэтому накладные расходы per-client ≈ 80 байт
+на запись. На 10 000 подключённых клиентах × 256 записей × ~80 байт
+получаем около 200 МБ предсказуемого потолка на пулере.
+
+Поднимайте лимит, когда:
+
+- ORM или генератор SQL выдаёт `stmt_<seq>` под каждый запрос и
+  Anonymous LRU постоянно вытесняет записи (видно по устойчиво
+  ненулевой скорости `pg_doorman_clients_prepared_anonymous_evictions_total`).
+- Приложение заведомо имеет широкое рабочее множество в одной
+  сессии (больше 256 разных анонимных запросов), и скорость
+  выселений соответствует этой нагрузке.
+
+Уменьшайте лимит или поднимайте `max_memory_usage` при очень больших
+числах подключений (50 000+ клиентов): на таком масштабе даже
+256 × clients × 80 байт пересекает 1 ГБ учётной памяти на пулере, и
+урезание лимита уполовинивает её.
+
+### Named всегда без лимита
+
+Named-часть per-client кеша не ограничена. PgDoorman держит
+`Arc<Parse>` для каждого именованного statement, который создал
+клиент, до его дисконнекта или явного `DEALLOCATE` /
+`DEALLOCATE ALL`. Это согласуется с собственным контрактом
+PostgreSQL — именованные prepared живут до конца сессии — и
+исключает сценарий, при котором выселение Named-записи под нагрузкой
+ломает следующий `Bind` ошибкой `prepared statement does not exist`.
+
+Обратная сторона: драйверы, генерирующие отдельное имя под каждый
+запрос (часть режимов pgjdbc и Hibernate, отдельные конфигурации
+.NET Npgsql), могут раздуть Named-часть без потолка. PgDoorman не
+может ограничить её безопасно; ответственность за переиспользование
+имён или явный `DEALLOCATE` лежит на приложении.
+
+Сигнал давления есть только для Anonymous LRU — счётчик выселений
+`pg_doorman_clients_prepared_anonymous_evictions_total`. Для Named
+такого сигнала нет: следите за колонкой `client_named_count` в
+`SHOW POOLS_MEMORY` и метрикой `pg_doorman_clients_prepared_named_entries`
+на предмет неожиданного роста.
+
+### Окно утечки памяти на бекенде
+
+При выселении записи из Anonymous LRU на стороне клиента PgDoorman
+дропает только локальный `Arc<Parse>`. Соответствующий
+`DOORMAN_<N>` остаётся живым на каждом backend, который когда-либо
+его обслуживал. Очищают его две силы:
+
+- **Server-level LRU.** На каждом backend ведётся свой
+  `LruCache<String, ()>` имён `DOORMAN_<N>`, ограниченный
+  `prepared_statements_cache_size` (default 8192). При достижении
+  лимита backend отправляет `Close` на наименее давно использованное
+  имя и освобождает план.
+- **Ротация backend.** Backend достигает `server_lifetime` (default
+  20 мин), и pg_doorman закрывает его; новый backend стартует с
+  пустым plan cache.
+
+Худший случай по памяти на одном backend — это
+`prepared_statements_cache_size × ~100 КБ` плана ≈ 800 МБ на стороне
+PostgreSQL. Чтобы сжать окно:
+
+- Снизьте `prepared_statements_cache_size`, чтобы server-level LRU
+  быстрее выселяла планы.
+- Снизьте `server_lifetime`, чтобы backend ротировались чаще.
+
+Системное представление `pg_prepared_statements` в PostgreSQL
+показывает имена, которые держит текущий backend. Подсчёт строк там
+показывает, насколько близко backend подошёл к лимиту.
+
 ## Observability
 
 Admin-команды:
 
-- `SHOW PREPARED_STATEMENTS` — pool, hash, name, query, `count_used`.
-  Топ записей по `count_used` показывает горячие запросы, на которых
-  кеш окупается.
+- `SHOW PREPARED_STATEMENTS` — pool, hash, name, query, `count_used`,
+  `kind`. Топ записей по `count_used` показывает горячие запросы,
+  на которых кеш окупается. Колонка `kind` — последняя в наборе и
+  принимает значения `named`, `anonymous` или `mixed` в зависимости
+  от того, как клиенты использовали запись за её жизнь.
+
+  Пример:
+
+  ```text
+   pool         | hash               | name        | query             | count_used | kind
+  --------------+--------------------+-------------+-------------------+------------+-----------
+   sharded.user | 1234567890123456   | DOORMAN_1   | SELECT * FROM t1  |     150234 | anonymous
+   sharded.user | 2345678901234567   | DOORMAN_2   | INSERT INTO t2 .. |      87654 | named
+   sharded.user | 3456789012345678   | DOORMAN_3   | SELECT * FROM t3  |      45678 | mixed
+  ```
+
 - `SHOW POOLS_MEMORY` — `pool_prepared_count`,
   `client_prepared_count`, `pool_prepared_bytes`,
-  `client_prepared_bytes`.
+  `client_prepared_bytes` плюс разбивка по kind:
+  `client_named_count`, `client_anonymous_count`,
+  `client_anonymous_evictions_total`. Суффикс `_total` отмечает
+  последнюю колонку как счётчик (нарастающий с момента старта пула)
+  в отличие от gauge-колонок слева.
 
 Prometheus-метрики (полный список в [Prometheus](../reference/prometheus.md)):
 
@@ -266,9 +359,62 @@ Prometheus-метрики (полный список в [Prometheus](../referenc
 - `pg_doorman_pool_prepared_cache_bytes`
 - `pg_doorman_clients_prepared_cache_entries`
 - `pg_doorman_clients_prepared_cache_bytes`
+- `pg_doorman_clients_prepared_named_entries{user, database}`
+- `pg_doorman_clients_prepared_anonymous_entries{user, database}`
+- `pg_doorman_clients_prepared_anonymous_evictions_total{user, database}`
 - `pg_doorman_servers_prepared_hits{user, database, backend_pid}`
 - `pg_doorman_servers_prepared_misses`
 - `pg_doorman_async_clients_count`
+
+## Алертинг
+
+### Скорость выселений в Anonymous LRU
+
+Устойчиво ненулевая скорость на счётчике выселений означает, что
+LRU вытесняет записи быстрее, чем приложение переиспользует их.
+Шаблон алерта:
+
+```text
+rate(pg_doorman_clients_prepared_anonymous_evictions_total[5m]) > 10
+  for 10m
+```
+
+Порог в 10 выселений/с на пул — отправная точка, реальное значение
+зависит от формы трафика и числа подключений. Срабатывание алерта
+читайте как "лимит слишком мал или рабочее множество приложения
+шире, чем ожидалось"; решение — либо поднять
+`client_anonymous_prepared_cache_size`, либо разобраться, не
+генерирует ли приложение уникальные запросы на горячем пути.
+
+### Интерпретация `kind = mixed`
+
+Каждая запись pool-level кеша помнит, использовали ли её клиенты под
+именованным statement, под анонимным, или и так и так. `kind = mixed`
+означает, что одна и та же пара `(query, param_types)` была
+обработана хотя бы одним клиентом как named и хотя бы одним другим
+как anonymous за её текущую жизнь. Большинство нагрузок не видят
+строк `mixed`; пул, в котором их большинство, говорит о
+гетерогенной клиентской базе (разные драйверы или конфигурации
+драйверов против одной БД), и эту разнородность стоит проверить —
+иногда она задумана, иногда сигналит, что один из клиентов настроен
+неверно.
+
+### Число prepared statements на бекенде
+
+PostgreSQL отдаёт `pg_prepared_statements` для текущего backend.
+Если память пулера в норме, но RSS PostgreSQL backend растёт,
+посчитайте строки на каждом backend:
+
+```sql
+SELECT count(*) FROM pg_prepared_statements;
+```
+
+Цифры около `prepared_statements_cache_size` (default 8192)
+означают, что server-level LRU работает на потолке и единственный
+способ освободить память планов — ротация. Если `server_lifetime`
+велик, планы копятся долго. Снижение любого из этих параметров
+ослабляет давление на память планов ценой более частых перепарсингов
+на backend.
 
 ## Справочник
 
