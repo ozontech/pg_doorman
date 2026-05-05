@@ -158,9 +158,7 @@ pub fn anon_remove(hash: u64) -> bool {
     ANON_INTERNER.remove(&hash).is_some()
 }
 
-/// Force-clear both interners. Used by the `RESET INTERNER` admin command
-/// added in a follow-up commit; exposed now so the split refactor is
-/// self-contained in tests.
+/// Force-clear both interners. Used by the `RESET INTERNER` admin command.
 pub fn reset_interners_force() {
     NAMED_INTERNER.clear();
     ANON_INTERNER.clear();

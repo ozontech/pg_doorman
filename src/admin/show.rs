@@ -195,6 +195,110 @@ where
     write_all_half(stream, &res).await
 }
 
+/// Aggregate of the global query interner, grouped by kind. Two rows
+/// (named, anonymous) with entry counts and uncompressed byte totals.
+pub async fn show_interner<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    use crate::server::{anon_snapshot, named_snapshot};
+
+    let columns = vec![
+        ("kind", DataType::Text),
+        ("entries", DataType::Numeric),
+        ("bytes", DataType::Numeric),
+    ];
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    let named = named_snapshot();
+    let anon = anon_snapshot();
+    let named_bytes: u64 = named.iter().map(|(_, e)| e.text().len() as u64).sum();
+    let anon_bytes: u64 = anon.iter().map(|(_, e)| e.text().len() as u64).sum();
+
+    res.put(data_row(&[
+        "named".to_string(),
+        named.len().to_string(),
+        named_bytes.to_string(),
+    ]));
+    res.put(data_row(&[
+        "anonymous".to_string(),
+        anon.len().to_string(),
+        anon_bytes.to_string(),
+    ]));
+
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Top N interner entries by interned text length. Each row carries hash,
+/// kind, byte length, and the idle time in milliseconds for anonymous
+/// entries (-1 for named, since the named half tracks GC state instead of
+/// last-used timestamps), plus a 120-character preview of the SQL.
+pub async fn show_interner_top<T>(stream: &mut T, n: usize) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    use crate::server::{anon_snapshot, named_snapshot, now_monotonic_ms};
+
+    let columns = vec![
+        ("hash", DataType::Text),
+        ("kind", DataType::Text),
+        ("bytes", DataType::Numeric),
+        ("idle_ms", DataType::Numeric),
+        ("query", DataType::Text),
+    ];
+    let mut res = BytesMut::new();
+    res.put(row_description(&columns));
+
+    let now = now_monotonic_ms();
+    let mut combined: Vec<(u64, &'static str, usize, i64, String)> = Vec::new();
+    for (hash, entry) in named_snapshot() {
+        let preview: String = entry.text().chars().take(120).collect();
+        combined.push((hash, "named", entry.text().len(), -1, preview));
+    }
+    for (hash, entry) in anon_snapshot() {
+        let preview: String = entry.text().chars().take(120).collect();
+        let idle = entry.idle_ms(now) as i64;
+        combined.push((hash, "anonymous", entry.text().len(), idle, preview));
+    }
+    combined.sort_by_key(|r| std::cmp::Reverse(r.2));
+    for (hash, kind, bytes, idle, preview) in combined.into_iter().take(n) {
+        res.put(data_row(&[
+            format!("{hash:#x}"),
+            kind.to_string(),
+            bytes.to_string(),
+            idle.to_string(),
+            preview,
+        ]));
+    }
+
+    res.put(command_complete("SHOW"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
+/// Force-clear both interners. Diagnostics-only — in-flight clients re-Parse
+/// on next reuse. Returns CommandComplete RESET.
+pub async fn reset_interner<T>(stream: &mut T) -> Result<(), Error>
+where
+    T: tokio::io::AsyncWrite + std::marker::Unpin,
+{
+    crate::server::reset_interners_force();
+
+    let mut res = BytesMut::new();
+    res.put(command_complete("RESET"));
+    res.put_u8(b'Z');
+    res.put_i32(5);
+    res.put_u8(b'I');
+    write_all_half(stream, &res).await
+}
+
 /// Show extended utilization of connection pools for each pool.
 pub async fn show_pools_extended<T>(stream: &mut T) -> Result<(), Error>
 where
