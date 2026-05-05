@@ -157,6 +157,11 @@ pub struct PoolStats {
     /// Total number of Anonymous entries across all clients' prepared statement caches
     pub client_anonymous_count: u64,
 
+    /// Cumulative count of Anonymous LRU evictions across all clients' caches.
+    /// A sustained non-zero rate indicates `client_anonymous_prepared_cache_size`
+    /// is too small for the workload.
+    pub client_anonymous_evictions: u64,
+
     /// Number of async clients (using Flush instead of Sync)
     pub async_clients_count: u64,
 
@@ -261,6 +266,7 @@ impl PoolStats {
             client_prepared_bytes: 0,
             client_named_count: 0,
             client_anonymous_count: 0,
+            client_anonymous_evictions: 0,
             async_clients_count: 0,
             avg_recv: 0,
             avg_sent: 0,
@@ -407,6 +413,7 @@ impl PoolStats {
             ("client_prepared_bytes", DataType::Numeric),
             ("client_named_count", DataType::Numeric),
             ("client_anonymous_count", DataType::Numeric),
+            ("client_anonymous_evictions", DataType::Numeric),
             ("async_clients", DataType::Numeric),
         ]
     }
@@ -421,6 +428,7 @@ impl PoolStats {
             Cow::Owned(self.client_prepared_bytes.to_string()),
             Cow::Owned(self.client_named_count.to_string()),
             Cow::Owned(self.client_anonymous_count.to_string()),
+            Cow::Owned(self.client_anonymous_evictions.to_string()),
             Cow::Owned(self.async_clients_count.to_string()),
         ]
     }
@@ -619,6 +627,7 @@ impl PoolStats {
                     pool_stats.client_prepared_bytes += client.prepared_cache_bytes();
                     pool_stats.client_named_count += client.prepared_named_count();
                     pool_stats.client_anonymous_count += client.prepared_anonymous_count();
+                    pool_stats.client_anonymous_evictions += client.prepared_anonymous_evictions();
                     if client.is_async_client() {
                         pool_stats.async_clients_count += 1;
                     }

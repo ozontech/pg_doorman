@@ -21,10 +21,11 @@ use super::SHOW_SOCKETS;
 use super::{
     AUTH_QUERY_AUTH, AUTH_QUERY_CACHE, AUTH_QUERY_DYNAMIC_POOLS, AUTH_QUERY_EXECUTOR, COORDINATOR,
     COORDINATOR_TOTALS, POOL_SCALING_GAUGE, POOL_SCALING_TOTALS, SHOW_ASYNC_CLIENTS_COUNT,
-    SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CONNECTIONS, SHOW_POOLS_BYTES,
-    SHOW_POOLS_CLIENT, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS, SHOW_POOLS_QUERIES_COUNTER,
-    SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME, SHOW_POOLS_SERVER,
-    SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
+    SHOW_CLIENT_CACHE_BYTES, SHOW_CLIENT_CACHE_ENTRIES, SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES,
+    SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL, SHOW_CLIENT_PREPARED_NAMED_ENTRIES,
+    SHOW_CONNECTIONS, SHOW_POOLS_BYTES, SHOW_POOLS_CLIENT, SHOW_POOLS_OLDEST_ACTIVE_AGE_MS,
+    SHOW_POOLS_QUERIES_COUNTER, SHOW_POOLS_QUERIES_PERCENTILE, SHOW_POOLS_QUERIES_TOTAL_TIME,
+    SHOW_POOLS_SERVER, SHOW_POOLS_TRANSACTIONS_COUNTER, SHOW_POOLS_TRANSACTIONS_PERCENTILE,
     SHOW_POOLS_TRANSACTIONS_TOTAL_TIME, SHOW_POOLS_WAIT_TIME_AVG, SHOW_POOL_CACHE_BYTES,
     SHOW_POOL_CACHE_ENTRIES, SHOW_POOL_SIZE, SHOW_SERVERS_PREPARED_HITS,
     SHOW_SERVERS_PREPARED_MISSES, SHOW_SERVER_TLS_CONNECTIONS, TOTAL_MEMORY,
@@ -122,6 +123,24 @@ fn update_pool_cache_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
     SHOW_CLIENT_CACHE_BYTES
         .with_label_values(&[user, database])
         .set(stats.client_prepared_bytes as f64);
+    SHOW_CLIENT_PREPARED_NAMED_ENTRIES
+        .with_label_values(&[user, database])
+        .set(stats.client_named_count as f64);
+    SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES
+        .with_label_values(&[user, database])
+        .set(stats.client_anonymous_count as f64);
+
+    // Anonymous LRU evictions are exposed as a monotonic counter; mirror the
+    // COORDINATOR_TOTALS pattern: read previous, compute delta, inc_by(delta).
+    let evictions_counter =
+        SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL.with_label_values(&[user, database]);
+    let delta = stats
+        .client_anonymous_evictions
+        .saturating_sub(evictions_counter.get());
+    if delta > 0 {
+        evictions_counter.inc_by(delta);
+    }
+
     SHOW_ASYNC_CLIENTS_COUNT
         .with_label_values(&[user, database])
         .set(stats.async_clients_count as f64);

@@ -216,7 +216,9 @@ where
             hash,
             async_name: async_name.clone(),
         };
-        let _ = self.prepared.cache.put(cache_key, cached);
+        if self.prepared.cache.put(cache_key, cached).is_some() {
+            self.prepared.anonymous_evictions += 1;
+        }
 
         // Update prepared cache stats after modification
         self.update_prepared_cache_stats();

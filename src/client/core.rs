@@ -304,6 +304,12 @@ pub struct PreparedStatementState {
 
     /// Counter for pending CloseComplete messages to send before ReadyForQuery
     pub pending_close_complete: u32,
+
+    /// Cumulative count of Anonymous LRU evictions in this client's cache.
+    /// Surfaced via the `pg_doorman_clients_prepared_anonymous_evictions_total`
+    /// Prometheus counter; a sustained non-zero rate signals that
+    /// `client_anonymous_prepared_cache_size` is too small for the workload.
+    pub anonymous_evictions: u64,
 }
 
 impl PreparedStatementState {
@@ -321,6 +327,7 @@ impl PreparedStatementState {
             parses_sent_in_batch: 0,
             processed_response_counts: ResponseCounts::default(),
             pending_close_complete: 0,
+            anonymous_evictions: 0,
         }
     }
 
@@ -351,6 +358,12 @@ impl PreparedStatementState {
     #[inline(always)]
     pub fn anonymous_count(&self) -> usize {
         self.cache.anonymous_count()
+    }
+
+    /// Returns the cumulative count of Anonymous LRU evictions in this cache.
+    #[inline(always)]
+    pub fn anonymous_evictions(&self) -> u64 {
+        self.anonymous_evictions
     }
 
     /// Calculates approximate memory usage of the client's prepared statement cache in bytes.
@@ -518,6 +531,7 @@ where
             self.prepared.cache_memory_usage() as u64,
             self.prepared.named_count() as u64,
             self.prepared.anonymous_count() as u64,
+            self.prepared.anonymous_evictions(),
         );
     }
 
@@ -531,6 +545,12 @@ where
     #[inline(always)]
     pub fn prepared_anonymous_count(&self) -> u64 {
         self.prepared.anonymous_count() as u64
+    }
+
+    /// Cumulative count of Anonymous LRU evictions in this client's cache.
+    #[inline(always)]
+    pub fn prepared_anonymous_evictions(&self) -> u64 {
+        self.prepared.anonymous_evictions()
     }
 
     /// Retrieve connection pool, if it exists.

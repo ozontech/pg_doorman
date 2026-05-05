@@ -87,6 +87,8 @@ pub struct ClientStats {
     pub prepared_named_count: AtomicU64,
     /// Number of Anonymous entries in client's prepared statement cache
     pub prepared_anonymous_count: AtomicU64,
+    /// Cumulative count of Anonymous LRU evictions in client's prepared statement cache
+    pub prepared_anonymous_evictions: AtomicU64,
     /// Whether this client is async (uses Flush instead of Sync)
     pub is_async_client: AtomicBool,
 }
@@ -120,6 +122,7 @@ impl Default for ClientStats {
             prepared_cache_bytes: AtomicU64::new(0),
             prepared_named_count: AtomicU64::new(0),
             prepared_anonymous_count: AtomicU64::new(0),
+            prepared_anonymous_evictions: AtomicU64::new(0),
             is_async_client: AtomicBool::new(false),
             reporter: get_reporter(),
             use_tls: false,
@@ -394,13 +397,23 @@ impl ClientStats {
     /// Called when adding or removing entries from the client's prepared statement cache.
     /// `count` must equal `named + anonymous`; we still store all three so SHOW
     /// POOLS_MEMORY can read the breakdown atomically without recomputing the sum.
+    /// `evictions` is the monotonic per-client Anonymous LRU eviction counter.
     #[inline(always)]
-    pub fn set_prepared_cache_stats(&self, count: u64, bytes: u64, named: u64, anonymous: u64) {
+    pub fn set_prepared_cache_stats(
+        &self,
+        count: u64,
+        bytes: u64,
+        named: u64,
+        anonymous: u64,
+        evictions: u64,
+    ) {
         self.prepared_cache_count.store(count, Ordering::Relaxed);
         self.prepared_cache_bytes.store(bytes, Ordering::Relaxed);
         self.prepared_named_count.store(named, Ordering::Relaxed);
         self.prepared_anonymous_count
             .store(anonymous, Ordering::Relaxed);
+        self.prepared_anonymous_evictions
+            .store(evictions, Ordering::Relaxed);
     }
 
     /// Returns the number of entries in the client's prepared statement cache.
@@ -425,6 +438,12 @@ impl ClientStats {
     #[inline(always)]
     pub fn prepared_anonymous_count(&self) -> u64 {
         self.prepared_anonymous_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the cumulative count of Anonymous LRU evictions in the client's cache.
+    #[inline(always)]
+    pub fn prepared_anonymous_evictions(&self) -> u64 {
+        self.prepared_anonymous_evictions.load(Ordering::Relaxed)
     }
 
     /// Marks this client as an async client (uses Flush instead of Sync).

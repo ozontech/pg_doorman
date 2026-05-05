@@ -186,6 +186,48 @@ pub(crate) static SHOW_ASYNC_CLIENTS_COUNT: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+pub(crate) static SHOW_CLIENT_PREPARED_NAMED_ENTRIES: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_clients_prepared_named_entries",
+            "Total Named entries across all clients' prepared statement caches by user and database.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_ENTRIES: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_clients_prepared_anonymous_entries",
+            "Total Anonymous entries across all clients' prepared statement caches by user and database.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
+pub(crate) static SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL: Lazy<IntCounterVec> =
+    Lazy::new(|| {
+        let counter = IntCounterVec::new(
+            Opts::new(
+                "pg_doorman_clients_prepared_anonymous_evictions_total",
+                "Cumulative count of Anonymous LRU evictions on the per-client cache by user and \
+                 database. A sustained non-zero rate signals that \
+                 client_anonymous_prepared_cache_size is too small for the workload.",
+            ),
+            &["user", "database"],
+        )
+        .unwrap();
+        REGISTRY.register(Box::new(counter.clone())).unwrap();
+        counter
+    });
+
 pub(crate) static SHOW_POOLS_QUERIES_PERCENTILE: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(

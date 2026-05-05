@@ -677,7 +677,9 @@ fn reconstruct_prepared_state(
             hash,
             async_name,
         };
-        let _ = prepared.cache.put(entry.key.clone(), cached);
+        if prepared.cache.put(entry.key.clone(), cached).is_some() {
+            prepared.anonymous_evictions += 1;
+        }
     }
     prepared
 }
