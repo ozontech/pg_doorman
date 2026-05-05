@@ -141,6 +141,7 @@ pub fn generate_reference_config(format: ConfigFormat, russian: bool) -> String 
         log_client_parameter_status_changes: false,
         application_name: None,
         prepared_statements_cache_size: None,
+        server_prepared_statements_cache_size: None,
         scaling_warm_pool_ratio: None,
         scaling_fast_retries: None,
         max_db_connections: None,
@@ -855,6 +856,14 @@ fn write_general_section(w: &mut ConfigWriter, config: &Config) {
     );
     w.blank();
 
+    write_field_comment(w, fi, "general", "server_prepared_statements_cache_size");
+    if let Some(val) = g.server_prepared_statements_cache_size {
+        w.kv(fi, "server_prepared_statements_cache_size", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "server_prepared_statements_cache_size", "8192");
+    }
+    w.blank();
+
     write_field_comment(w, fi, "general", "client_anonymous_prepared_cache_size");
     w.kv(
         fi,
@@ -1210,6 +1219,14 @@ fn write_single_pool(w: &mut ConfigWriter, pool_name: &str, pool: &Pool) {
         w.kv(fi, "prepared_statements_cache_size", &w.num_val(val));
     } else {
         w.commented_kv(fi, "prepared_statements_cache_size", "8192");
+    }
+    w.blank();
+
+    write_field_desc(w, fi, "pool", "server_prepared_statements_cache_size");
+    if let Some(val) = pool.server_prepared_statements_cache_size {
+        w.kv(fi, "server_prepared_statements_cache_size", &w.num_val(val));
+    } else {
+        w.commented_kv(fi, "server_prepared_statements_cache_size", "8192");
     }
     w.blank();
 

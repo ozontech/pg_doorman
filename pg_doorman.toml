@@ -252,6 +252,11 @@ prepared_statements = true
 # Default: 8192
 prepared_statements_cache_size = 8192
 
+# Per-backend prepared statement LRU size. When unset, inherits prepared_statements_cache_size.
+# Lets operators bound DOORMAN_<N> rows on a single PostgreSQL backend without shrinking the pool-level cache.
+# Default: not set (inherits prepared_statements_cache_size)
+# server_prepared_statements_cache_size = 8192
+
 # Per-client Anonymous prepared-statement LRU size.
 # Bounds the Anonymous part of the per-client cache; the Named part is always unbounded.
 # Set to 0 to disable the LRU and use an unlimited map.
@@ -469,6 +474,9 @@ cleanup_server_connections = true
 
 # Override global prepared_statements_cache_size for this pool.
 # prepared_statements_cache_size = 8192
+
+# Override the per-backend server-level prepared statement LRU for this pool.
+# server_prepared_statements_cache_size = 8192
 
 # --------------------------------------------------------------------------
 # Connection Scaling Overrides

@@ -251,6 +251,66 @@ general:
 
 ## Тюнинг
 
+### Размер кеша
+
+Кеш prepared statements в PgDoorman состоит из трёх слоёв, и
+управляют ими два связанных параметра:
+
+- `prepared_statements_cache_size` (по умолчанию `8192`) задаёт
+  размер общего pool-level кеша — одна карта на пул, ключом служит
+  хеш запроса. Это верхняя граница на число различных query shape,
+  которые пул помнит сразу для всех клиентов. Приближённый LRU:
+  выселение проходит за O(N) по всей карте и не отправляет `Close`
+  на бекенд (другие клиенты могут ещё держать `Arc`).
+- `server_prepared_statements_cache_size` (по умолчанию наследует
+  `prepared_statements_cache_size`) задаёт размер per-backend
+  кеша — отдельный LRU на каждое серверное соединение, ключом
+  служит имя `DOORMAN_<N>`. Это верхняя граница на число prepared
+  statements, которое PgDoorman позволит держать одному бекенду
+  PostgreSQL. Точный LRU за O(1); при выселении в очередь бекенда
+  кладётся `Close`, который отправляется ближайшим Sync или Flush —
+  представление `pg_prepared_statements` может временно показывать
+  больше строк, чем потолок, пока не придёт следующий Sync.
+
+Оба параметра принимают per-pool override:
+
+```yaml
+general:
+  prepared_statements_cache_size: 8192
+  server_prepared_statements_cache_size: 1024  # потолок per-backend жёстче
+
+pools:
+  oltp:
+    # наследует оба значения из general
+    pool_mode: "transaction"
+  reporting:
+    # у этого пула шире разнообразие запросов; пусть per-backend кеш
+    # вмещает больше
+    server_prepared_statements_cache_size: 4096
+    pool_mode: "transaction"
+```
+
+`prepared_statements_cache_size: 0` отключает подмену целиком и
+заодно обнуляет server-level LRU. Указать
+`server_prepared_statements_cache_size: 0` при положительном
+pool-size допустимо, но смысла мало: per-backend кеш превратится
+в pass-through, и каждое попадание на чужой бекенд приведёт к
+повторному `Parse`.
+
+Когда уменьшать `server_prepared_statements_cache_size` ниже размера
+pool-level кеша:
+
+- На бекендах копится слишком много строк `DOORMAN_<N>`
+  (`pg_prepared_statements` упирается в потолок, plan memory
+  растёт).
+- Хочется ускорить вытеснение через `Close`, не урезая попадания
+  в pool-level кеш.
+
+Когда оставить значения равными (поведение по умолчанию):
+
+- Нет измеренной проблемы с памятью на бекендах. Достаточно
+  наследования.
+
 ### Дефолт `client_anonymous_prepared_cache_size = 256`
 
 Лимит в 256 записей на клиента подобран под типичную OLTP-нагрузку:

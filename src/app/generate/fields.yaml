@@ -782,6 +782,24 @@ fields:
         This cache stores the mapping from query hash to rewritten prepared statement name.
       default: "8192"
 
+    server_prepared_statements_cache_size:
+      config:
+        en: |
+          Per-backend prepared statement LRU size. When unset, inherits prepared_statements_cache_size.
+          Lets operators bound DOORMAN_<N> rows on a single PostgreSQL backend without shrinking the pool-level cache.
+        ru: |
+          Размер LRU подготовленных запросов на каждое серверное соединение. Если не задан, наследует prepared_statements_cache_size.
+          Позволяет ограничить число DOORMAN_<N> на одном бэкенде PostgreSQL, не сужая пуловый кеш.
+      doc: |
+        Sizes the per-backend `LruCache<String, ()>` of `DOORMAN_<N>` names independently of the pool-level cache.
+        When unset (default), inherits the resolved `prepared_statements_cache_size` for that pool. A per-pool
+        override on this field takes precedence over this general value.
+
+        Lower this knob below the pool size when backends carry too many `DOORMAN_<N>` rows
+        (`pg_prepared_statements` near the cap, plan memory ballooning) or when faster `Close` recycling is desired
+        without shrinking pool-level hit rate. Forced to 0 when `prepared_statements: false`.
+      default: "not set (inherits prepared_statements_cache_size)"
+
     client_anonymous_prepared_cache_size:
       config:
         en: |
@@ -1164,6 +1182,16 @@ fields:
         en: "Override global prepared_statements_cache_size for this pool."
         ru: "Переопределить глобальный prepared_statements_cache_size для этого пула."
       doc: "Override global prepared_statements_cache_size for this pool. If not specified, the global setting is used."
+
+    server_prepared_statements_cache_size:
+      config:
+        en: "Override the per-backend server-level prepared statement LRU for this pool."
+        ru: "Переопределить per-backend LRU подготовленных запросов для этого пула."
+      doc: |
+        Override the per-backend server-level prepared statement LRU for this pool. When unset, inherits
+        `general.server_prepared_statements_cache_size`, which itself inherits from the resolved pool-level
+        `prepared_statements_cache_size`. Use this to widen or tighten the per-backend cache for one pool
+        with workload characteristics different from the rest of the instance.
 
     scaling_warm_pool_ratio:
       config:

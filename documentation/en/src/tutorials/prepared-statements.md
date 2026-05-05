@@ -249,6 +249,61 @@ explicit `Close`.
 
 ## Tuning
 
+### Sizing the cache
+
+PgDoorman's prepared-statement cache has three layers, governed by
+two related config knobs:
+
+- `prepared_statements_cache_size` (default `8192`) sizes the
+  pool-level shared cache — one map per pool, keyed by query hash.
+  This is the upper bound on distinct query shapes the pool will
+  remember across all clients. Approximate LRU; eviction is O(N) over
+  the whole map and never sends Close to a backend (other clients may
+  still hold the Arc).
+- `server_prepared_statements_cache_size` (default: inherits from
+  `prepared_statements_cache_size`) sizes the per-backend cache —
+  one LRU per backend connection, keyed by `DOORMAN_<N>` name. This
+  is the upper bound on distinct prepared statements PgDoorman will
+  let a single PostgreSQL backend hold. True LRU (O(1)); eviction
+  queues a `Close` message for the backend, sent on the next Sync or
+  Flush — your `pg_prepared_statements` view may temporarily show
+  more rows than the cap until the next Sync arrives.
+
+Both knobs accept a per-pool override:
+
+```yaml
+general:
+  prepared_statements_cache_size: 8192
+  server_prepared_statements_cache_size: 1024  # tighter per-backend
+
+pools:
+  oltp:
+    # inherits both from general
+    pool_mode: "transaction"
+  reporting:
+    # this pool has wider query diversity; let server cache hold more
+    server_prepared_statements_cache_size: 4096
+    pool_mode: "transaction"
+```
+
+Setting `prepared_statements_cache_size: 0` disables the entire
+remap and forces server-level LRU to 0 too. Setting
+`server_prepared_statements_cache_size: 0` while leaving the pool
+size positive is allowed but rarely useful — the per-backend cache
+becomes a pass-through that re-Parses on every cross-backend hit.
+
+When to lower `server_prepared_statements_cache_size` below the pool
+size:
+
+- Backends carry too many `DOORMAN_<N>` rows (`pg_prepared_statements`
+  near the cap, plan memory ballooning).
+- You want faster `Close` recycling without shrinking pool-cache hit
+  rate.
+
+When to keep them equal (the default):
+
+- You don't have a measured backend-memory problem. Leave the inheritance.
+
 ### Default `client_anonymous_prepared_cache_size = 256`
 
 The default of 256 entries per client is chosen for the typical OLTP

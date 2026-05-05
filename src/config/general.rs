@@ -208,6 +208,16 @@ pub struct General {
     #[serde(default = "General::default_prepared_statements_cache_size")]
     pub prepared_statements_cache_size: usize,
 
+    /// Per-backend prepared statement LRU size.
+    ///
+    /// Sizes the per-backend `LruCache<String, ()>` of `DOORMAN_<N>`
+    /// names independently of the pool-level cache. When `None`
+    /// (default), inherits the value of `prepared_statements_cache_size`
+    /// (or the per-pool override, if set). A per-pool value overrides
+    /// this one. Forced to 0 when `prepared_statements: false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_prepared_statements_cache_size: Option<usize>,
+
     /// Per-client Anonymous prepared statement LRU size.
     ///
     /// Bounds the Anonymous part of the per-client cache. The Named part
@@ -530,6 +540,7 @@ impl Default for General {
             server_round_robin: Self::default_server_round_robin(),
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
+            server_prepared_statements_cache_size: None,
             client_anonymous_prepared_cache_size:
                 Self::default_client_anonymous_prepared_cache_size(),
             hba: Self::default_hba(),
@@ -632,6 +643,25 @@ mod tests {
     fn anonymous_prepared_cache_default_is_256() {
         let g = General::default();
         assert_eq!(g.client_anonymous_prepared_cache_size, 256);
+    }
+
+    #[test]
+    fn server_cache_size_defaults_to_none() {
+        let g = General::default();
+        assert!(g.server_prepared_statements_cache_size.is_none());
+    }
+
+    #[test]
+    fn server_cache_size_parses_when_set() {
+        let yaml = r#"
+host: "0.0.0.0"
+port: 6432
+admin_username: "admin"
+admin_password: "x"
+server_prepared_statements_cache_size: 4096
+"#;
+        let parsed: General = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(parsed.server_prepared_statements_cache_size, Some(4096));
     }
 
     #[test]

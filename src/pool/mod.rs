@@ -407,6 +407,12 @@ impl ConnectionPool {
                     false => 0,
                 };
 
+                let server_prepared_statements_cache_size = resolve_server_cache_size(
+                    prepared_statements_cache_size,
+                    pool_config.server_prepared_statements_cache_size,
+                    config.general.server_prepared_statements_cache_size,
+                );
+
                 let application_name = pool_config
                     .application_name
                     .clone()
@@ -423,7 +429,7 @@ impl ConnectionPool {
                     client_server_map.clone(),
                     pool_config.cleanup_server_connections,
                     pool_config.log_client_parameter_status_changes,
-                    prepared_statements_cache_size,
+                    server_prepared_statements_cache_size,
                     application_name,
                     config.general.max_concurrent_creates,
                     pool_config
@@ -574,6 +580,12 @@ impl ConnectionPool {
                                 false => 0,
                             };
 
+                        let server_prepared_statements_cache_size = resolve_server_cache_size(
+                            prepared_statements_cache_size,
+                            pool_config.server_prepared_statements_cache_size,
+                            config.general.server_prepared_statements_cache_size,
+                        );
+
                         let application_name = pool_config
                             .application_name
                             .clone()
@@ -591,7 +603,7 @@ impl ConnectionPool {
                             client_server_map.clone(),
                             pool_config.cleanup_server_connections,
                             pool_config.log_client_parameter_status_changes,
-                            prepared_statements_cache_size,
+                            server_prepared_statements_cache_size,
                             application_name,
                             config.general.max_concurrent_creates,
                             pool_config
@@ -905,6 +917,30 @@ fn build_fallback_state(
     }
 }
 
+/// Resolve the per-backend prepared-statement LRU size for a pool.
+///
+/// Resolution order (most specific wins):
+/// 1. `pool_override` (per-pool `server_prepared_statements_cache_size`)
+/// 2. `general_override` (general-level `server_prepared_statements_cache_size`)
+/// 3. fallback to `pool_cache_size` — the resolved
+///    `prepared_statements_cache_size` for that pool, preserving the
+///    behaviour from before this knob existed.
+///
+/// Returns 0 when `pool_cache_size` is 0: the pool-level cache is
+/// disabled, so a per-backend LRU adds no value.
+pub(crate) fn resolve_server_cache_size(
+    pool_cache_size: usize,
+    pool_override: Option<usize>,
+    general_override: Option<usize>,
+) -> usize {
+    if pool_cache_size == 0 {
+        return 0;
+    }
+    pool_override
+        .or(general_override)
+        .unwrap_or(pool_cache_size)
+}
+
 /// Get the connection pool
 pub fn get_pool(db: &str, user: &str) -> Option<ConnectionPool> {
     (*(*POOLS.load()))
@@ -1001,5 +1037,51 @@ mod tests {
     fn spare_large_values() {
         assert_eq!(compute_spare(1000, Some(100), 200), 800);
         assert_eq!(compute_spare(1000, Some(999), 1), 1);
+    }
+
+    // --- resolve_server_cache_size tests ---
+
+    #[test]
+    fn server_cache_size_defaults_to_pool_size() {
+        // Neither override is set → inherit pool_cache_size.
+        assert_eq!(resolve_server_cache_size(8192, None, None), 8192);
+    }
+
+    #[test]
+    fn server_cache_size_general_override_takes_effect() {
+        // General override applied when pool override absent.
+        assert_eq!(resolve_server_cache_size(8192, None, Some(1024)), 1024);
+    }
+
+    #[test]
+    fn server_cache_size_pool_override_wins_over_general() {
+        // Per-pool override is the most specific level.
+        assert_eq!(
+            resolve_server_cache_size(8192, Some(2048), Some(1024)),
+            2048
+        );
+    }
+
+    #[test]
+    fn server_cache_size_pool_override_wins_over_inheritance() {
+        assert_eq!(resolve_server_cache_size(8192, Some(2048), None), 2048);
+    }
+
+    #[test]
+    fn server_cache_size_zero_pool_disables_server_lru() {
+        // pool_cache_size=0 means caches are off; server LRU is forced to 0
+        // regardless of overrides.
+        assert_eq!(resolve_server_cache_size(0, None, None), 0);
+        assert_eq!(resolve_server_cache_size(0, Some(1024), None), 0);
+        assert_eq!(resolve_server_cache_size(0, None, Some(1024)), 0);
+        assert_eq!(resolve_server_cache_size(0, Some(2048), Some(1024)), 0);
+    }
+
+    #[test]
+    fn server_cache_size_explicit_zero_per_pool_allowed() {
+        // Operators may explicitly disable the per-backend LRU even with a
+        // positive pool cache; resolve must return 0 in that case.
+        assert_eq!(resolve_server_cache_size(8192, Some(0), None), 0);
+        assert_eq!(resolve_server_cache_size(8192, Some(0), Some(1024)), 0);
     }
 }

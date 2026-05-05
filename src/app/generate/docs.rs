@@ -243,6 +243,7 @@ fn write_general_fields(out: &mut String, f: &FieldsData) {
         "admin_password",
         "prepared_statements",
         "prepared_statements_cache_size",
+        "server_prepared_statements_cache_size",
         "client_anonymous_prepared_cache_size",
         "message_size_to_be_stream",
         "scaling_warm_pool_ratio",

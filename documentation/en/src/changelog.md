@@ -4,6 +4,11 @@
 
 #### Added
 
+- New `server_prepared_statements_cache_size` config knob (general +
+  per-pool). Sizes the per-backend server-level prepared statement
+  LRU independently of the pool-level cache. When unset, inherits
+  the pool-level `prepared_statements_cache_size` value (no
+  behavioural change for existing configs).
 - `client_anonymous_prepared_cache_size` (default `256`) bounds the Anonymous part of the per-client prepared-statement cache. Named statements remain unbounded.
 - `kind` column appended to `SHOW PREPARED_STATEMENTS` as the last column (`named` / `anonymous` / `mixed`); reflects how clients have used each pool entry.
 - `client_named_count`, `client_anonymous_count`, and `client_anonymous_evictions_total` columns in `SHOW POOLS_MEMORY`. The `_total` suffix on the counter column distinguishes it from the gauge columns to its left.

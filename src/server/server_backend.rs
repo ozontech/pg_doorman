@@ -750,7 +750,7 @@ impl Server {
         stats: Arc<ServerStats>,
         cleanup_connections: bool,
         log_client_parameter_status_changes: bool,
-        prepared_statement_cache_size: usize,
+        server_prepared_statement_cache_size: usize,
         application_name: String,
         session_mode: bool,
     ) -> Result<Server, Error> {
@@ -965,10 +965,10 @@ impl Server {
                         last_activity: SystemTime::now(),
                         cleanup_connections,
                         log_client_parameter_status_changes,
-                        prepared_statement_cache: match prepared_statement_cache_size {
+                        prepared_statement_cache: match server_prepared_statement_cache_size {
                             0 => None,
                             _ => Some(LruCache::new(
-                                NonZeroUsize::new(prepared_statement_cache_size).unwrap(),
+                                NonZeroUsize::new(server_prepared_statement_cache_size).unwrap(),
                             )),
                         },
                         registering_prepared_statement: VecDeque::new(),
