@@ -137,7 +137,8 @@ PgDoorman держит состояние prepared statements на трёх ур
 
   Client-level  Named:     AHashMap<String, CachedStatement>, без лимита.
                 Anonymous: LruCache<u64, CachedStatement> ограничен
-                           client_anonymous_prepared_cache_size (default 256),
+                           client_anonymous_prepared_cache_size (если не задан,
+                           наследует prepared_statements_cache_size),
                            или AHashMap при размере 0.
                 Выселение Anonymous локальное: Arc<Parse> дропается,
                 DOORMAN_<N> на бекенде остаётся.
@@ -215,7 +216,7 @@ statement; на анонимный трафик он не влияет. PgCat в
 | Параметр                                 | Default | Эффект                                                                  |
 | ---------------------------------------- | :-----: | ----------------------------------------------------------------------- |
 | `prepared_statements_cache_size`         | 8192    | Размер pool-level кеша в записях. 0 отключает подмену.                  |
-| `client_anonymous_prepared_cache_size`   | 256     | Размер per-client Anonymous LRU. 0 = unlimited. Named всегда без лимита.|
+| `client_anonymous_prepared_cache_size`   | наследует `prepared_statements_cache_size` | Размер per-client Anonymous LRU. 0 = unlimited. Named всегда без лимита.|
 
 Named-часть per-client кеша всегда без лимита и не зависит от
 `client_anonymous_prepared_cache_size`.
@@ -271,6 +272,11 @@ general:
   кладётся `Close`, который отправляется ближайшим Sync или Flush —
   представление `pg_prepared_statements` может временно показывать
   больше строк, чем потолок, пока не придёт следующий Sync.
+- `client_anonymous_prepared_cache_size` (по умолчанию наследует
+  `prepared_statements_cache_size`) задаёт размер per-client
+  Anonymous LRU. `0` отключает LRU и использует неограниченную
+  карту; любое положительное число задаёт независимый от пулового
+  размера потолок per-client кеша.
 
 Оба параметра принимают per-pool override:
 
@@ -311,11 +317,15 @@ pool-level кеша:
 - Нет измеренной проблемы с памятью на бекендах. Достаточно
   наследования.
 
-### Дефолт `client_anonymous_prepared_cache_size = 256`
+### Размер `client_anonymous_prepared_cache_size`
 
-Лимит в 256 записей на клиента подобран под типичную OLTP-нагрузку:
-небольшой набор горячих анонимных запросов делится между тысячами
-клиентов. Каждая запись хранит лёгкую структуру
+Если параметр не задан, per-client Anonymous LRU наследует
+вычисленный `prepared_statements_cache_size` пула (default `8192`).
+Явное значение перекрывает наследование: `0` отключает LRU и
+использует неограниченную карту, любое положительное число задаёт
+потолок LRU.
+
+Каждая запись хранит лёгкую структуру
 `(hash, async_name?, Arc<Parse>)` — сам `Arc<Parse>` шарится с
 pool-level кешем, поэтому накладные расходы per-client ≈ 80 байт
 на запись. На 10 000 подключённых клиентах × 256 записей × ~80 байт
@@ -327,13 +337,12 @@ pool-level кешем, поэтому накладные расходы per-clie
   Anonymous LRU постоянно вытесняет записи (видно по устойчиво
   ненулевой скорости `pg_doorman_clients_prepared_anonymous_evictions_total`).
 - Приложение заведомо имеет широкое рабочее множество в одной
-  сессии (больше 256 разных анонимных запросов), и скорость
-  выселений соответствует этой нагрузке.
+  сессии и скорость выселений соответствует этой нагрузке.
 
 Уменьшайте лимит или поднимайте `max_memory_usage` при очень больших
-числах подключений (50 000+ клиентов): на таком масштабе даже
-256 × clients × 80 байт пересекает 1 ГБ учётной памяти на пулере, и
-урезание лимита уполовинивает её.
+числах подключений (50 000+ клиентов): на таком масштабе
+`clients × cache_size × 80 байт` учётной памяти на пулере может
+пересечь 1 ГБ, и урезание лимита уполовинивает её.
 
 ### Named всегда без лимита
 

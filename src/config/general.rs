@@ -221,20 +221,19 @@ pub struct General {
     /// Per-client Anonymous prepared statement LRU size.
     ///
     /// Bounds the Anonymous part of the per-client cache. The Named part
-    /// of the per-client cache is always unbounded; this knob only
-    /// constrains Anonymous entries. `0` disables the LRU and uses an
-    /// unlimited map. Default: 256.
+    /// is always unbounded; this knob only constrains Anonymous entries.
+    /// When `None` (default), inherits the value of
+    /// `prepared_statements_cache_size`. `Some(0)` disables the LRU and
+    /// uses an unlimited map; `Some(N)` caps the LRU at `N` entries.
     ///
     /// The `client_prepared_statements_cache_size` alias preserves
     /// backward compatibility for configs written before the field was
-    /// renamed; the value is mapped onto this field on parse. The parser
-    /// also emits a `log::warn!` when the deprecated name is used so
-    /// operators have a visible signal to update their configuration.
-    #[serde(
-        alias = "client_prepared_statements_cache_size",
-        default = "General::default_client_anonymous_prepared_cache_size"
-    )]
-    pub client_anonymous_prepared_cache_size: usize,
+    /// renamed; the value is mapped onto this field as `Some(N)`. The
+    /// parser also emits a `log::warn!` when the deprecated name is
+    /// used so operators have a visible signal to update their
+    /// configuration.
+    #[serde(default, alias = "client_prepared_statements_cache_size")]
+    pub client_anonymous_prepared_cache_size: Option<usize>,
 
     #[serde(default = "General::default_daemon_pid_file")]
     pub daemon_pid_file: String, // can be enabled only in daemon mode.
@@ -428,10 +427,6 @@ impl General {
     pub fn default_prepared_statements() -> bool {
         true
     }
-    /// Default per-client Anonymous LRU size.
-    pub fn default_client_anonymous_prepared_cache_size() -> usize {
-        256
-    }
 
     pub fn default_daemon_pid_file() -> String {
         "/tmp/pg_doorman.pid".to_string()
@@ -541,8 +536,7 @@ impl Default for General {
             prepared_statements: Self::default_prepared_statements(),
             prepared_statements_cache_size: Self::default_prepared_statements_cache_size(),
             server_prepared_statements_cache_size: None,
-            client_anonymous_prepared_cache_size:
-                Self::default_client_anonymous_prepared_cache_size(),
+            client_anonymous_prepared_cache_size: None,
             hba: Self::default_hba(),
             pg_hba: None,
             daemon_pid_file: Self::default_daemon_pid_file(),
@@ -640,9 +634,35 @@ mod tests {
     }
 
     #[test]
-    fn anonymous_prepared_cache_default_is_256() {
+    fn client_anon_cache_size_defaults_to_none() {
         let g = General::default();
-        assert_eq!(g.client_anonymous_prepared_cache_size, 256);
+        assert!(g.client_anonymous_prepared_cache_size.is_none());
+    }
+
+    #[test]
+    fn client_anon_cache_size_explicit_zero_is_unlimited() {
+        let yaml = r#"
+host: "0.0.0.0"
+port: 6432
+admin_username: "admin"
+admin_password: "x"
+client_anonymous_prepared_cache_size: 0
+"#;
+        let parsed: General = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(parsed.client_anonymous_prepared_cache_size, Some(0));
+    }
+
+    #[test]
+    fn client_anon_cache_size_explicit_value_is_kept() {
+        let yaml = r#"
+host: "0.0.0.0"
+port: 6432
+admin_username: "admin"
+admin_password: "x"
+client_anonymous_prepared_cache_size: 512
+"#;
+        let parsed: General = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(parsed.client_anonymous_prepared_cache_size, Some(512));
     }
 
     #[test]
@@ -675,8 +695,11 @@ client_prepared_statements_cache_size: 1024
 "#;
         let parsed: serde_yaml::Result<General> = serde_yaml::from_str(yaml);
         assert!(parsed.is_ok(), "should parse with deprecated field name");
-        // The alias should map the value into the new field.
-        assert_eq!(parsed.unwrap().client_anonymous_prepared_cache_size, 1024);
+        // The alias should map the value into the new field as Some(1024).
+        assert_eq!(
+            parsed.unwrap().client_anonymous_prepared_cache_size,
+            Some(1024),
+        );
     }
 
     #[test]
@@ -690,6 +713,9 @@ client_prepared_statements_cache_size = 2048
 "#;
         let parsed: Result<General, _> = toml::from_str(toml_input);
         assert!(parsed.is_ok(), "should parse with deprecated field name");
-        assert_eq!(parsed.unwrap().client_anonymous_prepared_cache_size, 2048);
+        assert_eq!(
+            parsed.unwrap().client_anonymous_prepared_cache_size,
+            Some(2048),
+        );
     }
 }

@@ -136,7 +136,8 @@ PgDoorman keeps prepared-statement state at three levels:
 
   Client-level  Named:     AHashMap<String, CachedStatement>, unbounded.
                 Anonymous: LruCache<u64, CachedStatement> bounded by
-                           client_anonymous_prepared_cache_size (default 256),
+                           client_anonymous_prepared_cache_size (defaults to
+                           prepared_statements_cache_size when unset),
                            or AHashMap if size = 0.
                 Eviction of an Anonymous entry is local: the Arc<Parse>
                 is dropped, the underlying DOORMAN_<N> on the backend
@@ -210,10 +211,10 @@ provides.
 
 ## Configuration
 
-| Setting                                  | Default | Effect                                                            |
-| ---------------------------------------- | :-----: | ----------------------------------------------------------------- |
-| `prepared_statements_cache_size`         | 8192    | Pool-level cache size in entries. 0 disables remap.               |
-| `client_anonymous_prepared_cache_size`   | 256     | Per-client Anonymous LRU size. 0 = unlimited. Named is unbounded. |
+| Setting                                  | Default | Effect                                                                                                        |
+| ---------------------------------------- | :-----: | ------------------------------------------------------------------------------------------------------------- |
+| `prepared_statements_cache_size`         | 8192    | Pool-level cache size in entries. 0 disables remap.                                                           |
+| `client_anonymous_prepared_cache_size`   | inherits `prepared_statements_cache_size` | Per-client Anonymous LRU size. 0 = unlimited. Named is unbounded. |
 
 The Named part of the per-client cache is always unlimited and is not
 affected by `client_anonymous_prepared_cache_size`.
@@ -268,6 +269,11 @@ two related config knobs:
   queues a `Close` message for the backend, sent on the next Sync or
   Flush — your `pg_prepared_statements` view may temporarily show
   more rows than the cap until the next Sync arrives.
+- `client_anonymous_prepared_cache_size` (default: inherits from
+  `prepared_statements_cache_size`) sizes the per-client Anonymous
+  LRU. Set to `0` to disable the LRU and use an unlimited map; set
+  to a number to bound the per-client cache independently of the
+  pool size.
 
 Both knobs accept a per-pool override:
 
@@ -304,11 +310,15 @@ When to keep them equal (the default):
 
 - You don't have a measured backend-memory problem. Leave the inheritance.
 
-### Default `client_anonymous_prepared_cache_size = 256`
+### Sizing `client_anonymous_prepared_cache_size`
 
-The default of 256 entries per client is chosen for the typical OLTP
-workload: a small set of hot anonymous queries shared across thousands
-of clients. Each entry holds a lightweight `(hash, async_name?, Arc<Parse>)`
+When unset, the per-client Anonymous LRU inherits the resolved
+`prepared_statements_cache_size` for the pool (default `8192`). Set
+an explicit value to override that inheritance — `0` disables the
+LRU and uses an unlimited map, any positive number caps the LRU at
+that size.
+
+Each entry holds a lightweight `(hash, async_name?, Arc<Parse>)`
 record — the `Arc<Parse>` is shared with the pool-level cache, so the
 per-client overhead is roughly `~80 bytes` of bookkeeping per entry.
 At 10 000 connected clients × 256 entries × ~80 bytes that adds up to
@@ -319,13 +329,13 @@ Raise the cap when:
 - An ORM or generated SQL framework mints `stmt_<seq>` per query and
   the `Anonymous` LRU keeps recycling entries (visible as a sustained
   non-zero rate on `pg_doorman_clients_prepared_anonymous_evictions_total`).
-- The application has a known wide working set per session (more than
-  256 distinct anonymous queries) and the eviction rate matches that
-  pressure.
+- The application has a known wide working set per session and the
+  eviction rate matches that pressure.
 
 Lower the cap or raise `max_memory_usage` for very large connection
-counts (50 000+ clients): at that scale even 256 × clients × 80 bytes
-crosses 1 GB of pooler bookkeeping, and trimming the cap halves it.
+counts (50 000+ clients): at that scale `clients × cache_size × 80
+bytes` of pooler bookkeeping can cross 1 GB, and trimming the cap
+halves it.
 
 ### Named is unbounded by design
 

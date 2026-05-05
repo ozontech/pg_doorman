@@ -803,11 +803,11 @@ fields:
     client_anonymous_prepared_cache_size:
       config:
         en: |
-          Per-client Anonymous prepared-statement LRU size.
+          Per-client Anonymous prepared-statement LRU size. When unset, inherits prepared_statements_cache_size.
           Bounds the Anonymous part of the per-client cache; the Named part is always unbounded.
           Set to 0 to disable the LRU and use an unlimited map.
         ru: |
-          Размер LRU-кеша Anonymous prepared-запросов на каждого клиента.
+          Размер LRU-кеша Anonymous prepared-запросов на каждого клиента. Если не задан, наследует prepared_statements_cache_size.
           Ограничивает Anonymous-часть клиентского кеша; Named-часть всегда без ограничений.
           0 — отключить LRU и использовать неограниченную карту.
       doc: |
@@ -815,12 +815,14 @@ fields:
         without an explicit name and are typically short-lived; the LRU caps how many of them a single client
         can accumulate before the oldest one is evicted.
 
+        When unset (default), inherits the resolved `prepared_statements_cache_size` for the pool. Set to `0` to
+        disable the LRU and fall back to an unlimited map for Anonymous entries; set to a number to bound the
+        per-client cache independently of the pool size.
+
         The Named part of the per-client cache (statements created with an explicit name via `PREPARE` or the
         extended-query Parse) is **always unbounded** — this knob does not affect it. Named statements stay
         cached for the lifetime of the client connection.
-
-        Set to `0` to disable the LRU and fall back to an unlimited map for Anonymous entries.
-      default: "256"
+      default: "not set (inherits prepared_statements_cache_size)"
 
     patroni_api_urls:
       config:

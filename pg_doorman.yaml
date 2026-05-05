@@ -297,11 +297,11 @@ general:
   # Default: not set (inherits prepared_statements_cache_size)
   # server_prepared_statements_cache_size: 8192
 
-  # Per-client Anonymous prepared-statement LRU size.
+  # Per-client Anonymous prepared-statement LRU size. When unset, inherits prepared_statements_cache_size.
   # Bounds the Anonymous part of the per-client cache; the Named part is always unbounded.
   # Set to 0 to disable the LRU and use an unlimited map.
-  # Default: 256
-  client_anonymous_prepared_cache_size: 256
+  # Default: not set (inherits prepared_statements_cache_size)
+  # client_anonymous_prepared_cache_size: 8192
 
   # --------------------------------------------------------------------------
   # Admin Console

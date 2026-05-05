@@ -463,7 +463,7 @@ fn write_prometheus_metrics_section(out: &mut String) {
 
     // Per-Client Prepared Statement Cache Metrics
     let _ = writeln!(out, "### Per-Client Prepared Statement Cache Metrics\n");
-    let _ = writeln!(out, "The per-client prepared statement cache is split into a Named map (unbounded) and an Anonymous LRU bounded by `client_anonymous_prepared_cache_size` (default 256). The three metrics below expose the size of each part and the eviction rate on the bounded part.\n");
+    let _ = writeln!(out, "The per-client prepared statement cache is split into a Named map (unbounded) and an Anonymous LRU bounded by `client_anonymous_prepared_cache_size` (defaults to the resolved `prepared_statements_cache_size` when unset). The three metrics below expose the size of each part and the eviction rate on the bounded part.\n");
     let _ = writeln!(out, "| Metric | Description |");
     let _ = writeln!(out, "|--------|-------------|");
     let _ = writeln!(out, "| `pg_doorman_clients_prepared_named_entries` | Gauge by user and database. Sum of Named entries across every connected client's cache. Named statements have no upper bound and are kept until the client disconnects or sends `DEALLOCATE`. Sustained growth here indicates drivers that mint per-query named statements (some pgjdbc / Hibernate flows, some .NET Npgsql configurations) and may justify capping per-client memory at the application layer. |");

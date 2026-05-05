@@ -9,7 +9,12 @@
   LRU independently of the pool-level cache. When unset, inherits
   the pool-level `prepared_statements_cache_size` value (no
   behavioural change for existing configs).
-- `client_anonymous_prepared_cache_size` (default `256`) bounds the Anonymous part of the per-client prepared-statement cache. Named statements remain unbounded.
+- `client_anonymous_prepared_cache_size` is now optional; when unset
+  it inherits the pool-level `prepared_statements_cache_size` (or
+  the resolved per-pool override). `0` continues to mean unlimited.
+  Aligns with the new `server_prepared_statements_cache_size`
+  inheritance pattern.
+- `client_anonymous_prepared_cache_size` bounds the Anonymous part of the per-client prepared-statement cache. Named statements remain unbounded.
 - `kind` column appended to `SHOW PREPARED_STATEMENTS` as the last column (`named` / `anonymous` / `mixed`); reflects how clients have used each pool entry.
 - `client_named_count`, `client_anonymous_count`, and `client_anonymous_evictions_total` columns in `SHOW POOLS_MEMORY`. The `_total` suffix on the counter column distinguishes it from the gauge columns to its left.
 - New Prometheus metrics:
