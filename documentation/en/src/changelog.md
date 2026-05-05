@@ -8,6 +8,10 @@ When a large `DataRow` was deferred via `pending_large_message`, `recv()` cleare
 
 `recv()` now keeps `pending_large_message` until large-message handling succeeds and clears it only on `Ok`. On error, the next `recv()` still has correct frame context, allowing cleanup to complete and active counters to drop as expected.
 
+#### Observability: `oldest_active_age_ms` per pool
+
+`SHOW POOLS` exposes a new `oldest_active_age_ms` column and Prometheus exports `pg_doorman_pools_oldest_active_age_ms{user, database}`. The gauge reports the maximum age in milliseconds among ACTIVE servers in each pool, taken at snapshot time, and falls back to `0` when no server is currently ACTIVE. Sustained non-zero values flag stuck checkouts before pool exhaustion.
+
 ### 3.6.4 <small>Apr 29, 2026</small>
 
 #### Fallback resilience

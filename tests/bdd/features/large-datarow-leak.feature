@@ -153,6 +153,52 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
     And we send SimpleQuery "SELECT 'CLEAN_HANDOFF'::text" to session "client_b" and store response
     Then session "client_b" should receive DataRow with "CLEAN_HANDOFF"
 
+  @large-datarow-leak-copy-data-timeout
+  Scenario: COPY ... TO STDOUT mid-stream timeout — next client sees clean state
+    # Mirrors @large-datarow-leak-timeout-clean-handoff via the CopyData ('d')
+    # path through handle_large_copy_data, instead of the DataRow ('D') path.
+    # Client A starts COPY ... TO STDOUT producing a 4 MB CopyData frame, never
+    # reads, hits proxy_copy_data_timeout, and disconnects. Client B's next
+    # query must return its own row, not leftover bytes.
+    When we create session "copy_a" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "COPY (SELECT repeat('X', 4000000)::text) TO STDOUT" to session "copy_a" without waiting
+
+    # 2s proxy timeout + cleanup margin.
+    And we sleep 4000ms
+
+    When we close session "copy_a"
+    And we sleep 1000ms
+
+    When we create admin session "admin-copy" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOLS" on admin session "admin-copy" and store response
+    Then admin session "admin-copy" column "cl_active" for row with "user" = "example_user_1" should be between 0 and 0
+    And admin session "admin-copy" column "sv_active" for row with "user" = "example_user_1" should be between 0 and 0
+
+    When we create session "copy_b" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT 'COPY_CLEAN'::text" to session "copy_b" and store response
+    Then session "copy_b" should receive DataRow with "COPY_CLEAN"
+
+  @oldest-active-age-smoke
+  Scenario: oldest_active_age_ms reflects the longest-held checkout and resets after release
+    # While client A holds a server mid-pg_sleep, SHOW POOLS reports a non-zero
+    # checkout age in milliseconds. After release the gauge falls back to 0.
+    # Wide ranges (200..5000 / exact 0) avoid CI timing flakes.
+    When we create session "age_a" to pg_doorman as "example_user_1" with password "" and database "example_db"
+    And we send SimpleQuery "SELECT pg_sleep(2)" to session "age_a" without waiting
+    And we sleep 1200ms
+
+    When we create admin session "admin-age" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOLS" on admin session "admin-age" and store response
+    Then admin session "admin-age" column "oldest_active_age_ms" for row with "user" = "example_user_1" should be between 200 and 5000
+
+    And we sleep 2000ms
+    When we close session "age_a"
+    And we sleep 800ms
+
+    When we create admin session "admin-age2" to pg_doorman as "admin" with password "admin"
+    And we execute "SHOW POOLS" on admin session "admin-age2" and store response
+    Then admin session "admin-age2" column "oldest_active_age_ms" for row with "user" = "example_user_1" should be between 0 and 0
+
   @large-datarow-leak-timeout-then-many-clients
   Scenario: After 5 timeout episodes, 5 fresh clients all get clean results
     # Hits five timeout-poisoned servers in sequence, then verifies a fresh
@@ -794,7 +840,8 @@ Feature: Large DataRow + RST mid-stream — server-side leak detection (mirrors 
     And admin session "admin-lw-pre" column "sv_active" for row with "user" = "example_user_1" should be between 40 and 40
 
     When we close 40 sessions with prefix "r40lw"
-    And we sleep 70000ms
+    # 8s pg_sleep + 2s proxy_copy_data_timeout cap + cleanup margin.
+    And we sleep 12000ms
 
     When we create admin session "admin-lw-post" to pg_doorman as "admin" with password "admin"
     And we execute "SHOW POOLS" on admin session "admin-lw-post" and store response

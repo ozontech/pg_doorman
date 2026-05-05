@@ -87,7 +87,16 @@ pub struct ServerStats {
 
     /// Whether this server connection uses TLS.
     use_tls: AtomicBool,
+
+    /// Nanoseconds elapsed from `connect_time` at the moment this server
+    /// last entered ACTIVE. `NEVER_ACTIVE` means not activated yet.
+    active_since_nanos_from_connect: AtomicU64,
 }
+
+/// Sentinel for `active_since_nanos_from_connect` meaning "not activated yet".
+/// A real activation rounds up to at least 1ns so the reader can distinguish
+/// it from this sentinel.
+const NEVER_ACTIVE: u64 = 0;
 
 /// Default implementation for ServerStats.
 ///
@@ -119,6 +128,7 @@ impl Default for ServerStats {
             prepared_miss_count: AtomicU64::new(0),
             prepared_cache_size: AtomicU64::new(0),
             use_tls: AtomicBool::new(false),
+            active_since_nanos_from_connect: AtomicU64::new(NEVER_ACTIVE),
         }
     }
 }
@@ -249,8 +259,42 @@ impl ServerStats {
     ///
     /// * `application_name` - Name of the application using this server connection
     pub fn active(&self, application_name: String) {
+        // Refresh the activation timestamp before flipping state to ACTIVE.
+        // The two atomics use Relaxed and provide no happens-before, so a
+        // concurrent reader of `active_age_ms()` may briefly see ACTIVE with
+        // the previous cycle's timestamp. The reader caps that to 0 via
+        // saturating_sub, so the worst observable effect is a transient
+        // overestimate of the age — never an underflow or panic.
+        let elapsed = self.nanos_from_connect();
+        self.active_since_nanos_from_connect
+            .store(elapsed.max(1), Ordering::Relaxed);
         self.set_state(SERVER_STATE_ACTIVE);
         self.set_application(application_name);
+    }
+
+    /// Returns the milliseconds elapsed since this server entered ACTIVE.
+    /// Returns `None` when the server is not currently ACTIVE or has never
+    /// been activated. Used by `SHOW POOLS` and Prometheus to expose stuck
+    /// checkouts.
+    #[inline]
+    pub fn active_age_ms(&self) -> Option<u64> {
+        if self.state() != SERVER_STATE_ACTIVE {
+            return None;
+        }
+        let since_nanos = self.active_since_nanos_from_connect.load(Ordering::Relaxed);
+        if since_nanos == NEVER_ACTIVE {
+            return None;
+        }
+        let now_nanos = self.nanos_from_connect();
+        Some(now_nanos.saturating_sub(since_nanos) / 1_000_000)
+    }
+
+    #[inline]
+    fn nanos_from_connect(&self) -> u64 {
+        clock::now()
+            .checked_duration_since(self.connect_time)
+            .unwrap_or_default()
+            .as_nanos() as u64
     }
 
     /// Sets the server state to IDLE and records transaction time.
@@ -798,6 +842,62 @@ mod tests {
         // Test set_undefined_application (indirectly through login)
         stats.login();
         assert_eq!(*stats.application_name.lock(), "Undefined");
+    }
+
+    #[test]
+    fn test_active_age_ms_returns_none_when_not_active() {
+        let stats = create_test_server_stats();
+        // Default state is LOGIN.
+        assert_eq!(stats.state(), SERVER_STATE_LOGIN);
+        assert_eq!(stats.active_age_ms(), None);
+
+        stats.idle(0);
+        assert_eq!(stats.active_age_ms(), None);
+    }
+
+    #[test]
+    fn test_active_age_ms_returns_none_when_state_is_active_but_never_activated() {
+        let stats = create_test_server_stats();
+        // Force ACTIVE without going through `active()`. The activation
+        // timestamp stays at NEVER_ACTIVE, so the reader must report None
+        // rather than fabricate a multi-second age from connect_time.
+        stats.set_state(SERVER_STATE_ACTIVE);
+        assert_eq!(stats.active_age_ms(), None);
+    }
+
+    #[test]
+    fn test_active_age_ms_grows_with_real_time() {
+        let stats = create_test_server_stats();
+        stats.active("TestApp".to_string());
+
+        let first = stats.active_age_ms().expect("ACTIVE should report age");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let second = stats.active_age_ms().expect("still ACTIVE");
+
+        assert!(
+            second >= first + 30,
+            "expected age to grow by ~50ms, got {first} then {second}"
+        );
+    }
+
+    #[test]
+    fn test_active_age_ms_resets_on_reactivation() {
+        let stats = create_test_server_stats();
+        stats.active("App1".to_string());
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let before_idle = stats.active_age_ms().expect("ACTIVE");
+
+        stats.idle(0);
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        // Re-activation must reset the age, otherwise the gauge would
+        // report carry-over time from the previous checkout.
+        stats.active("App2".to_string());
+        let after_reactivate = stats.active_age_ms().expect("ACTIVE again");
+
+        assert!(
+            after_reactivate < before_idle,
+            "reactivation should reset age (was {before_idle}, became {after_reactivate})"
+        );
     }
 
     #[test]
