@@ -1,0 +1,81 @@
+groups:
+  - name: pg_doorman_query_interner
+    interval: 30s
+    rules:
+      # ANON memory blowup. Threshold 1.5 GiB matches a steady-state of
+      # roughly 600k anonymous entries × 2 KiB, which is 50× higher than
+      # what an OLTP workload at 1k RPS with TTL=60s settles at.
+      - alert: PgDoormanAnonInternerMemoryHigh
+        expr: pg_doorman_query_interner_bytes{kind="anonymous"} > 1.5e9
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ANON interner > 1.5 GiB on {{ $labels.instance }}"
+          runbook: |
+            Reduce query_interner_anon_idle_ttl_seconds; check the workload
+            for ORM-generated dynamic SQL bypassing parameterization
+            (e.g. WHERE id IN (1, 2, 3) without bind arrays).
+
+      # Synthetic 26000 storm — TTL is shorter than a real client gap or
+      # a driver pattern depends on cross-batch unnamed prepared.
+      - alert: PgDoormanAnonTTLTooShort
+        expr: rate(pg_doorman_query_interner_synthetic_misses_total[5m]) > 1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Anon prepared expiring before next Bind ({{ $value | humanize }}/s)"
+          runbook: |
+            Increase query_interner_anon_idle_ttl_seconds.
+            Identify the driver — most do not depend on cross-batch
+            unnamed; if yours does, switch the offender to named prepared.
+
+      # ANON growing without TTL eviction — TTL is set too long for the
+      # actual idle pattern, or the workload is genuinely accumulating
+      # unique queries faster than the GC can shed them.
+      - alert: PgDoormanAnonInternerNotShrinking
+        expr: |
+          deriv(pg_doorman_query_interner_entries{kind="anonymous"}[1h]) > 0
+          and pg_doorman_query_interner_entries{kind="anonymous"} > 50000
+          and rate(pg_doorman_query_interner_evictions_total{kind="anonymous",reason="ttl_expired"}[10m]) < 0.1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "ANON interner growing without TTL eviction"
+          runbook: |
+            Tighten query_interner_anon_idle_ttl_seconds to fit the actual
+            idle distribution; check the grafana panel for query rate vs
+            entries growth to find the right value.
+
+      # GC sweep takes long enough to be visible in tail latency.
+      - alert: PgDoormanInternerGCSlow
+        expr: histogram_quantile(0.99, rate(pg_doorman_query_interner_gc_duration_seconds_bucket[10m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Interner GC P99 > 50ms on {{ $labels.instance }}"
+          runbook: |
+            Increase query_interner_gc_interval_seconds (less frequent
+            sweeps), or flatten the interner via RESET INTERNER and
+            tune the cache sizes downward.
+
+      # NAMED interner growing without strong_count GC eviction —
+      # something is leaking Arc<str> references and the passive
+      # collector cannot reclaim. Almost always a code bug.
+      - alert: PgDoormanNamedInternerGrowsUnbounded
+        expr: |
+          deriv(pg_doorman_query_interner_entries{kind="named"}[1h]) > 0
+          and pg_doorman_query_interner_entries{kind="named"} > 100000
+          and rate(pg_doorman_query_interner_evictions_total{kind="named"}[10m]) < 0.01
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "NAMED interner growing without GC eviction"
+          runbook: |
+            Possible Arc<str> leak: an entry stays alive because something
+            outside the interner holds the strong ref forever. Capture
+            heap profile and inspect Parse/Arc paths.

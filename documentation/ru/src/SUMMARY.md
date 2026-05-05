@@ -41,6 +41,7 @@
 
 - [Graceful Binary Upgrade](tutorials/binary-upgrade.md)
 - [Сигналы и перезагрузка](operations/signals.md)
+- [Мониторинг query interner](operations/monitoring-interner.md)
 - [Диагностика](tutorials/troubleshooting.md)
 
 # Observability
