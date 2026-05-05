@@ -37,7 +37,7 @@ PostgreSQL не кеширует план анонимных prepared statements
 
 PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для **именованных** statement; анонимный `Parse` пробрасывается без изменений и каждый раз перепланируется. PgDoorman — единственный пулер, который кеширует план анонимного трафика.
 
-[Подробнее →](concepts/prepared-statements.md)
+[Подробнее →](tutorials/prepared-statements.md)
 ```
 
 ## Почему PgDoorman

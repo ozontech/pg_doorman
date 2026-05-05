@@ -78,9 +78,10 @@ On every anonymous `Parse` from the client, PgDoorman:
    name to `DOORMAN_<N>` and ensures the current backend already
    holds the named statement; sends a fresh `Parse` if not.
 
-The client never sees `DOORMAN_<N>`. PgDoorman strips the rewrite
-from all responses and synthesises `ParseComplete` when it skips a
-backend round-trip.
+The client never sees `DOORMAN_<N>`: the rewrite lives only on the
+leg between PgDoorman and the backend. When the backend already
+holds the name, PgDoorman synthesises `ParseComplete` itself and
+skips the round-trip.
 
 ### Wire-protocol example
 
@@ -161,25 +162,25 @@ the same anonymous query share one allocation in memory.
 
 ## When the remap doesn't help
 
-- **Ad-hoc / OLAP traffic.** Each query is unique, so the pool cache
-  evicts continuously, scanning O(N) per insert. Disable with
+- **Ad-hoc / OLAP traffic.** Each query is unique, so every insert
+  triggers an eviction with an O(N) scan. Disable with
   `prepared_statements_cache_size = 0`.
 - **Single-statement scripts.** A connect → `Parse` → 1 `Bind` →
   disconnect pattern doesn't accumulate enough hits to repay the
   bookkeeping. The overhead per `Parse` is small (~700 ns) but
   measurable.
 - **Async drivers in pipeline mode.** Each session gets a unique
-  `DOORMAN_async_<N>` name to avoid in-flight collisions, so
-  cross-session reuse on the server cache doesn't happen. Pool-level
-  text sharing still works; the backend planner still runs once per
-  session.
+  `DOORMAN_async_<N>` name to avoid name collisions between
+  in-flight operations, so the server cache can't reuse entries
+  across sessions. The pool-level cache still shares the query text
+  across sessions; the backend planner still runs once per session.
 
 Track effectiveness with the Prometheus counters
 `pg_doorman_servers_prepared_hits` and
 `pg_doorman_servers_prepared_misses`. A sustained miss rate above
-30 % means the remap is paying CPU and memory without earning the
-plan-cache reuse. Either disable it or tune
-`prepared_statements_cache_size` upward.
+30 % means the remap is spending CPU and memory without delivering
+plan-cache reuse. Either disable it or raise
+`prepared_statements_cache_size`.
 
 ## How other poolers handle this
 
@@ -258,8 +259,8 @@ Prometheus metrics (full list in [Prometheus](../reference/prometheus.md)):
 
 ## Reference
 
-- [Pool Modes](pool-modes.md) — transaction mode, where prepared-statement
-  remapping is enabled.
+- [Pool Modes](../concepts/pool-modes.md) — transaction mode, where
+  prepared-statement remapping is enabled.
 - [General Settings](../reference/general.md) — `prepared_statements_cache_size`,
   `client_prepared_statements_cache_size`.
 - [Admin Commands](../observability/admin-commands.md) — `SHOW PREPARED_STATEMENTS`,

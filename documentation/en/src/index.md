@@ -37,7 +37,7 @@ PostgreSQL doesn't cache the plan of an anonymous prepared statement (the empty-
 
 PgBouncer (1.21+) and Odyssey support prepared statements in transaction mode, but only for **named** statements; an anonymous `Parse` is forwarded as-is and re-planned on every call. PgDoorman is the only pooler that caches the plan for anonymous prepared traffic.
 
-[Read more →](concepts/prepared-statements.md)
+[Read more →](tutorials/prepared-statements.md)
 ```
 
 ## Why PgDoorman
