@@ -2267,6 +2267,252 @@
         "y": 112
       },
       "repeatDirection": "h"
+    },
+    {
+      "type": "row",
+      "collapsed": true,
+      "id": 0,
+      "panels": [],
+      "title": "Query Interner",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 120
+      }
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_query_interner_entries{instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "title": "Interner Entries by Kind",
+      "description": "Live entries in the global query interner. NAMED is bounded by passive Arc::strong_count GC; ANON is bounded by query_interner_anon_idle_ttl_seconds. Sustained growth on either line points to either a long TTL on a unique-anon workload or an Arc<str> leak on the named side.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 121
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_query_interner_bytes{instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "title": "Interner Bytes by Kind",
+      "description": "Total length of interned Parse text per kind. ANON > 1.5 GiB is the alert threshold for the bundled prometheus rule (PgDoormanAnonInternerMemoryHigh).",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 121
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_query_interner_evictions_total{instance=~\"$instance\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "{{kind}}/{{reason}}"
+        }
+      ],
+      "title": "Interner Eviction Rate",
+      "description": "Evictions per second, split by kind (named|anonymous) and reason (gc_passive for named, ttl_expired for anonymous). Steady ANON eviction is normal; steady NAMED eviction is unusual unless a flood of unique named statements just landed.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 121
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_doorman_query_interner_synthetic_misses_total{instance=~\"$instance\"}[$__rate_interval])",
+          "refId": "",
+          "legendFormat": "synthetic 26000/s"
+        }
+      ],
+      "title": "Synthetic SQLSTATE 26000 Rate",
+      "description": "Bind referencing an anonymous prepared whose text is no longer in any cache. Flat zero is the normal case. Sustained > 1/s = TTL too short for the workload, or a driver depending on cross-batch unnamed prepared statements.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 129
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(pg_doorman_query_interner_gc_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "refId": "",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(pg_doorman_query_interner_gc_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
+          "refId": "",
+          "legendFormat": "p99"
+        }
+      ],
+      "title": "GC Sweep Duration",
+      "description": "Wall-clock time of one GC sweep cycle (named + anonymous combined). P99 above 50 ms means the sweep is starting to bite into request latency tails \u2014 increase query_interner_gc_interval_seconds or shrink the interner via RESET INTERNER plus cache-size tuning.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 129
+      },
+      "repeatDirection": "h"
     }
   ]
 }
