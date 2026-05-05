@@ -69,6 +69,11 @@ pub struct PoolStats {
     /// Number of server connections in the login phase
     pub sv_login: u64,
 
+    /// Maximum age in milliseconds among ACTIVE servers in this pool, taken at
+    /// snapshot time. Zero when no server is ACTIVE. Sustained non-zero values
+    /// indicate stuck checkouts.
+    pub oldest_active_age_ms: u64,
+
     //
     // Performance metrics
     // ------------------------------------------------------------------------------------------
@@ -223,6 +228,7 @@ impl PoolStats {
             sv_idle: 0,
             sv_used: 0,
             sv_login: 0,
+            oldest_active_age_ms: 0,
             maxwait: 0,
             avg_query_count: 0,
             avg_xact_count: 0,
@@ -306,6 +312,7 @@ impl PoolStats {
             ("maxwait_us", DataType::Numeric),
             ("avg_xact_time", DataType::Numeric),
             ("paused", DataType::Text),
+            ("oldest_active_age_ms", DataType::Numeric),
         ]
     }
 
@@ -378,6 +385,7 @@ impl PoolStats {
             Cow::Owned((self.maxwait % 1_000_000).to_string()),
             Cow::Owned(self.avg_xact_time_microsecons.to_string()),
             Cow::Borrowed(if self.paused { "1" } else { "0" }),
+            Cow::Owned(self.oldest_active_age_ms.to_string()),
         ]
     }
 
@@ -619,7 +627,13 @@ impl PoolStats {
                 Some(pool_stats) => {
                     // Update server state counter based on server state
                     match server.state() {
-                        SERVER_STATE_ACTIVE => pool_stats.sv_active += 1,
+                        SERVER_STATE_ACTIVE => {
+                            pool_stats.sv_active += 1;
+                            if let Some(age) = server.active_age_ms() {
+                                pool_stats.oldest_active_age_ms =
+                                    pool_stats.oldest_active_age_ms.max(age);
+                            }
+                        }
                         SERVER_STATE_IDLE => pool_stats.sv_idle += 1,
                         SERVER_STATE_LOGIN => pool_stats.sv_login += 1,
                         _ => error!(

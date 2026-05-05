@@ -30,6 +30,35 @@ pub async fn create_named_session(
 }
 
 #[when(
+    regex = r#"^we create (\d+) sessions with prefix "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
+)]
+pub async fn create_sessions_with_prefix(
+    world: &mut DoormanWorld,
+    count: usize,
+    prefix: String,
+    user: String,
+    password: String,
+    database: String,
+) {
+    let doorman_port = world.doorman_port.expect("pg_doorman not started");
+    let doorman_addr = format!("127.0.0.1:{}", doorman_port);
+
+    for idx in 1..=count {
+        let session_name = format!("{}{}", prefix, idx);
+        let mut conn = PgConnection::connect(&doorman_addr)
+            .await
+            .expect("Failed to connect to pg_doorman");
+        conn.send_startup(&user, &database)
+            .await
+            .expect("Failed to send startup to pg_doorman");
+        conn.authenticate(&user, &password)
+            .await
+            .expect("Failed to authenticate to pg_doorman");
+        world.named_sessions.insert(session_name, conn);
+    }
+}
+
+#[when(
     regex = r#"^we create TLS session "([^"]+)" to pg_doorman as "([^"]+)" with password "([^"]*)" and database "([^"]+)"$"#
 )]
 pub async fn create_tls_named_session(
@@ -213,6 +242,24 @@ pub async fn send_simple_query_to_session_without_waiting(
         .await
         .expect("Failed to send query");
     // Don't wait for response - just send the query
+}
+
+#[when(
+    regex = r#"^we send SimpleQuery "([^"]+)" to (\d+) sessions with prefix "([^"]+)" without waiting$"#
+)]
+pub async fn send_simple_query_to_sessions_with_prefix_without_waiting(
+    world: &mut DoormanWorld,
+    query: String,
+    count: usize,
+    prefix: String,
+) {
+    for idx in 1..=count {
+        let session_name = format!("{}{}", prefix, idx);
+        let conn = super::helpers::get_session(&mut world.named_sessions, &session_name);
+        conn.send_simple_query(&query)
+            .await
+            .expect("Failed to send query");
+    }
 }
 
 #[then(regex = r#"^we read SimpleQuery response from session "([^"]+)" within (\d+)ms$"#)]
@@ -425,6 +472,17 @@ pub async fn close_session(world: &mut DoormanWorld, session_name: String) {
         .named_sessions
         .remove(&session_name)
         .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+}
+
+#[when(regex = r#"^we close (\d+) sessions with prefix "([^"]+)"$"#)]
+pub async fn close_sessions_with_prefix(world: &mut DoormanWorld, count: usize, prefix: String) {
+    for idx in 1..=count {
+        let session_name = format!("{}{}", prefix, idx);
+        world
+            .named_sessions
+            .remove(&session_name)
+            .unwrap_or_else(|| panic!("Session '{}' not found", session_name));
+    }
 }
 
 #[when(regex = r#"^we abort TCP connection for session "([^"]+)"$"#)]

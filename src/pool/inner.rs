@@ -58,9 +58,34 @@ impl Drop for Object {
     fn drop(&mut self) {
         if let Some(mut inner) = self.inner.take() {
             if let Some(pool) = self.pool.upgrade() {
-                inner.metrics.recycled = Some(clock::now());
-                inner.metrics.recycle_count += 1;
-                pool.return_object(inner);
+                // Evict on two conditions, both meaning the connection is unsafe
+                // to hand to another client:
+                //   bad: mark_bad fired during the request (protocol desync,
+                //        large-frame failure, server-side drain error).
+                //   pending_large_message set: handle_large_data_row read the
+                //        DataRow/CopyData header but never streamed its body.
+                //        Body bytes still sit in the server socket. The next
+                //        client on this connection would read them as its own
+                //        protocol frames and corrupt its result set.
+                let must_evict = inner.obj.is_bad() || inner.obj.pending_large_message.is_some();
+                if must_evict {
+                    // Skip return_object so this connection never reaches the
+                    // idle queue or a direct-handoff waiter. Update accounting
+                    // in the same tick (decrement slots.size, return the
+                    // semaphore permit, wake coordinator observers) so the next
+                    // checkout sees the freed slot. Server::drop closes the PG
+                    // socket via RAII when `inner` falls off scope below.
+                    {
+                        let mut slots = pool.slots.lock();
+                        slots.size = slots.size.saturating_sub(1);
+                    }
+                    pool.semaphore.add_permits(1);
+                    pool.notify_return_observers();
+                } else {
+                    inner.metrics.recycled = Some(clock::now());
+                    inner.metrics.recycle_count += 1;
+                    pool.return_object(inner);
+                }
             }
         }
     }

@@ -95,6 +95,19 @@ pub(crate) static SHOW_POOLS_SERVER: Lazy<GaugeVec> = Lazy::new(|| {
     gauge
 });
 
+pub(crate) static SHOW_POOLS_OLDEST_ACTIVE_AGE_MS: Lazy<GaugeVec> = Lazy::new(|| {
+    let gauge = GaugeVec::new(
+        Opts::new(
+            "pg_doorman_pools_oldest_active_age_ms",
+            "Maximum age in milliseconds among ACTIVE servers in each pool. Zero when no server is currently ACTIVE. Sustained non-zero values indicate stuck checkouts.",
+        ),
+        &["user", "database"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(gauge.clone())).unwrap();
+    gauge
+});
+
 pub(crate) static SHOW_POOLS_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
     let gauge = GaugeVec::new(
         Opts::new(
