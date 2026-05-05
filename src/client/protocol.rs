@@ -339,10 +339,14 @@ where
                         "[{}@{} #c{}] anonymous prepared statement referenced but none registered",
                         self.username, self.pool_name, self.connection_id,
                     );
+                    crate::prometheus::record_synthetic_miss();
+                    // SQLSTATE 26000 (invalid_sql_statement_name) matches the
+                    // error native PostgreSQL raises for the same condition;
+                    // see src/backend/tcop/postgres.c exec_bind_message.
                     error_response(
                         &mut self.write,
-                        "prepared statement \"\" does not exist",
-                        "58000",
+                        "unnamed prepared statement does not exist",
+                        "26000",
                     )
                     .await?;
                     Err(Error::ClientError(

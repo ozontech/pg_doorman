@@ -558,14 +558,52 @@ fn update_pool_scaling_metrics() {
     prev.retain(|(_, user, db), _| !stale_pairs.contains(&(user.clone(), db.clone())));
 }
 
-/// Stub for the interner GC tick callback. The real implementation —
-/// gauges, eviction counters, sweep duration histogram — lands in the
-/// next commit, where the Prometheus surface for the interner is added.
-/// Spawning the GC task already calls this on every sweep so the wiring
-/// shows up in this commit's diff and the next commit only fills it in.
+/// Called by the GC tokio task on every sweep tick. Updates the interner
+/// gauges (entries, bytes per kind), increments eviction counters, and
+/// observes the sweep duration in the histogram. Two snapshot calls walk
+/// the named and anonymous DashMaps independently to compute byte totals;
+/// `len()` skips the iteration cost for the entry counts.
 pub fn record_interner_gc(
-    _named: crate::server::GcStats,
-    _anon: crate::server::GcStats,
-    _elapsed_seconds: f64,
+    named: crate::server::GcStats,
+    anon: crate::server::GcStats,
+    elapsed_seconds: f64,
 ) {
+    super::QUERY_INTERNER_EVICTIONS_TOTAL
+        .with_label_values(&["named", "gc_passive"])
+        .inc_by(named.evicted);
+    super::QUERY_INTERNER_EVICTIONS_TOTAL
+        .with_label_values(&["anonymous", "ttl_expired"])
+        .inc_by(anon.evicted);
+
+    let named_bytes: i64 = crate::server::named_snapshot()
+        .iter()
+        .map(|(_, e)| e.text().len() as i64)
+        .sum();
+    let anon_bytes: i64 = crate::server::anon_snapshot()
+        .iter()
+        .map(|(_, e)| e.text().len() as i64)
+        .sum();
+
+    super::QUERY_INTERNER_ENTRIES
+        .with_label_values(&["named"])
+        .set(crate::server::named_len() as i64);
+    super::QUERY_INTERNER_ENTRIES
+        .with_label_values(&["anonymous"])
+        .set(crate::server::anon_len() as i64);
+    super::QUERY_INTERNER_BYTES
+        .with_label_values(&["named"])
+        .set(named_bytes);
+    super::QUERY_INTERNER_BYTES
+        .with_label_values(&["anonymous"])
+        .set(anon_bytes);
+
+    super::QUERY_INTERNER_GC_DURATION_SECONDS.observe(elapsed_seconds);
+}
+
+/// Increments the synthetic-miss counter — called from the protocol
+/// path when pg_doorman returns SQLSTATE 26000 to a client because the
+/// anonymous prepared statement it referred to is no longer in any of
+/// the caches (interner, pool cache, client cache).
+pub fn record_synthetic_miss() {
+    super::QUERY_INTERNER_SYNTHETIC_MISSES_TOTAL.inc();
 }
