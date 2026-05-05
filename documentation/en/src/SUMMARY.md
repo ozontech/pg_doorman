@@ -29,6 +29,7 @@
 
 - [Pool Modes](concepts/pool-modes.md)
 - [Pool Coordinator](concepts/pool-coordinator.md)
+- [Anonymous Prepared Statement Caching](concepts/prepared-statements.md)
 - [Pool Pressure (advanced)](tutorials/pool-pressure.md)
 
 # High Availability

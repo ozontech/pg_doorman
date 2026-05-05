@@ -32,6 +32,14 @@ Online restart в PgBouncer (`-R`, deprecated с 1.20; либо rolling restart 
 [Подробнее →](tutorials/binary-upgrade.md)
 ```
 
+```admonish success title="Кеш плана для анонимных prepared statements"
+PostgreSQL не кеширует план анонимных prepared statements (`Parse` с пустым именем — типичная форма для разовых параметризованных запросов в большинстве драйверов): каждый `Bind` заново запускает планировщик. PgDoorman прозрачно переписывает пустое имя в служебное `DOORMAN_<N>` на бекенде, и план попадает в named-registry бекенда — переиспользуется между `Bind`'ами одного клиента и между клиентами, делящими пул.
+
+PgBouncer (1.21+) и Odyssey поддерживают prepared statements в transaction mode, но только для **именованных** statement; анонимный `Parse` пробрасывается без изменений и каждый раз перепланируется. PgDoorman — единственный пулер, который кеширует план анонимного трафика.
+
+[Подробнее →](concepts/prepared-statements.md)
+```
+
 ## Почему PgDoorman
 
 - **Prepared statements в transaction mode.** PgDoorman переименовывает клиентские statement names в `DOORMAN_N` и ведёт кеш на трёх уровнях — pool, client, backend. Драйверы видят свои имена, backend'ы — переименованные. Никаких прикладных `DEALLOCATE`, никаких `DISCARD ALL`.

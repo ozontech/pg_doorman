@@ -29,6 +29,7 @@
 
 - [Режимы пула](concepts/pool-modes.md)
 - [Pool Coordinator](concepts/pool-coordinator.md)
+- [Кеш плана для анонимных prepared statements](concepts/prepared-statements.md)
 - [Пул под нагрузкой (продвинутое)](tutorials/pool-pressure.md)
 
 # Высокая доступность
