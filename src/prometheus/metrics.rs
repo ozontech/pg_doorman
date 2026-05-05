@@ -130,20 +130,28 @@ fn update_pool_cache_metrics(identifier: &PoolIdentifier, stats: &PoolStats) {
         .with_label_values(&[user, database])
         .set(stats.client_anonymous_count as f64);
 
-    // Anonymous LRU evictions are exposed as a monotonic counter; mirror the
-    // COORDINATOR_TOTALS pattern: read previous, compute delta, inc_by(delta).
-    let evictions_counter =
-        SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL.with_label_values(&[user, database]);
-    let delta = stats
-        .client_anonymous_evictions
-        .saturating_sub(evictions_counter.get());
-    if delta > 0 {
-        evictions_counter.inc_by(delta);
-    }
+    // Anonymous LRU evictions are no longer aggregated here. The IntCounter
+    // is bumped at the eviction site via `observe_anonymous_eviction`, which
+    // survives client disconnect — the previous polling-delta approach lost
+    // history when an alive client's contribution dropped from the
+    // PoolStats sum.
 
     SHOW_ASYNC_CLIENTS_COUNT
         .with_label_values(&[user, database])
         .set(stats.async_clients_count as f64);
+}
+
+/// Increment the cumulative Anonymous LRU eviction counter for a single
+/// (user, database) pair.
+///
+/// Called from the eviction site (`process_parse_immediate`) so the counter
+/// is monotonic across client disconnects — the IntCounterVec entry lives in
+/// the global Prometheus registry, not in any per-client state.
+#[inline]
+pub fn observe_anonymous_eviction(user: &str, database: &str) {
+    SHOW_CLIENT_PREPARED_ANONYMOUS_EVICTIONS_TOTAL
+        .with_label_values(&[user, database])
+        .inc();
 }
 
 fn update_server_metrics() {

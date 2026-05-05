@@ -9,7 +9,7 @@ use crate::pool::ConnectionPool;
 use crate::server::Server;
 
 use super::core::{
-    BatchOperation, CachedStatement, Client, ParseCompleteTarget, PreparedStatementKey,
+    BatchOperation, CachedStatement, Client, ParseCompleteTarget, PreparedStatementKey, PutOutcome,
     SkippedParse,
 };
 use super::PREPARED_STATEMENT_COUNTER;
@@ -216,8 +216,13 @@ where
             hash,
             async_name: async_name.clone(),
         };
-        if self.prepared.cache.put(cache_key, cached).is_some() {
+        // Only Evicted is a real LRU eviction. Replaced (steady-state
+        // re-Parse of the same anonymous hash) and Inserted must not bump
+        // the operator counter — that was the bug behind a non-zero
+        // eviction rate at zero capacity pressure.
+        if let PutOutcome::Evicted(_) = self.prepared.cache.put(cache_key, cached) {
             self.prepared.anonymous_evictions += 1;
+            crate::prometheus::observe_anonymous_eviction(&self.username, &self.pool_name);
         }
 
         // Update prepared cache stats after modification

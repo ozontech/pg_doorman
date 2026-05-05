@@ -677,9 +677,12 @@ fn reconstruct_prepared_state(
             hash,
             async_name,
         };
-        if prepared.cache.put(entry.key.clone(), cached).is_some() {
-            prepared.anonymous_evictions += 1;
-        }
+        // Replay-evictions during reconstruction are an artefact of the new
+        // LRU cap vs the size of the migration blob, not real workload
+        // pressure on the running pooler. Drop the outcome instead of
+        // bumping per-client and Prometheus counters; the operator only
+        // wants to see evictions caused by live traffic.
+        let _ = prepared.cache.put(entry.key.clone(), cached);
     }
     prepared
 }

@@ -46,6 +46,42 @@ pub struct PreparedStatementCache {
     anonymous: AnonymousCache,
 }
 
+/// Outcome of `PreparedStatementCache::put`.
+///
+/// `lru::LruCache::push` collapses two distinct cases into the same
+/// `Some((k, v))` return: replacement of an existing key, and capacity-driven
+/// eviction of a different key. Conflating them produced false positives in
+/// the eviction counter when steady-state Parse traffic re-Parsed the same
+/// anonymous hash. `PutOutcome` keeps the two apart so callers can bump
+/// metrics only on real evictions.
+pub enum PutOutcome {
+    /// Key was not present; new entry inserted, no value displaced.
+    Inserted,
+    /// Key was already present; the old value is returned and the entry
+    /// remains in the cache. Not an eviction — operator-visible counters
+    /// must not increment on this outcome. The displaced value is exposed
+    /// for callers that want to observe or drop it explicitly.
+    #[allow(dead_code)]
+    Replaced(CachedStatement),
+    /// Cache was at capacity and a different key was evicted to make room.
+    /// Only this outcome should bump the eviction counter. The evicted
+    /// value is exposed for callers that want to inspect it before drop.
+    #[allow(dead_code)]
+    Evicted(CachedStatement),
+}
+
+impl std::fmt::Debug for PutOutcome {
+    // Variant name is enough for diagnostics; CachedStatement carries an
+    // Arc<Parse> with no Debug impl and no useful debug content for tests.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PutOutcome::Inserted => f.write_str("Inserted"),
+            PutOutcome::Replaced(_) => f.write_str("Replaced(_)"),
+            PutOutcome::Evicted(_) => f.write_str("Evicted(_)"),
+        }
+    }
+}
+
 enum AnonymousCache {
     Unlimited(AHashMap<u64, CachedStatement>),
     Limited(LruCache<u64, CachedStatement>),
@@ -78,31 +114,47 @@ impl PreparedStatementCache {
         }
     }
 
-    /// Insert into the routed map. For Anonymous + Limited, may evict the
-    /// oldest entry; the evicted entry is returned for the caller (caller
-    /// uses this to bump an evictions counter, otherwise drops it).
-    /// Named insertion always returns None (Named is unbounded).
-    #[must_use = "the evicted CachedStatement carries the eviction signal; explicitly drop with `let _ =` if you don't need it"]
+    /// Insert into the routed map and report what happened.
+    ///
+    /// Named insertion always returns `Inserted` or `Replaced`. The Named
+    /// map is unbounded, so capacity-driven eviction never occurs.
+    /// Anonymous + Unlimited behaves the same way. Only Anonymous + Limited
+    /// can return `Evicted`, and only when the LRU was full and a different
+    /// key was popped to make room.
+    #[must_use = "check for PutOutcome::Evicted to bump eviction metrics; otherwise discard with `let _ =`"]
     #[inline]
-    pub fn put(
-        &mut self,
-        key: PreparedStatementKey,
-        value: CachedStatement,
-    ) -> Option<CachedStatement> {
+    pub fn put(&mut self, key: PreparedStatementKey, value: CachedStatement) -> PutOutcome {
         match key {
-            PreparedStatementKey::Named(s) => {
-                self.named.insert(s, value);
-                None
-            }
+            PreparedStatementKey::Named(s) => match self.named.insert(s, value) {
+                None => PutOutcome::Inserted,
+                Some(prev) => PutOutcome::Replaced(prev),
+            },
             PreparedStatementKey::Anonymous(h) => match &mut self.anonymous {
-                AnonymousCache::Unlimited(m) => {
-                    m.insert(h, value);
-                    None
+                AnonymousCache::Unlimited(m) => match m.insert(h, value) {
+                    None => PutOutcome::Inserted,
+                    Some(prev) => PutOutcome::Replaced(prev),
+                },
+                // `LruCache::push` returns `Some((k, v))` for both replacement
+                // (key already present, old value returned) and eviction
+                // (cache at capacity, oldest entry popped). Disambiguate by
+                // probing capacity + presence beforehand so callers can tell
+                // a real eviction from a steady-state replacement.
+                AnonymousCache::Limited(l) => {
+                    let was_at_capacity = l.len() == l.cap().get();
+                    let key_existed = l.contains(&h);
+                    match l.push(h, value) {
+                        None => PutOutcome::Inserted,
+                        Some((_, prev)) if key_existed => PutOutcome::Replaced(prev),
+                        Some((_, evicted)) => {
+                            debug_assert!(
+                                was_at_capacity,
+                                "LruCache::push returned Some without replacement \
+                                 despite cache below capacity",
+                            );
+                            PutOutcome::Evicted(evicted)
+                        }
+                    }
                 }
-                // Use `push` (not `put`) so we capture LRU evictions when the
-                // cache is at capacity; `put` only reports replacements of an
-                // existing key.
-                AnonymousCache::Limited(l) => l.push(h, value).map(|(_, evicted)| evicted),
             },
         }
     }
@@ -652,21 +704,105 @@ mod cache_split_tests {
     #[test]
     fn anonymous_lru_evicts_oldest_when_full() {
         let mut cache = PreparedStatementCache::new(2);
-        let _ = cache.put(PreparedStatementKey::Anonymous(1), make_cached("a", "Q1"));
-        let _ = cache.put(PreparedStatementKey::Anonymous(2), make_cached("a", "Q2"));
-        let evicted = cache.put(PreparedStatementKey::Anonymous(3), make_cached("a", "Q3"));
-        assert!(evicted.is_some(), "Should have evicted entry 1");
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(1), make_cached("a", "Q1")),
+            PutOutcome::Inserted
+        ));
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(2), make_cached("a", "Q2")),
+            PutOutcome::Inserted
+        ));
+        let outcome = cache.put(PreparedStatementKey::Anonymous(3), make_cached("a", "Q3"));
+        assert!(
+            matches!(outcome, PutOutcome::Evicted(_)),
+            "Capacity overflow on a fresh hash must yield PutOutcome::Evicted, got {outcome:?}",
+        );
         assert!(cache.get(&PreparedStatementKey::Anonymous(1)).is_none());
         assert!(cache.get(&PreparedStatementKey::Anonymous(2)).is_some());
         assert!(cache.get(&PreparedStatementKey::Anonymous(3)).is_some());
     }
 
     #[test]
+    fn anonymous_put_returns_replaced_for_same_hash() {
+        // Re-Parsing the same anonymous hash must not signal an eviction —
+        // the LRU stays at one entry, no capacity pressure, the operator
+        // counter must remain at zero.
+        let mut cache = PreparedStatementCache::new(4);
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(42), make_cached("a", "Q")),
+            PutOutcome::Inserted
+        ));
+        let outcome = cache.put(PreparedStatementKey::Anonymous(42), make_cached("a", "Q"));
+        assert!(
+            matches!(outcome, PutOutcome::Replaced(_)),
+            "Same-hash put must yield PutOutcome::Replaced, got {outcome:?}",
+        );
+        assert_eq!(cache.anonymous_count(), 1);
+    }
+
+    #[test]
+    fn anonymous_lru_distinguishes_inserted_replaced_evicted() {
+        // Capacity 2: walk the three outcomes in sequence.
+        let mut cache = PreparedStatementCache::new(2);
+
+        // Two distinct keys → both Inserted.
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(1), make_cached("a", "Q1")),
+            PutOutcome::Inserted
+        ));
+        assert!(matches!(
+            cache.put(PreparedStatementKey::Anonymous(2), make_cached("a", "Q2")),
+            PutOutcome::Inserted
+        ));
+
+        // Re-Parse hash 1 at full capacity → Replaced (no eviction).
+        let outcome = cache.put(PreparedStatementKey::Anonymous(1), make_cached("a", "Q1"));
+        assert!(
+            matches!(outcome, PutOutcome::Replaced(_)),
+            "Replacement at capacity must not signal eviction, got {outcome:?}",
+        );
+        assert_eq!(cache.anonymous_count(), 2);
+
+        // Third distinct hash at full capacity → Evicted; oldest (hash 2)
+        // popped because hash 1 was just touched and bumped to MRU.
+        let outcome = cache.put(PreparedStatementKey::Anonymous(3), make_cached("a", "Q3"));
+        assert!(
+            matches!(outcome, PutOutcome::Evicted(_)),
+            "Distinct hash at capacity must signal eviction, got {outcome:?}",
+        );
+        assert!(cache.get(&PreparedStatementKey::Anonymous(2)).is_none());
+        assert!(cache.get(&PreparedStatementKey::Anonymous(1)).is_some());
+        assert!(cache.get(&PreparedStatementKey::Anonymous(3)).is_some());
+    }
+
+    #[test]
+    fn named_put_returns_inserted_then_replaced() {
+        // Named map is unbounded — capacity-driven eviction never occurs.
+        // First put on a fresh name → Inserted; same name again → Replaced.
+        let mut cache = PreparedStatementCache::new(0);
+        let key = PreparedStatementKey::Named("stmt".into());
+        let first = cache.put(key.clone(), make_cached("stmt", "Q1"));
+        assert!(
+            matches!(first, PutOutcome::Inserted),
+            "First Named put on a fresh name must be Inserted, got {first:?}",
+        );
+        let second = cache.put(key.clone(), make_cached("stmt", "Q2"));
+        assert!(
+            matches!(second, PutOutcome::Replaced(_)),
+            "Re-put on existing Named name must be Replaced, got {second:?}",
+        );
+        assert_eq!(cache.named_count(), 1);
+    }
+
+    #[test]
     fn anonymous_unlimited_when_size_zero() {
         let mut cache = PreparedStatementCache::new(0);
         for i in 0..1000_u64 {
-            let evicted = cache.put(PreparedStatementKey::Anonymous(i), make_cached("a", "Q"));
-            assert!(evicted.is_none(), "Unlimited cache must not evict");
+            let outcome = cache.put(PreparedStatementKey::Anonymous(i), make_cached("a", "Q"));
+            assert!(
+                matches!(outcome, PutOutcome::Inserted),
+                "Unlimited cache must not evict or replace on fresh keys, got {outcome:?}",
+            );
         }
         assert_eq!(cache.anonymous_count(), 1000);
     }

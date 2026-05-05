@@ -15,6 +15,7 @@ mod system;
 mod tests;
 
 // Re-exports
+pub use metrics::observe_anonymous_eviction;
 pub use server::start_prometheus_server;
 
 // Define the metrics we want to expose
