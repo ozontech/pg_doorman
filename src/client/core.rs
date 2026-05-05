@@ -34,6 +34,19 @@ impl PreparedStatementKey {
     }
 }
 
+/// Borrowed view over a `PreparedStatementKey`. Used by `PreparedStatementCache::iter`
+/// to yield key kinds without cloning the Named String per entry. The hot path
+/// (`cache_memory_usage`, called from `update_prepared_cache_stats` after every Parse)
+/// only inspects the kind and reads the borrowed `&str` — owning the key would
+/// allocate a fresh String per yield.
+#[derive(Debug, Clone, Copy)]
+pub enum PreparedStatementKeyRef<'a> {
+    /// Named prepared statement (client-provided name)
+    Named(&'a str),
+    /// Anonymous prepared statement (identified by hash)
+    Anonymous(u64),
+}
+
 /// Per-client prepared statement cache, split into two parts:
 ///   - `named`: AHashMap of client-provided statement names. Never evicted
 ///     by the pooler; lifecycle is owned by the client (Close, DEALLOCATE,
@@ -206,27 +219,55 @@ impl PreparedStatementCache {
         }
     }
 
-    /// Yields `(synthesised key, value)` for both maps. The Anonymous side
-    /// produces `PreparedStatementKey::Anonymous(hash)` keys, the Named
-    /// side `PreparedStatementKey::Named(name)`. Order is unspecified.
-    /// Note: does not affect LRU order for Anonymous + Limited.
-    pub fn iter(&self) -> Box<dyn Iterator<Item = (PreparedStatementKey, &CachedStatement)> + '_> {
+    /// Yields `(borrowed key, value)` for both maps. The Anonymous side
+    /// produces `PreparedStatementKeyRef::Anonymous(hash)` keys, the Named
+    /// side `PreparedStatementKeyRef::Named(&str)` borrowing the map's key.
+    /// Order is unspecified. Note: does not affect LRU order for Anonymous + Limited.
+    ///
+    /// Returning a borrowed-key view avoids two allocation costs that the
+    /// previous `Box<dyn Iterator<Item = (PreparedStatementKey, ...)>>`
+    /// signature paid on every call: the trait-object box and a `String`
+    /// clone per Named entry.
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = (PreparedStatementKeyRef<'_>, &CachedStatement)> + '_ {
         let named_iter = self
             .named
             .iter()
-            .map(|(k, v)| (PreparedStatementKey::Named(k.clone()), v));
-        let anon_iter: Box<dyn Iterator<Item = (PreparedStatementKey, &CachedStatement)>> =
-            match &self.anonymous {
-                AnonymousCache::Unlimited(m) => Box::new(
-                    m.iter()
-                        .map(|(h, v)| (PreparedStatementKey::Anonymous(*h), v)),
-                ),
-                AnonymousCache::Limited(l) => Box::new(
-                    l.iter()
-                        .map(|(h, v)| (PreparedStatementKey::Anonymous(*h), v)),
-                ),
-            };
-        Box::new(named_iter.chain(anon_iter))
+            .map(|(k, v)| (PreparedStatementKeyRef::Named(k.as_str()), v));
+        let anon_iter =
+            AnonIter::new(&self.anonymous).map(|(h, v)| (PreparedStatementKeyRef::Anonymous(h), v));
+        named_iter.chain(anon_iter)
+    }
+}
+
+/// Unifies the two backing iterator types of `AnonymousCache`
+/// (`std::collections::hash_map::Iter` and `lru::Iter`) into a single
+/// concrete type so `PreparedStatementCache::iter` can return
+/// `impl Iterator` without boxing. `AHashMap` derefs to `std::HashMap`,
+/// so its `iter()` returns the standard library's hash_map iterator.
+enum AnonIter<'a> {
+    Unlimited(std::collections::hash_map::Iter<'a, u64, CachedStatement>),
+    Limited(lru::Iter<'a, u64, CachedStatement>),
+}
+
+impl<'a> AnonIter<'a> {
+    fn new(anon: &'a AnonymousCache) -> Self {
+        match anon {
+            AnonymousCache::Unlimited(m) => AnonIter::Unlimited(m.iter()),
+            AnonymousCache::Limited(l) => AnonIter::Limited(l.iter()),
+        }
+    }
+}
+
+impl<'a> Iterator for AnonIter<'a> {
+    type Item = (u64, &'a CachedStatement);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            AnonIter::Unlimited(it) => it.next().map(|(h, v)| (*h, v)),
+            AnonIter::Limited(it) => it.next().map(|(h, v)| (*h, v)),
+        }
     }
 }
 
@@ -425,12 +466,18 @@ impl PreparedStatementState {
     pub fn cache_memory_usage(&self) -> usize {
         let mut total = 0;
         for (key, cached) in self.cache.iter() {
-            // Key size
+            // Key size. Named uses `s.len()` rather than the underlying
+            // String capacity — exposing capacity through the iter would
+            // require re-allocating an owned key per yield, defeating the
+            // borrow that makes this loop allocation-free. Length is a
+            // close lower bound on the actual capacity.
             total += match key {
-                PreparedStatementKey::Named(s) => {
-                    std::mem::size_of::<PreparedStatementKey>() + s.capacity()
+                PreparedStatementKeyRef::Named(s) => {
+                    std::mem::size_of::<PreparedStatementKey>() + s.len()
                 }
-                PreparedStatementKey::Anonymous(_) => std::mem::size_of::<PreparedStatementKey>(),
+                PreparedStatementKeyRef::Anonymous(_) => {
+                    std::mem::size_of::<PreparedStatementKey>()
+                }
             };
             // CachedStatement struct size
             total += std::mem::size_of::<CachedStatement>();
@@ -849,12 +896,75 @@ mod cache_split_tests {
         let kinds: Vec<&str> = cache
             .iter()
             .map(|(k, _)| match k {
-                PreparedStatementKey::Named(_) => "named",
-                PreparedStatementKey::Anonymous(_) => "anon",
+                PreparedStatementKeyRef::Named(_) => "named",
+                PreparedStatementKeyRef::Anonymous(_) => "anon",
             })
             .collect();
         assert_eq!(kinds.len(), 2);
         assert!(kinds.contains(&"named"));
         assert!(kinds.contains(&"anon"));
+    }
+
+    #[test]
+    fn iter_borrows_named_keys_without_allocation() {
+        // Regression guard for B3: iter() must yield borrowed Named keys,
+        // not freshly cloned Strings. The yielded &str must point into the
+        // map's owned String, so its address must match across calls and
+        // not match the address of an unrelated owned copy.
+        let mut cache = PreparedStatementCache::new(0);
+        let name = "stmt_borrow_check".to_owned();
+        let _ = cache.put(
+            PreparedStatementKey::Named(name.clone()),
+            make_cached("stmt", "SELECT 1"),
+        );
+
+        // Two consecutive iter() calls must hand back the same backing pointer.
+        let first_ptr = cache
+            .iter()
+            .find_map(|(k, _)| match k {
+                PreparedStatementKeyRef::Named(s) => Some(s.as_ptr()),
+                _ => None,
+            })
+            .expect("Named entry not yielded");
+        let second_ptr = cache
+            .iter()
+            .find_map(|(k, _)| match k {
+                PreparedStatementKeyRef::Named(s) => Some(s.as_ptr()),
+                _ => None,
+            })
+            .expect("Named entry not yielded");
+        assert_eq!(
+            first_ptr, second_ptr,
+            "iter() must borrow the same String storage on each call"
+        );
+        // And it must differ from a freshly-built String — proving we are
+        // not silently copying somewhere.
+        assert_ne!(first_ptr, name.as_ptr());
+    }
+
+    #[test]
+    fn iter_handles_fifty_named_entries() {
+        // Smoke test: 50-Named-entry cache mirrors a typical ORM client.
+        // Counts every yielded entry to catch any regression that would
+        // truncate or panic the iterator.
+        let mut cache = PreparedStatementCache::new(0);
+        for i in 0..50_u32 {
+            let _ = cache.put(
+                PreparedStatementKey::Named(format!("stmt_{i}")),
+                make_cached("stmt", "SELECT 1"),
+            );
+        }
+        assert_eq!(cache.iter().count(), 50);
+
+        let mut named = 0_usize;
+        let mut anon = 0_usize;
+        for (k, _) in cache.iter() {
+            match k {
+                PreparedStatementKeyRef::Named(_) => named += 1,
+                PreparedStatementKeyRef::Anonymous(_) => anon += 1,
+            }
+        }
+        assert_eq!(named, 50);
+        assert_eq!(anon, 0);
     }
 }

@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use std::ffi::c_void;
 
 use crate::client::buffer_pool::PooledBuffer;
-use crate::client::core::{CachedStatement, Client, PreparedStatementKey};
+use crate::client::core::{CachedStatement, Client, PreparedStatementKey, PreparedStatementKeyRef};
 use crate::client::util::PREPARED_STATEMENT_COUNTER;
 use crate::config::{get_config, BackendAuthMethod};
 use crate::errors::Error;
@@ -256,11 +256,11 @@ fn serialize_prepared_state(buf: &mut BytesMut, prepared: &PreparedStatementStat
     buf.put_u32(cache_entries.len() as u32);
     for (key, cached) in &cache_entries {
         match key {
-            PreparedStatementKey::Named(name) => {
+            PreparedStatementKeyRef::Named(name) => {
                 buf.put_u8(0);
                 put_str(buf, name);
             }
-            PreparedStatementKey::Anonymous(hash) => {
+            PreparedStatementKeyRef::Anonymous(hash) => {
                 buf.put_u8(1);
                 buf.put_u64(*hash);
             }
