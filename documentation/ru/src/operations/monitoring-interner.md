@@ -1,123 +1,129 @@
 # Мониторинг query interner
 
 Query interner дедуплицирует тексты Parse в памяти процесса
-pg_doorman. Две половины работают по разным политикам: NAMED
-ограничен пассивным GC по `Arc::strong_count`, ANON — per-entry
-TTL по бездействию (`query_interner_anon_idle_ttl_seconds`). Обе
-половины публикуют Prometheus-метрики (gauges, eviction-counters,
-гистограмму длительности sweep'а), плюс счётчик синтетических
-SQLSTATE 26000, которые pg_doorman возвращает клиентам, чей
-анонимный prepared statement выпал из всех кешей.
+pg_doorman. Хранилище разделено на две независимые карты, NAMED и
+ANON; каждая работает по своей политике. NAMED очищает пассивный GC
+по `Arc::strong_count`. ANON выселяет по бездействию через
+`query_interner_anon_idle_ttl_seconds`. Обе карты публикуют метрики
+Prometheus (gauges, eviction-counters, гистограмму длительности
+sweep'а) и счётчик синтетических SQLSTATE 26000 — этот код
+pg_doorman возвращает клиентам, чей анонимный prepared statement
+выпал из всех кешей.
 
-Эта страница — operator-сторона тех метрик: рецепт дашборда,
-правила алертов и руководство по настройке.
+Эта страница помогает оператору пользоваться этими метриками:
+рецепт дашборда, правила алертов и приёмы настройки.
 
 ## Дашборд
 
-### Above-the-fold (три верхние панели)
+### Главные панели (на первом экране)
 
-1. **Stat — total bytes интернера.**
-   `sum(pg_doorman_query_interner_bytes)` per-instance, красный
-   порог 1.5 GiB, жёлтый — 500 MiB. Главный сигнал по памяти.
+1. **Stat — общий объём интернера.**
+   `sum(pg_doorman_query_interner_bytes)` в разрезе инстансов.
+   Красный порог 1.5 ГиБ, жёлтый — 500 МиБ. Главный сигнал по
+   памяти.
 2. **Time series — entries по kind.** Две линии:
    - `pg_doorman_query_interner_entries{kind="named"}`
    - `pg_doorman_query_interner_entries{kind="anonymous"}`
-   Окно 6 часов. Устойчивый рост любой из линий — повод открыть
-   drill-down.
-3. **Time series — синтетический 26000 rate.**
+   Окно шесть часов. Устойчивый рост любой из линий — повод открыть
+   панели детализации.
+3. **Time series — частота синтетических 26000.**
    `rate(pg_doorman_query_interner_synthetic_misses_total[5m])`.
    Норма — плоский ноль. Любой всплеск означает, что TTL вытеснил
-   запись, на которую ссылался клиент, или драйвер опирался на
-   cross-batch unnamed.
+   запись, на которую сослался клиент, или драйвер рассчитывает на
+   unnamed prepared statement, переживший Sync.
 
-### Drill-down
+### Детализация
 
-4. Eviction rate с разбивкой по reason:
-   `sum by (kind, reason) (rate(pg_doorman_query_interner_evictions_total[5m]))`
+4. Скорость eviction'ов с разбивкой по reason:
+   `sum by (kind, reason) (rate(pg_doorman_query_interner_evictions_total[5m]))`.
 5. Heatmap длительности sweep'а:
    `histogram_quantile(0.5, rate(pg_doorman_query_interner_gc_duration_seconds_bucket[5m]))`,
-   с P99-линией поверх.
-6. Среднее число байт на запись:
-   `pg_doorman_query_interner_bytes / pg_doorman_query_interner_entries`,
-   per-kind.
+   с P99 поверх.
+6. Среднее число байт на запись по kind:
+   `pg_doorman_query_interner_bytes / pg_doorman_query_interner_entries`.
 
 ### Корреляции
 
-7. Anon eviction rate vs total query rate. Линейная корреляция —
-   нормальный трафик; нелинейная — взрыв динамического SQL от ORM.
-8. Synthetic 26000 rate vs P99 query latency. Корреляция — TTL
-   режет реальный трафик; разбираться с медленным путём.
+7. Скорость eviction'ов anon vs общий query rate. Линейная
+   корреляция говорит о здоровом трафике; нелинейная — о взрыве
+   динамического SQL от ORM.
+8. Частота синтетических 26000 vs P99 latency запросов. Корреляция
+   означает, что TTL режет реальный трафик; разбираться с медленным
+   путём.
 
-### Рекомендуемые dashboard variables
+### Переменные дашборда
 
-- `instance` — для сравнения реплик.
-- `kind` — для среза gauges/counters до одной половины.
+- `instance` — сравнивать реплики.
+- `kind` — отрезать gauges и counter до одной из карт.
 
-Поля pool/user/database к интернеру неприменимы — он глобален на
-процесс. Их добавление к interner-панелям ввело бы читателя в
+Pool, user и database к интернеру неприменимы — он один на процесс.
+Эти лейблы на interner-панелях только введут читателя в
 заблуждение.
 
 ## Правила алертов
 
-Полный `groups:` блок поставляется по адресу
+Готовый блок `groups:` лежит в
 `monitoring/prometheus-rules/pg_doorman_interner.yaml`. Пять
-алертов:
+алертов.
 
 - **`PgDoormanAnonInternerMemoryHigh`** (critical) — ANON bytes
-  > 1.5 GiB. Уменьшить TTL или проверить ORM на динамический SQL.
-- **`PgDoormanAnonTTLTooShort`** (critical) — synthetic 26000 rate
-  > 1/s 10 минут. Поднять TTL или починить виновный драйвер.
+  выше 1.5 ГиБ. Уменьшить TTL или проверить ORM на динамический
+  SQL.
+- **`PgDoormanAnonTTLTooShort`** (critical) — синтетические 26000
+  чаще 1/с в течение 10 минут. Поднять TTL или починить виновный
+  драйвер.
 - **`PgDoormanAnonInternerNotShrinking`** (warning) — ANON растёт,
-  TTL-eviction плоский. TTL слишком велик или поток уникальных
-  запросов выше ритма истечения.
-- **`PgDoormanInternerGCSlow`** (warning) — sweep P99 > 50 ms 15
-  минут. Увеличить `query_interner_gc_interval_seconds` или
-  выполнить `RESET INTERNER` плюс уменьшить размеры кешей.
-- **`PgDoormanNamedInternerGrowsUnbounded`** (warning) — NAMED
-  > 100k записей с почти нулевым eviction. Почти всегда баг,
-  где Arc<str> strong-ref остаётся жив навсегда.
+  а TTL-eviction плоский. TTL слишком велик, либо поток уникальных
+  запросов превышает скорость их истечения.
+- **`PgDoormanInternerGCSlow`** (warning) — P99 sweep'а выше 50 мс
+  на 15-минутном окне. Увеличить
+  `query_interner_gc_interval_seconds` или сделать
+  `RESET INTERNER` и уменьшить размеры кешей.
+- **`PgDoormanNamedInternerGrowsUnbounded`** (warning) — больше
+  100k записей в NAMED при почти нулевом eviction. Почти всегда баг,
+  при котором `Arc<str>` strong-ref удерживается навсегда.
 
-Cold-start guard: все алерты используют `for: > 5m`, поэтому пустой
+Защита от холодного старта: у всех алертов `for: > 5m`. Пустой
 интернер сразу после запуска процесса их не зажигает.
 
-## Рецепты настройки
+## Приёмы настройки
 
 ### Уменьшить TTL, когда давит память
 
-Триггер: `PgDoormanAnonInternerNotShrinking`, ANON bytes
-приближается к budget'у хоста.
+Когда: горит `PgDoormanAnonInternerNotShrinking`, ANON bytes
+подходит к лимиту памяти хоста.
 
 Действие: уменьшить `query_interner_anon_idle_ttl_seconds` в
-`general` (например, 60 → 30). Reload pg_doorman. Скорость
-вытеснений догонит новый порог.
+`general` (например, с 60 до 30). Перечитать конфиг pg_doorman.
+Скорость вытеснений догонит новый порог.
 
 ### Поднять TTL при синтетических 26000
 
-Триггер: `PgDoormanAnonTTLTooShort`.
+Когда: горит `PgDoormanAnonTTLTooShort`.
 
-Действие: определить клиента и запрос. У synthetic_misses нет
-labels, поэтому смотрите WARN-лог, который пишется при каждом
-миссе с client / pool / connection_id. Если виновник — драйвер,
-законно переиспользующий unnamed Bind через batch, поднять TTL
-(например, 60 → 300). Если нет — переключить клиента на named
-prepared.
+Действие: понять, какой клиент и какой запрос. У synthetic_misses
+нет лейблов, поэтому смотреть WARN-лог — он пишется на каждый
+миссинг и содержит client, pool, connection_id. Если виновник —
+драйвер, который законно переиспользует unnamed Bind в следующем
+batch'е, поднять TTL (с 60 до 300, например). Если нет —
+переключить клиента на named prepared.
 
-### Запустить RESET INTERNER
+### Сбросить интернер
 
-Триггер: ad-hoc диагностика или контейнинг инцидента по памяти.
+Когда: разовая диагностика или жёсткое сжатие памяти под инцидентом.
 
 Действие: `psql admin@:6432 -c "RESET INTERNER"`. Возвращает
-`CommandComplete RESET`. Активные клиенты делают повторный Parse
-при следующем использовании; короткоживущие клиенты эффект не
-ощущают, потому что их `last_anonymous_hash` помнит хеш, который
-они зарегистрировали до сброса, и следующий Bind обнаруживает
-отсутствие записи и один раз отвечает 26000 — драйвер делает
-повторный Parse.
+`CommandComplete RESET`. Активные клиенты переparsят при следующем
+использовании. Короткоживущие клиенты эффекта не заметят: их
+`last_anonymous_hash` всё ещё помнит хеш, который они
+зарегистрировали до сброса, и следующий Bind увидит отсутствие
+записи и один раз получит 26000. Драйвер на это отреагирует
+повторным Parse.
 
 ## Recording rules
 
-Cluster-wide агрегаты, которые имеет смысл предвычислять для более
-дешёвых дашбордов:
+Кластерные агрегаты, которые имеет смысл предвычислять, чтобы
+дашборды были дешевле:
 
 ```yaml
 groups:
@@ -131,6 +137,6 @@ groups:
           sum without (instance) (rate(pg_doorman_query_interner_evictions_total[5m]))
 ```
 
-Первое правило позволяет cluster-wide stat-панели читать одну
-серию; второе — рисовать eviction-rate-by-reason без повторного
-вычисления `rate()` на каждом перерендере.
+Первое правило позволяет кластерной stat-панели читать одну серию.
+Второе рисует eviction-rate с разбивкой по reason без пересчёта
+`rate()` на каждом перерендере дашборда.
