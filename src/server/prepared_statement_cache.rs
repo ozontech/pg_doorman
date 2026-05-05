@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use log::info;
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::messages::Parse;
@@ -27,15 +27,59 @@ pub fn intern_query(query: &str, hash: u64) -> Arc<str> {
     QUERY_INTERNER.entry(hash).or_insert(arc_str).clone()
 }
 
+/// Bit set when at least one client has Parse'd this hash with a non-empty name.
+const FLAG_NAMED: u8 = 0b01;
+/// Bit set when at least one client has Parse'd this hash with an empty name.
+const FLAG_ANONYMOUS: u8 = 0b10;
+
 /// Entry in the prepared statement cache with LRU ordering.
 struct CacheEntry {
     parse: Arc<Parse>,
     /// Counter for LRU ordering (higher = more recently used)
     count_used: u64,
-    /// Has at least one client ever Parse'd this hash with a non-empty name?
-    seen_as_named: AtomicBool,
-    /// Has at least one client ever Parse'd this hash with an empty name?
-    seen_as_anonymous: AtomicBool,
+    /// Bitmask of `CacheEntryKind` flags. Bit 0 = seen as named,
+    /// bit 1 = seen as anonymous. At least one bit is always set after
+    /// construction (`CacheEntry::new`); bits only ever flip from 0 to 1.
+    kind_flags: AtomicU8,
+}
+
+impl CacheEntry {
+    /// Construct an entry with the bitmask reflecting the initial classification.
+    /// `initial_kind` must be `Named` or `Anonymous` at the call site of
+    /// `get_or_insert`; `Mixed` is supported for completeness.
+    fn new(parse: Arc<Parse>, count_used: u64, initial_kind: CacheEntryKind) -> Self {
+        let bits = match initial_kind {
+            CacheEntryKind::Named => FLAG_NAMED,
+            CacheEntryKind::Anonymous => FLAG_ANONYMOUS,
+            CacheEntryKind::Mixed => FLAG_NAMED | FLAG_ANONYMOUS,
+        };
+        Self {
+            parse,
+            count_used,
+            kind_flags: AtomicU8::new(bits),
+        }
+    }
+
+    /// Mark this entry as seen via a named statement. Skips the atomic
+    /// fetch_or when the bit is already set, avoiding cache-line ping-pong
+    /// on hot cache hits.
+    fn note_named(&self) {
+        if self.kind_flags.load(Ordering::Relaxed) & FLAG_NAMED == 0 {
+            self.kind_flags.fetch_or(FLAG_NAMED, Ordering::Relaxed);
+        }
+    }
+
+    /// Mark this entry as seen via an anonymous statement. Skips the atomic
+    /// fetch_or when the bit is already set.
+    fn note_anonymous(&self) {
+        if self.kind_flags.load(Ordering::Relaxed) & FLAG_ANONYMOUS == 0 {
+            self.kind_flags.fetch_or(FLAG_ANONYMOUS, Ordering::Relaxed);
+        }
+    }
+
+    fn kind(&self) -> CacheEntryKind {
+        CacheEntryKind::from_bits(self.kind_flags.load(Ordering::Relaxed))
+    }
 }
 
 /// Classification of how clients have referenced a pool cache entry over
@@ -48,12 +92,15 @@ pub enum CacheEntryKind {
 }
 
 impl CacheEntryKind {
-    fn from_flags(named: bool, anonymous: bool) -> Self {
-        match (named, anonymous) {
-            (true, true) => CacheEntryKind::Mixed,
-            (true, false) => CacheEntryKind::Named,
-            (false, true) => CacheEntryKind::Anonymous,
-            (false, false) => unreachable!("CacheEntry constructed without a kind flag"),
+    /// Decode a bitmask back into a `CacheEntryKind`. The 0 pattern is
+    /// structurally unreachable because `CacheEntry::new` always writes
+    /// at least one bit; we map it to `Mixed` defensively rather than
+    /// panicking.
+    fn from_bits(bits: u8) -> Self {
+        match bits & (FLAG_NAMED | FLAG_ANONYMOUS) {
+            FLAG_NAMED => CacheEntryKind::Named,
+            FLAG_ANONYMOUS => CacheEntryKind::Anonymous,
+            _ => CacheEntryKind::Mixed,
         }
     }
 
@@ -110,8 +157,9 @@ impl PreparedStatementCache {
     ///
     /// Pass the hash to this so that we can do the compute before acquiring the lock.
     /// `client_given_name` is the original Parse name from the client; an empty
-    /// string indicates an anonymous prepared statement. The corresponding
-    /// `seen_as_*` flag on the entry is flipped from false to true on every call.
+    /// string indicates an anonymous prepared statement. The corresponding bit in
+    /// the entry's `kind_flags` bitmask is set on every call (the test-and-set
+    /// guard skips the atomic write when the bit is already set).
     pub fn get_or_insert(&self, parse: &Parse, hash: u64, client_given_name: &str) -> Arc<Parse> {
         let timestamp = self.counter.fetch_add(1, Ordering::Relaxed);
         let is_anonymous = client_given_name.is_empty();
@@ -120,9 +168,9 @@ impl PreparedStatementCache {
         if let Some(mut entry) = self.cache.get_mut(&hash) {
             entry.count_used = timestamp;
             if is_anonymous {
-                entry.seen_as_anonymous.store(true, Ordering::Relaxed);
+                entry.note_anonymous();
             } else {
-                entry.seen_as_named.store(true, Ordering::Relaxed);
+                entry.note_named();
             }
             return entry.parse.clone();
         }
@@ -132,17 +180,18 @@ impl PreparedStatementCache {
         // then rewrite the statement name
         let new_parse = Arc::new(parse.clone().intern_query(hash).rewrite());
 
+        let initial_kind = if is_anonymous {
+            CacheEntryKind::Anonymous
+        } else {
+            CacheEntryKind::Named
+        };
+
         // Insert first, then evict excess. Reversing the order closes
         // the race where N concurrent callers all pass len() >= max_size
         // before any eviction runs, pushing the cache far above the limit.
         self.cache.insert(
             hash,
-            CacheEntry {
-                parse: new_parse.clone(),
-                count_used: timestamp,
-                seen_as_named: AtomicBool::new(!is_anonymous),
-                seen_as_anonymous: AtomicBool::new(is_anonymous),
-            },
+            CacheEntry::new(new_parse.clone(), timestamp, initial_kind),
         );
 
         while self.cache.len() > self.max_size {
@@ -180,11 +229,12 @@ impl PreparedStatementCache {
         self.cache
             .iter()
             .map(|entry| {
-                let kind = CacheEntryKind::from_flags(
-                    entry.seen_as_named.load(Ordering::Relaxed),
-                    entry.seen_as_anonymous.load(Ordering::Relaxed),
-                );
-                (*entry.key(), entry.parse.clone(), entry.count_used, kind)
+                (
+                    *entry.key(),
+                    entry.parse.clone(),
+                    entry.count_used,
+                    entry.kind(),
+                )
             })
             .collect()
     }
@@ -335,5 +385,20 @@ mod tests {
         cache.get_or_insert(&p2, 1, "");
         let entries = cache.get_entries();
         assert_eq!(entries[0].3, CacheEntryKind::Mixed);
+    }
+
+    /// A repeated hit with the same kind must not mutate the bitmask
+    /// beyond the bit set at construction. The cache-line-friendly
+    /// test-and-set guard relies on this invariant; verify the visible
+    /// outcome (the kind) stays exactly Named, never accidentally Mixed.
+    #[test]
+    fn flags_set_only_when_state_actually_changes() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt_one", "SELECT 1");
+        cache.get_or_insert(&parse, 1, "stmt_one"); // bits = FLAG_NAMED
+        cache.get_or_insert(&parse, 1, "stmt_one"); // hit, no real state change
+        let entries = cache.get_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].3, CacheEntryKind::Named);
     }
 }
