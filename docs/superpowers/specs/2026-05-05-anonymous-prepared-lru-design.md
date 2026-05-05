@@ -224,13 +224,16 @@ deployments.
 
 ### Migration (binary upgrade)
 
-`src/client/migration.rs:251-380` already serialises each entry with
-its key kind (`Named(name)` vs `Anonymous(hash)`) and the
-`client_given_name`. On the receiving side, `reconstruct_prepared_state`
-inserts into the right map by key kind, and `register_parse_to_cache`
-on the new process naturally sets `seen_as_named` /
-`seen_as_anonymous` from the incoming `client_given_name`. No
-format change. No special handling.
+The blob format and the reconstruction logic are unchanged. The
+single visible edit is a compile-required adjustment to the
+`register_parse_to_cache` call site
+(`src/client/migration.rs:409-418`) so that it passes the
+`client_given_name` carried in the blob: the `Named(name)` case
+forwards the name, the `Anonymous(hash)` case forwards `""`. This
+threads the same `seen_as_*` classification path through the
+migration as for live traffic. No new migration logic, no blob
+versioning, no behavioural difference for clients across the
+upgrade.
 
 ### `cache_memory_usage` (`src/client/core.rs:273-299`)
 
