@@ -557,3 +557,15 @@ fn update_pool_scaling_metrics() {
 
     prev.retain(|(_, user, db), _| !stale_pairs.contains(&(user.clone(), db.clone())));
 }
+
+/// Stub for the interner GC tick callback. The real implementation —
+/// gauges, eviction counters, sweep duration histogram — lands in the
+/// next commit, where the Prometheus surface for the interner is added.
+/// Spawning the GC task already calls this on every sweep so the wiring
+/// shows up in this commit's diff and the next commit only fills it in.
+pub fn record_interner_gc(
+    _named: crate::server::GcStats,
+    _anon: crate::server::GcStats,
+    _elapsed_seconds: f64,
+) {
+}

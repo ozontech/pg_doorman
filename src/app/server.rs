@@ -19,7 +19,8 @@ use crate::config::{get_config, reload_config, Config};
 use crate::daemon;
 use crate::messages::{configure_tcp_socket, configure_unix_socket};
 use crate::pool::{retain, ClientServerMap, ConnectionPool};
-use crate::prometheus::start_prometheus_server;
+use crate::prometheus::{record_interner_gc, start_prometheus_server};
+use crate::server::{gc_sweep_anon, gc_sweep_named};
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use crate::utils::core_affinity;
 use crate::utils::format_duration;
@@ -285,6 +286,38 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         {
             let gc_interval = config.general.retain_connections_time.as_std();
             crate::pool::gc::spawn_dynamic_pool_gc(gc_interval);
+        }
+
+        // Query interner GC: bounds NAMED via passive Arc::strong_count and
+        // ANON via per-entry TTL. Sweep ticks at gc_interval / 4 so an entry
+        // marked on cycle N has roughly a quarter-interval to be touched and
+        // unmarked before cycle N+1 evicts it. anon_idle_ttl_seconds = 0 maps
+        // to u64::MAX milliseconds — disables TTL eviction entirely.
+        {
+            let gc_interval =
+                Duration::from_secs(config.general.query_interner_gc_interval_seconds.max(1));
+            let sweep_interval = gc_interval / 4;
+            let anon_ttl_secs = config.general.query_interner_anon_idle_ttl_seconds;
+            let anon_ttl_ms = if anon_ttl_secs == 0 {
+                u64::MAX
+            } else {
+                anon_ttl_secs.saturating_mul(1000)
+            };
+
+            tokio::task::spawn(async move {
+                let mut ticker = tokio::time::interval(sweep_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    ticker.tick().await;
+
+                    let started = std::time::Instant::now();
+                    let named_stats = gc_sweep_named();
+                    let anon_stats = gc_sweep_anon(anon_ttl_ms);
+                    let elapsed = started.elapsed().as_secs_f64();
+
+                    record_interner_gc(named_stats, anon_stats, elapsed);
+                }
+            });
         }
 
         let shutdown_timeout = config.general.shutdown_timeout.as_std();

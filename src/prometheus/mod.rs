@@ -15,7 +15,7 @@ mod system;
 mod tests;
 
 // Re-exports
-pub use metrics::observe_anonymous_eviction;
+pub use metrics::{observe_anonymous_eviction, record_interner_gc};
 pub use server::start_prometheus_server;
 
 // Define the metrics we want to expose
