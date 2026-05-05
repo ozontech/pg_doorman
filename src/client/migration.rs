@@ -1300,6 +1300,7 @@ mod tests {
     /// goes through `parse.clone().intern_query(hash, is_anonymous)` with
     /// is_anonymous=true, so the text must land in ANON_INTERNER, not NAMED.
     #[test]
+    #[serial_test::serial(query_interner)]
     fn migration_path_routes_anonymous_to_anon_interner() {
         use crate::server::{anon_entry_for_test, named_entry_for_test, reset_interners_for_test};
 
@@ -1321,6 +1322,7 @@ mod tests {
     /// Mirror for the named branch: Named entry from migration goes into
     /// NAMED_INTERNER.
     #[test]
+    #[serial_test::serial(query_interner)]
     fn migration_path_routes_named_to_named_interner() {
         use crate::server::{anon_entry_for_test, named_entry_for_test, reset_interners_for_test};
 

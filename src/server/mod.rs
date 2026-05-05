@@ -14,9 +14,9 @@ mod server_backend;
 
 pub use parameters::ServerParameters;
 pub use prepared_statement_cache::{
-    anon_len, anon_remove, anon_snapshot, intern_query, named_len, named_remove, named_snapshot,
-    now_monotonic_ms, reset_interners_force, AnonEntry, CacheEntryKind, NamedEntry,
-    PreparedStatementCache,
+    anon_len, anon_remove, anon_snapshot, gc_sweep_anon, gc_sweep_named, intern_query, named_len,
+    named_remove, named_snapshot, now_monotonic_ms, reset_interners_force, AnonEntry,
+    CacheEntryKind, GcStats, NamedEntry, PreparedStatementCache,
 };
 
 #[cfg(test)]

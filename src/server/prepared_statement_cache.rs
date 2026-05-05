@@ -13,8 +13,6 @@ use crate::utils::dashmap::new_dashmap_with_capacity;
 /// switches the state back to `ACTIVE`, so cold-but-still-needed entries
 /// survive the cycle.
 const GC_STATE_ACTIVE: u8 = 0;
-// Used by `gc_sweep_named` / `gc_sweep_anon` in the follow-up commit.
-#[allow(dead_code)]
 const GC_STATE_MARKED: u8 = 1;
 
 /// Entry in the named interner. Bounded by passive GC over
@@ -181,6 +179,61 @@ pub fn named_entry_for_test(hash: u64) -> Option<Arc<NamedEntry>> {
 #[cfg(test)]
 pub fn anon_entry_for_test(hash: u64) -> Option<Arc<AnonEntry>> {
     ANON_INTERNER.get(&hash).map(|e| e.value().clone())
+}
+
+/// Result of one GC sweep over a single interner. `marked` counts entries
+/// flagged as candidates this cycle; `evicted` counts entries removed
+/// because they were already flagged in the previous cycle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GcStats {
+    pub marked: u64,
+    pub evicted: u64,
+}
+
+/// Mark-and-sweep over `NAMED_INTERNER`. A named entry is a candidate when
+/// `Arc::strong_count(text) == 1` — only the interner itself holds the
+/// `Arc<str>`. The candidate is marked on cycle N; if it's still a
+/// candidate on cycle N+1 (no `intern_query` touched it in between), it
+/// is removed. The grace cycle prevents thrash on cold-but-still-needed
+/// hashes that would otherwise be reallocated on the very next Parse.
+pub fn gc_sweep_named() -> GcStats {
+    let mut stats = GcStats::default();
+    for (hash, entry) in named_snapshot() {
+        if Arc::strong_count(&entry.text) > 1 {
+            entry.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
+            continue;
+        }
+        let prev = entry.gc_state.swap(GC_STATE_MARKED, Ordering::Relaxed);
+        if prev == GC_STATE_MARKED && NAMED_INTERNER.remove(&hash).is_some() {
+            stats.evicted += 1;
+        } else if prev == GC_STATE_ACTIVE {
+            stats.marked += 1;
+        }
+    }
+    stats
+}
+
+/// Mark-and-sweep over `ANON_INTERNER`. A candidate is an entry whose
+/// idle time exceeds `anon_idle_ttl_ms`. Two-cycle grace identical to
+/// the named sweep — `intern_query` touch resets the mark. Pass
+/// `u64::MAX` to disable TTL eviction (used when the operator sets
+/// `query_interner_anon_idle_ttl_seconds = 0`).
+pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
+    let now = now_monotonic_ms();
+    let mut stats = GcStats::default();
+    for (hash, entry) in anon_snapshot() {
+        if entry.idle_ms(now) <= anon_idle_ttl_ms {
+            entry.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
+            continue;
+        }
+        let prev = entry.gc_state.swap(GC_STATE_MARKED, Ordering::Relaxed);
+        if prev == GC_STATE_MARKED && ANON_INTERNER.remove(&hash).is_some() {
+            stats.evicted += 1;
+        } else if prev == GC_STATE_ACTIVE {
+            stats.marked += 1;
+        }
+    }
+    stats
 }
 
 /// Bit set when at least one client has Parse'd this hash with a non-empty name.
@@ -448,6 +501,7 @@ impl PreparedStatementCache {
 mod tests {
     use super::*;
     use bytes::{BufMut, BytesMut};
+    use serial_test::serial;
     use std::sync::Arc;
 
     /// Build a minimal Parse message for testing.
@@ -566,6 +620,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(query_interner)]
     fn intern_query_named_lands_in_named_interner() {
         reset_interners_for_test();
         let arc = intern_query("select 1", 0xAA, false);
@@ -575,6 +630,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(query_interner)]
     fn intern_query_anonymous_lands_in_anon_interner() {
         reset_interners_for_test();
         let _arc = intern_query("select 2", 0xBB, true);
@@ -586,6 +642,7 @@ mod tests {
     /// independent allocations. The dedup loss in this rare mixed case is
     /// the documented trade-off of the split refactor.
     #[test]
+    #[serial(query_interner)]
     fn intern_query_same_hash_in_both_interners_independent() {
         reset_interners_for_test();
         let a_named = intern_query("select 3", 0xCC, false);
@@ -598,6 +655,7 @@ mod tests {
     /// Within a single kind, repeated intern of the same hash returns the
     /// same `Arc<str>` — the dedup property the interner exists for.
     #[test]
+    #[serial(query_interner)]
     fn intern_query_returns_same_arc_for_same_hash_within_kind() {
         reset_interners_for_test();
         let a = intern_query("select 4", 0xDD, false);
@@ -606,6 +664,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(query_interner)]
     fn anon_entry_tracks_last_used() {
         reset_interners_for_test();
         let _ = intern_query("select 5", 0xEE, true);
@@ -617,5 +676,94 @@ mod tests {
             t1 > t0,
             "last_used must advance on access (t0={t0}, t1={t1})"
         );
+    }
+
+    /// strong_count == 1 (only the interner holds the Arc<str>) → marked
+    /// on cycle 1, evicted on cycle 2.
+    #[test]
+    #[serial(query_interner)]
+    fn named_passive_gc_two_cycle_grace() {
+        reset_interners_for_test();
+        {
+            let _arc = intern_query("select strangler", 0x100, false);
+        }
+        let s1 = gc_sweep_named();
+        assert_eq!(s1.evicted, 0);
+        assert!(s1.marked >= 1);
+        assert!(named_entry_for_test(0x100).is_some());
+        let s2 = gc_sweep_named();
+        assert!(s2.evicted >= 1);
+        assert!(named_entry_for_test(0x100).is_none());
+    }
+
+    /// External Arc<str> alive → strong_count > 1 → never marked.
+    #[test]
+    #[serial(query_interner)]
+    fn named_passive_gc_keeps_referenced() {
+        reset_interners_for_test();
+        let _arc = intern_query("select holder", 0x101, false);
+        for _ in 0..5 {
+            gc_sweep_named();
+        }
+        assert!(named_entry_for_test(0x101).is_some());
+    }
+
+    /// Touch between marking sweep and eviction sweep must clear the mark.
+    #[test]
+    #[serial(query_interner)]
+    fn named_passive_gc_touch_unmarks() {
+        reset_interners_for_test();
+        {
+            let _arc = intern_query("select touched", 0x102, false);
+        }
+        gc_sweep_named();
+        let _arc2 = intern_query("select touched", 0x102, false);
+        gc_sweep_named();
+        assert!(named_entry_for_test(0x102).is_some());
+    }
+
+    /// Anonymous entry idle past TTL → marked, then evicted on the next
+    /// sweep that still sees it as a candidate.
+    #[test]
+    #[serial(query_interner)]
+    fn anon_ttl_evicts_idle_with_grace() {
+        reset_interners_for_test();
+        let _arc = intern_query("select stale_anon", 0x103, true);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let s1 = gc_sweep_anon(10);
+        assert!(s1.marked >= 1);
+        assert_eq!(s1.evicted, 0);
+        assert!(anon_entry_for_test(0x103).is_some());
+        let s2 = gc_sweep_anon(10);
+        assert!(s2.evicted >= 1);
+        assert!(anon_entry_for_test(0x103).is_none());
+    }
+
+    /// Touch refreshes `last_used` so the entry is no longer a TTL
+    /// candidate on the second sweep.
+    #[test]
+    #[serial(query_interner)]
+    fn anon_ttl_touch_unmarks() {
+        reset_interners_for_test();
+        let _arc = intern_query("select touched_anon", 0x104, true);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        gc_sweep_anon(10);
+        let _arc2 = intern_query("select touched_anon", 0x104, true);
+        gc_sweep_anon(10);
+        assert!(anon_entry_for_test(0x104).is_some());
+    }
+
+    /// TTL = u64::MAX (operator sets `anon_idle_ttl_seconds = 0`) disables
+    /// time-based eviction entirely.
+    #[test]
+    #[serial(query_interner)]
+    fn anon_ttl_disabled_keeps_everything() {
+        reset_interners_for_test();
+        let _arc = intern_query("select forever", 0x105, true);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        for _ in 0..5 {
+            gc_sweep_anon(u64::MAX);
+        }
+        assert!(anon_entry_for_test(0x105).is_some());
     }
 }
