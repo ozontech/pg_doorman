@@ -33,13 +33,17 @@ groups:
 
       # ANON growing without TTL eviction — TTL is set too long for the
       # actual idle pattern, or the workload is genuinely accumulating
-      # unique queries faster than the GC can shed them.
+      # unique queries faster than the GC can shed them. Threshold and
+      # window tuned for production: at 10k+ RPS with 50% prepared anon
+      # the interner can hit 50k entries within minutes, so a one-hour
+      # `for` would alert too late; 10k entries + 15min lets a sysadmin
+      # catch a runaway workload before memory pressure hits.
       - alert: PgDoormanAnonInternerNotShrinking
         expr: |
-          deriv(pg_doorman_query_interner_entries{kind="anonymous"}[1h]) > 0
-          and pg_doorman_query_interner_entries{kind="anonymous"} > 50000
+          deriv(pg_doorman_query_interner_entries{kind="anonymous"}[15m]) > 0
+          and pg_doorman_query_interner_entries{kind="anonymous"} > 10000
           and rate(pg_doorman_query_interner_evictions_total{kind="anonymous",reason="ttl_expired"}[10m]) < 0.1
-        for: 1h
+        for: 15m
         labels:
           severity: warning
         annotations:
@@ -50,6 +54,9 @@ groups:
             entries growth to find the right value.
 
       # GC sweep takes long enough to be visible in tail latency.
+      # The 50ms P99 threshold assumes interners under ~100k entries;
+      # past that, scale the threshold up or accept that GC ticks are
+      # part of the request-tail story.
       - alert: PgDoormanInternerGCSlow
         expr: histogram_quantile(0.99, rate(pg_doorman_query_interner_gc_duration_seconds_bucket[10m])) > 0.05
         for: 15m

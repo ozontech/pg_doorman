@@ -150,14 +150,6 @@ pub fn anon_len() -> usize {
     ANON_INTERNER.len()
 }
 
-pub fn named_remove(hash: u64) -> bool {
-    NAMED_INTERNER.remove(&hash).is_some()
-}
-
-pub fn anon_remove(hash: u64) -> bool {
-    ANON_INTERNER.remove(&hash).is_some()
-}
-
 /// Force-clear both interners. Used by the `RESET INTERNER` admin command.
 pub fn reset_interners_force() {
     NAMED_INTERNER.clear();
@@ -186,6 +178,9 @@ pub fn anon_entry_for_test(hash: u64) -> Option<Arc<AnonEntry>> {
 pub struct GcStats {
     pub marked: u64,
     pub evicted: u64,
+    /// Total bytes of interned text alive at the end of the sweep — the
+    /// gauge value Prometheus needs without taking a second snapshot.
+    pub bytes: u64,
 }
 
 /// Mark-and-sweep over `NAMED_INTERNER`. A named entry is a candidate when
@@ -194,11 +189,21 @@ pub struct GcStats {
 /// candidate on cycle N+1 (no `intern_query` touched it in between), it
 /// is removed. The grace cycle prevents thrash on cold-but-still-needed
 /// hashes that would otherwise be reallocated on the very next Parse.
+///
+/// Race invariant (do not collapse the two-cycle grace into a single
+/// cycle): between the `strong_count` read and the `swap(MARKED)` a
+/// concurrent `intern_query` may clone an Arc and call `touch()`,
+/// writing ACTIVE. This sweep then overwrites ACTIVE with MARKED. The
+/// next sweep observes either `strong_count > 1` (touch path holds the
+/// Arc) and stores ACTIVE, sparing the entry, or the Arc has dropped
+/// and eviction is correct. Removing the grace cycle would let this
+/// race evict a freshly-touched entry on the very next allocation.
 pub fn gc_sweep_named() -> GcStats {
     let mut stats = GcStats::default();
     for (hash, entry) in named_snapshot() {
         if Arc::strong_count(&entry.text) > 1 {
             entry.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
+            stats.bytes += entry.text.len() as u64;
             continue;
         }
         let prev = entry.gc_state.swap(GC_STATE_MARKED, Ordering::Relaxed);
@@ -206,6 +211,11 @@ pub fn gc_sweep_named() -> GcStats {
             stats.evicted += 1;
         } else if prev == GC_STATE_ACTIVE {
             stats.marked += 1;
+            stats.bytes += entry.text.len() as u64;
+        } else {
+            // Already MARKED but not removed (concurrent remove won the
+            // race). Entry will not be in the next snapshot.
+            stats.bytes += entry.text.len() as u64;
         }
     }
     stats
@@ -222,6 +232,7 @@ pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
     for (hash, entry) in anon_snapshot() {
         if entry.idle_ms(now) <= anon_idle_ttl_ms {
             entry.gc_state.store(GC_STATE_ACTIVE, Ordering::Relaxed);
+            stats.bytes += entry.text.len() as u64;
             continue;
         }
         let prev = entry.gc_state.swap(GC_STATE_MARKED, Ordering::Relaxed);
@@ -229,6 +240,9 @@ pub fn gc_sweep_anon(anon_idle_ttl_ms: u64) -> GcStats {
             stats.evicted += 1;
         } else if prev == GC_STATE_ACTIVE {
             stats.marked += 1;
+            stats.bytes += entry.text.len() as u64;
+        } else {
+            stats.bytes += entry.text.len() as u64;
         }
     }
     stats

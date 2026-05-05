@@ -80,6 +80,34 @@ alerts:
 Cold-start guard: every alert above uses `for: > 5m`, so the empty
 interner immediately after process start does not trip them.
 
+## Sizing
+
+Steady-state ANON interner footprint, assuming 50% of queries take the
+prepared path and the average SQL text is 2 KiB:
+
+| RPS    | TTL = 60s          | TTL = 300s          |
+|--------|--------------------|---------------------|
+| 100    | ~12k entries / ~24 MiB | ~60k / ~120 MiB |
+| 1 000  | ~120k / ~240 MiB   | ~600k / ~1.2 GiB    |
+| 10 000 | ~1.2M / ~2.4 GiB   | refuse to size      |
+
+The interner is process-global, so the cluster-wide footprint scales
+linearly with the number of pg_doorman replicas. Use this as the
+starting estimate for `query_interner_anon_idle_ttl_seconds` and the
+RAM budget per host; the live `pg_doorman_query_interner_bytes`
+gauge is authoritative.
+
+## Effective TTL
+
+The eviction policy is two-cycle mark-and-sweep over a sweep that
+ticks at `gc_interval / 4`. With the defaults
+(`gc_interval = 60 s`, `anon_idle_ttl = 60 s`) the sweep runs every
+15 s, so an entry is marked between 60 s and 75 s after it last got
+touched, and removed on the next sweep that still sees it as a
+candidate — i.e. between 75 s and 120 s of total idle time. A shorter
+TTL than the 60 s default does not buy you sub-15-second eviction:
+`gc_interval` controls the sweep cadence.
+
 ## Tuning recipes
 
 ### Reduce TTL when memory pressure dominates

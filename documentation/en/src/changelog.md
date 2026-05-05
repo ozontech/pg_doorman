@@ -1,6 +1,6 @@
 # Changelog
 
-### Unreleased
+### 3.7.0
 
 #### ACTION REQUIRED before upgrading to 3.7.0
 

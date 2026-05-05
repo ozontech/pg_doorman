@@ -2302,24 +2302,26 @@
         }
       },
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "unit": "ops"
+        },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "pg_doorman_query_interner_entries{instance=~\"$instance\"}",
+          "expr": "rate(pg_doorman_query_interner_synthetic_misses_total{instance=~\"$instance\"}[$__rate_interval])",
           "refId": "",
-          "legendFormat": "{{kind}}"
+          "legendFormat": "synthetic 26000/s"
         }
       ],
-      "title": "Interner Entries by Kind",
-      "description": "Live entries in the global query interner. NAMED is bounded by passive Arc::strong_count GC; ANON is bounded by query_interner_anon_idle_ttl_seconds. Sustained growth on either line points to either a long TTL on a unique-anon workload or an Arc<str> leak on the named side.",
+      "title": "Synthetic SQLSTATE 26000 Rate",
+      "description": "Bind referencing an anonymous prepared whose text is no longer in any cache. Flat zero is the normal case. Sustained > 1/s = TTL too short for the workload, or a driver depending on cross-batch unnamed prepared statements.",
       "datasource": {
         "uid": "prometheus"
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 12,
         "x": 0,
         "y": 121
       },
@@ -2366,7 +2368,51 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 8,
+        "x": 12,
+        "y": 121
+      },
+      "repeatDirection": "h"
+    },
+    {
+      "type": "timeseries",
+      "transparent": false,
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "min",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "asc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "pg_doorman_query_interner_entries{instance=~\"$instance\"}",
+          "refId": "",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "title": "Interner Entries by Kind",
+      "description": "Live entries in the global query interner. NAMED is bounded by passive Arc::strong_count GC; ANON is bounded by query_interner_anon_idle_ttl_seconds. Sustained growth on either line points to either a long TTL on a unique-anon workload or an Arc<str> leak on the named side.",
+      "datasource": {
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 20,
         "y": 121
       },
       "repeatDirection": "h"
@@ -2412,52 +2458,6 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 16,
-        "y": 121
-      },
-      "repeatDirection": "h"
-    },
-    {
-      "type": "timeseries",
-      "transparent": false,
-      "transformations": [],
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "min",
-            "max",
-            "lastNotNull"
-          ]
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "asc"
-        }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "expr": "rate(pg_doorman_query_interner_synthetic_misses_total{instance=~\"$instance\"}[$__rate_interval])",
-          "refId": "",
-          "legendFormat": "synthetic 26000/s"
-        }
-      ],
-      "title": "Synthetic SQLSTATE 26000 Rate",
-      "description": "Bind referencing an anonymous prepared whose text is no longer in any cache. Flat zero is the normal case. Sustained > 1/s = TTL too short for the workload, or a driver depending on cross-batch unnamed prepared statements.",
-      "datasource": {
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
         "y": 129
       },
@@ -2509,7 +2509,7 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
+        "x": 8,
         "y": 129
       },
       "repeatDirection": "h"

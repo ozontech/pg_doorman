@@ -476,11 +476,7 @@ pub async fn reconstruct_client(
         &state.pool_name,
     );
 
-    // None inherits the pool-level prepared_statements_cache_size.
-    let anon_cache_size = config
-        .general
-        .client_anonymous_prepared_cache_size
-        .unwrap_or(config.general.prepared_statements_cache_size);
+    let anon_cache_size = config.general.resolve_client_anon_cache_size();
 
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,
@@ -587,11 +583,7 @@ pub async fn reconstruct_tls_client(
         &state.pool_name,
     );
 
-    // None inherits the pool-level prepared_statements_cache_size.
-    let anon_cache_size = config
-        .general
-        .client_anonymous_prepared_cache_size
-        .unwrap_or(config.general.prepared_statements_cache_size);
+    let anon_cache_size = config.general.resolve_client_anon_cache_size();
 
     let prepared = reconstruct_prepared_state(
         state.prepared_enabled,

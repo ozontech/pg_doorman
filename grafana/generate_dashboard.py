@@ -631,12 +631,14 @@ d = (
     .with_panel(p_patroni_api_rate)
     .with_panel(p_patroni_api_duration)
     .with_panel(p_fallback_cache_hits)
-    # Row 13: Query Interner (collapsed)
+    # Row 13: Query Interner (collapsed). Order is SLO-first: synthetic
+    # misses and bytes go up top because they trip the alerts; entries
+    # and eviction rate are drill-down; GC duration last.
     .with_row(row13)
-    .with_panel(p_interner_entries)
-    .with_panel(p_interner_bytes)
-    .with_panel(p_interner_evictions)
     .with_panel(p_interner_synthetic_misses)
+    .with_panel(p_interner_bytes)
+    .with_panel(p_interner_entries)
+    .with_panel(p_interner_evictions)
     .with_panel(p_interner_gc_duration)
 )
 

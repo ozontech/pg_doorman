@@ -560,9 +560,9 @@ fn update_pool_scaling_metrics() {
 
 /// Called by the GC tokio task on every sweep tick. Updates the interner
 /// gauges (entries, bytes per kind), increments eviction counters, and
-/// observes the sweep duration in the histogram. Two snapshot calls walk
-/// the named and anonymous DashMaps independently to compute byte totals;
-/// `len()` skips the iteration cost for the entry counts.
+/// observes the sweep duration in the histogram. The byte totals come
+/// straight from `GcStats` so we don't traverse the DashMaps a second
+/// time after the sweep already walked them.
 pub fn record_interner_gc(
     named: crate::server::GcStats,
     anon: crate::server::GcStats,
@@ -575,15 +575,6 @@ pub fn record_interner_gc(
         .with_label_values(&["anonymous", "ttl_expired"])
         .inc_by(anon.evicted);
 
-    let named_bytes: i64 = crate::server::named_snapshot()
-        .iter()
-        .map(|(_, e)| e.text().len() as i64)
-        .sum();
-    let anon_bytes: i64 = crate::server::anon_snapshot()
-        .iter()
-        .map(|(_, e)| e.text().len() as i64)
-        .sum();
-
     super::QUERY_INTERNER_ENTRIES
         .with_label_values(&["named"])
         .set(crate::server::named_len() as i64);
@@ -592,10 +583,10 @@ pub fn record_interner_gc(
         .set(crate::server::anon_len() as i64);
     super::QUERY_INTERNER_BYTES
         .with_label_values(&["named"])
-        .set(named_bytes);
+        .set(named.bytes as i64);
     super::QUERY_INTERNER_BYTES
         .with_label_values(&["anonymous"])
-        .set(anon_bytes);
+        .set(anon.bytes as i64);
 
     super::QUERY_INTERNER_GC_DURATION_SECONDS.observe(elapsed_seconds);
 }

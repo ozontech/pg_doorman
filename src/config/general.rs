@@ -454,6 +454,17 @@ impl General {
         60
     }
 
+    /// `client_anonymous_prepared_cache_size` is `Option<usize>`: when
+    /// unset (None) it inherits `prepared_statements_cache_size`. The
+    /// inheritance is the same on the live-connection path
+    /// (`Client::startup`) and on both migration paths
+    /// (`reconstruct_prepared_state` / its retry); centralising it here
+    /// keeps those three call-sites in sync.
+    pub fn resolve_client_anon_cache_size(&self) -> usize {
+        self.client_anonymous_prepared_cache_size
+            .unwrap_or(self.prepared_statements_cache_size)
+    }
+
     pub fn default_daemon_pid_file() -> String {
         "/tmp/pg_doorman.pid".to_string()
     }

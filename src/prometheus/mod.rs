@@ -310,7 +310,7 @@ pub(crate) static QUERY_INTERNER_GC_DURATION_SECONDS: Lazy<Histogram> = Lazy::ne
         "Wall-clock time spent in a single GC sweep cycle (named + anonymous combined).",
     )
     .buckets(vec![
-        0.0001, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,
+        0.0001, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
     ]);
     let histogram = Histogram::with_opts(opts).unwrap();
     REGISTRY.register(Box::new(histogram.clone())).unwrap();
