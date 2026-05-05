@@ -173,7 +173,7 @@ where
     for (identifier, pool) in get_all_pools().iter() {
         if let Some(cache) = pool.prepared_statement_cache.as_ref() {
             let entries = cache.get_entries();
-            for (hash, parse, last_used) in entries {
+            for (hash, parse, last_used, _kind) in entries {
                 res.put(data_row(&[
                     identifier.to_string(),
                     hash.to_string(),

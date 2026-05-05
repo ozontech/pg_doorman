@@ -653,7 +653,15 @@ fn reconstruct_prepared_state(
     for entry in entries {
         let parse = Parse::from_parts(&entry.query, &entry.param_types);
         let hash = entry.hash;
-        let Some(shared_parse) = pool.register_parse_to_cache(hash, &parse) else {
+        // Forward the client-given name from the deserialised blob so that the
+        // pool cache's seen_as_named / seen_as_anonymous flags survive the
+        // binary upgrade. Anonymous keys carry no name; pass an empty string.
+        let client_given_name = match &entry.key {
+            PreparedStatementKey::Named(name) => name.as_str(),
+            PreparedStatementKey::Anonymous(_) => "",
+        };
+        let Some(shared_parse) = pool.register_parse_to_cache(hash, &parse, client_given_name)
+        else {
             continue;
         };
         let async_name = if async_client {

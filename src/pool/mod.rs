@@ -781,15 +781,23 @@ impl ConnectionPool {
         &self.address
     }
 
-    /// Register a parse statement to the pool's cache and return the rewritten parse
+    /// Register a parse statement to the pool's cache and return the rewritten parse.
     ///
-    /// Do not pass an anonymous parse statement to this function
+    /// `client_given_name` is the original Parse name from the client (empty
+    /// string for anonymous prepared statements). It is forwarded to the
+    /// pool cache so each entry tracks whether it was ever Parse'd as a named
+    /// statement, an anonymous one, or both — surfaced via `CacheEntryKind`.
     #[inline(always)]
-    pub fn register_parse_to_cache(&self, hash: u64, parse: &Parse) -> Option<Arc<Parse>> {
+    pub fn register_parse_to_cache(
+        &self,
+        hash: u64,
+        parse: &Parse,
+        client_given_name: &str,
+    ) -> Option<Arc<Parse>> {
         // We should only be calling this function if the cache is enabled
         self.prepared_statement_cache
             .as_ref()
-            .map(|cache| cache.get_or_insert(parse, hash))
+            .map(|cache| cache.get_or_insert(parse, hash, client_given_name))
     }
 
     /// Promote a prepared statement hash in the LRU

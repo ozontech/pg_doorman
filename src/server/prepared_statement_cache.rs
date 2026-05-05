@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use log::info;
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::messages::Parse;
@@ -32,6 +32,38 @@ struct CacheEntry {
     parse: Arc<Parse>,
     /// Counter for LRU ordering (higher = more recently used)
     count_used: u64,
+    /// Has at least one client ever Parse'd this hash with a non-empty name?
+    seen_as_named: AtomicBool,
+    /// Has at least one client ever Parse'd this hash with an empty name?
+    seen_as_anonymous: AtomicBool,
+}
+
+/// Classification of how clients have referenced a pool cache entry over
+/// its lifetime. Flags only ever flip from false to true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheEntryKind {
+    Named,
+    Anonymous,
+    Mixed,
+}
+
+impl CacheEntryKind {
+    fn from_flags(named: bool, anonymous: bool) -> Self {
+        match (named, anonymous) {
+            (true, true) => CacheEntryKind::Mixed,
+            (true, false) => CacheEntryKind::Named,
+            (false, true) => CacheEntryKind::Anonymous,
+            (false, false) => unreachable!("CacheEntry constructed without a kind flag"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CacheEntryKind::Named => "named",
+            CacheEntryKind::Anonymous => "anonymous",
+            CacheEntryKind::Mixed => "mixed",
+        }
+    }
 }
 
 // TODO: Add stats the this cache
@@ -76,13 +108,22 @@ impl PreparedStatementCache {
     /// Adds the prepared statement to the cache if it doesn't exist with a new name
     /// if it already exists will give you the existing parse
     ///
-    /// Pass the hash to this so that we can do the compute before acquiring the lock
-    pub fn get_or_insert(&self, parse: &Parse, hash: u64) -> Arc<Parse> {
+    /// Pass the hash to this so that we can do the compute before acquiring the lock.
+    /// `client_given_name` is the original Parse name from the client; an empty
+    /// string indicates an anonymous prepared statement. The corresponding
+    /// `seen_as_*` flag on the entry is flipped from false to true on every call.
+    pub fn get_or_insert(&self, parse: &Parse, hash: u64, client_given_name: &str) -> Arc<Parse> {
         let timestamp = self.counter.fetch_add(1, Ordering::Relaxed);
+        let is_anonymous = client_given_name.is_empty();
 
         // Fast path: check if already exists
         if let Some(mut entry) = self.cache.get_mut(&hash) {
             entry.count_used = timestamp;
+            if is_anonymous {
+                entry.seen_as_anonymous.store(true, Ordering::Relaxed);
+            } else {
+                entry.seen_as_named.store(true, Ordering::Relaxed);
+            }
             return entry.parse.clone();
         }
 
@@ -99,6 +140,8 @@ impl PreparedStatementCache {
             CacheEntry {
                 parse: new_parse.clone(),
                 count_used: timestamp,
+                seen_as_named: AtomicBool::new(!is_anonymous),
+                seen_as_anonymous: AtomicBool::new(is_anonymous),
             },
         );
 
@@ -130,11 +173,19 @@ impl PreparedStatementCache {
         total
     }
 
-    /// Returns a list of all entries in the cache
-    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64)> {
+    /// Returns a list of all entries in the cache, including the derived
+    /// `CacheEntryKind` reflecting whether clients have used this hash via
+    /// named statements, anonymous statements, or both.
+    pub fn get_entries(&self) -> Vec<(u64, Arc<Parse>, u64, CacheEntryKind)> {
         self.cache
             .iter()
-            .map(|entry| (*entry.key(), entry.parse.clone(), entry.count_used))
+            .map(|entry| {
+                let kind = CacheEntryKind::from_flags(
+                    entry.seen_as_named.load(Ordering::Relaxed),
+                    entry.seen_as_anonymous.load(Ordering::Relaxed),
+                );
+                (*entry.key(), entry.parse.clone(), entry.count_used, kind)
+            })
             .collect()
     }
 
@@ -232,7 +283,7 @@ mod tests {
                         let query = format!("SELECT {} FROM t{}", i, t);
                         let hash = hash_query(&query);
                         let parse = make_parse("stmt", &query);
-                        cache.get_or_insert(&parse, hash);
+                        cache.get_or_insert(&parse, hash, "stmt");
                     }
                 })
             })
@@ -254,5 +305,35 @@ mod tests {
             max,
             threads,
         );
+    }
+
+    #[test]
+    fn flags_named_only_on_named_register() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("stmt_one", "SELECT 1");
+        cache.get_or_insert(&parse, 1, "stmt_one");
+        let entries = cache.get_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].3, CacheEntryKind::Named);
+    }
+
+    #[test]
+    fn flags_anonymous_only_on_anonymous_register() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let parse = make_parse("", "SELECT 1");
+        cache.get_or_insert(&parse, 1, "");
+        let entries = cache.get_entries();
+        assert_eq!(entries[0].3, CacheEntryKind::Anonymous);
+    }
+
+    #[test]
+    fn flags_mixed_when_both_seen() {
+        let cache = PreparedStatementCache::new(8, 1);
+        let p1 = make_parse("stmt_one", "SELECT 1");
+        cache.get_or_insert(&p1, 1, "stmt_one");
+        let p2 = make_parse("", "SELECT 1");
+        cache.get_or_insert(&p2, 1, "");
+        let entries = cache.get_entries();
+        assert_eq!(entries[0].3, CacheEntryKind::Mixed);
     }
 }
