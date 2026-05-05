@@ -83,6 +83,10 @@ pub struct ClientStats {
     pub prepared_cache_count: AtomicU64,
     /// Approximate memory usage of client's prepared statement cache in bytes
     pub prepared_cache_bytes: AtomicU64,
+    /// Number of Named entries in client's prepared statement cache
+    pub prepared_named_count: AtomicU64,
+    /// Number of Anonymous entries in client's prepared statement cache
+    pub prepared_anonymous_count: AtomicU64,
     /// Whether this client is async (uses Flush instead of Sync)
     pub is_async_client: AtomicBool,
 }
@@ -114,6 +118,8 @@ impl Default for ClientStats {
             error_count: AtomicU64::new(0),
             prepared_cache_count: AtomicU64::new(0),
             prepared_cache_bytes: AtomicU64::new(0),
+            prepared_named_count: AtomicU64::new(0),
+            prepared_anonymous_count: AtomicU64::new(0),
             is_async_client: AtomicBool::new(false),
             reporter: get_reporter(),
             use_tls: false,
@@ -386,10 +392,15 @@ impl ClientStats {
 
     /// Updates the prepared statement cache metrics.
     /// Called when adding or removing entries from the client's prepared statement cache.
+    /// `count` must equal `named + anonymous`; we still store all three so SHOW
+    /// POOLS_MEMORY can read the breakdown atomically without recomputing the sum.
     #[inline(always)]
-    pub fn set_prepared_cache_stats(&self, count: u64, bytes: u64) {
+    pub fn set_prepared_cache_stats(&self, count: u64, bytes: u64, named: u64, anonymous: u64) {
         self.prepared_cache_count.store(count, Ordering::Relaxed);
         self.prepared_cache_bytes.store(bytes, Ordering::Relaxed);
+        self.prepared_named_count.store(named, Ordering::Relaxed);
+        self.prepared_anonymous_count
+            .store(anonymous, Ordering::Relaxed);
     }
 
     /// Returns the number of entries in the client's prepared statement cache.
@@ -402,6 +413,18 @@ impl ClientStats {
     #[inline(always)]
     pub fn prepared_cache_bytes(&self) -> u64 {
         self.prepared_cache_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of Named entries in the client's prepared statement cache.
+    #[inline(always)]
+    pub fn prepared_named_count(&self) -> u64 {
+        self.prepared_named_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of Anonymous entries in the client's prepared statement cache.
+    #[inline(always)]
+    pub fn prepared_anonymous_count(&self) -> u64 {
+        self.prepared_anonymous_count.load(Ordering::Relaxed)
     }
 
     /// Marks this client as an async client (uses Flush instead of Sync).

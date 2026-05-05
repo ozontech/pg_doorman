@@ -151,6 +151,12 @@ pub struct PoolStats {
     /// Total approximate memory usage of all clients' prepared statement caches in bytes
     pub client_prepared_bytes: u64,
 
+    /// Total number of Named entries across all clients' prepared statement caches
+    pub client_named_count: u64,
+
+    /// Total number of Anonymous entries across all clients' prepared statement caches
+    pub client_anonymous_count: u64,
+
     /// Number of async clients (using Flush instead of Sync)
     pub async_clients_count: u64,
 
@@ -253,6 +259,8 @@ impl PoolStats {
             prepared_statements_bytes: 0,
             client_prepared_count: 0,
             client_prepared_bytes: 0,
+            client_named_count: 0,
+            client_anonymous_count: 0,
             async_clients_count: 0,
             avg_recv: 0,
             avg_sent: 0,
@@ -397,6 +405,8 @@ impl PoolStats {
             ("pool_prepared_bytes", DataType::Numeric),
             ("client_prepared_count", DataType::Numeric),
             ("client_prepared_bytes", DataType::Numeric),
+            ("client_named_count", DataType::Numeric),
+            ("client_anonymous_count", DataType::Numeric),
             ("async_clients", DataType::Numeric),
         ]
     }
@@ -409,6 +419,8 @@ impl PoolStats {
             Cow::Owned(self.prepared_statements_bytes.to_string()),
             Cow::Owned(self.client_prepared_count.to_string()),
             Cow::Owned(self.client_prepared_bytes.to_string()),
+            Cow::Owned(self.client_named_count.to_string()),
+            Cow::Owned(self.client_anonymous_count.to_string()),
             Cow::Owned(self.async_clients_count.to_string()),
         ]
     }
@@ -605,6 +617,8 @@ impl PoolStats {
                     // Aggregate client-level prepared statement cache metrics
                     pool_stats.client_prepared_count += client.prepared_cache_count();
                     pool_stats.client_prepared_bytes += client.prepared_cache_bytes();
+                    pool_stats.client_named_count += client.prepared_named_count();
+                    pool_stats.client_anonymous_count += client.prepared_anonymous_count();
                     if client.is_async_client() {
                         pool_stats.async_clients_count += 1;
                     }

@@ -341,7 +341,6 @@ impl PreparedStatementState {
 
     /// Returns the number of Named entries in the cache.
     /// Used by SHOW POOLS_MEMORY and Prometheus to break down per-client cache.
-    #[allow(dead_code)]
     #[inline(always)]
     pub fn named_count(&self) -> usize {
         self.cache.named_count()
@@ -349,7 +348,6 @@ impl PreparedStatementState {
 
     /// Returns the number of Anonymous entries in the cache.
     /// Used by SHOW POOLS_MEMORY and Prometheus to break down per-client cache.
-    #[allow(dead_code)]
     #[inline(always)]
     pub fn anonymous_count(&self) -> usize {
         self.cache.anonymous_count()
@@ -518,7 +516,21 @@ where
         self.stats.set_prepared_cache_stats(
             self.prepared.cache_count() as u64,
             self.prepared.cache_memory_usage() as u64,
+            self.prepared.named_count() as u64,
+            self.prepared.anonymous_count() as u64,
         );
+    }
+
+    /// Number of Named entries in this client's prepared statement cache.
+    #[inline(always)]
+    pub fn prepared_named_count(&self) -> u64 {
+        self.prepared.named_count() as u64
+    }
+
+    /// Number of Anonymous entries in this client's prepared statement cache.
+    #[inline(always)]
+    pub fn prepared_anonymous_count(&self) -> u64 {
+        self.prepared.anonymous_count() as u64
     }
 
     /// Retrieve connection pool, if it exists.
