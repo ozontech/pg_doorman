@@ -628,24 +628,6 @@ where
             ));
     }
 
-    /// Number of Named entries in this client's prepared statement cache.
-    #[inline(always)]
-    pub fn prepared_named_count(&self) -> u64 {
-        self.prepared.named_count() as u64
-    }
-
-    /// Number of Anonymous entries in this client's prepared statement cache.
-    #[inline(always)]
-    pub fn prepared_anonymous_count(&self) -> u64 {
-        self.prepared.anonymous_count() as u64
-    }
-
-    /// Cumulative count of Anonymous LRU evictions in this client's cache.
-    #[inline(always)]
-    pub fn prepared_anonymous_evictions(&self) -> u64 {
-        self.prepared.anonymous_evictions()
-    }
-
     /// Retrieve connection pool, if it exists.
     /// Return an error to the client otherwise.
     pub(crate) async fn get_pool(&mut self) -> Result<ConnectionPool, Error> {
