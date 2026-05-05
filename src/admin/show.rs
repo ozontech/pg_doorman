@@ -164,6 +164,7 @@ where
         ("pool", DataType::Text),
         ("hash", DataType::Numeric),
         ("name", DataType::Text),
+        ("kind", DataType::Text),
         ("query", DataType::Text),
         ("count_used", DataType::Numeric),
     ];
@@ -173,11 +174,12 @@ where
     for (identifier, pool) in get_all_pools().iter() {
         if let Some(cache) = pool.prepared_statement_cache.as_ref() {
             let entries = cache.get_entries();
-            for (hash, parse, last_used, _kind) in entries {
+            for (hash, parse, last_used, kind) in entries {
                 res.put(data_row(&[
                     identifier.to_string(),
                     hash.to_string(),
                     parse.name.clone(),
+                    kind.as_str().to_string(),
                     parse.query().to_string(),
                     last_used.to_string(),
                 ]));
