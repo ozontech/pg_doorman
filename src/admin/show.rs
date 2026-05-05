@@ -164,9 +164,9 @@ where
         ("pool", DataType::Text),
         ("hash", DataType::Numeric),
         ("name", DataType::Text),
-        ("kind", DataType::Text),
         ("query", DataType::Text),
         ("count_used", DataType::Numeric),
+        ("kind", DataType::Text),
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
@@ -179,9 +179,9 @@ where
                     identifier.to_string(),
                     hash.to_string(),
                     parse.name.clone(),
-                    kind.as_str().to_string(),
                     parse.query().to_string(),
                     last_used.to_string(),
+                    kind.as_str().to_string(),
                 ]));
             }
         }

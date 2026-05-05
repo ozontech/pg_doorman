@@ -413,7 +413,7 @@ impl PoolStats {
             ("client_prepared_bytes", DataType::Numeric),
             ("client_named_count", DataType::Numeric),
             ("client_anonymous_count", DataType::Numeric),
-            ("client_anonymous_evictions", DataType::Numeric),
+            ("client_anonymous_evictions_total", DataType::Numeric),
             ("async_clients", DataType::Numeric),
         ]
     }
