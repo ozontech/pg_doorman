@@ -669,7 +669,7 @@ fn reconstruct_prepared_state(
             hash,
             async_name,
         };
-        prepared.cache.put(entry.key.clone(), cached);
+        let _ = prepared.cache.put(entry.key.clone(), cached);
     }
     prepared
 }

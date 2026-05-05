@@ -216,7 +216,7 @@ where
             hash,
             async_name: async_name.clone(),
         };
-        self.prepared.cache.put(cache_key, cached);
+        let _ = self.prepared.cache.put(cache_key, cached);
 
         // Update prepared cache stats after modification
         self.update_prepared_cache_stats();
