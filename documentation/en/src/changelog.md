@@ -2,74 +2,63 @@
 
 ### Unreleased
 
-3.7.0 makes the prepared-statement cache bounded and observable: the
-query interner is split into NAMED (passive GC) and ANON (idle TTL),
-the per-client cache is split into Named (unbounded) and Anonymous
-(LRU), and `SHOW INTERNER` plus five `pg_doorman_query_interner_*`
-metrics expose entries, bytes, evictions, and GC duration. `Bind`
-against an expired anonymous statement now returns SQLSTATE `26000`
-(was `58000`), matching PostgreSQL so standard drivers re-`Parse`
-transparently.
-
 #### Added
 
-- The global query interner is split into NAMED and ANON halves. NAMED
-  is bounded by passive `Arc::strong_count` GC; ANON is bounded by
-  per-entry idle TTL (`query_interner_anon_idle_ttl_seconds`,
-  default 60). Both use a two-cycle mark-and-sweep grace so an entry
-  touched between cycles survives. Set `query_interner_anon_idle_ttl_seconds`
-  to `0` to disable TTL — matches the pre-3.7 unbounded behaviour.
-- Two new general-level config knobs control the GC:
-  `query_interner_gc_interval_seconds` (default 60),
-  `query_interner_anon_idle_ttl_seconds` (default 60).
-- Three new admin commands: `SHOW INTERNER` (count + bytes per
-  kind), `SHOW INTERNER N` (top N entries by interned text length
-  with hash, kind, bytes, idle_ms, 120-character preview),
-  `RESET INTERNER` (clear both halves; diagnostics-only).
-- Five new Prometheus metrics:
-    - `pg_doorman_query_interner_entries{kind}`
-    - `pg_doorman_query_interner_bytes{kind}`
-    - `pg_doorman_query_interner_evictions_total{kind, reason}`
-    - `pg_doorman_query_interner_synthetic_misses_total`
-    - `pg_doorman_query_interner_gc_duration_seconds`
-- New `server_prepared_statements_cache_size` config knob (general +
-  per-pool). Sizes the per-backend server-level prepared statement
-  LRU independently of the pool-level cache. When unset, inherits
-  the pool-level `prepared_statements_cache_size` value (no
-  behavioural change for existing configs).
-- `client_anonymous_prepared_cache_size` is now optional; when unset
-  it inherits the pool-level `prepared_statements_cache_size` (or
-  the resolved per-pool override). `0` continues to mean unlimited.
-  Aligns with the new `server_prepared_statements_cache_size`
-  inheritance pattern.
-- `client_anonymous_prepared_cache_size` bounds the Anonymous part of the per-client prepared-statement cache. Named statements remain unbounded.
-- `kind` column appended to `SHOW PREPARED_STATEMENTS` as the last column (`named` / `anonymous` / `mixed`); reflects how clients have used each pool entry.
-- `client_named_count`, `client_anonymous_count`, and `client_anonymous_evictions_total` columns in `SHOW POOLS_MEMORY`. The `_total` suffix on the counter column distinguishes it from the gauge columns to its left.
-- New Prometheus metrics:
-    - `pg_doorman_clients_prepared_named_entries`
-    - `pg_doorman_clients_prepared_anonymous_entries`
-    - `pg_doorman_clients_prepared_anonymous_evictions_total`
+- The query interner is split into NAMED (passive `Arc::strong_count`
+  GC) and ANON (idle TTL). Two general knobs control the GC:
+  `query_interner_gc_interval_seconds` (default 60) and
+  `query_interner_anon_idle_ttl_seconds` (default 60; `0` disables
+  TTL and restores pre-3.7 unbounded behaviour). A two-cycle
+  mark-and-sweep grace prevents eviction of entries touched between
+  cycles.
+- `SHOW INTERNER` reports entries and bytes per kind;
+  `SHOW INTERNER N` lists the top N by interned text length with
+  hash, kind, idle_ms, and a 120-character preview; `RESET INTERNER`
+  clears both halves (diagnostics-only).
+- Prometheus interner metrics:
+  `pg_doorman_query_interner_entries{kind}`,
+  `_bytes{kind}`, `_evictions_total{kind, reason}`,
+  `_synthetic_misses_total`, `_gc_duration_seconds`.
+- `server_prepared_statements_cache_size` (general + per-pool)
+  sizes the per-backend server-level prepared-statement LRU.
+  When unset, inherits `prepared_statements_cache_size`.
+- `client_anonymous_prepared_cache_size` bounds the Anonymous part
+  of the per-client cache; named statements remain unbounded. The
+  knob is now optional and inherits `prepared_statements_cache_size`
+  when unset (`0` still means unlimited).
+- `kind` column appended to `SHOW PREPARED_STATEMENTS`
+  (`named` / `anonymous` / `mixed`).
+- `SHOW POOLS_MEMORY` gains `client_named_count`,
+  `client_anonymous_count`, and `client_anonymous_evictions_total`,
+  with matching Prometheus gauges and counter
+  (`pg_doorman_clients_prepared_named_entries`,
+  `..._anonymous_entries`, `..._anonymous_evictions_total`).
 
 #### Changed
 
-- The per-client prepared-statement cache is split into two maps: Named (unbounded) and Anonymous (LRU). This fixes a bug where the previous combined LRU could evict a Named entry and cause the next `Bind` to fail with `prepared statement does not exist`.
-- `Bind` referencing an anonymous prepared statement that is no longer
-  in any cache (interner, pool, client) now returns SQLSTATE `26000`
-  (`invalid_sql_statement_name`) with the message "unnamed prepared
-  statement does not exist", matching what native PostgreSQL emits
-  for the same condition (previously SQLSTATE `58000`). Standard
-  drivers handle `26000` transparently by re-issuing `Parse`.
-
-#### Removed
-
-- Migration format v1 is no longer accepted. `deserialize_state`
-  returns `unsupported version 1` for any incoming v1 payload.
-  Upgrades from pg_doorman versions that emitted v1 (3.4 and earlier)
-  must hop through a 3.5–3.6 binary first.
+- The per-client prepared-statement cache is split into Named
+  (unbounded) and Anonymous (LRU). Fixes a bug where the previous
+  combined LRU could evict a Named entry and cause the next `Bind`
+  to fail with `prepared statement does not exist`.
+- `Bind` against an anonymous prepared statement that is no longer
+  cached anywhere (interner, pool, client) now returns SQLSTATE
+  `26000` (`invalid_sql_statement_name`) instead of `58000`,
+  matching native PostgreSQL. Standard drivers re-issue `Parse`
+  transparently.
 
 #### Deprecated
 
-- `client_prepared_statements_cache_size` is renamed to `client_anonymous_prepared_cache_size`. The old name is kept as a serde alias so existing configs continue to load; a `WARN` is logged at startup when the deprecated name is used. Operators who tuned that value should rename it.
+- `client_prepared_statements_cache_size` is renamed to
+  `client_anonymous_prepared_cache_size`. The old name remains a
+  serde alias and logs a `WARN` at startup; rename it in your
+  config.
+
+#### Removed
+
+- Migration format v1 is no longer accepted. Upgrades from versions
+  that emitted v1 (3.4 and earlier) must hop through a 3.5–3.6
+  binary first; `deserialize_state` returns `unsupported version 1`
+  otherwise.
 
 ### 3.6.5 <small>May 4, 2026</small>
 

@@ -343,6 +343,7 @@ where
         "PAUSE [db]".to_string(),
         "RESUME [db]".to_string(),
         "RECONNECT [db]".to_string(),
+        "RESET INTERNER".to_string(),
     ];
     let mut res = BytesMut::new();
     res.put(row_description(&columns));
