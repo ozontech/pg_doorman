@@ -372,6 +372,7 @@ function PoolDetail({
           <KV label="errors total" value={String(pool.errors_total)} />
         </dl>
       </div>
+      <SqlstateBreakdown errors={pool.errors_by_sqlstate} />
       {row.eval.reasons.length > 0 && (
         <div>
           <div className="text-xs uppercase tracking-wide text-text-dim">Threshold reasons</div>
@@ -382,6 +383,27 @@ function PoolDetail({
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+function SqlstateBreakdown({ errors }: { errors?: Record<string, number> }) {
+  const entries = errors ? Object.entries(errors) : [];
+  if (entries.length === 0) return null;
+  // Top-5 SQLSTATEs by count. Long tails roll into "other" so the drawer stays
+  // compact without hiding the total.
+  entries.sort((a, b) => b[1] - a[1]);
+  const top = entries.slice(0, 5);
+  const tail = entries.slice(5).reduce((sum, [, v]) => sum + v, 0);
+  return (
+    <div>
+      <div className="text-xs uppercase tracking-wide text-text-dim">Errors by SQLSTATE</div>
+      <dl className="mt-2 space-y-1 tabular">
+        {top.map(([code, count]) => (
+          <KV key={code} label={code} value={String(count)} />
+        ))}
+        {tail > 0 && <KV label={`other (${entries.length - 5})`} value={String(tail)} />}
+      </dl>
     </div>
   );
 }

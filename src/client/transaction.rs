@@ -756,7 +756,10 @@ where
                             // We'll send back an error message and clean the extended
                             // protocol buffer
                             self.stats.idle_read();
-                            current_pool.address.stats.error();
+                            // Mirrors the SQLSTATE in the ErrorResponse below
+                            // so the per-pool breakdown reflects checkout
+                            // failures alongside PG-side errors.
+                            current_pool.address.stats.error_with_sqlstate("53300");
                             self.stats.checkout_error();
 
                             if message[0] as char == 'S' {

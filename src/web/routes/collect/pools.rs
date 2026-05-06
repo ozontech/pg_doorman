@@ -14,6 +14,7 @@ pub(crate) fn collect_pools() -> PoolsDto {
             continue;
         };
         let address = pool.address();
+        let errors_by_sqlstate = address.stats.errors_by_sqlstate_snapshot();
         let dto = PoolDto {
             id: format!("{}@{}", identifier.user, identifier.db),
             user: identifier.user.clone(),
@@ -39,6 +40,7 @@ pub(crate) fn collect_pools() -> PoolsDto {
             queries_total: stats.total_query_count,
             transactions_total: stats.total_xact_count,
             errors_total: stats.errors,
+            errors_by_sqlstate,
             paused: stats.paused,
             // TODO: epoch wiring in phase 3e (no epoch field on PoolSettings yet).
             epoch: 0,

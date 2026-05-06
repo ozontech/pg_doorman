@@ -53,6 +53,9 @@ export interface PoolDto {
   queries_total: number;
   transactions_total: number;
   errors_total: number;
+  // Cumulative error breakdown by PostgreSQL SQLSTATE. Optional — backend
+  // omits the field when no errors have been classified yet.
+  errors_by_sqlstate?: Record<string, number>;
   paused: boolean;
   epoch: number;
 }

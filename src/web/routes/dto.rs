@@ -7,6 +7,7 @@
 //! tests are a candidate follow-up.
 
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct VersionDto {
@@ -79,6 +80,12 @@ pub(crate) struct PoolDto {
     pub queries_total: u64,
     pub transactions_total: u64,
     pub errors_total: u64,
+    /// Cumulative error breakdown keyed by PostgreSQL SQLSTATE. Includes
+    /// both PG-side ErrorResponse codes and pg_doorman-side codes such as
+    /// `53300` raised on checkout failure. Omitted from the JSON when no
+    /// errors have been classified yet.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub errors_by_sqlstate: HashMap<String, u64>,
 
     pub paused: bool,
     pub epoch: u64,

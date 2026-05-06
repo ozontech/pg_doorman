@@ -1,5 +1,7 @@
+use dashmap::DashMap;
 use hdrhistogram::Histogram;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::sync::atomic::*;
 
 /// Fields for tracking various statistics related to PostgreSQL connections by address.
@@ -35,6 +37,13 @@ pub struct AddressStatFields {
 
 /// Maximum trackable time in microseconds for HDR histogram (10 minutes)
 const HISTOGRAM_MAX_VALUE_US: u64 = 10 * 60 * 1_000_000;
+
+/// Canonical PostgreSQL SQLSTATE: exactly 5 uppercase ASCII letters or digits.
+/// Bounding the breakdown map's key shape stops adversarial backends from
+/// inflating it with arbitrary `ErrorResponse.code` payloads.
+fn is_valid_sqlstate(s: &str) -> bool {
+    s.len() == 5 && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+}
 
 /// Number of significant digits for HDR histogram precision (3 = 0.1% error)
 const HISTOGRAM_SIGFIG: u8 = 2;
@@ -86,6 +95,12 @@ pub struct AddressStats {
     /// to prefer slow pools as connection donors — one atomic load per candidate
     /// instead of locking the histogram mutex on every eviction call.
     pub p95_xact_time_us: AtomicU64,
+
+    /// Cumulative error counter keyed by PostgreSQL SQLSTATE code (5-char).
+    /// Updated alongside `total.errors`. Sharded; the hot path takes a single
+    /// shard's read lock for the atomic increment, the slow path inserts a
+    /// new shard entry under a brief write lock.
+    pub errors_by_sqlstate: DashMap<String, AtomicU64>,
 }
 
 impl Default for AddressStats {
@@ -99,6 +114,7 @@ impl Default for AddressStats {
             query_histogram: Mutex::new(new_histogram()),
             wait_histogram: Mutex::new(new_histogram()),
             p95_xact_time_us: AtomicU64::new(0),
+            errors_by_sqlstate: DashMap::new(),
         }
     }
 }
@@ -330,6 +346,37 @@ impl AddressStats {
     pub fn error(&self) {
         self.total.errors.fetch_add(1, Ordering::Relaxed);
         self.current.errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment the total/current error counters and the per-SQLSTATE
+    /// breakdown bucket. After the first observation of a given code the hot
+    /// path takes one DashMap shard read lock; the first observation also
+    /// takes a brief shard write lock to allocate the bucket.
+    ///
+    /// Codes that fail validation (`is_valid_sqlstate`) are counted in the
+    /// aggregate `errors` counter but skipped from the breakdown so a
+    /// malformed or adversarial `ErrorResponse.code` field cannot grow the
+    /// map without bound. Canonical PostgreSQL SQLSTATEs are exactly 5
+    /// uppercase-ASCII characters.
+    #[inline(always)]
+    pub fn error_with_sqlstate(&self, sqlstate: &str) {
+        self.error();
+        if !is_valid_sqlstate(sqlstate) {
+            return;
+        }
+        self.errors_by_sqlstate
+            .entry(sqlstate.to_string())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Snapshot of the SQLSTATE breakdown as a plain map. Reading is O(N)
+    /// over the live entries with one atomic load each.
+    pub fn errors_by_sqlstate_snapshot(&self) -> HashMap<String, u64> {
+        self.errors_by_sqlstate
+            .iter()
+            .map(|kv| (kv.key().clone(), kv.value().load(Ordering::Relaxed)))
+            .collect()
     }
 
     /// Returns transaction time percentiles (p50, p90, p95, p99) in microseconds.
@@ -616,6 +663,71 @@ mod tests {
         stats.error();
         assert_eq!(stats.total.errors.load(Ordering::Relaxed), 1);
         assert_eq!(stats.current.errors.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_error_with_sqlstate_breakdown() {
+        let stats = AddressStats::default();
+
+        stats.error_with_sqlstate("23503");
+        stats.error_with_sqlstate("23503");
+        stats.error_with_sqlstate("57P01");
+        stats.error_with_sqlstate("53300");
+
+        // The aggregate counter increments alongside the per-code bucket.
+        assert_eq!(stats.total.errors.load(Ordering::Relaxed), 4);
+        assert_eq!(stats.current.errors.load(Ordering::Relaxed), 4);
+
+        let snap = stats.errors_by_sqlstate_snapshot();
+        assert_eq!(snap.get("23503"), Some(&2));
+        assert_eq!(snap.get("57P01"), Some(&1));
+        assert_eq!(snap.get("53300"), Some(&1));
+        assert_eq!(snap.len(), 3);
+    }
+
+    #[test]
+    fn test_error_with_sqlstate_snapshot_empty_by_default() {
+        let stats = AddressStats::default();
+        // No PG-side errors yet — breakdown is empty even after a plain
+        // `error()` call. Only `error_with_sqlstate` populates the bucket.
+        stats.error();
+        assert_eq!(stats.total.errors.load(Ordering::Relaxed), 1);
+        assert!(stats.errors_by_sqlstate_snapshot().is_empty());
+    }
+
+    #[test]
+    fn test_error_with_sqlstate_rejects_malformed_codes() {
+        let stats = AddressStats::default();
+
+        // Aggregate counter advances for every call, but only canonical
+        // codes land in the breakdown.
+        stats.error_with_sqlstate("23503"); // valid
+        stats.error_with_sqlstate("");
+        stats.error_with_sqlstate("23503EXTRA");
+        stats.error_with_sqlstate("aBc12");
+        stats.error_with_sqlstate("23 03");
+        stats.error_with_sqlstate("23503\u{0}");
+
+        assert_eq!(stats.total.errors.load(Ordering::Relaxed), 6);
+        let snap = stats.errors_by_sqlstate_snapshot();
+        assert_eq!(snap.get("23503"), Some(&1));
+        assert_eq!(snap.len(), 1);
+    }
+
+    #[test]
+    fn test_is_valid_sqlstate() {
+        // Canonical codes accepted across the documented PG classes.
+        assert!(is_valid_sqlstate("00000"));
+        assert!(is_valid_sqlstate("23503"));
+        assert!(is_valid_sqlstate("57P01"));
+        assert!(is_valid_sqlstate("ZZZZZ"));
+
+        // Anything else rejected.
+        assert!(!is_valid_sqlstate(""));
+        assert!(!is_valid_sqlstate("2350"));
+        assert!(!is_valid_sqlstate("235033"));
+        assert!(!is_valid_sqlstate("aBcDe"));
+        assert!(!is_valid_sqlstate("01-23"));
     }
 
     #[test]
