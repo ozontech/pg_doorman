@@ -340,24 +340,40 @@ export default function Overview() {
     });
   }, [poolsPoll.data, poolSatHistory.history]);
 
-  // Human-friendly duration: 87 ms / 1.20 s / 1m 29s / 12m 03s / 1h 42m.
-  // Operators kept reading "89087 ms" as "89 ms" at a glance — the
-  // milliseconds suffix on a large number is a misread waiting to happen.
+  // Compact human-friendly duration. Tile widths are tight; the suffix
+  // sits right after the number with no space so the whole string fits
+  // a 6-character mono cell at any magnitude. "87ms" / "1.2s" / "1m29s"
+  // / "1h42m". Operators read this as a number-plus-magnitude word, the
+  // exact precision is in the hover tooltip.
   const fmtMs = (n: number | undefined): string => {
     if (n === undefined) return "—";
-    if (n < 1000) return `${Math.round(n)} ms`;
-    if (n < 60_000) return `${(n / 1000).toFixed(2)} s`;
+    if (n < 1000) return `${Math.round(n)}ms`;
+    if (n < 10_000) return `${(n / 1000).toFixed(1)}s`;
+    if (n < 60_000) return `${Math.round(n / 1000)}s`;
     if (n < 3_600_000) {
       const m = Math.floor(n / 60_000);
       const s = Math.floor((n % 60_000) / 1000);
-      return `${m}m ${s.toString().padStart(2, "0")}s`;
+      return `${m}m${s.toString().padStart(2, "0")}s`;
     }
     const h = Math.floor(n / 3_600_000);
     const m = Math.floor((n % 3_600_000) / 60_000);
-    return `${h}h ${m.toString().padStart(2, "0")}m`;
+    return `${h}h${m.toString().padStart(2, "0")}m`;
   };
-  const fmtRate = (n: number | undefined, suffix: string) =>
-    n === undefined ? "—" : `${n.toFixed(n < 10 ? 2 : 0)} ${suffix}`;
+  // Compact rate formatter — number + k/M suffix, no whitespace. The
+  // separate `unit` argument lives in the tile label, not the value, so
+  // the value column stays wide enough to render two numbers when the
+  // caller composes (qps + tps).
+  const fmtRate = (n: number | undefined, unit?: string): string => {
+    if (n === undefined) return "—";
+    const abs = Math.abs(n);
+    let body: string;
+    if (abs >= 1_000_000) body = `${(n / 1_000_000).toFixed(1)}M`;
+    else if (abs >= 10_000) body = `${(n / 1000).toFixed(0)}k`;
+    else if (abs >= 1000) body = `${(n / 1000).toFixed(1)}k`;
+    else if (abs >= 10) body = n.toFixed(0);
+    else body = n.toFixed(2);
+    return unit ? `${body}${unit}` : body;
+  };
   const fmtPct = (n: number | undefined) => (n === undefined ? "—" : `${Math.round(n)}%`);
 
   if (overviewPoll.error || poolsPoll.error) {
@@ -405,15 +421,15 @@ export default function Overview() {
               events={chartEvents}
             />
             <Sparkline
-              label="Traffic"
-              valueText={`${fmtRate(latest?.qps, "q/s")} · ${fmtRate(latest?.tps, "t/s")}`}
+              label="Traffic q/s · t/s"
+              valueText={`${fmtRate(latest?.qps)} · ${fmtRate(latest?.tps)}`}
               series={sigSeries((s) => s.qps)}
               syncKey="overview"
               events={chartEvents}
             />
             <Sparkline
               label="Errors / s"
-              valueText={fmtRate(latest?.errors_per_s, "/s")}
+              valueText={fmtRate(latest?.errors_per_s)}
               series={sigSeries((s) => s.errors_per_s)}
               warn={1}
               crit={10}
