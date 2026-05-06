@@ -1,7 +1,6 @@
-import { useMemo } from "react";
-import type uPlot from "uplot";
-import type { Options } from "uplot";
-import { Chart } from "./Chart";
+import { useEffect, useMemo, useRef, useState } from "react";
+import uPlot, { type Options } from "uplot";
+import "uplot/dist/uPlot.min.css";
 
 interface SparklineProps {
   label: string;
@@ -13,11 +12,16 @@ interface SparklineProps {
   syncKey?: string;
 }
 
-const HEIGHT_PX = 80;
+const HEIGHT_PX = 64;
 const STROKE = "rgb(34 184 207)";
-const WARN_STROKE = "rgb(245 165 36 / 0.6)";
-const CRIT_STROKE = "rgb(229 72 77 / 0.6)";
+const WARN_STROKE = "rgb(245 165 36 / 0.55)";
+const CRIT_STROKE = "rgb(229 72 77 / 0.55)";
 
+/**
+ * uPlot-backed sparkline that fills its container width via ResizeObserver.
+ * The label and value sit above the chart; threshold lines are painted in
+ * the draw hook so they survive setData without a chart rebuild.
+ */
 export function Sparkline({
   label,
   valueText,
@@ -27,15 +31,28 @@ export function Sparkline({
   logY,
   syncKey,
 }: SparklineProps) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const plotRef = useRef<uPlot | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = Math.max(40, Math.floor(entries[0].contentRect.width));
+      setWidth(w);
+    });
+    ro.observe(wrapRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   const options: Options = useMemo(
     () => ({
-      width: 200,
+      width: width || 200,
       height: HEIGHT_PX,
       cursor: syncKey ? { sync: { key: syncKey } } : undefined,
       legend: { show: false },
-      scales: {
-        y: logY ? { distr: 3 } : { auto: true },
-      },
+      scales: { y: logY ? { distr: 3 } : { auto: true } },
       axes: [{ show: false }, { show: false }],
       series: [{}, { stroke: STROKE, width: 1.5 }],
       hooks: {
@@ -61,16 +78,35 @@ export function Sparkline({
         ],
       },
     }),
-    [warn, crit, logY, syncKey],
+    [width, warn, crit, logY, syncKey],
   );
 
+  // Create plot only after width is known.
+  useEffect(() => {
+    if (!containerRef.current) return;
+    if (width === 0) return;
+    plotRef.current = new uPlot(options, series, containerRef.current);
+    return () => {
+      plotRef.current?.destroy();
+      plotRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options]);
+
+  useEffect(() => {
+    plotRef.current?.setData(series);
+  }, [series]);
+
   return (
-    <div className="flex flex-col gap-1 px-3 py-3 border-r border-border last:border-r-0">
-      <div className="flex items-baseline justify-between">
-        <span className="text-xs text-text-muted uppercase tracking-wide">{label}</span>
-        <span className="text-lg font-semibold font-mono text-text tabular">{valueText}</span>
+    <div
+      ref={wrapRef}
+      className="flex flex-col gap-1 rounded-md border border-border bg-surface p-3"
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-text-dim">{label}</span>
+        <span className="font-mono text-base font-semibold text-text tabular">{valueText}</span>
       </div>
-      <Chart data={series} options={options} />
+      <div ref={containerRef} className="w-full" />
     </div>
   );
 }

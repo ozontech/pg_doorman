@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
 import { Collapsible } from "../components/Collapsible";
@@ -267,123 +267,158 @@ export default function Overview() {
     <div className="flex flex-col">
       <PageHero
         title="Overview"
-        description="Aggregate health, traffic, and saturation across every pool. Polls /api/overview and /api/pools every 1.5 s; threshold rules from src/lib/thresholds.ts paint each cell."
+        description="Aggregate health, traffic, and saturation across every pool. Refreshes every 1.5 seconds."
       />
-      <SectionHeader
-        title="Health summary"
-        what="Worst severity across all pools."
-        how="Recomputed on every 1.5 s sample."
-        normal="Green = ok; amber when any rule trips; red on saturated/sustained breaches."
-      />
-      <HealthPill health={health} lastUpdated={overviewPoll.lastUpdated} />
-      <SectionHeader
-        title="Golden signals"
-        what="Latency P95, traffic, error rate, and worst saturation."
-        how="One sparkline per signal · 120 points × 1.5 s = 3 min."
-        normal="P95 < 100 ms · errors near 0 /s · saturation < 70 %."
-      />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-        <Sparkline
-          label="Latency P95"
-          valueText={fmtMs(latest?.query_p95_max_ms)}
-          series={sigSeries((s) => s.query_p95_max_ms)}
-          warn={100}
-          crit={500}
-          logY
-          syncKey="overview"
+      <div className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
+        <HealthPill
+          health={health}
+          lastUpdated={overviewPoll.lastUpdated}
+          overview={overviewPoll.data}
+          pools={poolsPoll.data}
+          errorsPerSecond={latest?.errors_per_s ?? null}
         />
-        <Sparkline
-          label="Traffic"
-          valueText={`${fmtRate(latest?.qps, "qps")} / ${fmtRate(latest?.tps, "tps")}`}
-          series={sigSeries((s) => s.qps)}
-          syncKey="overview"
-        />
-        <Sparkline
-          label="Errors / s"
-          valueText={fmtRate(latest?.errors_per_s, "/s")}
-          series={sigSeries((s) => s.errors_per_s)}
-          warn={1}
-          crit={10}
-          syncKey="overview"
-        />
-        <Sparkline
-          label="Saturation max"
-          valueText={fmtPct(latest?.saturation_max_pct)}
-          series={sigSeries((s) => s.saturation_max_pct)}
-          warn={70}
-          crit={90}
-          syncKey="overview"
-        />
-      </div>
-      <SectionHeader
-        title="Connection breakdown"
-        what="Stacked clients in active / idle / waiting state."
-        how="Three series over the 3 min sample window. Interpretive — no thresholds."
-      />
-      <AreaChart
-        data={connBreakdown}
-        labels={["active", "idle", "waiting"]}
-        fills={["rgb(45 194 107 / 0.55)", "rgb(138 147 164 / 0.45)", "rgb(245 165 36 / 0.55)"]}
-        syncKey="overview"
-      />
-      {heatmapRows.length > 0 && (
-        <>
-          <SectionHeader
-            title="Pool fill heatmap"
-            what="One row per pool; each cell is a 1.5 s saturation sample (last 60)."
-            how="Cell color thresholds: green < 70 % · amber 70–89 % · red ≥ 90 %."
-            normal="A single red row while the rest stay green = one pool is burning."
-          />
-          <Heatmap rows={heatmapRows} />
-        </>
-      )}
-      <SectionHeader
-        title="Wait queue vs oldest active"
-        what="Left axis: clients currently waiting for a backend. Right axis (log ms): worst single in-flight query age across pools."
-        how="Both updated every 1.5 s; right-axis dashed lines mark the threshold engine's amber/red."
-        normal="Waiting near 0; oldest active < 30 s. Sustained > 5 min = stuck connection."
-      />
-      <DualAxisChart
-        data={[
-          seriesXs,
-          sampleHistory.history.map((s) => s.waiting_clients),
-          sampleHistory.history.map((s) => Math.max(1, s.oldest_active_age_max_ms)),
-        ]}
-        leftLabel="waiting"
-        rightLabel="oldest-active ms"
-        leftStroke="rgb(91 140 255)"
-        rightStroke="rgb(245 165 36)"
-        rightLogScale
-        rightWarn={30_000}
-        rightCrit={300_000}
-        syncKey="overview"
-      />
-      {top5Errors.labels.length > 0 && (
-        <>
-          <SectionHeader
-            title="Top pools by error rate"
-            what={`The ${top5Errors.labels.length} pools with the highest errors-per-second over the last 30 s.`}
-            how="Stacked area; each band is one pool. Empty when no pool has produced errors recently."
-            normal="Bands hovering at 0 = no errors. Sustained > 1 / s on one band = investigate that pool."
-          />
+        <Card
+          title="Golden signals"
+          help={{
+            what: "Latency P95, traffic, error rate, and worst saturation.",
+            how: "One sparkline per signal · 120 points × 1.5 s = 3 min.",
+            normal: "P95 < 100 ms · errors near 0 /s · saturation < 70 %.",
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Sparkline
+              label="Latency P95"
+              valueText={fmtMs(latest?.query_p95_max_ms)}
+              series={sigSeries((s) => s.query_p95_max_ms)}
+              warn={100}
+              crit={500}
+              logY
+              syncKey="overview"
+            />
+            <Sparkline
+              label="Traffic"
+              valueText={`${fmtRate(latest?.qps, "qps")} / ${fmtRate(latest?.tps, "tps")}`}
+              series={sigSeries((s) => s.qps)}
+              syncKey="overview"
+            />
+            <Sparkline
+              label="Errors / s"
+              valueText={fmtRate(latest?.errors_per_s, "/s")}
+              series={sigSeries((s) => s.errors_per_s)}
+              warn={1}
+              crit={10}
+              syncKey="overview"
+            />
+            <Sparkline
+              label="Saturation max"
+              valueText={fmtPct(latest?.saturation_max_pct)}
+              series={sigSeries((s) => s.saturation_max_pct)}
+              warn={70}
+              crit={90}
+              syncKey="overview"
+            />
+          </div>
+        </Card>
+        <Card
+          title="Connection breakdown"
+          help={{
+            what: "Stacked clients in active / idle / waiting state.",
+            how: "Three series over the 3 min sample window. Interpretive — no thresholds.",
+          }}
+        >
           <AreaChart
-            data={top5Errors.data}
-            labels={top5Errors.labels}
-            fills={[
-              "rgb(229 72 77 / 0.6)",
-              "rgb(245 165 36 / 0.6)",
-              "rgb(177 140 245 / 0.6)",
-              "rgb(91 140 255 / 0.55)",
-              "rgb(45 194 107 / 0.5)",
-            ]}
+            data={connBreakdown}
+            labels={["active", "idle", "waiting"]}
+            fills={["rgb(45 194 107 / 0.55)", "rgb(138 147 164 / 0.45)", "rgb(245 165 36 / 0.55)"]}
             syncKey="overview"
           />
-        </>
-      )}
-      <Collapsible id="overview-resource" title="Resource detail">
-        <ResourceDetail sockets={socketsPoll.data} interner={internerPoll.data} />
-      </Collapsible>
+        </Card>
+        {heatmapRows.length > 0 && (
+          <Card
+            title="Pool fill heatmap"
+            help={{
+              what: "One row per pool; each cell is a 1.5 s saturation sample (last 60).",
+              how: "Cell color thresholds: green < 70 % · amber 70–89 % · red ≥ 90 %.",
+              normal: "A single red row while the rest stay green = one pool is burning.",
+            }}
+          >
+            <Heatmap rows={heatmapRows} />
+          </Card>
+        )}
+        <Card
+          title="Wait queue vs oldest active"
+          help={{
+            what: "Left axis: clients currently waiting for a backend. Right axis (log ms): worst single in-flight query age across pools.",
+            how: "Both updated every 1.5 s; right-axis dashed lines mark the threshold engine's amber/red.",
+            normal: "Waiting near 0; oldest active < 30 s. Sustained > 5 min = stuck connection.",
+          }}
+        >
+          <DualAxisChart
+            data={[
+              seriesXs,
+              sampleHistory.history.map((s) => s.waiting_clients),
+              sampleHistory.history.map((s) => Math.max(1, s.oldest_active_age_max_ms)),
+            ]}
+            leftLabel="waiting"
+            rightLabel="oldest-active ms"
+            leftStroke="rgb(91 140 255)"
+            rightStroke="rgb(245 165 36)"
+            rightLogScale
+            rightWarn={30_000}
+            rightCrit={300_000}
+            syncKey="overview"
+          />
+        </Card>
+        {top5Errors.labels.length > 0 && (
+          <Card
+            title="Top pools by error rate"
+            help={{
+              what: `The ${top5Errors.labels.length} pools with the highest errors-per-second over the last 30 s.`,
+              how: "Stacked area; each band is one pool. Empty when no pool has produced errors recently.",
+              normal: "Bands hovering at 0 = no errors. Sustained > 1 / s on one band = investigate that pool.",
+            }}
+          >
+            <AreaChart
+              data={top5Errors.data}
+              labels={top5Errors.labels}
+              fills={[
+                "rgb(229 72 77 / 0.6)",
+                "rgb(245 165 36 / 0.6)",
+                "rgb(177 140 245 / 0.6)",
+                "rgb(91 140 255 / 0.55)",
+                "rgb(45 194 107 / 0.5)",
+              ]}
+              syncKey="overview"
+            />
+          </Card>
+        )}
+        <Collapsible id="overview-resource" title="Resource detail">
+          <ResourceDetail sockets={socketsPoll.data} interner={internerPoll.data} />
+        </Collapsible>
+      </div>
     </div>
+  );
+}
+
+function Card({
+  title,
+  help,
+  children,
+}: {
+  title: string;
+  help?: { what?: string; how?: string; normal?: string };
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-md border border-border bg-surface">
+      <SectionHeader
+        title={title}
+        what={help?.what}
+        how={help?.how}
+        normal={help?.normal}
+      />
+      <div className="p-4">{children}</div>
+    </section>
   );
 }
 
