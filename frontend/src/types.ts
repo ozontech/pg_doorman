@@ -81,6 +81,19 @@ export interface PoolsDto {
 
 export type Severity = "ok" | "degraded" | "critical";
 
+export interface AppRowDto {
+  application_name: string;
+  clients: number;
+  queries_total: number;
+  transactions_total: number;
+  errors_total: number;
+}
+
+export interface AppsDto {
+  ts: number;
+  apps: AppRowDto[];
+}
+
 export interface ProcessThreadDto {
   tid: number;
   name: string;

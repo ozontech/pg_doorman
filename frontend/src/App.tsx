@@ -6,6 +6,7 @@ import Overview from "./pages/Overview";
 import Pools from "./pages/Pools";
 import PoolDetail from "./pages/PoolDetail";
 import Clients from "./pages/Clients";
+import Apps from "./pages/Apps";
 import Caches from "./pages/Caches";
 import Logs from "./pages/Logs";
 import ConfigState from "./pages/ConfigState";
@@ -24,6 +25,7 @@ export default function App() {
                 <Route path="/pools" element={<Pools />} />
                 <Route path="/pools/:poolId" element={<PoolDetail />} />
                 <Route path="/clients" element={<Clients />} />
+                <Route path="/apps" element={<Apps />} />
                 <Route path="/caches" element={<Caches />} />
                 <Route path="/logs" element={<Logs />} />
                 <Route path="/config" element={<ConfigState />} />

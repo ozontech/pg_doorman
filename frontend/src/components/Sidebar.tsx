@@ -4,6 +4,7 @@ const NAV: { to: string; label: string }[] = [
   { to: "/overview", label: "Overview" },
   { to: "/pools", label: "Pools" },
   { to: "/clients", label: "Clients" },
+  { to: "/apps", label: "Apps" },
   { to: "/caches", label: "Caches" },
   { to: "/logs", label: "Logs" },
   { to: "/config", label: "Config" },
