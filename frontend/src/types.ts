@@ -63,3 +63,36 @@ export interface PoolsDto {
 }
 
 export type Severity = "ok" | "degraded" | "critical";
+
+export interface InternerKindDto {
+  entries: number;
+  bytes: number;
+}
+
+export interface InternerDto {
+  ts: number;
+  named: InternerKindDto;
+  anonymous: InternerKindDto;
+}
+
+export interface TcpCounts {
+  established: number;
+  time_wait: number;
+  close_wait: number;
+  listen: number;
+  // Other states exist (syn_sent/recv, fin_wait1/2, close, last_ack, etc.) —
+  // phase 6a-4 surfaces only the four operators most often look at; they can
+  // be added later without an api change.
+}
+
+export interface UnixStreamCounts {
+  established: number;
+  listen: number;
+}
+
+export interface SocketsDto {
+  ts: number;
+  tcp: TcpCounts;
+  tcp6: TcpCounts;
+  unix_stream: UnixStreamCounts;
+}

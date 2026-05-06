@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { apiGet } from "../api";
 import { AreaChart } from "../components/AreaChart";
+import { Collapsible } from "../components/Collapsible";
 import { DualAxisChart } from "../components/DualAxisChart";
 import { HealthPill } from "../components/HealthPill";
 import { Heatmap } from "../components/Heatmap";
@@ -14,7 +15,7 @@ import {
   type PoolHistory,
   type PoolHistoryPoint,
 } from "../lib/thresholds";
-import type { OverviewDto, PoolsDto } from "../types";
+import type { InternerDto, OverviewDto, PoolsDto, SocketsDto } from "../types";
 
 const POLL_MS = 1500;
 const HISTORY_KEY = "overview";
@@ -54,6 +55,16 @@ export default function Overview() {
   const poolsPoll = usePoll<PoolsDto>(
     (signal) => apiGet<PoolsDto>("/api/pools", authHeader, signal),
     POLL_MS,
+  );
+  // Resource detail polls — slower cadence (3 s) since the data is not
+  // hot-path and the section is collapsed by default.
+  const socketsPoll = usePoll<SocketsDto>(
+    (signal) => apiGet<SocketsDto>("/api/sockets", authHeader, signal),
+    3000,
+  );
+  const internerPoll = usePoll<InternerDto>(
+    (signal) => apiGet<InternerDto>("/api/interner", authHeader, signal),
+    3000,
   );
 
   const rawHistory = useHistory<RawTotals>(`${HISTORY_KEY}.raw`);
@@ -337,10 +348,60 @@ export default function Overview() {
           />
         </section>
       )}
-      <p className="px-4 py-3 text-xs text-text-dim">
-        Phase 6a-3 done. Resource detail (memory/sockets/interner) lands in
-        6a-4 once the polled endpoints are wired into a collapsed section.
-      </p>
+      <Collapsible id="overview-resource" title="Resource detail">
+        <ResourceDetail sockets={socketsPoll.data} interner={internerPoll.data} />
+      </Collapsible>
+    </div>
+  );
+}
+
+function ResourceDetail({
+  sockets,
+  interner,
+}: {
+  sockets: SocketsDto | null;
+  interner: InternerDto | null;
+}) {
+  const fmtBytes = (n: number) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MiB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+  };
+  return (
+    <div className="grid grid-cols-2 gap-6 px-4 py-4">
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-text">Sockets</h3>
+        {sockets ? (
+          <table className="text-sm tabular">
+            <tbody>
+              <tr><td className="pr-3 text-text-muted">tcp established</td><td>{sockets.tcp.established}</td></tr>
+              <tr><td className="pr-3 text-text-muted">tcp time-wait</td><td>{sockets.tcp.time_wait}</td></tr>
+              <tr><td className="pr-3 text-text-muted">tcp close-wait</td><td>{sockets.tcp.close_wait}</td></tr>
+              <tr><td className="pr-3 text-text-muted">tcp listen</td><td>{sockets.tcp.listen}</td></tr>
+              <tr><td className="pr-3 text-text-muted">tcp6 established</td><td>{sockets.tcp6.established}</td></tr>
+              <tr><td className="pr-3 text-text-muted">unix-stream</td><td>{sockets.unix_stream.established}</td></tr>
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-sm text-text-dim">linux only — no data on this platform.</p>
+        )}
+      </div>
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-text">Query interner</h3>
+        {interner ? (
+          <table className="text-sm tabular">
+            <tbody>
+              <tr><td className="pr-3 text-text-muted">named entries</td><td>{interner.named.entries}</td></tr>
+              <tr><td className="pr-3 text-text-muted">named bytes</td><td>{fmtBytes(interner.named.bytes)}</td></tr>
+              <tr><td className="pr-3 text-text-muted">anonymous entries</td><td>{interner.anonymous.entries}</td></tr>
+              <tr><td className="pr-3 text-text-muted">anonymous bytes</td><td>{fmtBytes(interner.anonymous.bytes)}</td></tr>
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-sm text-text-dim">loading…</p>
+        )}
+      </div>
     </div>
   );
 }
