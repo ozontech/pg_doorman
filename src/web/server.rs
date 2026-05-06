@@ -130,12 +130,7 @@ async fn handle_connection(stream: TcpStream, opts: WebServerOptions) {
         && (parsed.path == "/api/logs" || parsed.path.starts_with("/api/logs?"))
     {
         if auth != AuthOutcome::Admin {
-            let resp = if parsed.accepts_json {
-                Response::unauthorized_silent()
-            } else {
-                Response::unauthorized()
-            };
-            let _ = resp.write(&mut writer).await;
+            let _ = unauthorized_for(&parsed).write(&mut writer).await;
             return;
         }
         let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
@@ -260,21 +255,46 @@ impl Response {
 
     /// Serves a static asset (SPA bundle file). Hashed assets get a long
     /// immutable cache; the SPA shell (`index.html`) is no-cache so a redeploy
-    /// reaches operators on their next reload.
-    pub(crate) fn static_asset(asset: &crate::web::static_assets::Asset) -> Self {
+    /// reaches operators on their next reload. When the caller advertises
+    /// `Accept-Encoding: gzip` and the asset compresses worthwhile (text-like
+    /// MIME, > 256 bytes), the body is gzipped on the fly — that turns the
+    /// ~280 KB JS bundle into ~95 KB on the wire.
+    pub(crate) fn static_asset(
+        asset: &crate::web::static_assets::Asset,
+        accepts_gzip: bool,
+    ) -> Self {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
         let cache = if asset.immutable {
             "public, max-age=31536000, immutable"
         } else {
             "no-cache"
         };
+        let mut headers = vec![
+            ("Content-Type", asset.mime.into()),
+            ("Cache-Control", cache.into()),
+        ];
+        let body = if accepts_gzip && is_compressible(asset.mime) && asset.bytes.len() > 256 {
+            let mut compressed = Vec::with_capacity(asset.bytes.len() / 2);
+            {
+                let mut gz = GzEncoder::new(&mut compressed, Compression::default());
+                if gz.write_all(asset.bytes).is_ok() && gz.finish().is_ok() {
+                    headers.push(("Content-Encoding", "gzip".into()));
+                    compressed
+                } else {
+                    asset.bytes.to_vec()
+                }
+            }
+        } else {
+            asset.bytes.to_vec()
+        };
         Response {
             status: 200,
             reason: "OK",
-            extra_headers: vec![
-                ("Content-Type", asset.mime.into()),
-                ("Cache-Control", cache.into()),
-            ],
-            body: asset.bytes.to_vec(),
+            extra_headers: headers,
+            body,
         }
     }
 
@@ -330,6 +350,27 @@ fn is_admin_only(path: &str) -> bool {
     ADMIN_ONLY_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
+}
+
+/// Compressing a 200-byte favicon PNG buys nothing and risks negative
+/// ratios; only compress text-like payloads where gzip pays off.
+fn is_compressible(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || mime.starts_with("application/javascript")
+        || mime.starts_with("application/json")
+        || mime.starts_with("image/svg+xml")
+}
+
+/// Picks the right 401 shape for the caller. Browsers and curl get the
+/// `WWW-Authenticate: Basic` challenge so existing tooling keeps working;
+/// `Accept: application/json` (the SPA) gets a plain 401 so the React
+/// modal can take over without the browser caching credentials.
+fn unauthorized_for(req: &ParsedRequest<'_>) -> Response {
+    if req.accepts_json {
+        Response::unauthorized_silent()
+    } else {
+        Response::unauthorized()
+    }
 }
 
 fn route_api(req: &ParsedRequest<'_>) -> Response {
@@ -393,11 +434,7 @@ fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome)
 
     let needs_admin = admin_only || (!opts.ui_anonymous);
     if needs_admin && auth != AuthOutcome::Admin {
-        return if req.accepts_json {
-            Response::unauthorized_silent()
-        } else {
-            Response::unauthorized()
-        };
+        return unauthorized_for(req);
     }
 
     if req.path.starts_with("/api/") {
@@ -409,7 +446,7 @@ fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome)
     // routes (`/pools`, `/clients/...`) work on a hard refresh.
     let bundle_path = req.path.split_once('?').map(|(p, _)| p).unwrap_or(req.path);
     if let Some(asset) = crate::web::static_assets::lookup(bundle_path) {
-        return Response::static_asset(&asset);
+        return Response::static_asset(&asset, req.accepts_gzip);
     }
 
     Response::status(404, "Not Found")
