@@ -35,7 +35,12 @@ pub struct WebServerOptions {
 
 /// Admin-only path prefixes (require `Admin` auth regardless of `ui_anonymous`).
 /// Spec section 6.1.
-const ADMIN_ONLY_PREFIXES: &[&str] = &["/api/logs", "/api/prepared/text/", "/api/interner/top"];
+const ADMIN_ONLY_PREFIXES: &[&str] = &[
+    "/api/logs",
+    "/api/prepared/text/",
+    "/api/interner/top",
+    "/api/admin/",
+];
 
 /// Spawns the HTTP listener for the given address.
 pub async fn start_web_server(host: &str, opts: WebServerOptions) {
@@ -139,6 +144,22 @@ async fn handle_connection(stream: TcpStream, opts: WebServerOptions) {
         let query_str = parsed.path.split_once('?').map(|(_, q)| q).unwrap_or("");
         let query = crate::web::routes::query::parse_query(query_str);
         let response = crate::web::routes::logs::handle_logs(&query).await;
+        let _ = response.write(&mut writer).await;
+        return;
+    }
+
+    // POST /api/admin/{action} needs an async handler because reload_now()
+    // is async (it reloads the config and reconciles pools). Pre-screen
+    // ui_active and admin auth in the same shape as /api/logs.
+    if opts.ui_active
+        && parsed.method == "POST"
+        && parsed.path.starts_with("/api/admin/")
+    {
+        if auth != AuthOutcome::Admin {
+            let _ = unauthorized_for(&parsed).write(&mut writer).await;
+            return;
+        }
+        let response = crate::web::routes::admin::handle_admin_action(parsed.path).await;
         let _ = response.write(&mut writer).await;
         return;
     }
@@ -425,7 +446,9 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
 }
 
 fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome) -> Response {
-    if req.method != "GET" && req.method != "HEAD" {
+    let is_admin_post =
+        req.method == "POST" && req.path.starts_with("/api/admin/");
+    if req.method != "GET" && req.method != "HEAD" && !is_admin_post {
         return Response::status(405, "Method Not Allowed");
     }
 

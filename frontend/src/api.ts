@@ -61,3 +61,26 @@ export async function apiGet<T>(
   if (!res.ok) throw new ApiError(res.status, await res.text());
   return (await res.json()) as T;
 }
+
+export async function apiPost<T>(
+  path: string,
+  headerProvider: HeaderProvider,
+): Promise<T> {
+  const provided = headerProvider();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: "Basic ",
+    ...provided,
+  };
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "omit",
+    headers,
+  });
+  if (res.status === 401) {
+    onUnauthorized();
+    throw new Unauthorized();
+  }
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return (await res.json()) as T;
+}

@@ -88,7 +88,7 @@ fn set_client_server_map(csm: ClientServerMap) {
     CLIENT_SERVER_MAP.set(csm).ok();
 }
 
-fn get_client_server_map() -> Option<ClientServerMap> {
+pub fn get_client_server_map() -> Option<ClientServerMap> {
     CLIENT_SERVER_MAP.get().cloned()
 }
 

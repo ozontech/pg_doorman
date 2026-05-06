@@ -7,9 +7,9 @@
 // nothing on the backend had to move for this view to exist.
 
 import type { ReactNode } from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiGet } from "../api";
+import { apiGet, apiPost } from "../api";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
@@ -17,6 +17,13 @@ import { usePoll } from "../hooks/usePoll";
 import { describeSqlstate } from "../lib/sqlstate";
 import { evaluatePool } from "../lib/thresholds";
 import type { PoolDto, PoolsDto } from "../types";
+
+interface AdminActionResponse {
+  ts: number;
+  action: string;
+  affected_pools?: number;
+  error?: string;
+}
 
 const POLL_MS = 1500;
 const HISTORY_KEY_PREFIX = "pools.detail";
@@ -105,7 +112,7 @@ export default function PoolDetail() {
   return (
     <section className="flex min-h-screen flex-col">
       <header className="border-b border-border bg-surface px-6 py-4">
-        <div className="flex items-baseline justify-between gap-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-4">
           <div>
             <BackLink />
             <h1 className="mt-2 font-mono text-xl font-semibold text-text">{pool.id}</h1>
@@ -128,6 +135,7 @@ export default function PoolDetail() {
               )}
             </p>
           </div>
+          <PoolActions pool={pool} />
         </div>
       </header>
 
@@ -226,6 +234,166 @@ export default function PoolDetail() {
         )}
       </div>
     </section>
+  );
+}
+
+// Admin action bar — Pause / Resume / Reconnect against this pool's
+// database via POST /api/admin/{action}?db=<database>, plus the global
+// Reload at the right edge. Each click opens a confirmation modal: write
+// actions on a live pool are easy to mis-click and the modal makes the
+// operator type "yes" before the network call goes out.
+function PoolActions({ pool }: { pool: PoolDto }) {
+  const { authHeader } = useAdminAuth();
+  const [pending, setPending] = useState<null | string>(null);
+  const [confirm, setConfirm] = useState<null | { action: string; scope: "pool" | "global" }>(null);
+  const [feedback, setFeedback] = useState<null | { tone: "ok" | "err"; text: string }>(null);
+
+  const trigger = async (action: string, scope: "pool" | "global") => {
+    setPending(action);
+    setFeedback(null);
+    try {
+      const url =
+        scope === "pool"
+          ? `/api/admin/${action}?db=${encodeURIComponent(pool.database)}`
+          : `/api/admin/${action}`;
+      const res = await apiPost<AdminActionResponse>(url, authHeader);
+      if (res.error) {
+        setFeedback({ tone: "err", text: `${action} failed: ${res.error}` });
+      } else {
+        setFeedback({
+          tone: "ok",
+          text: `${action} OK · ${res.affected_pools ?? 0} pool(s) affected`,
+        });
+      }
+    } catch (e) {
+      setFeedback({ tone: "err", text: `${action} failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setPending(null);
+      setConfirm(null);
+    }
+  };
+
+  const buttonClass = (variant: "default" | "danger" | "warning") => {
+    const base =
+      "border px-3 py-1 text-xs font-mono uppercase tracking-wider transition-colors disabled:opacity-50";
+    if (variant === "danger") return `${base} border-danger text-danger hover:bg-danger/10`;
+    if (variant === "warning") return `${base} border-warning text-warning hover:bg-warning/10`;
+    return `${base} border-border-strong text-text-muted hover:text-accent`;
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={pending !== null || pool.paused}
+          onClick={() => setConfirm({ action: "pause", scope: "pool" })}
+          className={buttonClass("warning")}
+          title="Block new client checkouts on this pool. Active transactions continue."
+        >
+          pause
+        </button>
+        <button
+          type="button"
+          disabled={pending !== null || !pool.paused}
+          onClick={() => setConfirm({ action: "resume", scope: "pool" })}
+          className={buttonClass("default")}
+          title="Re-enable client checkouts after a pause."
+        >
+          resume
+        </button>
+        <button
+          type="button"
+          disabled={pending !== null}
+          onClick={() => setConfirm({ action: "reconnect", scope: "pool" })}
+          className={buttonClass("warning")}
+          title="Bump pool epoch and drain idle connections. Active connections refused on return."
+        >
+          reconnect
+        </button>
+        <button
+          type="button"
+          disabled={pending !== null}
+          onClick={() => setConfirm({ action: "reload", scope: "global" })}
+          className={buttonClass("danger")}
+          title="Reload the entire pg_doorman config from disk. Affects every pool."
+        >
+          reload (global)
+        </button>
+      </div>
+      {feedback && (
+        <div
+          className={`text-xs font-mono ${
+            feedback.tone === "ok" ? "text-success" : "text-danger"
+          }`}
+        >
+          {feedback.text}
+        </div>
+      )}
+      {confirm && (
+        <ConfirmModal
+          action={confirm.action}
+          scopeLabel={confirm.scope === "pool" ? `database "${pool.database}"` : "the entire pooler"}
+          pending={pending !== null}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => trigger(confirm.action, confirm.scope)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ConfirmModal({
+  action,
+  scopeLabel,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  action: string;
+  scopeLabel: string;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const required = action.toUpperCase();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-sm">
+      <div className="w-96 border border-border bg-surface p-6 text-sm">
+        <h2 className="mb-3 font-mono text-base font-semibold text-text">
+          {action.toUpperCase()} {scopeLabel}?
+        </h2>
+        <p className="mb-4 text-text-muted">
+          This is a write action. Type <span className="font-mono text-text">{required}</span> below to confirm.
+        </p>
+        <input
+          autoFocus
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          className="mb-4 w-full border border-border-strong bg-surface-2 px-2 py-1 font-mono text-sm text-text"
+          placeholder={required}
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="border border-border-strong px-3 py-1 text-xs font-mono uppercase tracking-wider text-text-muted hover:text-text"
+          >
+            cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={pending || typed !== required}
+            className="border border-danger bg-danger/10 px-3 py-1 text-xs font-mono uppercase tracking-wider text-danger hover:bg-danger/20 disabled:opacity-50"
+          >
+            {pending ? "running…" : `run ${action}`}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
