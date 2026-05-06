@@ -1,6 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { apiGet } from "../api";
+import { AreaChart } from "../components/AreaChart";
 import { HealthPill } from "../components/HealthPill";
+import { Heatmap } from "../components/Heatmap";
 import { Sparkline } from "../components/Sparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
@@ -15,6 +17,7 @@ import type { OverviewDto, PoolsDto } from "../types";
 
 const POLL_MS = 1500;
 const HISTORY_KEY = "overview";
+const HEATMAP_CELLS = 60;
 
 interface OverviewSamplePoint {
   ts: number;
@@ -23,6 +26,9 @@ interface OverviewSamplePoint {
   tps: number;
   errors_per_s: number;
   saturation_max_pct: number;
+  active_clients: number;
+  idle_clients: number;
+  waiting_clients: number;
 }
 
 interface RawTotals {
@@ -33,6 +39,7 @@ interface RawTotals {
 }
 
 type PoolSnap = Record<string, PoolHistoryPoint>;
+type PoolSatSnap = Record<string, { saturation: number; max_connections: number; label: string }>;
 
 const EMPTY_HEALTH: HealthState = { state: "ok", reason: null, perPool: [] };
 
@@ -50,6 +57,7 @@ export default function Overview() {
   const rawHistory = useHistory<RawTotals>(`${HISTORY_KEY}.raw`);
   const sampleHistory = useHistory<OverviewSamplePoint>(HISTORY_KEY);
   const poolErrorsHistory = useHistory<PoolSnap>(`${HISTORY_KEY}.poolerrs`);
+  const poolSatHistory = useHistory<PoolSatSnap>(`${HISTORY_KEY}.poolsat`);
 
   useEffect(() => {
     if (!overviewPoll.data || !poolsPoll.data) return;
@@ -84,12 +92,22 @@ export default function Overview() {
           const s = p.max_connections > 0 ? p.connections / p.max_connections : 0;
           return Math.max(m, s);
         }, 0) * 100,
+      active_clients: ov.active_clients,
+      idle_clients: ov.idle_clients,
+      waiting_clients: ov.waiting_clients,
     });
-    const snap: PoolSnap = {};
+    const errSnap: PoolSnap = {};
+    const satSnap: PoolSatSnap = {};
     for (const p of pools.pools) {
-      snap[p.id] = { ts: ov.ts, errors_total: p.errors_total, queries_total: p.queries_total };
+      errSnap[p.id] = { ts: ov.ts, errors_total: p.errors_total, queries_total: p.queries_total };
+      satSnap[p.id] = {
+        saturation: p.max_connections > 0 ? p.connections / p.max_connections : 0,
+        max_connections: p.max_connections,
+        label: p.id,
+      };
     }
-    poolErrorsHistory.push(snap);
+    poolErrorsHistory.push(errSnap);
+    poolSatHistory.push(satSnap);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overviewPoll.data?.ts, poolsPoll.data?.ts]);
 
@@ -121,6 +139,37 @@ export default function Overview() {
   ];
 
   const latest = sampleHistory.history[sampleHistory.history.length - 1];
+
+  // Connection breakdown: stacked area active / idle / waiting over the
+  // sample window. Three separate (non-cumulative) series; AreaChart stacks
+  // them internally.
+  const connBreakdown: [number[], ...number[][]] = useMemo(() => {
+    const xs = sampleHistory.history.map((s) => s.ts / 1000);
+    const active = sampleHistory.history.map((s) => s.active_clients);
+    const idle = sampleHistory.history.map((s) => s.idle_clients);
+    const waiting = sampleHistory.history.map((s) => s.waiting_clients);
+    return [xs, active, idle, waiting];
+  }, [sampleHistory.history]);
+
+  // Pool fill heatmap rows: one per current pool, last HEATMAP_CELLS cells of
+  // saturation. Pads with `null` on the left when history is shorter.
+  const heatmapRows = useMemo(() => {
+    const ids = poolsPoll.data ? poolsPoll.data.pools.map((p) => p.id) : [];
+    const capacities = new Map<string, number>();
+    if (poolsPoll.data) {
+      for (const p of poolsPoll.data.pools) capacities.set(p.id, p.max_connections);
+    }
+    const recent = poolSatHistory.history.slice(-HEATMAP_CELLS);
+    return ids.map((id) => {
+      const cells: (number | null)[] = new Array(HEATMAP_CELLS).fill(null);
+      const offset = HEATMAP_CELLS - recent.length;
+      for (let i = 0; i < recent.length; i++) {
+        const cell = recent[i][id];
+        cells[offset + i] = cell ? cell.saturation : null;
+      }
+      return { label: id, cells, capacity: capacities.get(id) ?? 0 };
+    });
+  }, [poolsPoll.data, poolSatHistory.history]);
 
   const fmtMs = (n: number | undefined) => (n === undefined ? "—" : `${Math.round(n)} ms`);
   const fmtRate = (n: number | undefined, suffix: string) =>
@@ -173,10 +222,22 @@ export default function Overview() {
           syncKey="overview"
         />
       </div>
+      <section className="border-b border-border">
+        <div className="px-4 py-2 text-xs text-text-muted uppercase tracking-wide">
+          Connection breakdown — active / idle / waiting (last 3 min)
+        </div>
+        <AreaChart
+          data={connBreakdown}
+          labels={["active", "idle", "waiting"]}
+          fills={["rgb(45 194 107 / 0.5)", "rgb(138 147 164 / 0.4)", "rgb(245 165 36 / 0.5)"]}
+          syncKey="overview"
+        />
+      </section>
+      {heatmapRows.length > 0 && <Heatmap rows={heatmapRows} />}
       <p className="px-4 py-3 text-xs text-text-dim">
-        Phase 6a MVP: Health bar + Golden Signals only. Connection breakdown,
-        Pool heatmap, dual-axis wait + oldest-active-age, top-5 errors, and
-        resource detail land in 6a-2.
+        Phase 6a-2: Connection breakdown + pool fill heatmap landed. Dual-axis
+        wait + oldest-active-age, top-5 errors, and the resource detail row
+        follow in 6a-3.
       </p>
     </div>
   );
