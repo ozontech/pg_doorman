@@ -491,6 +491,103 @@ pub struct InternerTopRowDto {
     pub preview: String,
 }
 
+/// `GET /api/top/clients` — Top-N clients by qps / errors / age.
+#[derive(Debug, Serialize)]
+pub struct TopClientsDto {
+    pub ts: u64,
+    /// The sort dimension actually used: `"qps"`, `"errors"`, `"age"`.
+    pub by: String,
+    /// The clamped value of `n` actually used (1..=200; default 20).
+    pub n: u64,
+    pub clients: Vec<TopClientRowDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TopClientRowDto {
+    /// `"#cN"` form — matches `ClientDto.client_id`.
+    pub client_id: String,
+    pub application_name: String,
+    pub user: String,
+    pub database: String,
+    pub addr: String,
+    pub age_seconds: u64,
+    pub queries_total: u64,
+    pub errors_total: u64,
+    /// Server-side computed `queries_total / age_seconds.max(1)`, exposed
+    /// for parity with the `by=qps` sort dimension and so the frontend
+    /// does not have to recompute when rendering the table column.
+    pub qps: f64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum TopClientBy {
+    #[default]
+    Qps,
+    Errors,
+    Age,
+}
+
+impl TopClientBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TopClientBy::Qps => "qps",
+            TopClientBy::Errors => "errors",
+            TopClientBy::Age => "age",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TopClientFilters {
+    pub by: TopClientBy,
+    pub n: u64,
+    pub pool: Option<String>,
+}
+
+/// `GET /api/apps` — per-application_name aggregate of client counters.
+#[derive(Debug, Serialize)]
+pub struct AppsDto {
+    pub ts: u64,
+    pub apps: Vec<AppRowDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AppRowDto {
+    pub application_name: String,
+    /// Number of currently-connected clients reporting this application_name.
+    pub clients: u64,
+    /// Cumulative counters; frontend computes rates from successive snapshots.
+    pub queries_total: u64,
+    pub transactions_total: u64,
+    pub errors_total: u64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum AppSort {
+    #[default]
+    Clients,
+    Queries,
+    Transactions,
+    Errors,
+}
+
+impl AppSort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AppSort::Clients => "clients",
+            AppSort::Queries => "queries",
+            AppSort::Transactions => "transactions",
+            AppSort::Errors => "errors",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AppFilters {
+    pub sort: AppSort,
+    pub order: SortOrder,
+}
+
 /// `GET /api/prepared/text/{hash}` — admin-only body of a single prepared
 /// statement. Returns 404 when the hash is not present in any pool's cache.
 #[derive(Debug, Serialize)]

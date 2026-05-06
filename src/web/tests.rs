@@ -369,6 +369,28 @@ async fn api_prepared_text_anonymous_returns_401() {
 }
 
 #[tokio::test]
+async fn api_top_clients_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/top/clients HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"by\":\"qps\""), "raw={raw}");
+    assert!(raw.contains("\"n\":20"), "raw={raw}");
+    assert!(raw.contains("\"clients\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_apps_returns_envelope() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/apps HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"apps\""), "raw={raw}");
+}
+
+#[tokio::test]
 async fn api_prepared_text_admin_unknown_hash_returns_404() {
     let port = spawn_server(opts(true, true)).await;
     let creds = base64::engine::general_purpose::STANDARD.encode("admin:secret");

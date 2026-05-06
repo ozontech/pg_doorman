@@ -6,6 +6,7 @@
 pub mod collect;
 pub mod dto;
 
+pub(crate) mod apps;
 pub(crate) mod auth_query;
 pub(crate) mod clients;
 pub(crate) mod config;
@@ -24,5 +25,6 @@ pub(crate) mod query;
 pub(crate) mod servers;
 pub(crate) mod sockets;
 pub(crate) mod stats;
+pub(crate) mod top_clients;
 pub(crate) mod users;
 pub(crate) mod version;

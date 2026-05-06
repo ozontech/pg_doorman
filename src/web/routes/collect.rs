@@ -18,12 +18,13 @@ use crate::stats::{
     TLS_CONNECTION_COUNTER, TOTAL_CONNECTION_COUNTER,
 };
 use crate::web::routes::dto::{
-    AuthQueryDto, AuthQueryRowDto, ClientDto, ClientFilters, ClientSort, ClientsDto, ConfigDto,
-    ConfigEntry, ConnectionsDto, DatabaseDto, DatabasesDto, InternerDto, InternerKindDto,
-    InternerTopDto, InternerTopRowDto, LogLevelDto, OverviewDto, PoolCoordinatorDto,
-    PoolCoordinatorRowDto, PoolDto, PoolScalingDto, PoolScalingRowDto, PoolsDto, PreparedDto,
-    PreparedRowDto, PreparedTextDto, ServerDto, ServerFilters, ServerSort, ServersDto, SortOrder,
-    StatsDto, StatsRowDto, UserDto, UsersDto, VersionDto,
+    AppFilters, AppRowDto, AppSort, AppsDto, AuthQueryDto, AuthQueryRowDto, ClientDto,
+    ClientFilters, ClientSort, ClientsDto, ConfigDto, ConfigEntry, ConnectionsDto, DatabaseDto,
+    DatabasesDto, InternerDto, InternerKindDto, InternerTopDto, InternerTopRowDto, LogLevelDto,
+    OverviewDto, PoolCoordinatorDto, PoolCoordinatorRowDto, PoolDto, PoolScalingDto,
+    PoolScalingRowDto, PoolsDto, PreparedDto, PreparedRowDto, PreparedTextDto, ServerDto,
+    ServerFilters, ServerSort, ServersDto, SortOrder, StatsDto, StatsRowDto, TopClientBy,
+    TopClientFilters, TopClientRowDto, TopClientsDto, UserDto, UsersDto, VersionDto,
 };
 
 #[cfg(target_os = "linux")]
@@ -784,6 +785,129 @@ pub(crate) fn clamp_top_n(requested: u64) -> u64 {
     }
 }
 
+/// Clamps `?n=` for the Top-N client/apps endpoints. Same shape as
+/// `clamp_top_n` for interner top, kept as a separate function so changing
+/// the interner cap doesn't affect these page-sized lists.
+pub(crate) fn clamp_top_clients_n(requested: u64) -> u64 {
+    const DEFAULT: u64 = 20;
+    const MAX: u64 = 200;
+    match requested {
+        0 => DEFAULT,
+        n if n > MAX => MAX,
+        n => n,
+    }
+}
+
+pub fn collect_top_clients(filters: &TopClientFilters) -> TopClientsDto {
+    let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
+    top_clients_from(snapshot, filters)
+}
+
+fn top_clients_from(
+    snapshot: Vec<std::sync::Arc<crate::stats::ClientStats>>,
+    filters: &TopClientFilters,
+) -> TopClientsDto {
+    let n = clamp_top_clients_n(filters.n);
+
+    let mut rows: Vec<TopClientRowDto> = snapshot
+        .iter()
+        .filter(|s| {
+            if let Some(p) = &filters.pool {
+                let id = format!("{}@{}", s.username(), s.pool_name());
+                if id != *p {
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|s| {
+            let age_seconds = s.connect_time().elapsed().as_secs();
+            let queries_total = s.query_count.load(Ordering::Relaxed);
+            let errors_total = s.error_count.load(Ordering::Relaxed);
+            let qps = queries_total as f64 / age_seconds.max(1) as f64;
+            TopClientRowDto {
+                client_id: format!("#c{}", s.connection_id()),
+                application_name: s.application_name(),
+                user: s.username(),
+                database: s.pool_name(),
+                addr: s.ipaddr(),
+                age_seconds,
+                queries_total,
+                errors_total,
+                qps,
+            }
+        })
+        .collect();
+
+    rows.sort_by(|a, b| {
+        // All Top-N sorts are descending — operators want busiest first.
+        match filters.by {
+            TopClientBy::Qps => b
+                .qps
+                .partial_cmp(&a.qps)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            TopClientBy::Errors => b.errors_total.cmp(&a.errors_total),
+            TopClientBy::Age => b.age_seconds.cmp(&a.age_seconds),
+        }
+    });
+
+    let clients: Vec<_> = rows.into_iter().take(n as usize).collect();
+
+    TopClientsDto {
+        ts: now_unix_ms(),
+        by: filters.by.as_str().to_string(),
+        n,
+        clients,
+    }
+}
+
+pub fn collect_apps(filters: &AppFilters) -> AppsDto {
+    let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
+    apps_from(snapshot, filters)
+}
+
+fn apps_from(
+    snapshot: Vec<std::sync::Arc<crate::stats::ClientStats>>,
+    filters: &AppFilters,
+) -> AppsDto {
+    use std::collections::HashMap;
+
+    let mut acc: HashMap<String, AppRowDto> = HashMap::new();
+    for s in &snapshot {
+        let app = s.application_name();
+        let entry = acc.entry(app.clone()).or_insert_with(|| AppRowDto {
+            application_name: app,
+            clients: 0,
+            queries_total: 0,
+            transactions_total: 0,
+            errors_total: 0,
+        });
+        entry.clients += 1;
+        entry.queries_total += s.query_count.load(Ordering::Relaxed);
+        entry.transactions_total += s.transaction_count.load(Ordering::Relaxed);
+        entry.errors_total += s.error_count.load(Ordering::Relaxed);
+    }
+
+    let mut apps: Vec<AppRowDto> = acc.into_values().collect();
+    apps.sort_by(|a, b| {
+        let ord = match filters.sort {
+            AppSort::Clients => a.clients.cmp(&b.clients),
+            AppSort::Queries => a.queries_total.cmp(&b.queries_total),
+            AppSort::Transactions => a.transactions_total.cmp(&b.transactions_total),
+            AppSort::Errors => a.errors_total.cmp(&b.errors_total),
+        };
+        match filters.order {
+            SortOrder::Asc => ord,
+            SortOrder::Desc => ord.reverse(),
+        }
+    });
+
+    AppsDto {
+        ts: now_unix_ms(),
+        apps,
+    }
+}
+
 pub fn collect_interner_top(n: u64) -> InternerTopDto {
     let n = clamp_top_n(n);
     let now = now_monotonic_ms();
@@ -1343,5 +1467,131 @@ mod tests {
     fn clamp_top_n_caps_above_max() {
         assert_eq!(super::clamp_top_n(201), 200);
         assert_eq!(super::clamp_top_n(u64::MAX), 200);
+    }
+
+    // -------------------------------------------------------------------------
+    // Top-clients clamp helper
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn clamp_top_clients_n_zero_returns_default() {
+        assert_eq!(super::clamp_top_clients_n(0), 20);
+    }
+
+    #[test]
+    fn clamp_top_clients_n_keeps_in_range() {
+        assert_eq!(super::clamp_top_clients_n(1), 1);
+        assert_eq!(super::clamp_top_clients_n(50), 50);
+        assert_eq!(super::clamp_top_clients_n(200), 200);
+    }
+
+    #[test]
+    fn clamp_top_clients_n_caps_above_max() {
+        assert_eq!(super::clamp_top_clients_n(201), 200);
+        assert_eq!(super::clamp_top_clients_n(u64::MAX), 200);
+    }
+
+    // -------------------------------------------------------------------------
+    // Top-clients sort
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn top_clients_sort_by_errors_desc() {
+        let clients = vec![
+            make_client(1, "db", "u", "a", 0, 5),
+            make_client(2, "db", "u", "a", 0, 1),
+            make_client(3, "db", "u", "a", 0, 3),
+        ];
+        let f = TopClientFilters {
+            by: TopClientBy::Errors,
+            n: 10,
+            pool: None,
+        };
+        let result = super::top_clients_from(clients, &f);
+        let errs: Vec<u64> = result.clients.iter().map(|c| c.errors_total).collect();
+        assert_eq!(errs, vec![5, 3, 1]);
+        assert_eq!(result.by, "errors");
+    }
+
+    #[test]
+    fn top_clients_n_default_when_zero() {
+        let clients: Vec<_> = (0..5)
+            .map(|i| make_client(i, "db", "u", "a", 0, 0))
+            .collect();
+        let f = TopClientFilters {
+            by: TopClientBy::Qps,
+            n: 0,
+            pool: None,
+        };
+        let result = super::top_clients_from(clients, &f);
+        assert_eq!(result.n, 20);
+    }
+
+    #[test]
+    fn top_clients_pool_filter_excludes_others() {
+        let clients = vec![
+            make_client(1, "db1", "alice", "a", 0, 0),
+            make_client(2, "db2", "bob", "a", 0, 0),
+        ];
+        let f = TopClientFilters {
+            by: TopClientBy::Qps,
+            n: 10,
+            pool: Some("alice@db1".to_string()),
+        };
+        let result = super::top_clients_from(clients, &f);
+        assert_eq!(result.clients.len(), 1);
+        assert_eq!(result.clients[0].user, "alice");
+    }
+
+    // -------------------------------------------------------------------------
+    // Apps aggregation
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn apps_aggregate_counts_clients_per_application_name() {
+        let clients = vec![
+            make_client(1, "db", "u", "appA", 10, 0),
+            make_client(2, "db", "u", "appA", 20, 0),
+            make_client(3, "db", "u", "appB", 5, 0),
+        ];
+        let f = AppFilters {
+            sort: AppSort::Clients,
+            order: SortOrder::Desc,
+        };
+        let result = super::apps_from(clients, &f);
+        let app_a = result
+            .apps
+            .iter()
+            .find(|a| a.application_name == "appA")
+            .unwrap();
+        let app_b = result
+            .apps
+            .iter()
+            .find(|a| a.application_name == "appB")
+            .unwrap();
+        assert_eq!(app_a.clients, 2);
+        assert_eq!(app_a.queries_total, 30);
+        assert_eq!(app_b.clients, 1);
+        assert_eq!(app_b.queries_total, 5);
+    }
+
+    #[test]
+    fn apps_sort_by_queries_desc() {
+        let clients = vec![
+            make_client(1, "db", "u", "appA", 10, 0),
+            make_client(2, "db", "u", "appB", 100, 0),
+            make_client(3, "db", "u", "appC", 50, 0),
+        ];
+        let f = AppFilters {
+            sort: AppSort::Queries,
+            order: SortOrder::Desc,
+        };
+        let result = super::apps_from(clients, &f);
+        let names: Vec<_> = result
+            .apps
+            .iter()
+            .map(|a| a.application_name.clone())
+            .collect();
+        assert_eq!(names, vec!["appB", "appC", "appA"]);
     }
 }

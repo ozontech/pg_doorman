@@ -294,6 +294,8 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/prepared" => routes::prepared::handle_prepared(),
         "/api/interner" => routes::interner::handle_interner(),
         "/api/interner/top" => routes::interner_top::handle_interner_top(&query),
+        "/api/top/clients" => routes::top_clients::handle_top_clients(&query),
+        "/api/apps" => routes::apps::handle_apps(&query),
         _ => Response::json(
             501,
             "Not Implemented",
@@ -717,5 +719,25 @@ mod tests {
             AuthOutcome::Admin,
         );
         assert_eq!(r.status, 404);
+    }
+
+    #[test]
+    fn dispatch_top_clients_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/top/clients"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_apps_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/apps"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
     }
 }
