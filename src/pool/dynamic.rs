@@ -18,8 +18,8 @@ use crate::stats::AddressStats;
 use super::types::{PoolConfig, QueueMode, Timeouts};
 use super::{
     build_server_tls_for_pool, get_auth_query_state, get_coordinator, get_pool,
-    register_dynamic_pool, Address, ConnectionPool, Pool, PoolIdentifier, PoolSettings,
-    PreparedStatementCache, ServerPool, POOLS,
+    register_dynamic_pool, resolve_server_cache_size, Address, ConnectionPool, Pool,
+    PoolIdentifier, PoolSettings, PreparedStatementCache, ServerPool, POOLS,
 };
 
 /// Create a dynamic data pool for auth_query passthrough mode.
@@ -107,6 +107,12 @@ pub fn create_dynamic_pool(
         false => 0,
     };
 
+    let server_prepared_statements_cache_size = resolve_server_cache_size(
+        prepared_statements_cache_size,
+        pool_config.server_prepared_statements_cache_size,
+        config.general.server_prepared_statements_cache_size,
+    );
+
     let application_name = pool_config
         .application_name
         .clone()
@@ -123,7 +129,7 @@ pub fn create_dynamic_pool(
         client_server_map,
         pool_config.cleanup_server_connections,
         pool_config.log_client_parameter_status_changes,
-        prepared_statements_cache_size,
+        server_prepared_statements_cache_size,
         application_name,
         config.general.max_concurrent_creates,
         pool_config

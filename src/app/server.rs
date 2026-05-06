@@ -301,6 +301,12 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         // to u64::MAX milliseconds — disables TTL eviction entirely.
         // gc_interval_seconds = 0 is rejected by Config::validate, so we can
         // assume a strictly positive interval here.
+        //
+        // anon_idle_ttl is re-read from the live config every tick, so RELOAD
+        // takes effect without a restart. gc_interval_seconds is captured at
+        // startup and is restart-only — changing the sweep cadence at runtime
+        // would require recreating the ticker, which adds complexity for a
+        // knob that operators rarely tune live.
         {
             let gc_interval =
                 Duration::from_secs(config.general.query_interner_gc_interval_seconds);
@@ -310,18 +316,21 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
                 "query_interner_gc_interval_seconds must produce a non-zero sweep interval; \
                  Config::validate should have caught a value of 0"
             );
-            let anon_ttl_secs = config.general.query_interner_anon_idle_ttl_seconds;
-            let anon_ttl_ms = if anon_ttl_secs == 0 {
-                u64::MAX
-            } else {
-                anon_ttl_secs.saturating_mul(1000)
-            };
 
             tokio::task::spawn(async move {
                 let mut ticker = tokio::time::interval(sweep_interval);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 loop {
                     ticker.tick().await;
+
+                    let anon_ttl_secs = get_config()
+                        .general
+                        .query_interner_anon_idle_ttl_seconds;
+                    let anon_ttl_ms = if anon_ttl_secs == 0 {
+                        u64::MAX
+                    } else {
+                        anon_ttl_secs.saturating_mul(1000)
+                    };
 
                     let started = std::time::Instant::now();
                     let named_stats = gc_sweep_named();

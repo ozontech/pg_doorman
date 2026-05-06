@@ -454,15 +454,20 @@ impl General {
         60
     }
 
-    /// `client_anonymous_prepared_cache_size` is `Option<usize>`: when
-    /// unset (None) it inherits `prepared_statements_cache_size`. The
-    /// inheritance is the same on the live-connection path
-    /// (`Client::startup`) and on both migration paths
-    /// (`reconstruct_prepared_state` / its retry); centralising it here
-    /// keeps those three call-sites in sync.
-    pub fn resolve_client_anon_cache_size(&self) -> usize {
-        self.client_anonymous_prepared_cache_size
-            .unwrap_or(self.prepared_statements_cache_size)
+    /// Resolution order for the per-client Anonymous LRU size:
+    /// 1. explicit `client_anonymous_prepared_cache_size` always wins;
+    /// 2. otherwise inherit the resolved pool-level
+    ///    `prepared_statements_cache_size` (the per-pool override if set,
+    ///    else this `General` field).
+    ///
+    /// Call-sites pass `pool_override` as
+    /// `Pool::prepared_statements_cache_size`; admin connections and
+    /// pre-creation paths can pass `None` to fall back to general.
+    pub fn resolve_client_anon_cache_size(&self, pool_override: Option<usize>) -> usize {
+        if let Some(explicit) = self.client_anonymous_prepared_cache_size {
+            return explicit;
+        }
+        pool_override.unwrap_or(self.prepared_statements_cache_size)
     }
 
     pub fn default_daemon_pid_file() -> String {
@@ -703,6 +708,47 @@ client_anonymous_prepared_cache_size: 512
 "#;
         let parsed: General = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(parsed.client_anonymous_prepared_cache_size, Some(512));
+    }
+
+    #[test]
+    fn resolve_client_anon_inherits_general_when_no_overrides() {
+        let g = General {
+            prepared_statements_cache_size: 8192,
+            client_anonymous_prepared_cache_size: None,
+            ..Default::default()
+        };
+        assert_eq!(g.resolve_client_anon_cache_size(None), 8192);
+    }
+
+    #[test]
+    fn resolve_client_anon_uses_pool_override_when_no_explicit() {
+        let g = General {
+            prepared_statements_cache_size: 8192,
+            client_anonymous_prepared_cache_size: None,
+            ..Default::default()
+        };
+        assert_eq!(g.resolve_client_anon_cache_size(Some(1024)), 1024);
+    }
+
+    #[test]
+    fn resolve_client_anon_explicit_wins_over_pool_override() {
+        let g = General {
+            prepared_statements_cache_size: 8192,
+            client_anonymous_prepared_cache_size: Some(256),
+            ..Default::default()
+        };
+        assert_eq!(g.resolve_client_anon_cache_size(Some(1024)), 256);
+        assert_eq!(g.resolve_client_anon_cache_size(None), 256);
+    }
+
+    #[test]
+    fn resolve_client_anon_explicit_zero_disables_lru_regardless_of_pool() {
+        let g = General {
+            prepared_statements_cache_size: 8192,
+            client_anonymous_prepared_cache_size: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(g.resolve_client_anon_cache_size(Some(1024)), 0);
     }
 
     #[test]

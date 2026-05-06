@@ -26,11 +26,11 @@
 
 - The query interner is split into NAMED (passive `Arc::strong_count`
   GC) and ANON (idle TTL). Two general knobs control the GC:
-  `query_interner_gc_interval_seconds` (default 60) and
+  `query_interner_gc_interval_seconds` (default 60, restart-only) and
   `query_interner_anon_idle_ttl_seconds` (default 60; `0` disables
-  TTL and restores pre-3.7 unbounded behaviour). A two-cycle
-  mark-and-sweep grace prevents eviction of entries touched between
-  cycles.
+  TTL and restores pre-3.7 unbounded behaviour; live-reloadable).
+  A two-cycle mark-and-sweep grace prevents eviction of entries
+  touched between cycles.
 - `SHOW INTERNER` reports entries and bytes per kind;
   `SHOW INTERNER N` lists the top N by interned text length with
   hash, kind, idle_ms, and a 120-character preview; `RESET INTERNER`

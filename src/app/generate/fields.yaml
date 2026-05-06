@@ -846,6 +846,9 @@ fields:
 
         Lower values shrink the interner faster after disconnect waves at the cost
         of more CPU. Setting this to `0` is rejected at startup.
+
+        **Restart-only**: changes to this knob take effect only after a restart;
+        a config reload won't change the running sweep cadence.
       default: "60"
 
     query_interner_anon_idle_ttl_seconds:
@@ -867,6 +870,9 @@ fields:
         live until the process restarts. This matches the pre-3.7 behaviour and
         is the right choice for legacy deployments that rely on cross-batch
         unnamed prepared statements; everywhere else, leave the default.
+
+        Re-read on every sweep, so a config reload changes the effective TTL
+        without a restart.
       default: "60"
 
     patroni_api_urls:
