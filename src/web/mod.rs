@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod metrics;
+pub mod routes;
 pub mod server;
 
 pub use server::{start_web_server, WebServerOptions};

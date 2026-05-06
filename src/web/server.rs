@@ -1,13 +1,13 @@
 //! HTTP listener + path mux for the web subsystem.
 //!
 //! Routes:
-//! - `GET /metrics` → Prometheus exporter, no auth.
-//! - `GET /api/*`   → public or admin per spec section 6, returns 501 in phase 2.
-//! - `GET /` | `GET /assets/*` → SPA placeholder, returns 404 in phase 2 (filled in phase 7).
+//! - `GET /metrics`      → Prometheus exporter, no auth.
+//! - `GET /api/version`  → version info, public.
+//! - `GET /api/overview` → cluster overview, public.
+//! - `GET /api/pools`    → pool list, public.
+//! - `GET /api/*`        → other endpoints return 501 until wired in later phases.
+//! - `GET /` | `GET /assets/*` → SPA placeholder, returns 404 (filled in phase 7).
 //! - everything else → 404.
-//!
-//! Phase 2 ships only the dispatch + auth gating; real `/api/*` handlers and
-//! the SPA bundle are added in phases 3 and 7.
 
 use std::net::SocketAddr;
 
@@ -171,15 +171,15 @@ impl<'a> ParsedRequest<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct Response {
-    status: u16,
-    reason: &'static str,
-    extra_headers: Vec<(&'static str, String)>,
-    body: Vec<u8>,
+pub(crate) struct Response {
+    pub(crate) status: u16,
+    pub(crate) reason: &'static str,
+    pub(crate) extra_headers: Vec<(&'static str, String)>,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Response {
-    fn status(status: u16, reason: &'static str) -> Self {
+    pub(crate) fn status(status: u16, reason: &'static str) -> Self {
         Response {
             status,
             reason,
@@ -188,7 +188,7 @@ impl Response {
         }
     }
 
-    fn json(status: u16, reason: &'static str, body: &str) -> Self {
+    pub(crate) fn json(status: u16, reason: &'static str, body: &str) -> Self {
         Response {
             status,
             reason,
@@ -197,13 +197,28 @@ impl Response {
         }
     }
 
-    fn unauthorized() -> Self {
+    pub(crate) fn unauthorized() -> Self {
         let mut r = Response::status(401, "Unauthorized");
         r.extra_headers.push((
             "WWW-Authenticate",
             "Basic realm=\"pg_doorman admin\"".into(),
         ));
         r
+    }
+
+    pub(crate) fn ok_json<T: serde::Serialize>(value: &T) -> Self {
+        match serde_json::to_vec(value) {
+            Ok(body) => Response {
+                status: 200,
+                reason: "OK",
+                extra_headers: vec![("Content-Type", "application/json".into())],
+                body,
+            },
+            Err(e) => {
+                log::error!("Failed to serialize JSON response: {e}");
+                Response::status(500, "Internal Server Error")
+            }
+        }
     }
 
     async fn write(
@@ -245,6 +260,22 @@ fn is_admin_only(path: &str) -> bool {
         .any(|prefix| path.starts_with(prefix))
 }
 
+fn route_api(req: &ParsedRequest<'_>) -> Response {
+    use crate::web::routes;
+    // strip query string for matching
+    let path = req.path.split('?').next().unwrap_or(req.path);
+    match path {
+        "/api/version" => routes::version::handle_version(),
+        "/api/overview" => routes::overview::handle_overview(),
+        "/api/pools" => routes::pools::handle_pools(),
+        _ => Response::json(
+            501,
+            "Not Implemented",
+            r#"{"error":"not_implemented","message":"endpoint will be wired in a later phase"}"#,
+        ),
+    }
+}
+
 fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome) -> Response {
     if req.method != "GET" && req.method != "HEAD" {
         return Response::status(405, "Method Not Allowed");
@@ -263,12 +294,7 @@ fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome)
     }
 
     if req.path.starts_with("/api/") {
-        // Real handlers land in phase 3.
-        return Response::json(
-            501,
-            "Not Implemented",
-            r#"{"error":"not_implemented","message":"phase 2 stub; api routes land in phase 3"}"#,
-        );
+        return route_api(req);
     }
 
     if req.path == "/" || req.path.starts_with("/assets/") {
@@ -360,13 +386,43 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_anonymous_public_path_when_ui_anonymous_true() {
+    fn dispatch_unknown_api_returns_501() {
+        let r = dispatch(
+            &req("GET", "/api/not-yet-wired"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 501);
+    }
+
+    #[test]
+    fn dispatch_overview_returns_200() {
         let r = dispatch(
             &req("GET", "/api/overview"),
             &opts(true, true),
             AuthOutcome::Anonymous,
         );
-        assert_eq!(r.status, 501);
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_version_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/version"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
+    }
+
+    #[test]
+    fn dispatch_pools_returns_200() {
+        let r = dispatch(
+            &req("GET", "/api/pools"),
+            &opts(true, true),
+            AuthOutcome::Anonymous,
+        );
+        assert_eq!(r.status, 200);
     }
 
     #[test]

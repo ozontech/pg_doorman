@@ -67,11 +67,11 @@ async fn api_returns_404_when_ui_inactive() {
 }
 
 #[tokio::test]
-async fn api_public_route_returns_501_when_ui_active_anonymous() {
+async fn api_unknown_route_returns_501_when_ui_active_anonymous() {
     let port = spawn_server(opts(true, true)).await;
     let raw = send(
         port,
-        "GET /api/overview HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        "GET /api/not-yet-wired HTTP/1.1\r\nHost: localhost\r\n\r\n",
     )
     .await;
     assert!(raw.starts_with("HTTP/1.1 501"), "raw={raw}");
@@ -105,4 +105,46 @@ async fn api_public_route_returns_401_when_ui_anonymous_false() {
     )
     .await;
     assert!(raw.starts_with("HTTP/1.1 401"), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_version_returns_json() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/version HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("Content-Type: application/json"), "raw={raw}");
+    assert!(raw.contains("\"version\""), "raw={raw}");
+    assert!(raw.contains("\"git_commit\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_overview_returns_json_when_ui_active() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(
+        port,
+        "GET /api/overview HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"active_clients\""), "raw={raw}");
+    assert!(raw.contains("\"pools_total\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_pools_returns_json_when_ui_active() {
+    let port = spawn_server(opts(true, true)).await;
+    let raw = send(port, "GET /api/pools HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "raw={raw}");
+    assert!(raw.contains("\"pools\""), "raw={raw}");
+}
+
+#[tokio::test]
+async fn api_overview_still_404_when_ui_inactive() {
+    let port = spawn_server(opts(false, true)).await;
+    let raw = send(
+        port,
+        "GET /api/overview HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    .await;
+    assert!(raw.starts_with("HTTP/1.1 404"), "raw={raw}");
 }
