@@ -17,7 +17,15 @@ import {
   type PoolHistory,
   type PoolHistoryPoint,
 } from "../lib/thresholds";
-import type { InternerDto, OverviewDto, PoolsDto, SocketsDto } from "../types";
+import type {
+  AuthQueryDto,
+  InternerDto,
+  OverviewDto,
+  PoolCoordinatorDto,
+  PoolScalingDto,
+  PoolsDto,
+  SocketsDto,
+} from "../types";
 
 const POLL_MS = 1500;
 const HISTORY_KEY = "overview";
@@ -66,6 +74,21 @@ export default function Overview() {
   );
   const internerPoll = usePoll<InternerDto>(
     (signal) => apiGet<InternerDto>("/api/interner", authHeader, signal),
+    3000,
+  );
+  // Threshold-only polls for §15.4 reconnect-rate, gate-budget, coordinator,
+  // and auth-failure rules. Not rendered, but their counters feed the
+  // per-pool history that the threshold engine reads.
+  const scalingPoll = usePoll<PoolScalingDto>(
+    (signal) => apiGet<PoolScalingDto>("/api/pool_scaling", authHeader, signal),
+    POLL_MS,
+  );
+  const coordPoll = usePoll<PoolCoordinatorDto>(
+    (signal) => apiGet<PoolCoordinatorDto>("/api/pool_coordinator", authHeader, signal),
+    POLL_MS,
+  );
+  const authPoll = usePoll<AuthQueryDto>(
+    (signal) => apiGet<AuthQueryDto>("/api/auth_query", authHeader, signal),
     3000,
   );
 
@@ -117,8 +140,32 @@ export default function Overview() {
     });
     const errSnap: PoolSnap = {};
     const satSnap: PoolSatSnap = {};
+    // Index sibling-endpoint rows for O(1) lookup per pool id below.
+    const scalingByKey = new Map<string, { creates: number; gate_budget_ex: number }>();
+    if (scalingPoll.data) {
+      for (const r of scalingPoll.data.pools) {
+        scalingByKey.set(`${r.user}@${r.database}`, {
+          creates: r.creates,
+          gate_budget_ex: r.gate_budget_ex,
+        });
+      }
+    }
+    const coordByDb = new Map<string, number>();
+    if (coordPoll.data) {
+      for (const r of coordPoll.data.databases) {
+        coordByDb.set(r.database, r.exhaustions);
+      }
+    }
     for (const p of pools.pools) {
-      errSnap[p.id] = { ts: ov.ts, errors_total: p.errors_total, queries_total: p.queries_total };
+      const scaling = scalingByKey.get(p.id);
+      errSnap[p.id] = {
+        ts: ov.ts,
+        errors_total: p.errors_total,
+        queries_total: p.queries_total,
+        creates_total: scaling?.creates,
+        gate_budget_ex_total: scaling?.gate_budget_ex,
+        coordinator_exhaustions_total: coordByDb.get(p.database),
+      };
       satSnap[p.id] = {
         saturation: p.max_connections > 0 ? p.connections / p.max_connections : 0,
         max_connections: p.max_connections,
@@ -128,7 +175,7 @@ export default function Overview() {
     poolErrorsHistory.push(errSnap);
     poolSatHistory.push(satSnap);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overviewPoll.data?.ts, poolsPoll.data?.ts]);
+  }, [overviewPoll.data?.ts, poolsPoll.data?.ts, scalingPoll.data?.ts, coordPoll.data?.ts]);
 
   const poolHistoryForEngine: PoolHistory = useMemo(() => {
     const map: PoolHistory = new Map();
@@ -144,8 +191,13 @@ export default function Overview() {
 
   const health = useMemo(() => {
     if (!overviewPoll.data || !poolsPoll.data) return EMPTY_HEALTH;
-    return aggregateHealth(overviewPoll.data, poolsPoll.data.pools, poolHistoryForEngine);
-  }, [overviewPoll.data, poolsPoll.data, poolHistoryForEngine]);
+    return aggregateHealth(
+      overviewPoll.data,
+      poolsPoll.data.pools,
+      poolHistoryForEngine,
+      authPoll.data ?? null,
+    );
+  }, [overviewPoll.data, poolsPoll.data, poolHistoryForEngine, authPoll.data]);
 
   const seriesXs = useMemo(
     () => sampleHistory.history.map((s) => s.ts / 1000),
