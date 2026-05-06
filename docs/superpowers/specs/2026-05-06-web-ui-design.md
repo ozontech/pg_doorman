@@ -53,6 +53,7 @@ Web UI закрывает оба сценария, не вводя новых с
 | 19 | log_tap_max_entries default | Default bump 1024 → 8192 (DBA-ревью). На info-уровне при 5kTPS 1024 строк = субсекунда истории; 8192 даёт ~1.5–2 минуты, сохраняя ≤2 MB RSS. |
 | 20 | Thresholds — formula-based | Все warning/critical пороги в раздел 15 — формулы, не абсолютные числа. `0.7×pool_size`, не `35`. Это нужно, чтобы пороги работали и для pool_size=10, и для pool_size=500. |
 | 21 | Thin server, fat client | Backend отдаёт ТОЛЬКО raw counters / gauges / percentiles. Никаких computed `health.state`, `errors_per_sec`, `worst_pool`, aggregations. Threshold engine — чистая функция во frontend (`src/lib/thresholds.ts`), применяется к raw shape. Перенос: (1) backend не дублирует UI бизнес-логику; (2) поменять порог = PR во frontend без backend rebuild и rollout; (3) `cargo build` и frontend deployment слабо связаны. |
+| 22 | Frontend dist коммитится | `frontend/dist/` коммитится в git; release-pipeline не зависит от npm. `cargo build` берёт уже built bundle через `include_dir!`. Trade-off: ~150-250 KB built артефактов в репо ради простоты RPM/DEB/Docker сборки без npm-toolchain. Lint/typecheck остаются обязательны на pre-commit (см. 10.4). |
 
 ## 4. Архитектура
 
@@ -151,7 +152,9 @@ use include_dir::{include_dir, Dir};
 static SPA: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/frontend/dist");
 ```
 
-CI билдит фронт перед `cargo build`. В dev — `vite dev` отдельно с proxy на `:9127`.
+**Built артефакты коммитятся в git** как `frontend/dist/`. Release-pipeline (RPM/DEB/Docker) НЕ запускает `npm run build` — `cargo build` напрямую embed'ит уже закоммитнутый bundle. Это сознательный trade-off: добавлять npm-toolchain в release machinery дороже, чем коммитить ~150-250 KB built файлов.
+
+В dev — `vite dev` на :5173 с proxy на :9127. Разработчик отвечает за `npm run build` перед коммитом изменений во `frontend/src/`. См. раздел 10.4 про CI и pre-commit verification.
 
 ## 5. Конфиг
 
@@ -832,19 +835,40 @@ Credentials хранятся **только в memory** (React state). При F5
 
 ### 10.4 Build/CI
 
-В `release`-pipeline шаг перед `cargo build`:
+**Release-pipeline не зависит от npm.** `frontend/dist/` коммитится в git как built артефакт; `cargo build` напрямую embed'ит готовый bundle через `include_dir!`. RPM/DEB/Docker сборка не нуждается в node toolchain. См. decision #22.
+
+**Frontend CI job** (отдельный от Rust release):
 
 ```yaml
-- name: Build frontend
+- name: Frontend lint and typecheck
   run: |
     cd frontend
     npm ci
-    npm run build
+    npm run lint        # eslint, обязательно — блокирует merge при errors
+    npm run typecheck   # tsc --noEmit, обязательно
+    npm run build       # rebuild и сравнить с frontend/dist (см. ниже)
+- name: Verify dist is in sync with sources
+  run: |
+    git diff --exit-code frontend/dist
+    # exit 1 если built bundle отличается от закоммитнутого — разработчик
+    # забыл прогнать `npm run build` перед коммитом
 ```
 
-В dev: `vite dev` на :5173, proxy `/api/*` → :9127. Hot reload работает.
+`npm run build` в CI — sanity check, не источник release-артефакта. Если diff найден → CI fail с инструкцией: «run `npm run build` locally and commit the result».
 
-В CI checks: `npm run typecheck` + `npm run lint`.
+**Dev loop:** `vite dev` на :5173 с proxy `/api/* → :9127`. Hot reload работает. Разработчик ответственен за `npm run build` перед коммитом изменений во `frontend/src/` — pre-commit hook (опционально) автоматизирует это.
+
+**Pre-commit hook** (`.git/hooks/pre-commit` или husky):
+
+```bash
+#!/bin/sh
+if git diff --cached --name-only | grep -q '^frontend/src/'; then
+  echo "Frontend sources changed — rebuilding dist..."
+  cd frontend && npm run build && git add dist
+fi
+```
+
+Это nice-to-have, не строгое требование MVP — некоторые разработчики предпочитают ручной контроль над dist.
 
 ## 11. Error handling
 
@@ -904,13 +928,14 @@ Credentials хранятся **только в memory** (React state). При F5
 
 - `vitest` для hooks (`usePoll`, `useHistory`).
 - React Testing Library для `AuthGate` (рендер + 401 → modal).
-- Smoke build: `npm run build` без warnings (CI gate).
+- `npm run lint` (eslint) и `npm run typecheck` (tsc --noEmit) — CI-gated, блокируют merge при errors.
+- Sanity rebuild в CI: `npm run build` затем `git diff --exit-code frontend/dist` — fail если разработчик не закоммитил обновлённый bundle. Сама сборка не источник release artifact (см. 10.4).
 
 ## 13. Migration
 
 ### 13.1 Конфиг
 
-Backwards-compatible через `#[serde(alias = "prometheus")]`. Старые `pg_doorman.toml` с `[prometheus] enabled = true / host / port` продолжат работать без изменений. Дефолты новых ключей (`ui = false`, `ui_anonymous = true`, `log_tap_kb = 64`) безопасны: ничего не появляется само.
+Backwards-compatible через `#[serde(alias = "prometheus")]`. Старые `pg_doorman.toml` с `[prometheus] enabled = true / host / port` продолжат работать без изменений. Дефолты новых ключей (`ui = false`, `ui_anonymous = true`, `log_tap_max_entries = 8192`) безопасны: ничего не появляется само.
 
 Ограничение alias-подхода: нельзя одновременно держать в одном TOML и `[prometheus]`, и `[web]` — это будет ошибка парсинга. Документируем явно, в `pg_doorman.example.toml` показываем только новое имя.
 
@@ -940,18 +965,19 @@ Backwards-compatible через `#[serde(alias = "prometheus")]`. Старые `
 - Размер бинарника проверен (ожидание +200–400 KB)
 - Hot path логов, info-уровень, `tap_active=false`: бенчмарк до/после, регрессия должна быть в шуме измерений (≤ 2%).
 - Hot path логов под concurrent producers, debug-уровень, `tap_active=true`: бенчмарк с 16/64/256 producer threads × 1k log!()/s. Контроль — отсутствие contention'а на producer'е (no measurable wait time на `try_send`), `dropped_total` растёт только при заведомом burst'е выше channel capacity.
+- Frontend: `npm run lint` и `npm run typecheck` зелёные. `npm run build` запущен локально, `frontend/dist/` синхронизирован с `frontend/src/` и закоммичен (CI fail'нет иначе).
 
 ## 14. Implementation phases
 
 Будет уточнено в `writing-plans`. Высокоуровневое разбиение:
 
-1. **Reorg + config** — переезд `prometheus → web/metrics`, новая `Web` структура с alias, defaults. Без изменения поведения наружу.
+1. **Reorg + config** — переезд `prometheus → web/metrics`, новая `Web` структура с alias, defaults. Без изменения поведения наружу. ✅ DONE (commit b24082f).
 2. **Listener + mux + auth** — расширение `web/server.rs` до mux'а, `web/auth.rs`, отказ при дефолтном пароле. `/metrics` продолжает работать.
 3. **Backend routes** — `routes/*.rs` плюс рефакторинг `admin/show.rs` (`collect_*` функции), все public endpoint'ы.
 4. **LogTap + admin endpoint'ы** — `log_tap.rs`, `enable_log_tap` в `LogLevelController`, `routes/logs.rs`, reaper-task.
-5. **Frontend skeleton** — `frontend/` с Vite, sidebar layout, AuthGate, react-router. Все страницы — заглушки.
-6. **Frontend pages** — Overview (с uPlot), Pools, Clients, Servers, Prepared, Interner, Logs, Config.
-7. **Embedding + CI + docs** — `include_dir!`, build-pipeline шаг, документация, BDD-сценарии.
+5. **Frontend skeleton** — `frontend/` с Vite, sidebar layout, AuthGate, react-router, `npm run lint`/`typecheck` в CI. Все страницы — заглушки.
+6. **Frontend pages** — Overview (с uPlot), Pools, Clients, Caches, Logs, ConfigState. Каждая страница — отдельный коммит с обновлением `frontend/dist/`.
+7. **Embedding + docs** — `include_dir!`, BDD-сценарии, обновление `documentation/{en,ru}/src/configuration*.md`. Release-pipeline остаётся cargo-only (никакого `npm run build` шага); CI job для frontend lint/typecheck/dist-sync проверки добавляется отдельным workflow.
 
 ## 15. Observability layout & thresholds
 
