@@ -78,8 +78,10 @@ pg_doorman. Хранилище разделено на две независим
   уникальных запросов превышает скорость их истечения.
 - **`PgDoormanInternerGCSlow`** (warning) — P99 уборки выше 50 мс
   на 15-минутном окне. Увеличить
-  `query_interner_gc_interval_seconds` или сделать
-  `RESET INTERNER` и уменьшить размеры кешей.
+  `query_interner_gc_interval_seconds` (этот параметр работает
+  **только при перезапуске**: reload не изменит частоту проходов
+  у работающего процесса) или сделать `RESET INTERNER`
+  и уменьшить размеры кешей.
 - **`PgDoormanNamedInternerGrowsUnbounded`** (warning) — больше
   100 000 записей в NAMED при почти нулевом вытеснении. Почти
   всегда баг: ссылка на `Arc<str>` удерживается навсегда.

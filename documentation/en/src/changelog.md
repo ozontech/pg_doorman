@@ -21,6 +21,15 @@
   remains a serde alias of `client_anonymous_prepared_cache_size`,
   with a `WARN` at startup. Planned for removal in 3.9; rename in
   configs now.
+- **Anonymous prepared statements have a TTL by default.** The
+  query interner evicts an anonymous entry after
+  `query_interner_anon_idle_ttl_seconds` (default 60) of idle time.
+  Drivers like pgjdbc and `pgx` with `cache_describe` re-issue
+  `Parse` transparently when the next `Bind` returns SQLSTATE
+  `26000`. If your driver relies on cross-batch unnamed prepared
+  statements without a re-Parse, set
+  `query_interner_anon_idle_ttl_seconds: 0` to keep the pre-3.7
+  unbounded behaviour.
 
 #### Added
 

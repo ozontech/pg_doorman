@@ -71,8 +71,10 @@ alerts:
   growing while TTL evictions are flat. Either TTL is set too long
   or the workload is pushing unique queries faster than they expire.
 - **`PgDoormanInternerGCSlow`** (warning) — GC sweep P99 > 50 ms
-  for 15 min. Lengthen `query_interner_gc_interval_seconds` or
-  shrink the interner via `RESET INTERNER` plus cache-size tuning.
+  for 15 min. Lengthen `query_interner_gc_interval_seconds` (this
+  knob is **restart-only**; reload won't change the running sweep
+  cadence) or shrink the interner via `RESET INTERNER` plus
+  cache-size tuning.
 - **`PgDoormanNamedInternerGrowsUnbounded`** (warning) — NAMED
   entries above 100k with near-zero eviction rate. Almost always a
   code bug holding `Arc<str>` strong refs forever.

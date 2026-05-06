@@ -780,6 +780,10 @@ fields:
       doc: |
         Cache size of prepared statements at the pool level (shared across all clients connecting to the same pool).
         This cache stores the mapping from query hash to rewritten prepared statement name.
+
+        For an end-to-end picture of how this knob interacts with `server_prepared_statements_cache_size`,
+        `client_anonymous_prepared_cache_size`, and the query interner, see the
+        [Anonymous Prepared Statement Caching tutorial](../tutorials/prepared-statements.md).
       default: "8192"
 
     server_prepared_statements_cache_size:
@@ -871,8 +875,8 @@ fields:
         is the right choice for legacy deployments that rely on cross-batch
         unnamed prepared statements; everywhere else, leave the default.
 
-        Re-read on every sweep, so a config reload changes the effective TTL
-        without a restart.
+        **Live-reloadable**: re-read on every sweep, so a config reload changes
+        the effective TTL without a restart.
       default: "60"
 
     patroni_api_urls:
