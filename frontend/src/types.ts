@@ -155,3 +155,104 @@ export interface LogsDto {
   dropped_total: number;
   entries: LogEntryDto[];
 }
+
+export interface ConfigEntry {
+  key: string;
+  value: string;
+  default: string;
+  changeable: string;
+}
+
+export interface ConfigDto {
+  ts: number;
+  config: ConfigEntry[];
+}
+
+export interface LogLevelDto {
+  ts: number;
+  log_level: string;
+}
+
+export interface AuthQueryRowDto {
+  database: string;
+  cache_entries: number;
+  cache_hits: number;
+  cache_misses: number;
+  cache_refetches: number;
+  cache_rate_limited: number;
+  auth_success: number;
+  auth_failure: number;
+  executor_queries: number;
+  executor_errors: number;
+  dynamic_pools_current: number;
+  dynamic_pools_created: number;
+  dynamic_pools_destroyed: number;
+}
+
+export interface AuthQueryDto {
+  ts: number;
+  pools: AuthQueryRowDto[];
+}
+
+export interface DatabaseDto {
+  name: string;
+  host: string;
+  port: number;
+  database: string;
+  force_user: string;
+  pool_size: number;
+  min_pool_size: number;
+  reserve_pool: number;
+  pool_mode: string;
+  max_connections: number;
+  current_connections: number;
+}
+
+export interface DatabasesDto {
+  ts: number;
+  databases: DatabaseDto[];
+}
+
+export interface UserDto {
+  name: string;
+  pool_mode: string;
+}
+
+export interface UsersDto {
+  ts: number;
+  users: UserDto[];
+}
+
+export interface PoolScalingRowDto {
+  user: string;
+  database: string;
+  inflight: number;
+  creates: number;
+  gate_waits: number;
+  gate_budget_ex: number;
+  antic_notify: number;
+  antic_timeout: number;
+  create_fallback: number;
+  replenish_def: number;
+}
+
+export interface PoolScalingDto {
+  ts: number;
+  pools: PoolScalingRowDto[];
+}
+
+export interface PoolCoordinatorRowDto {
+  database: string;
+  max_db_conn: number;
+  current: number;
+  reserve_size: number;
+  reserve_used: number;
+  evictions: number;
+  reserve_acq: number;
+  exhaustions: number;
+}
+
+export interface PoolCoordinatorDto {
+  ts: number;
+  databases: PoolCoordinatorRowDto[];
+}
