@@ -468,7 +468,7 @@ web:
 
   # Allow unauthenticated access to the web UI.
   # Default: true
-  ui_anonymous: true
+  ui_anonymous: false
 
   # Maximum number of log entries held in the in-memory log tap.
   # Default: 8192

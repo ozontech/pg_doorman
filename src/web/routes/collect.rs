@@ -44,7 +44,7 @@ pub fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn collect_version() -> VersionDto {
+pub(crate) fn collect_version() -> VersionDto {
     VersionDto {
         version: env!("CARGO_PKG_VERSION"),
         git_commit: option_env!("PG_DOORMAN_GIT_COMMIT").unwrap_or("unknown"),
@@ -53,7 +53,7 @@ pub fn collect_version() -> VersionDto {
     }
 }
 
-pub fn collect_overview() -> OverviewDto {
+pub(crate) fn collect_overview() -> OverviewDto {
     let pool_lookup = PoolStats::construct_pool_lookup();
     let client_states = get_client_stats();
     let server_states = get_server_stats();
@@ -130,7 +130,7 @@ pub fn collect_overview() -> OverviewDto {
     }
 }
 
-pub fn collect_pools() -> PoolsDto {
+pub(crate) fn collect_pools() -> PoolsDto {
     let pool_lookup = PoolStats::construct_pool_lookup();
     let pools_map = get_all_pools();
 
@@ -186,7 +186,7 @@ pub fn collect_pools() -> PoolsDto {
 // demands it.
 const MAX_LIMIT: u64 = 1000;
 
-pub fn collect_clients(filters: &ClientFilters) -> ClientsDto {
+pub(crate) fn collect_clients(filters: &ClientFilters) -> ClientsDto {
     let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
     collect_clients_from(snapshot, filters)
 }
@@ -286,7 +286,7 @@ fn client_to_dto(s: &std::sync::Arc<crate::stats::ClientStats>) -> ClientDto {
     }
 }
 
-pub fn collect_servers(filters: &ServerFilters) -> ServersDto {
+pub(crate) fn collect_servers(filters: &ServerFilters) -> ServersDto {
     let snapshot: Vec<_> = get_server_stats().values().cloned().collect();
     collect_servers_from(snapshot, filters)
 }
@@ -383,7 +383,7 @@ fn server_to_dto(s: &std::sync::Arc<crate::stats::ServerStats>) -> ServerDto {
     }
 }
 
-pub fn collect_connections() -> ConnectionsDto {
+pub(crate) fn collect_connections() -> ConnectionsDto {
     connections_from_raw(
         cnt(&TOTAL_CONNECTION_COUNTER),
         cnt(&TLS_CONNECTION_COUNTER),
@@ -412,7 +412,7 @@ fn connections_from_raw(total: u64, tls: u64, plain: u64, cancel: u64) -> Connec
     }
 }
 
-pub fn collect_stats() -> StatsDto {
+pub(crate) fn collect_stats() -> StatsDto {
     let pool_lookup = PoolStats::construct_pool_lookup();
     let mut stats: Vec<StatsRowDto> = pool_lookup
         .iter()
@@ -450,7 +450,7 @@ pub fn collect_stats() -> StatsDto {
     }
 }
 
-pub fn collect_databases() -> DatabasesDto {
+pub(crate) fn collect_databases() -> DatabasesDto {
     let pools_map = get_all_pools();
     let mut databases: Vec<DatabaseDto> = pools_map
         .iter()
@@ -483,7 +483,7 @@ pub fn collect_databases() -> DatabasesDto {
     }
 }
 
-pub fn collect_users() -> UsersDto {
+pub(crate) fn collect_users() -> UsersDto {
     let pools_map = get_all_pools();
     let mut users: Vec<UserDto> = pools_map
         .iter()
@@ -521,7 +521,7 @@ fn is_secret_key(key: &str) -> bool {
         || last_segment.ends_with("_key")
 }
 
-pub fn collect_config() -> ConfigDto {
+pub(crate) fn collect_config() -> ConfigDto {
     // Mirrors `show_config` in src/admin/show.rs:429 for the immutables list
     // (these are the only fields that require a restart to change).
     const IMMUTABLES: &[&str] = &["host", "port", "connect_timeout"];
@@ -559,14 +559,14 @@ pub fn collect_config() -> ConfigDto {
     }
 }
 
-pub fn collect_log_level() -> LogLevelDto {
+pub(crate) fn collect_log_level() -> LogLevelDto {
     LogLevelDto {
         ts: now_unix_ms(),
         log_level: log_level::get_log_level(),
     }
 }
 
-pub fn collect_auth_query() -> AuthQueryDto {
+pub(crate) fn collect_auth_query() -> AuthQueryDto {
     let states = AUTH_QUERY_STATE.load();
     let dynamic = DYNAMIC_POOLS.load();
 
@@ -602,7 +602,7 @@ pub fn collect_auth_query() -> AuthQueryDto {
     }
 }
 
-pub fn collect_pool_scaling() -> PoolScalingDto {
+pub(crate) fn collect_pool_scaling() -> PoolScalingDto {
     let mut entries: Vec<_> = get_all_pools()
         .iter()
         .map(|(id, pool)| (id.clone(), pool.database.scaling_stats()))
@@ -631,7 +631,7 @@ pub fn collect_pool_scaling() -> PoolScalingDto {
     }
 }
 
-pub fn collect_pool_coordinator() -> PoolCoordinatorDto {
+pub(crate) fn collect_pool_coordinator() -> PoolCoordinatorDto {
     let coordinators = COORDINATORS.load();
     let mut databases: Vec<PoolCoordinatorRowDto> = coordinators
         .iter()
@@ -660,7 +660,7 @@ pub fn collect_pool_coordinator() -> PoolCoordinatorDto {
 }
 
 #[cfg(target_os = "linux")]
-pub fn collect_sockets() -> Result<SocketsDto, &'static str> {
+pub(crate) fn collect_sockets() -> Result<SocketsDto, &'static str> {
     use crate::stats::socket::{get_socket_states_count, TcpStateCount, UnixStreamStateCount};
 
     let info = get_socket_states_count(std::process::id())
@@ -705,7 +705,7 @@ pub fn collect_sockets() -> Result<SocketsDto, &'static str> {
     })
 }
 
-pub fn collect_prepared() -> PreparedDto {
+pub(crate) fn collect_prepared() -> PreparedDto {
     let mut prepared: Vec<PreparedRowDto> = Vec::new();
     for (identifier, pool) in get_all_pools().iter() {
         let Some(cache) = pool.prepared_statement_cache.as_ref() else {
@@ -735,7 +735,7 @@ pub fn collect_prepared() -> PreparedDto {
     }
 }
 
-pub fn collect_interner() -> InternerDto {
+pub(crate) fn collect_interner() -> InternerDto {
     let named = named_snapshot();
     let anon = anon_snapshot();
     let named_bytes: u64 = named.iter().map(|(_, e)| e.text().len() as u64).sum();
@@ -754,7 +754,7 @@ pub fn collect_interner() -> InternerDto {
     }
 }
 
-pub fn collect_prepared_text(hash: u64) -> Option<PreparedTextDto> {
+pub(crate) fn collect_prepared_text(hash: u64) -> Option<PreparedTextDto> {
     for (identifier, pool) in get_all_pools().iter() {
         let Some(cache) = pool.prepared_statement_cache.as_ref() else {
             continue;
@@ -775,7 +775,7 @@ pub fn collect_prepared_text(hash: u64) -> Option<PreparedTextDto> {
     None
 }
 
-pub fn collect_top_prepared(filters: &TopPreparedFilters) -> TopPreparedDto {
+pub(crate) fn collect_top_prepared(filters: &TopPreparedFilters) -> TopPreparedDto {
     let n = clamp_top_clients_n(filters.n);
 
     let mut rows: Vec<TopPreparedRowDto> = Vec::new();
@@ -839,7 +839,7 @@ pub(crate) fn clamp_top_clients_n(requested: u64) -> u64 {
     }
 }
 
-pub fn collect_top_clients(filters: &TopClientFilters) -> TopClientsDto {
+pub(crate) fn collect_top_clients(filters: &TopClientFilters) -> TopClientsDto {
     let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
     top_clients_from(snapshot, filters)
 }
@@ -902,7 +902,7 @@ fn top_clients_from(
     }
 }
 
-pub fn collect_apps(filters: &AppFilters) -> AppsDto {
+pub(crate) fn collect_apps(filters: &AppFilters) -> AppsDto {
     let snapshot: Vec<_> = get_client_stats().values().cloned().collect();
     apps_from(snapshot, filters)
 }
@@ -949,7 +949,7 @@ fn apps_from(
     }
 }
 
-pub fn collect_interner_top(n: u64) -> InternerTopDto {
+pub(crate) fn collect_interner_top(n: u64) -> InternerTopDto {
     let n = clamp_top_n(n);
     let now = now_monotonic_ms();
 
@@ -996,7 +996,7 @@ pub fn collect_interner_top(n: u64) -> InternerTopDto {
     }
 }
 
-pub fn collect_events(since: u64, max: u64) -> EventsDto {
+pub(crate) fn collect_events(since: u64, max: u64) -> EventsDto {
     // Cap max at 1000 — protects against accidental ?max=10000 over the wire.
     const HARD_CAP: usize = 1000;
     let max_n = (max.min(HARD_CAP as u64) as usize).max(1);
@@ -1019,7 +1019,7 @@ pub fn collect_events(since: u64, max: u64) -> EventsDto {
     }
 }
 
-pub fn collect_top_queries(filters: &TopQueryFilters) -> TopQueriesDto {
+pub(crate) fn collect_top_queries(filters: &TopQueryFilters) -> TopQueriesDto {
     let n = clamp_top_clients_n(filters.n);
 
     let mut rows: Vec<TopQueryRowDto> = Vec::new();

@@ -9,7 +9,7 @@
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
-pub struct VersionDto {
+pub(crate) struct VersionDto {
     pub version: &'static str,
     pub git_commit: &'static str,
     pub build_date: &'static str,
@@ -17,7 +17,7 @@ pub struct VersionDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct OverviewDto {
+pub(crate) struct OverviewDto {
     pub ts: u64,
 
     pub active_clients: u64,
@@ -44,13 +44,13 @@ pub struct OverviewDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct PoolsDto {
+pub(crate) struct PoolsDto {
     pub ts: u64,
     pub pools: Vec<PoolDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct PoolDto {
+pub(crate) struct PoolDto {
     /// Stable identifier `<user>@<database>`.
     pub id: String,
     pub user: String,
@@ -85,7 +85,7 @@ pub struct PoolDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ClientsDto {
+pub(crate) struct ClientsDto {
     pub ts: u64,
     pub total: u64,
     pub limit: u64,
@@ -94,7 +94,7 @@ pub struct ClientsDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ClientDto {
+pub(crate) struct ClientDto {
     pub client_id: String,
     pub database: String,
     pub user: String,
@@ -112,7 +112,7 @@ pub struct ClientDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ServersDto {
+pub(crate) struct ServersDto {
     pub ts: u64,
     pub total: u64,
     pub limit: u64,
@@ -121,7 +121,7 @@ pub struct ServersDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ServerDto {
+pub(crate) struct ServerDto {
     pub server_id: i32,
     pub process_id: i32,
     pub database: String,
@@ -145,7 +145,7 @@ pub struct ServerDto {
 // Filter structs are NOT serialized; they're internal request DTOs.
 
 #[derive(Debug, Default, Clone)]
-pub struct ClientFilters {
+pub(crate) struct ClientFilters {
     pub limit: u64,
     pub offset: u64,
     pub sort: ClientSort,
@@ -158,7 +158,7 @@ pub struct ClientFilters {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum ClientSort {
+pub(crate) enum ClientSort {
     #[default]
     QueriesTotal,
     ErrorsTotal,
@@ -167,14 +167,14 @@ pub enum ClientSort {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum SortOrder {
+pub(crate) enum SortOrder {
     Asc,
     #[default]
     Desc,
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct ServerFilters {
+pub(crate) struct ServerFilters {
     pub limit: u64,
     pub offset: u64,
     pub sort: ServerSort,
@@ -185,7 +185,7 @@ pub struct ServerFilters {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum ServerSort {
+pub(crate) enum ServerSort {
     #[default]
     AgeSeconds,
     QueriesTotal,
@@ -199,7 +199,7 @@ pub enum ServerSort {
 /// existing `SHOW CONNECTIONS` admin output exactly. Operators reading the
 /// REST API see the same values they saw via the admin protocol.
 #[derive(Debug, Serialize)]
-pub struct ConnectionsDto {
+pub(crate) struct ConnectionsDto {
     pub ts: u64,
     pub total: u64,
     pub tls: u64,
@@ -214,13 +214,13 @@ pub struct ConnectionsDto {
 /// `*_query_time`, `*_wait_time`) are microseconds, matching the units stored
 /// in `PoolStats`. Frontend converts to milliseconds for display.
 #[derive(Debug, Serialize)]
-pub struct StatsDto {
+pub(crate) struct StatsDto {
     pub ts: u64,
     pub stats: Vec<StatsRowDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct StatsRowDto {
+pub(crate) struct StatsRowDto {
     /// Stable identifier `<user>@<database>`, matches `PoolDto.id`.
     pub id: String,
     pub database: String,
@@ -246,13 +246,13 @@ pub struct StatsRowDto {
 /// `GET /api/databases` — configured database/pool entries.
 /// Field names mirror `SHOW DATABASES` columns.
 #[derive(Debug, Serialize)]
-pub struct DatabasesDto {
+pub(crate) struct DatabasesDto {
     pub ts: u64,
     pub databases: Vec<DatabaseDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct DatabaseDto {
+pub(crate) struct DatabaseDto {
     pub name: String,
     pub host: String,
     pub port: u16,
@@ -277,13 +277,13 @@ pub struct DatabaseDto {
 /// `SHOW USERS`: same user appearing in multiple databases yields multiple
 /// rows (the admin command did not deduplicate).
 #[derive(Debug, Serialize)]
-pub struct UsersDto {
+pub(crate) struct UsersDto {
     pub ts: u64,
     pub users: Vec<UserDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct UserDto {
+pub(crate) struct UserDto {
     pub name: String,
     pub pool_mode: String,
 }
@@ -297,13 +297,13 @@ pub struct UserDto {
 /// `From<&Config> for HashMap<String, String>`); when that conversion is
 /// later extended the masker will pick up the new keys automatically.
 #[derive(Debug, Serialize)]
-pub struct ConfigDto {
+pub(crate) struct ConfigDto {
     pub ts: u64,
     pub config: Vec<ConfigEntry>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ConfigEntry {
+pub(crate) struct ConfigEntry {
     pub key: String,
     pub value: String,
     /// Marker text used by `SHOW CONFIG` for the default-value column.
@@ -316,7 +316,7 @@ pub struct ConfigEntry {
 
 /// `GET /api/log_level` — the active log filter (RUST_LOG-style).
 #[derive(Debug, Serialize)]
-pub struct LogLevelDto {
+pub(crate) struct LogLevelDto {
     pub ts: u64,
     pub log_level: String,
 }
@@ -324,13 +324,13 @@ pub struct LogLevelDto {
 /// `GET /api/auth_query` — per-pool auth_query cache and authentication
 /// metrics. Field names mirror `SHOW AUTH_QUERY` columns.
 #[derive(Debug, Serialize)]
-pub struct AuthQueryDto {
+pub(crate) struct AuthQueryDto {
     pub ts: u64,
     pub pools: Vec<AuthQueryRowDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct AuthQueryRowDto {
+pub(crate) struct AuthQueryRowDto {
     pub database: String,
     pub cache_entries: u64,
     pub cache_hits: u64,
@@ -349,13 +349,13 @@ pub struct AuthQueryRowDto {
 /// `GET /api/pool_scaling` — per-pool counters for the anticipation and
 /// bounded-burst create paths. Field names mirror `SHOW POOL_SCALING`.
 #[derive(Debug, Serialize)]
-pub struct PoolScalingDto {
+pub(crate) struct PoolScalingDto {
     pub ts: u64,
     pub pools: Vec<PoolScalingRowDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct PoolScalingRowDto {
+pub(crate) struct PoolScalingRowDto {
     pub user: String,
     pub database: String,
     pub inflight: u64,
@@ -371,13 +371,13 @@ pub struct PoolScalingRowDto {
 /// `GET /api/pool_coordinator` — per-database limits and reserve-pool counters.
 /// Field names mirror `SHOW POOL_COORDINATOR`.
 #[derive(Debug, Serialize)]
-pub struct PoolCoordinatorDto {
+pub(crate) struct PoolCoordinatorDto {
     pub ts: u64,
     pub databases: Vec<PoolCoordinatorRowDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct PoolCoordinatorRowDto {
+pub(crate) struct PoolCoordinatorRowDto {
     pub database: String,
     pub max_db_conn: u64,
     pub current: u64,
@@ -392,7 +392,7 @@ pub struct PoolCoordinatorRowDto {
 /// Field names mirror the backend `SocketStateCount` and (transitively)
 /// the columns of `SHOW SOCKETS`.
 #[derive(Debug, Serialize)]
-pub struct SocketsDto {
+pub(crate) struct SocketsDto {
     pub ts: u64,
     pub tcp: TcpCounts,
     pub tcp6: TcpCounts,
@@ -403,7 +403,7 @@ pub struct SocketsDto {
 }
 
 #[derive(Debug, Serialize, Default)]
-pub struct TcpCounts {
+pub(crate) struct TcpCounts {
     pub established: u64,
     pub syn_sent: u64,
     pub syn_recv: u64,
@@ -420,7 +420,7 @@ pub struct TcpCounts {
 }
 
 #[derive(Debug, Serialize, Default)]
-pub struct UnixStreamCounts {
+pub(crate) struct UnixStreamCounts {
     pub free: u64,
     pub unconnected: u64,
     pub connecting: u64,
@@ -434,13 +434,13 @@ pub struct UnixStreamCounts {
 /// avoid leaking SQL bodies to anonymous Web UI viewers; the admin-only
 /// `/api/prepared/text/{hash}` endpoint returns the text on demand.
 #[derive(Debug, Serialize)]
-pub struct PreparedDto {
+pub(crate) struct PreparedDto {
     pub ts: u64,
     pub prepared: Vec<PreparedRowDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct PreparedRowDto {
+pub(crate) struct PreparedRowDto {
     /// Pool identifier in the form rendered by `PoolIdentifier::Display`.
     pub pool: String,
     /// 64-bit FxHash, formatted as decimal to mirror SHOW PREPARED STATEMENTS.
@@ -460,14 +460,14 @@ pub struct PreparedRowDto {
 /// `GET /api/interner` — global query interner aggregate.
 /// Public; no SQL preview.
 #[derive(Debug, Serialize)]
-pub struct InternerDto {
+pub(crate) struct InternerDto {
     pub ts: u64,
     pub named: InternerKindDto,
     pub anonymous: InternerKindDto,
 }
 
 #[derive(Debug, Serialize)]
-pub struct InternerKindDto {
+pub(crate) struct InternerKindDto {
     pub entries: u64,
     pub bytes: u64,
 }
@@ -475,7 +475,7 @@ pub struct InternerKindDto {
 /// `GET /api/interner/top?n=N` — admin-only Top-N interner entries by
 /// interned-text byte length, with a 120-character SQL preview.
 #[derive(Debug, Serialize)]
-pub struct InternerTopDto {
+pub(crate) struct InternerTopDto {
     pub ts: u64,
     /// The clamped value of `n` actually used (1..=MAX).
     pub n: u64,
@@ -483,7 +483,7 @@ pub struct InternerTopDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct InternerTopRowDto {
+pub(crate) struct InternerTopRowDto {
     /// `0x<hex>` form of the FxHash, matching SHOW INTERNER TOP.
     pub hash: String,
     /// `"named"` or `"anonymous"`.
@@ -499,7 +499,7 @@ pub struct InternerTopRowDto {
 
 /// `GET /api/top/clients` — Top-N clients by qps / errors / age.
 #[derive(Debug, Serialize)]
-pub struct TopClientsDto {
+pub(crate) struct TopClientsDto {
     pub ts: u64,
     /// The sort dimension actually used: `"qps"`, `"errors"`, `"age"`.
     pub by: String,
@@ -509,7 +509,7 @@ pub struct TopClientsDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct TopClientRowDto {
+pub(crate) struct TopClientRowDto {
     /// `"#cN"` form — matches `ClientDto.client_id`.
     pub client_id: String,
     pub application_name: String,
@@ -526,7 +526,7 @@ pub struct TopClientRowDto {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum TopClientBy {
+pub(crate) enum TopClientBy {
     #[default]
     Qps,
     Errors,
@@ -544,7 +544,7 @@ impl TopClientBy {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct TopClientFilters {
+pub(crate) struct TopClientFilters {
     pub by: TopClientBy,
     pub n: u64,
     pub pool: Option<String>,
@@ -552,13 +552,13 @@ pub struct TopClientFilters {
 
 /// `GET /api/apps` — per-application_name aggregate of client counters.
 #[derive(Debug, Serialize)]
-pub struct AppsDto {
+pub(crate) struct AppsDto {
     pub ts: u64,
     pub apps: Vec<AppRowDto>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct AppRowDto {
+pub(crate) struct AppRowDto {
     pub application_name: String,
     /// Number of currently-connected clients reporting this application_name.
     pub clients: u64,
@@ -569,7 +569,7 @@ pub struct AppRowDto {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum AppSort {
+pub(crate) enum AppSort {
     #[default]
     Clients,
     Queries,
@@ -578,7 +578,8 @@ pub enum AppSort {
 }
 
 impl AppSort {
-    pub fn as_str(self) -> &'static str {
+    #[allow(dead_code)]
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             AppSort::Clients => "clients",
             AppSort::Queries => "queries",
@@ -589,7 +590,7 @@ impl AppSort {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct AppFilters {
+pub(crate) struct AppFilters {
     pub sort: AppSort,
     pub order: SortOrder,
 }
@@ -598,7 +599,7 @@ pub struct AppFilters {
 /// average duration. See plan for accuracy notes (Bind-counted, batch-
 /// level duration attribution).
 #[derive(Debug, Serialize)]
-pub struct TopQueriesDto {
+pub(crate) struct TopQueriesDto {
     pub ts: u64,
     pub by: String,
     pub n: u64,
@@ -606,7 +607,7 @@ pub struct TopQueriesDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct TopQueryRowDto {
+pub(crate) struct TopQueryRowDto {
     /// `0x<hex>` form of the FxHash, matching `/api/interner/top`.
     pub hash: String,
     /// `"named"` or `"anonymous"`.
@@ -621,7 +622,7 @@ pub struct TopQueryRowDto {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum TopQueryBy {
+pub(crate) enum TopQueryBy {
     #[default]
     Count,
     Duration,
@@ -637,7 +638,7 @@ impl TopQueryBy {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct TopQueryFilters {
+pub(crate) struct TopQueryFilters {
     pub by: TopQueryBy,
     pub n: u64,
 }
@@ -646,7 +647,7 @@ pub struct TopQueryFilters {
 /// for vertical-line annotations on the Overview graphs. Bounded ring
 /// buffer; oldest events drop silently when full.
 #[derive(Debug, Serialize)]
-pub struct EventsDto {
+pub(crate) struct EventsDto {
     pub ts: u64,
     /// Sequence number to poll with on the next request to receive only
     /// events newer than this batch. Equal to `since` when nothing new.
@@ -655,7 +656,7 @@ pub struct EventsDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct EventEntryDto {
+pub(crate) struct EventEntryDto {
     pub seq: u64,
     pub ts_ms: u64,
     /// One of `"RELOAD"`, `"PAUSE"`, `"RESUME"`, `"RECONNECT"`.
@@ -666,7 +667,7 @@ pub struct EventEntryDto {
 /// `GET /api/prepared/text/{hash}` — admin-only body of a single prepared
 /// statement. Returns 404 when the hash is not present in any pool's cache.
 #[derive(Debug, Serialize)]
-pub struct PreparedTextDto {
+pub(crate) struct PreparedTextDto {
     pub ts: u64,
     pub hash: String,
     pub pool: String,
@@ -679,7 +680,7 @@ pub struct PreparedTextDto {
 /// across all pools, sorted by cumulative hit or miss count. Public; no SQL
 /// preview — for the body use admin-only `/api/prepared/text/{hash}`.
 #[derive(Debug, Serialize)]
-pub struct TopPreparedDto {
+pub(crate) struct TopPreparedDto {
     pub ts: u64,
     pub by: String,
     pub n: u64,
@@ -687,7 +688,7 @@ pub struct TopPreparedDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct TopPreparedRowDto {
+pub(crate) struct TopPreparedRowDto {
     pub pool: String,
     pub hash: String,
     pub name: String,
@@ -698,7 +699,7 @@ pub struct TopPreparedRowDto {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub enum TopPreparedBy {
+pub(crate) enum TopPreparedBy {
     #[default]
     Hits,
     Misses,
@@ -714,7 +715,7 @@ impl TopPreparedBy {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct TopPreparedFilters {
+pub(crate) struct TopPreparedFilters {
     pub by: TopPreparedBy,
     pub n: u64,
 }
@@ -722,7 +723,7 @@ pub struct TopPreparedFilters {
 /// `GET /api/logs?since=&max=&level=&target=` — admin-only live tail
 /// over the in-memory LogTap ring (spec section 8.6 + 9).
 #[derive(Debug, Serialize)]
-pub struct LogsDto {
+pub(crate) struct LogsDto {
     pub ts: u64,
     pub tap_active: bool,
     pub tap_capacity_entries: u64,
@@ -740,7 +741,7 @@ pub struct LogsDto {
 }
 
 #[derive(Debug, Serialize)]
-pub struct LogEntryDto {
+pub(crate) struct LogEntryDto {
     pub seq: u64,
     pub ts_ms: u64,
     pub level: String,

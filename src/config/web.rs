@@ -51,11 +51,14 @@ impl Web {
         false
     }
 
-    /// Public read-only routes accessible without auth, matching the existing /metrics default.
-    /// When the operator opts into the UI (`ui = true`), default visibility mirrors /metrics;
-    /// admin-only routes (logs, prepared bodies, interner top) always require basic-auth regardless.
+    /// Public read-only routes accessible without auth. Defaults to `false` —
+    /// `/api/clients` exposes per-client peer addresses and application names,
+    /// `/api/top/queries` exposes statement text, and other endpoints leak
+    /// pool topology that is more sensitive than the aggregate `/metrics`
+    /// counters. The operator who wants public read-only access flips this
+    /// flag deliberately.
     pub fn default_ui_anonymous() -> bool {
-        true
+        false
     }
 
     /// Capacity of in-memory log ring buffer (entries, not bytes). 8192 ≈ 1.5–2 minutes of history

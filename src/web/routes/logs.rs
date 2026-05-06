@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 use log::Level;
 
 use crate::config::get_config;
-use crate::web::log_tap::{enable_log_tap, log_tap, now_monotonic_ms, TapCommand};
+use crate::web::log_tap::{enable_log_tap, log_tap, now_monotonic_ms};
 use crate::web::routes::collect::now_unix_ms;
 use crate::web::routes::dto::{LogEntryDto, LogsDto};
 use crate::web::routes::query::{first, parse_u64};
@@ -53,27 +53,10 @@ pub(crate) async fn handle_logs(query: &BTreeMap<String, Vec<String>>) -> Respon
     tap.last_request_at
         .store(now_monotonic_ms(), Ordering::Relaxed);
 
-    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    if tap
-        .cmd_tx
-        .send(TapCommand::Drain {
-            since,
-            max: max_n,
-            level,
-            target,
-            reply: reply_tx,
-        })
-        .await
-        .is_err()
-    {
-        // Consumer task is gone — leave a trace so a dead tap is not silent.
-        log::warn!("LogTap drain failed: command channel closed");
-        return empty_response(cap);
-    }
-    let drain = match reply_rx.await {
+    let drain = match tap.drain(since, max_n, level, target).await {
         Ok(d) => d,
         Err(_) => {
-            log::warn!("LogTap drain failed: consumer dropped reply channel");
+            log::warn!("LogTap drain failed: consumer task gone");
             return empty_response(cap);
         }
     };

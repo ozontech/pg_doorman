@@ -67,16 +67,43 @@ pub struct DrainResult {
 }
 
 pub struct LogTap {
-    pub tap_active: Arc<AtomicBool>,
-    #[allow(private_interfaces)]
-    pub tx: mpsc::Sender<RawEntry>,
-    pub dropped_total: Arc<AtomicU64>,
-    pub cmd_tx: mpsc::Sender<TapCommand>,
-    pub last_request_at: Arc<AtomicU64>,
+    tx: mpsc::Sender<RawEntry>,
+    pub(crate) dropped_total: Arc<AtomicU64>,
+    cmd_tx: mpsc::Sender<TapCommand>,
+    pub(crate) last_request_at: Arc<AtomicU64>,
 }
 
-/// Module-level statics — single global LogTap.
-pub(crate) static TAP_ACTIVE: AtomicBool = AtomicBool::new(false);
+impl LogTap {
+    /// Sends a Drain command to the consumer task and waits for the reply.
+    /// Returns `Err` only when the consumer is gone — handlers turn that
+    /// into a 200-with-empty-envelope so the operator's poll loop survives
+    /// a momentary lapse.
+    pub(crate) async fn drain(
+        &self,
+        since: u64,
+        max: usize,
+        level: Option<Level>,
+        target: Option<String>,
+    ) -> Result<DrainResult, ()> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(TapCommand::Drain {
+                since,
+                max,
+                level,
+                target,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ())?;
+        reply_rx.await.map_err(|_| ())
+    }
+}
+
+/// Module-level statics — single global LogTap. The gate is private to
+/// this module so callers cannot toggle it without going through
+/// `enable_log_tap` / `disable_log_tap` and desyncing it from `LOG_TAP`.
+static TAP_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LOG_TAP: Lazy<ArcSwap<Option<Arc<LogTap>>>> = Lazy::new(|| ArcSwap::from_pointee(None));
 static LIFECYCLE: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -260,7 +287,6 @@ pub fn enable_log_tap(max_entries: usize) -> Arc<LogTap> {
 
     let dropped_total = Arc::new(AtomicU64::new(0));
     let last_request_at = Arc::new(AtomicU64::new(now_monotonic_ms()));
-    let tap_active = Arc::new(AtomicBool::new(true));
     // Floor of 64 keeps the channel from collapsing if config sets
     // log_tap_max_entries near zero.
     let max = max_entries.max(64);
@@ -275,7 +301,6 @@ pub fn enable_log_tap(max_entries: usize) -> Arc<LogTap> {
     });
 
     let arc = Arc::new(LogTap {
-        tap_active: tap_active.clone(),
         tx,
         dropped_total,
         cmd_tx,

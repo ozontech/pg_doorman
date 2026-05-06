@@ -1907,7 +1907,7 @@ pool_size = 5
     assert_eq!(cfg.web.port, 9128);
     // New-field defaults are preserved when the legacy [prometheus] alias is used.
     assert!(!cfg.web.ui);
-    assert!(cfg.web.ui_anonymous);
+    assert!(!cfg.web.ui_anonymous);
     assert_eq!(cfg.web.log_tap_max_entries, 8192);
 }
 
@@ -1981,6 +1981,6 @@ pool_size = 5
     assert_eq!(cfg.web.host, "0.0.0.0");
     assert_eq!(cfg.web.port, 9127);
     assert!(!cfg.web.ui);
-    assert!(cfg.web.ui_anonymous);
+    assert!(!cfg.web.ui_anonymous);
     assert_eq!(cfg.web.log_tap_max_entries, 8192);
 }
