@@ -37,8 +37,8 @@ pool_size = 10
 # client pinned to its own backend for the lifetime of the session, so
 # pool_size = concurrent client count.
 [[pools.app_db.users]]
-username = "session_user"
-password = "md5cd9e540cc88befe2fc88bb0259ddbe42"
+username = "app_session"
+password = "md5ca9e0f8ef284b8b27348eee420aae511"
 pool_size = 5
 pool_mode = "session"
 
