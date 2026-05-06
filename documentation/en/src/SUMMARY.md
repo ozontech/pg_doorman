@@ -24,6 +24,7 @@
 # TLS
 
 - [Client and Server TLS](guides/tls.md)
+- [Web UI](guides/web-ui.md)
 
 # Pooling
 

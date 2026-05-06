@@ -24,6 +24,7 @@
 # TLS
 
 - [Клиентский и серверный TLS](guides/tls.md)
+- [Web UI](guides/web-ui.md)
 
 # Пулинг
 
