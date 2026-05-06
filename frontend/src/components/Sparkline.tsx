@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import uPlot, { type Options } from "uplot";
 import "uplot/dist/uPlot.min.css";
 
+export interface ChartEvent {
+  /// Unix timestamp in seconds (uPlot convention). Frontend converts ms → s.
+  ts: number;
+  /// Short label drawn near the line (e.g. "RELOAD"). Optional.
+  label?: string;
+}
+
 interface SparklineProps {
   label: string;
   valueText: string;
@@ -10,6 +17,7 @@ interface SparklineProps {
   crit?: number;
   logY?: boolean;
   syncKey?: string;
+  events?: ChartEvent[];
 }
 
 const HEIGHT_PX = 64;
@@ -30,6 +38,7 @@ export function Sparkline({
   crit,
   logY,
   syncKey,
+  events,
 }: SparklineProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -74,11 +83,29 @@ export function Sparkline({
             };
             if (warn !== undefined) drawLine(warn, WARN_STROKE);
             if (crit !== undefined) drawLine(crit, CRIT_STROKE);
+            // Event annotations: thin amber vertical line per /api/events
+            // entry inside the visible window.
+            if (events && events.length > 0) {
+              ctx.save();
+              ctx.strokeStyle = "rgb(255 176 0 / 0.55)";
+              ctx.setLineDash([]);
+              ctx.lineWidth = 1;
+              for (const ev of events) {
+                const xPx = u.valToPos(ev.ts, "x", true);
+                if (!Number.isFinite(xPx)) continue;
+                if (xPx < u.bbox.left || xPx > u.bbox.left + u.bbox.width) continue;
+                ctx.beginPath();
+                ctx.moveTo(xPx, u.bbox.top);
+                ctx.lineTo(xPx, u.bbox.top + u.bbox.height);
+                ctx.stroke();
+              }
+              ctx.restore();
+            }
           },
         ],
       },
     }),
-    [width, warn, crit, logY, syncKey],
+    [width, warn, crit, logY, syncKey, events],
   );
 
   // Create plot only after width is known.

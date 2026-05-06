@@ -81,6 +81,20 @@ export interface PoolsDto {
 
 export type Severity = "ok" | "degraded" | "critical";
 
+export interface EventEntryDto {
+  seq: number;
+  ts_ms: number;
+  // RELOAD, PAUSE, RESUME, RECONNECT (admin commands).
+  target: string;
+  message: string;
+}
+
+export interface EventsDto {
+  ts: number;
+  next_seq: number;
+  events: EventEntryDto[];
+}
+
 export interface AppRowDto {
   application_name: string;
   clients: number;

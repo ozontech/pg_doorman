@@ -17,8 +17,10 @@ import {
   type PoolHistory,
   type PoolHistoryPoint,
 } from "../lib/thresholds";
+import type { ChartEvent } from "../components/Sparkline";
 import type {
   AuthQueryDto,
+  EventsDto,
   InternerDto,
   OverviewDto,
   PoolCoordinatorDto,
@@ -99,6 +101,17 @@ export default function Overview() {
     (signal) => apiGet<ProcessDto>("/api/process", authHeader, signal),
     3000,
   );
+  // Admin event ring (RELOAD/PAUSE/RESUME/RECONNECT) — paint vertical
+  // annotation lines on every chart so a metric spike correlates with the
+  // operator action that caused it.
+  const eventsPoll = usePoll<EventsDto>(
+    (signal) => apiGet<EventsDto>("/api/events", authHeader, signal),
+    3000,
+  );
+  const chartEvents: ChartEvent[] = useMemo(() => {
+    const list = eventsPoll.data?.events ?? [];
+    return list.map((e) => ({ ts: e.ts_ms / 1000, label: e.target }));
+  }, [eventsPoll.data]);
 
   const rawHistory = useHistory<RawTotals>(`${HISTORY_KEY}.raw`);
   const sampleHistory = useHistory<OverviewSamplePoint>(HISTORY_KEY);
@@ -374,12 +387,14 @@ export default function Overview() {
               crit={500}
               logY
               syncKey="overview"
+              events={chartEvents}
             />
             <Sparkline
               label="Traffic"
               valueText={`${fmtRate(latest?.qps, "q/s")} · ${fmtRate(latest?.tps, "t/s")}`}
               series={sigSeries((s) => s.qps)}
               syncKey="overview"
+              events={chartEvents}
             />
             <Sparkline
               label="Errors / s"
@@ -388,6 +403,7 @@ export default function Overview() {
               warn={1}
               crit={10}
               syncKey="overview"
+              events={chartEvents}
             />
             <Sparkline
               label="Saturation max"
@@ -396,6 +412,7 @@ export default function Overview() {
               warn={70}
               crit={90}
               syncKey="overview"
+              events={chartEvents}
             />
           </div>
         </Card>
