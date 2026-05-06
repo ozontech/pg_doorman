@@ -42,9 +42,7 @@ pub(crate) async fn handle_admin_action(raw_path: &str) -> Response {
         _ => Response::json(
             404,
             "Not Found",
-            &format!(
-                r#"{{"error":"unknown_action","message":"unknown admin action: {action}"}}"#
-            ),
+            &format!(r#"{{"error":"unknown_action","message":"unknown admin action: {action}"}}"#),
         ),
     }
 }

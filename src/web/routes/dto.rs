@@ -279,6 +279,78 @@ pub(crate) struct ProcessThreadDto {
     pub cpu_system_us: u64,
 }
 
+/// `GET /api/process/memory` — memory breakdown for the RSS panel.
+/// Linux fills every field; macOS / others return what they can and
+/// leave Linux-only fields `None`.
+#[derive(Debug, Serialize)]
+pub(crate) struct MemoryBreakdownDto {
+    pub ts: u64,
+    pub rss_bytes: u64,
+    /// Fields harvested from `/proc/self/status` in one pass. `None` on
+    /// non-Linux.
+    pub vm_peak_bytes: Option<u64>,
+    pub vm_hwm_bytes: Option<u64>,
+    pub vm_data_bytes: Option<u64>,
+    pub vm_stack_bytes: Option<u64>,
+    pub vm_exe_bytes: Option<u64>,
+    pub vm_lib_bytes: Option<u64>,
+    pub vm_pte_bytes: Option<u64>,
+    pub vm_swap_bytes: Option<u64>,
+    pub rss_anon_bytes: Option<u64>,
+    pub rss_file_bytes: Option<u64>,
+    pub rss_shmem_bytes: Option<u64>,
+    /// jemalloc accounting (the global allocator pg_doorman links).
+    /// `None` only if the ctl call failed (should never happen at runtime).
+    pub jemalloc: Option<JemallocStatsDto>,
+    /// Container memory limits and current usage. `None` on non-Linux or
+    /// when the cgroup files are not readable (chroot, custom mounts).
+    pub cgroup: Option<CgroupMemoryDto>,
+    /// pg_doorman-internal accountable bytes — the SQL interner cache and
+    /// the prepared-statement cache. Operators look here first when RSS
+    /// climbs.
+    pub interner_named_bytes: u64,
+    pub interner_anonymous_bytes: u64,
+    /// Operator-facing rollup categories. Each maps to a `MemoryCategoryDto`
+    /// with a stable `key` so the frontend can paint a stacked bar without
+    /// hard-coding category names.
+    pub categories: Vec<MemoryCategoryDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct JemallocStatsDto {
+    pub allocated_bytes: u64,
+    pub active_bytes: u64,
+    pub resident_bytes: u64,
+    pub mapped_bytes: u64,
+    pub retained_bytes: u64,
+    pub metadata_bytes: u64,
+    /// `resident − allocated`. Pages jemalloc holds but is not currently
+    /// using; reclaimable on demand.
+    pub fragmentation_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CgroupMemoryDto {
+    /// 1 for cgroup v1, 2 for cgroup v2 unified hierarchy.
+    pub version: u8,
+    pub current_bytes: u64,
+    /// On cgroup v2: `memory.peak` (kernels ≥ 5.19); `None` otherwise.
+    /// On cgroup v1: historical maximum from `memory.max_usage_in_bytes`.
+    pub peak_bytes: Option<u64>,
+    /// `None` when the limit is "max" (uncapped).
+    pub max_bytes: Option<u64>,
+    /// `None` on cgroup v1.
+    pub high_bytes: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MemoryCategoryDto {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub bytes: u64,
+    pub explain: &'static str,
+}
+
 /// `GET /api/connections` — cumulative connection counters.
 ///
 /// `errors` is derived as `total - tls - plain - cancel` to mirror the

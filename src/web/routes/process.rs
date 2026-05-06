@@ -6,10 +6,17 @@
 
 use crate::web::server::Response;
 
-use super::collect::collect_process;
+use super::collect::{collect_memory_breakdown, collect_process};
 
 pub(crate) fn handle_process() -> Response {
     Response::ok_json(&collect_process())
+}
+
+/// `GET /api/process/memory` — drill-down for the RSS panel. Heavier than
+/// `/api/process` (jemalloc epoch advance, full /proc/self/status parse,
+/// cgroup files) so it lives behind a separate route.
+pub(crate) fn handle_process_memory() -> Response {
+    Response::ok_json(&collect_memory_breakdown())
 }
 
 #[cfg(test)]
@@ -34,5 +41,4 @@ mod tests {
             assert!(body.contains(field), "missing {field} in {body}");
         }
     }
-
 }

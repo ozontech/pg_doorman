@@ -23,10 +23,7 @@ pub(crate) fn collect_pools() -> PoolsDto {
         // been touched yet — `with_label_values` will lazily create the
         // metric. That is acceptable: the pool is real, the counter is just
         // empty, and downstream consumers see `0` instead of a missing key.
-        let fallback_active = FALLBACK_ACTIVE
-            .with_label_values(&[pool_id.as_str()])
-            .get()
-            > 0.5;
+        let fallback_active = FALLBACK_ACTIVE.with_label_values(&[pool_id.as_str()]).get() > 0.5;
         let tls_handshake_errors_total = SHOW_SERVER_TLS_HANDSHAKE_ERRORS
             .with_label_values(&[pool_id.as_str()])
             .get();

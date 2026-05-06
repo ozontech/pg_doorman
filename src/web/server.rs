@@ -151,10 +151,7 @@ async fn handle_connection(stream: TcpStream, opts: WebServerOptions) {
     // POST /api/admin/{action} needs an async handler because reload_now()
     // is async (it reloads the config and reconciles pools). Pre-screen
     // ui_active and admin auth in the same shape as /api/logs.
-    if opts.ui_active
-        && parsed.method == "POST"
-        && parsed.path.starts_with("/api/admin/")
-    {
+    if opts.ui_active && parsed.method == "POST" && parsed.path.starts_with("/api/admin/") {
         if auth != AuthOutcome::Admin {
             let _ = unauthorized_for(&parsed).write(&mut writer).await;
             return;
@@ -428,6 +425,7 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
         "/api/pool_coordinator" => routes::pool_coordinator::handle_pool_coordinator(),
         "/api/pool_scaling" => routes::pool_scaling::handle_pool_scaling(),
         "/api/process" => routes::process::handle_process(),
+        "/api/process/memory" => routes::process::handle_process_memory(),
         "/api/sockets" => routes::sockets::handle_sockets(),
         "/api/prepared" => routes::prepared::handle_prepared(),
         "/api/interner" => routes::interner::handle_interner(),
@@ -446,8 +444,7 @@ fn route_api(req: &ParsedRequest<'_>) -> Response {
 }
 
 fn dispatch(req: &ParsedRequest<'_>, opts: &WebServerOptions, auth: AuthOutcome) -> Response {
-    let is_admin_post =
-        req.method == "POST" && req.path.starts_with("/api/admin/");
+    let is_admin_post = req.method == "POST" && req.path.starts_with("/api/admin/");
     if req.method != "GET" && req.method != "HEAD" && !is_admin_post {
         return Response::status(405, "Method Not Allowed");
     }
@@ -526,7 +523,7 @@ mod tests {
         assert_eq!(p.method, "GET");
         assert_eq!(p.path, "/api/foo");
         assert_eq!(p.authorization, None);
-        assert_eq!(p.accepts_gzip, false);
+        assert!(!p.accepts_gzip);
     }
 
     #[test]
@@ -534,7 +531,7 @@ mod tests {
         let raw = "GET /api/foo HTTP/1.1\r\nHost: x\r\nAuthorization: Basic abc\r\n\r\n";
         let p = ParsedRequest::parse(raw).unwrap();
         assert_eq!(p.authorization, Some("Basic abc"));
-        assert_eq!(p.accepts_gzip, false);
+        assert!(!p.accepts_gzip);
     }
 
     #[test]
@@ -542,7 +539,7 @@ mod tests {
         let raw = "GET /api/foo HTTP/1.1\r\nHost: x\r\nauthorization: Basic abc\r\n\r\n";
         let p = ParsedRequest::parse(raw).unwrap();
         assert_eq!(p.authorization, Some("Basic abc"));
-        assert_eq!(p.accepts_gzip, false);
+        assert!(!p.accepts_gzip);
     }
 
     #[test]
@@ -716,7 +713,11 @@ mod tests {
         // basic-auth prompt on top of the React `AuthGate`. The SPA shell is
         // anonymous regardless of `ui_anonymous`; only `/api/*` is gated.
         for path in ["/", "/overview", "/pools/some-pool"] {
-            let r = dispatch(&req("GET", path), &opts(true, false), AuthOutcome::Anonymous);
+            let r = dispatch(
+                &req("GET", path),
+                &opts(true, false),
+                AuthOutcome::Anonymous,
+            );
             assert_eq!(
                 r.status, 200,
                 "anonymous SPA shell should serve {path} with ui_anonymous=false"

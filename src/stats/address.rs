@@ -42,7 +42,9 @@ const HISTOGRAM_MAX_VALUE_US: u64 = 10 * 60 * 1_000_000;
 /// Bounding the breakdown map's key shape stops adversarial backends from
 /// inflating it with arbitrary `ErrorResponse.code` payloads.
 fn is_valid_sqlstate(s: &str) -> bool {
-    s.len() == 5 && s.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    s.len() == 5
+        && s.bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
 /// Number of significant digits for HDR histogram precision (3 = 0.1% error)

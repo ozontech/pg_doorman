@@ -108,6 +108,52 @@ export interface AppsDto {
   apps: AppRowDto[];
 }
 
+export interface JemallocStatsDto {
+  allocated_bytes: number;
+  active_bytes: number;
+  resident_bytes: number;
+  mapped_bytes: number;
+  retained_bytes: number;
+  metadata_bytes: number;
+  fragmentation_bytes: number;
+}
+
+export interface CgroupMemoryDto {
+  version: number;
+  current_bytes: number;
+  peak_bytes: number | null;
+  max_bytes: number | null;
+  high_bytes: number | null;
+}
+
+export interface MemoryCategoryDto {
+  key: string;
+  label: string;
+  bytes: number;
+  explain: string;
+}
+
+export interface MemoryBreakdownDto {
+  ts: number;
+  rss_bytes: number;
+  vm_peak_bytes: number | null;
+  vm_hwm_bytes: number | null;
+  vm_data_bytes: number | null;
+  vm_stack_bytes: number | null;
+  vm_exe_bytes: number | null;
+  vm_lib_bytes: number | null;
+  vm_pte_bytes: number | null;
+  vm_swap_bytes: number | null;
+  rss_anon_bytes: number | null;
+  rss_file_bytes: number | null;
+  rss_shmem_bytes: number | null;
+  jemalloc: JemallocStatsDto | null;
+  cgroup: CgroupMemoryDto | null;
+  interner_named_bytes: number;
+  interner_anonymous_bytes: number;
+  categories: MemoryCategoryDto[];
+}
+
 export interface ProcessThreadDto {
   tid: number;
   name: string;

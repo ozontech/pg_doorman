@@ -7,6 +7,7 @@ import { DualAxisChart } from "../components/DualAxisChart";
 import { HealthPill } from "../components/HealthPill";
 import { Heatmap } from "../components/Heatmap";
 import { PageHero } from "../components/PageHero";
+import { MemoryPanel } from "../components/MemoryPanel";
 import { PanelView, type PanelKind } from "../components/PanelView";
 import { SectionHeader } from "../components/SectionHeader";
 import { Sparkline } from "../components/Sparkline";
@@ -605,7 +606,8 @@ export default function Overview() {
         </Collapsible>
       </div>
 
-      {openPanel && (
+      {openPanel === "rss" && <MemoryPanel open onClose={closePanel} />}
+      {openPanel && openPanel !== "rss" && (
         <PanelView
           {...panelDescriptor(
             openPanel,
