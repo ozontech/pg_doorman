@@ -5,6 +5,8 @@ import { Collapsible } from "../components/Collapsible";
 import { DualAxisChart } from "../components/DualAxisChart";
 import { HealthPill } from "../components/HealthPill";
 import { Heatmap } from "../components/Heatmap";
+import { PageHero } from "../components/PageHero";
+import { SectionHeader } from "../components/SectionHeader";
 import { Sparkline } from "../components/Sparkline";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { useHistory } from "../hooks/useHistory";
@@ -263,8 +265,24 @@ export default function Overview() {
 
   return (
     <div className="flex flex-col">
+      <PageHero
+        title="Overview"
+        description="Aggregate health, traffic, and saturation across every pool. Polls /api/overview and /api/pools every 1.5 s; threshold rules from src/lib/thresholds.ts paint each cell."
+      />
+      <SectionHeader
+        title="Health summary"
+        what="Worst severity across all pools."
+        how="Recomputed on every 1.5 s sample."
+        normal="Green = ok; amber when any rule trips; red on saturated/sustained breaches."
+      />
       <HealthPill health={health} lastUpdated={overviewPoll.lastUpdated} />
-      <div className="grid grid-cols-4 border-b border-border">
+      <SectionHeader
+        title="Golden signals"
+        what="Latency P95, traffic, error rate, and worst saturation."
+        how="One sparkline per signal · 120 points × 1.5 s = 3 min."
+        normal="P95 < 100 ms · errors near 0 /s · saturation < 70 %."
+      />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <Sparkline
           label="Latency P95"
           valueText={fmtMs(latest?.query_p95_max_ms)}
@@ -281,7 +299,7 @@ export default function Overview() {
           syncKey="overview"
         />
         <Sparkline
-          label="Errors/s"
+          label="Errors / s"
           valueText={fmtRate(latest?.errors_per_s, "/s")}
           series={sigSeries((s) => s.errors_per_s)}
           warn={1}
@@ -297,56 +315,70 @@ export default function Overview() {
           syncKey="overview"
         />
       </div>
-      <section className="border-b border-border">
-        <div className="px-4 py-2 text-xs text-text-muted uppercase tracking-wide">
-          Connection breakdown — active / idle / waiting (last 3 min)
-        </div>
-        <AreaChart
-          data={connBreakdown}
-          labels={["active", "idle", "waiting"]}
-          fills={["rgb(45 194 107 / 0.5)", "rgb(138 147 164 / 0.4)", "rgb(245 165 36 / 0.5)"]}
-          syncKey="overview"
-        />
-      </section>
-      {heatmapRows.length > 0 && <Heatmap rows={heatmapRows} />}
-      <section className="border-b border-border">
-        <div className="px-4 py-2 text-xs text-text-muted uppercase tracking-wide">
-          Wait queue (left) vs oldest-active-age ms (right, log)
-        </div>
-        <DualAxisChart
-          data={[
-            seriesXs,
-            sampleHistory.history.map((s) => s.waiting_clients),
-            sampleHistory.history.map((s) => Math.max(1, s.oldest_active_age_max_ms)),
-          ]}
-          leftLabel="waiting"
-          rightLabel="oldest-active ms"
-          leftStroke="rgb(91 140 255)"
-          rightStroke="rgb(245 165 36)"
-          rightLogScale
-          rightWarn={30_000}
-          rightCrit={300_000}
-          syncKey="overview"
-        />
-      </section>
+      <SectionHeader
+        title="Connection breakdown"
+        what="Stacked clients in active / idle / waiting state."
+        how="Three series over the 3 min sample window. Interpretive — no thresholds."
+      />
+      <AreaChart
+        data={connBreakdown}
+        labels={["active", "idle", "waiting"]}
+        fills={["rgb(45 194 107 / 0.55)", "rgb(138 147 164 / 0.45)", "rgb(245 165 36 / 0.55)"]}
+        syncKey="overview"
+      />
+      {heatmapRows.length > 0 && (
+        <>
+          <SectionHeader
+            title="Pool fill heatmap"
+            what="One row per pool; each cell is a 1.5 s saturation sample (last 60)."
+            how="Cell color thresholds: green < 70 % · amber 70–89 % · red ≥ 90 %."
+            normal="A single red row while the rest stay green = one pool is burning."
+          />
+          <Heatmap rows={heatmapRows} />
+        </>
+      )}
+      <SectionHeader
+        title="Wait queue vs oldest active"
+        what="Left axis: clients currently waiting for a backend. Right axis (log ms): worst single in-flight query age across pools."
+        how="Both updated every 1.5 s; right-axis dashed lines mark the threshold engine's amber/red."
+        normal="Waiting near 0; oldest active < 30 s. Sustained > 5 min = stuck connection."
+      />
+      <DualAxisChart
+        data={[
+          seriesXs,
+          sampleHistory.history.map((s) => s.waiting_clients),
+          sampleHistory.history.map((s) => Math.max(1, s.oldest_active_age_max_ms)),
+        ]}
+        leftLabel="waiting"
+        rightLabel="oldest-active ms"
+        leftStroke="rgb(91 140 255)"
+        rightStroke="rgb(245 165 36)"
+        rightLogScale
+        rightWarn={30_000}
+        rightCrit={300_000}
+        syncKey="overview"
+      />
       {top5Errors.labels.length > 0 && (
-        <section className="border-b border-border">
-          <div className="px-4 py-2 text-xs text-text-muted uppercase tracking-wide">
-            Top {top5Errors.labels.length} pools by error rate (last 30 s)
-          </div>
+        <>
+          <SectionHeader
+            title="Top pools by error rate"
+            what={`The ${top5Errors.labels.length} pools with the highest errors-per-second over the last 30 s.`}
+            how="Stacked area; each band is one pool. Empty when no pool has produced errors recently."
+            normal="Bands hovering at 0 = no errors. Sustained > 1 / s on one band = investigate that pool."
+          />
           <AreaChart
             data={top5Errors.data}
             labels={top5Errors.labels}
             fills={[
-              "rgb(229 72 77 / 0.55)",
-              "rgb(245 165 36 / 0.55)",
-              "rgb(177 140 245 / 0.55)",
-              "rgb(91 140 255 / 0.5)",
-              "rgb(45 194 107 / 0.45)",
+              "rgb(229 72 77 / 0.6)",
+              "rgb(245 165 36 / 0.6)",
+              "rgb(177 140 245 / 0.6)",
+              "rgb(91 140 255 / 0.55)",
+              "rgb(45 194 107 / 0.5)",
             ]}
             syncKey="overview"
           />
-        </section>
+        </>
       )}
       <Collapsible id="overview-resource" title="Resource detail">
         <ResourceDetail sockets={socketsPoll.data} interner={internerPoll.data} />
@@ -354,6 +386,7 @@ export default function Overview() {
     </div>
   );
 }
+
 
 function ResourceDetail({
   sockets,

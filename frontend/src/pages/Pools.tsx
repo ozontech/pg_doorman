@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { apiGet } from "../api";
+import { PageHero } from "../components/PageHero";
+import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import { evaluatePool } from "../lib/thresholds";
@@ -106,7 +108,17 @@ export default function Pools() {
 
   return (
     <section className="flex flex-col">
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+      <PageHero
+        title="Pools"
+        description="Per-pool table backed by /api/pools polled at 1.5 s. Severity column applies the same threshold engine as the overview health pill."
+      />
+      <SectionHeader
+        title="Filter & sort"
+        what="Substring filter on pool id and an exact severity match."
+        how="Click any column header to sort; click again to flip the direction."
+        normal="Default sort is saturation descending — busiest pool floats up."
+      />
+      <div className="flex items-center gap-3 border-b border-border px-6 py-3">
         <input
           placeholder="filter by id…"
           value={filters.query}

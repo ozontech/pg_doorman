@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "../api";
+import { PageHero } from "../components/PageHero";
+import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { LogEntryDto, LogsDto } from "../types";
@@ -99,7 +101,17 @@ export default function Logs() {
 
   return (
     <section className="flex h-screen flex-col">
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+      <PageHero
+        title="Logs"
+        description="Live tail of the in-memory LogTap, admin-only. The tap activates on the first request and stops itself 30 s after the last poll, so the buffer footprint is zero when nobody is reading."
+      />
+      <SectionHeader
+        title="Stream"
+        what="Newest entries appended below; last 500 lines kept in memory."
+        how={"Poll cadence 1.5 s. Pause holds the buffer and slows polling to 60 s."}
+        normal="drops > 0 = consumer fell behind, raise log_tap_max_entries or filter narrower."
+      />
+      <div className="flex items-center gap-3 border-b border-border px-6 py-3">
         <select
           value={level}
           onChange={(e) => setLevel(e.target.value)}

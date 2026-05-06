@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { apiGet } from "../api";
+import { PageHero } from "../components/PageHero";
+import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { ClientsDto } from "../types";
@@ -86,7 +88,17 @@ export default function Clients() {
 
   return (
     <section className="flex flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
+      <PageHero
+        title="Clients"
+        description="Every connected client. Polled at 1.5 s through /api/clients with server-side filtering, sorting, and pagination — none of the search work happens in the browser."
+      />
+      <SectionHeader
+        title="Filters"
+        what="Substring filter on pool / database / user / application_name and an exact state match."
+        how="Each change resets the pager to offset 0 and re-issues the API call."
+        normal="Page size is 50 rows; total count below is what the server reports after applying the filters."
+      />
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input
           placeholder="pool"
           value={filters.pool}

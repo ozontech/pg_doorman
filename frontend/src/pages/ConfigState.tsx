@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { apiGet } from "../api";
 import { Collapsible } from "../components/Collapsible";
+import { PageHero } from "../components/PageHero";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 
@@ -27,13 +28,10 @@ const SECTIONS: {
 export default function ConfigState() {
   return (
     <section className="flex flex-col">
-      <header className="border-b border-border bg-surface px-4 py-3">
-        <h1 className="text-lg font-semibold text-text">Config &amp; state</h1>
-        <p className="mt-1 text-xs text-text-muted">
-          Read-only inspection of the running pooler. Each section polls its
-          own endpoint; collapsed sections do not poll until you open them.
-        </p>
-      </header>
+      <PageHero
+        title="Config & state"
+        description="Read-only inspection of the running pooler. Each section polls its own endpoint at the cadence below — collapsed sections do not poll until you open them, so the page stays cheap."
+      />
       {SECTIONS.map((s) => (
         <Collapsible key={s.id} id={`config-${s.id}`} title={s.title} defaultOpen={s.open}>
           <SectionBody endpoint={s.endpoint} intervalMs={s.intervalMs} />

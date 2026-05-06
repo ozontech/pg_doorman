@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { apiGet } from "../api";
+import { PageHero } from "../components/PageHero";
+import { SectionHeader } from "../components/SectionHeader";
 import { useAdminAuth } from "../hooks/useAdminAuth";
 import { usePoll } from "../hooks/usePoll";
 import type { InternerDto, PreparedDto } from "../types";
@@ -12,7 +14,11 @@ export default function Caches() {
   const [tab, setTab] = useState<Tab>("prepared");
   return (
     <section className="flex flex-col">
-      <div className="flex items-center gap-1 border-b border-border bg-surface px-4">
+      <PageHero
+        title="Caches"
+        description="Two backend caches that affect connection efficiency: per-pool prepared statements and the global query interner that deduplicates SQL text."
+      />
+      <div className="flex items-center gap-1 border-b border-border bg-surface px-6">
         <TabButton active={tab === "prepared"} onClick={() => setTab("prepared")}>Prepared</TabButton>
         <TabButton active={tab === "interner"} onClick={() => setTab("interner")}>Query cache</TabButton>
       </div>
@@ -54,7 +60,14 @@ function PreparedTab() {
   if (!poll.data) return <p className="p-4 text-sm text-text-dim">loading…</p>;
 
   return (
-    <div className="overflow-x-auto">
+    <>
+      <SectionHeader
+        title="Prepared statements"
+        what="One row per (pool, prepared statement). Hits = parse-time hit on the server cache; misses = a fresh PostgreSQL Parse round-trip."
+        how="Polled every 3 s from /api/prepared. Counters are cumulative since pool warm-up; lost on LRU eviction."
+        normal="Hit rate ≥ 95 % once warm. Amber under 95 %, red under 80 % — bump prepared-statement-cache size if sustained."
+      />
+      <div className="overflow-x-auto">
       <table className="w-full text-sm tabular">
         <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
           <tr>
@@ -95,7 +108,8 @@ function PreparedTab() {
       {poll.data.prepared.length === 0 && (
         <p className="p-4 text-sm text-text-dim">No prepared statements cached yet.</p>
       )}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -116,10 +130,18 @@ function InternerTab() {
   };
 
   return (
-    <div className="grid grid-cols-2 gap-6 p-6">
-      <Card title="Named" entries={poll.data.named.entries} bytes={poll.data.named.bytes} fmtBytes={fmtBytes} />
-      <Card title="Anonymous" entries={poll.data.anonymous.entries} bytes={poll.data.anonymous.bytes} fmtBytes={fmtBytes} />
-    </div>
+    <>
+      <SectionHeader
+        title="Query interner"
+        what="Global byte-deduplicated SQL text cache. Named = explicitly prepared statements; anonymous = ad-hoc queries."
+        how="Polled every 3 s from /api/interner."
+        normal="Anonymous bytes growing without bound = lower client_anonymous_prepared_cache_size or shorten anon idle TTL."
+      />
+      <div className="grid grid-cols-2 gap-6 p-6">
+        <Card title="Named" entries={poll.data.named.entries} bytes={poll.data.named.bytes} fmtBytes={fmtBytes} />
+        <Card title="Anonymous" entries={poll.data.anonymous.entries} bytes={poll.data.anonymous.bytes} fmtBytes={fmtBytes} />
+      </div>
+    </>
   );
 }
 

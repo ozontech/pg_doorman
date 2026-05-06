@@ -13,10 +13,10 @@ export default function App() {
   return (
     <AdminAuthProvider>
       <BrowserRouter>
-        <AuthGate>
-          <div className="flex min-h-screen bg-bg text-text">
-            <Sidebar />
-            <main className="flex-1">
+        <div className="flex min-h-screen bg-bg text-text">
+          <Sidebar />
+          <main className="flex-1 min-w-0">
+            <AuthGate>
               <Routes>
                 <Route path="/" element={<Navigate to="/overview" replace />} />
                 <Route path="/overview" element={<Overview />} />
@@ -27,9 +27,9 @@ export default function App() {
                 <Route path="/config" element={<ConfigState />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </main>
-          </div>
-        </AuthGate>
+            </AuthGate>
+          </main>
+        </div>
       </BrowserRouter>
     </AdminAuthProvider>
   );
@@ -37,8 +37,8 @@ export default function App() {
 
 function NotFound() {
   return (
-    <section className="p-6">
-      <h1 className="text-lg font-semibold text-text">Not found</h1>
+    <section className="px-6 py-8">
+      <h1 className="font-mono text-lg font-semibold text-text">Not found</h1>
     </section>
   );
 }
