@@ -56,3 +56,4 @@ flamegraph-output/
 
 # Superpowers brainstorm session workdir (VC mockups, server state)
 .superpowers/
+Dockerfile.ubuntu22-tls

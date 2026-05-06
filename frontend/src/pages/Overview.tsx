@@ -676,6 +676,17 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
     const d = Math.floor(h / 24);
     return `${d}d ${h % 24}h`;
   };
+  // FD limits land at 2^30+ on modern Linux containers — formatting them
+  // as raw integers turned the tile into "66/1073741816" which truncated
+  // and read as gibberish. Operators care that the limit is "effectively
+  // infinite", not the exact number; if the limit is sane (< 1M) we show
+  // the raw figure, otherwise we abbreviate.
+  const fmtFdLimit = (n: number): string => {
+    if (n <= 0) return "?";
+    if (n < 1_000_000) return n.toLocaleString();
+    if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
+    return "∞";
+  };
 
   const cpuTone =
     cpuPct === null
@@ -718,13 +729,14 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
           tone="text-text"
           hint={`Resident set size. VM size ${fmtBytes(process.vm_size_bytes)}.`}
         />
-        <ProcStat
+        <ProcStatTwoLine
           label={`threads (${process.threads})`}
-          value={
+          primary={
             maxThreadPct === null
               ? "sampling…"
-              : `max ${maxThreadPct.toFixed(0)} · avg ${avgThreadPct?.toFixed(0) ?? "0"} · min ${minThreadPct?.toFixed(0) ?? "0"}`
+              : `${maxThreadPct.toFixed(0)}/${(minThreadPct ?? 0).toFixed(0)}/${(avgThreadPct ?? 0).toFixed(0)}`
           }
+          secondary={maxThreadPct === null ? "" : "max/min/avg %"}
           tone={maxThreadTone}
           hint={
             threadDeltas.length === 0
@@ -742,11 +754,11 @@ function ProcessBar({ process }: { process: ProcessDto | null }) {
           label="fds"
           value={
             process.fd_limit > 0
-              ? `${process.fd_open}/${process.fd_limit}`
+              ? `${process.fd_open}/${fmtFdLimit(process.fd_limit)}`
               : String(process.fd_open)
           }
           tone={fdTone}
-          hint={`Open file descriptors. Limit warns >70%, crits >90%.`}
+          hint={`Open file descriptors. Limit warns at >70% of the soft cap, crits >90%. Soft cap here: ${process.fd_limit.toLocaleString()}.`}
         />
         <ProcStat
           label="uptime"
@@ -778,6 +790,28 @@ function ProcStat({
     <div title={hint} className="border border-border bg-surface-2 px-3 py-2">
       <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
       <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
+function ProcStatTwoLine({
+  label,
+  primary,
+  secondary,
+  tone,
+  hint,
+}: {
+  label: string;
+  primary: string;
+  secondary: string;
+  tone: string;
+  hint: string;
+}) {
+  return (
+    <div title={hint} className="border border-border bg-surface-2 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-[0.2em] text-text-dim">{label}</div>
+      <div className={`mt-1 font-mono text-base font-semibold tabular ${tone}`}>{primary}</div>
+      {secondary && <div className="text-[10px] text-text-dim">{secondary}</div>}
     </div>
   );
 }
