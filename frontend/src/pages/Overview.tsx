@@ -340,7 +340,22 @@ export default function Overview() {
     });
   }, [poolsPoll.data, poolSatHistory.history]);
 
-  const fmtMs = (n: number | undefined) => (n === undefined ? "—" : `${Math.round(n)} ms`);
+  // Human-friendly duration: 87 ms / 1.20 s / 1m 29s / 12m 03s / 1h 42m.
+  // Operators kept reading "89087 ms" as "89 ms" at a glance — the
+  // milliseconds suffix on a large number is a misread waiting to happen.
+  const fmtMs = (n: number | undefined): string => {
+    if (n === undefined) return "—";
+    if (n < 1000) return `${Math.round(n)} ms`;
+    if (n < 60_000) return `${(n / 1000).toFixed(2)} s`;
+    if (n < 3_600_000) {
+      const m = Math.floor(n / 60_000);
+      const s = Math.floor((n % 60_000) / 1000);
+      return `${m}m ${s.toString().padStart(2, "0")}s`;
+    }
+    const h = Math.floor(n / 3_600_000);
+    const m = Math.floor((n % 3_600_000) / 60_000);
+    return `${h}h ${m.toString().padStart(2, "0")}m`;
+  };
   const fmtRate = (n: number | undefined, suffix: string) =>
     n === undefined ? "—" : `${n.toFixed(n < 10 ? 2 : 0)} ${suffix}`;
   const fmtPct = (n: number | undefined) => (n === undefined ? "—" : `${Math.round(n)}%`);
