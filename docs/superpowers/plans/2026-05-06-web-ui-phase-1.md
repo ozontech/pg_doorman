@@ -92,18 +92,20 @@ ls /home/vadv/Projects/pg_doorman/src/lib.rs /home/vadv/Projects/pg_doorman/src/
 
 - [ ] **Step 1.1: Написать failing-тест на парсинг `[web]` секции**
 
-Открыть `src/config/tests.rs`. В конец файла добавить:
+Открыть `src/config/tests.rs`. Существующие тесты используют helper `create_temp_config() -> NamedTempFile`, потом `parse(file_path).await.unwrap()` + `get_config()` для доступа к глобальному `Config`. Поскольку `parse` пишет в глобальный singleton, серialize-зависимые тесты помечены `#[serial]`. Используем тот же паттерн.
+
+В конец файла добавить:
 
 ```rust
 #[tokio::test]
+#[serial]
 async fn test_config_web_section() {
-    use crate::config::Config;
-    let toml = r#"
+    let config_content = r#"
 [general]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 6432
 admin_username = "admin"
-admin_password = "secret"
+admin_password = "admin_password"
 
 [web]
 enabled = true
@@ -113,17 +115,28 @@ ui = true
 ui_anonymous = false
 log_tap_max_entries = 4096
 
-[pools.test]
-[pools.test.users]
-0 = { username = "u", password = "p", pool_size = 5 }
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "u"
+password = "p"
+pool_size = 5
 "#;
-    let config: Config = toml::from_str(toml).expect("parse [web] section");
-    assert!(config.web.enabled);
-    assert_eq!(config.web.host, "127.0.0.1");
-    assert_eq!(config.web.port, 9128);
-    assert!(config.web.ui);
-    assert!(!config.web.ui_anonymous);
-    assert_eq!(config.web.log_tap_max_entries, 4096);
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    parse(temp_file.path().to_str().unwrap()).await.unwrap();
+
+    let cfg = get_config();
+    assert!(cfg.web.enabled);
+    assert_eq!(cfg.web.host, "127.0.0.1");
+    assert_eq!(cfg.web.port, 9128);
+    assert!(cfg.web.ui);
+    assert!(!cfg.web.ui_anonymous);
+    assert_eq!(cfg.web.log_tap_max_entries, 4096);
 }
 ```
 
@@ -133,42 +146,54 @@ log_tap_max_entries = 4096
 
 ```rust
 #[tokio::test]
+#[serial]
 async fn test_config_prometheus_alias() {
-    use crate::config::Config;
-    let toml = r#"
+    let config_content = r#"
 [general]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 6432
 admin_username = "admin"
-admin_password = "secret"
+admin_password = "admin_password"
 
 [prometheus]
 enabled = true
 host = "127.0.0.1"
 port = 9128
 
-[pools.test]
-[pools.test.users]
-0 = { username = "u", password = "p", pool_size = 5 }
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "u"
+password = "p"
+pool_size = 5
 "#;
-    let config: Config = toml::from_str(toml).expect("parse [prometheus] alias");
-    assert!(config.web.enabled);
-    assert_eq!(config.web.host, "127.0.0.1");
-    assert_eq!(config.web.port, 9128);
-    // Дефолты новых полей сохраняются
-    assert!(!config.web.ui);
-    assert!(config.web.ui_anonymous);
-    assert_eq!(config.web.log_tap_max_entries, 8192);
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    parse(temp_file.path().to_str().unwrap()).await.unwrap();
+
+    let cfg = get_config();
+    assert!(cfg.web.enabled);
+    assert_eq!(cfg.web.host, "127.0.0.1");
+    assert_eq!(cfg.web.port, 9128);
+    // Дефолты новых полей сохраняются — даже когда исходный конфиг
+    // использует legacy [prometheus] alias, новые поля пустые / по дефолту.
+    assert!(!cfg.web.ui);
+    assert!(cfg.web.ui_anonymous);
+    assert_eq!(cfg.web.log_tap_max_entries, 8192);
 }
 ```
 
 - [ ] **Step 1.3: Запустить тесты, убедиться что они falling**
 
 ```bash
-cargo test --lib config::tests::test_config_web_section -- --nocapture 2>&1 | tail -20
-cargo test --lib config::tests::test_config_prometheus_alias -- --nocapture 2>&1 | tail -20
+cargo test --lib config::tests::test_config_web_section 2>&1 | tail -20
+cargo test --lib config::tests::test_config_prometheus_alias 2>&1 | tail -20
 ```
-Expected: оба `error[E0...]` или panic про отсутствующее `config.web` поле — компилируется неудачно, как и должно.
+Expected: error компиляции: `no field 'web' on type 'Config'` (и/или `cannot find function 'parse' in scope` если import нужно поменять — но он уже есть через `super::*`). Тесты не должны компилироваться, пока не сделаны Steps 1.4-1.5.
 
 - [ ] **Step 1.4: Переименовать `Prometheus` → `Web` в `src/config/prometheus.rs`**
 

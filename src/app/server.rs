@@ -19,11 +19,11 @@ use crate::config::{get_config, reload_config, Config};
 use crate::daemon;
 use crate::messages::{configure_tcp_socket, configure_unix_socket};
 use crate::pool::{retain, ClientServerMap, ConnectionPool};
-use crate::prometheus::{record_interner_gc, start_prometheus_server};
 use crate::server::{gc_sweep_anon, gc_sweep_named};
 use crate::stats::{Collector, Reporter, REPORTER, TOTAL_CONNECTION_COUNTER};
 use crate::utils::core_affinity;
 use crate::utils::format_duration;
+use crate::web::metrics::{record_interner_gc, start_prometheus_server};
 use socket2::SockRef;
 #[cfg(not(windows))]
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -358,10 +358,10 @@ pub fn run_server(args: Args, config: Config) -> Result<(), Box<dyn std::error::
         let shutdown_timeout = config.general.shutdown_timeout.as_std();
 
         // Prometheus metrics exporter
-        if config.prometheus.enabled {
+        if config.web.enabled {
             tokio::task::spawn(async move {
                 start_prometheus_server(
-                    format!("{}:{}", config.prometheus.host, config.prometheus.port).as_str(),
+                    format!("{}:{}", config.web.host, config.web.port).as_str(),
                 )
                 .await;
             });

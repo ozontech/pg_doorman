@@ -1828,3 +1828,159 @@ client_anonymous_prepared_cache_size = 2048
     let found = find_deprecated_general_keys_toml(&value);
     assert!(found.is_empty());
 }
+
+#[tokio::test]
+#[serial]
+async fn test_config_web_section() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 9128
+ui = true
+ui_anonymous = false
+log_tap_max_entries = 4096
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "u"
+password = "p"
+pool_size = 5
+"#;
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    parse(temp_file.path().to_str().unwrap()).await.unwrap();
+
+    let cfg = get_config();
+    assert!(cfg.web.enabled);
+    assert_eq!(cfg.web.host, "127.0.0.1");
+    assert_eq!(cfg.web.port, 9128);
+    assert!(cfg.web.ui);
+    assert!(!cfg.web.ui_anonymous);
+    assert_eq!(cfg.web.log_tap_max_entries, 4096);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_config_prometheus_alias() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[prometheus]
+enabled = true
+host = "127.0.0.1"
+port = 9128
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "u"
+password = "p"
+pool_size = 5
+"#;
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    parse(temp_file.path().to_str().unwrap()).await.unwrap();
+
+    let cfg = get_config();
+    assert!(cfg.web.enabled);
+    assert_eq!(cfg.web.host, "127.0.0.1");
+    assert_eq!(cfg.web.port, 9128);
+    // New-field defaults are preserved when the legacy [prometheus] alias is used.
+    assert!(!cfg.web.ui);
+    assert!(cfg.web.ui_anonymous);
+    assert_eq!(cfg.web.log_tap_max_entries, 8192);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_config_web_and_prometheus_both_rejected() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[web]
+enabled = true
+
+[prometheus]
+enabled = false
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "u"
+password = "p"
+pool_size = 5
+"#;
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    let result = parse(temp_file.path().to_str().unwrap()).await;
+    assert!(
+        result.is_err(),
+        "Expected parse to fail when both [web] and [prometheus] are present, but it succeeded"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_config_web_section_partial() {
+    let config_content = r#"
+[general]
+host = "127.0.0.1"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+
+[web]
+enabled = true
+
+[pools.example_db]
+server_host = "localhost"
+server_port = 5432
+
+[[pools.example_db.users]]
+username = "u"
+password = "p"
+pool_size = 5
+"#;
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(config_content.as_bytes()).unwrap();
+    temp_file.flush().unwrap();
+
+    parse(temp_file.path().to_str().unwrap()).await.unwrap();
+
+    let cfg = get_config();
+    assert!(cfg.web.enabled);
+    // All other fields fall back to defaults.
+    assert_eq!(cfg.web.host, "0.0.0.0");
+    assert_eq!(cfg.web.port, 9127);
+    assert!(!cfg.web.ui);
+    assert!(cfg.web.ui_anonymous);
+    assert_eq!(cfg.web.log_tap_max_entries, 8192);
+}

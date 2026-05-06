@@ -151,9 +151,9 @@ texts:
   general_title:
     en: "GENERAL SETTINGS"
     ru: "ОСНОВНЫЕ НАСТРОЙКИ"
-  prometheus_title:
-    en: "PROMETHEUS METRICS"
-    ru: "МЕТРИКИ PROMETHEUS"
+  web_title:
+    en: "WEB UI / METRICS"
+    ru: "ВЕБ-ИНТЕРФЕЙС / МЕТРИКИ"
   talos_title:
     en: "TALOS AUTHENTICATION (Optional)"
     ru: "АУТЕНТИФИКАЦИЯ TALOS (Опционально)"
@@ -1675,7 +1675,7 @@ fields:
       doc: "Minimum interval between re-fetches for the same username after an authentication failure. Protects the backend from excessive queries during brute-force attempts."
       default: '"1s"'
 
-  prometheus:
+  web:
     enabled:
       config:
         en: "Enable Prometheus metrics exporter."
@@ -1696,3 +1696,24 @@ fields:
         ru: "Порт HTTP-эндпоинта для метрик."
       doc: "The port on which the Prometheus metrics exporter will listen."
       default: "9127"
+
+    ui:
+      config:
+        en: "Enable the web UI."
+        ru: "Включить веб-интерфейс."
+      doc: "When true, the web listener also serves the SPA (static assets) and `/api/*` routes alongside `/metrics`. Requires `admin_password` to be set to a non-default value."
+      default: "false"
+
+    ui_anonymous:
+      config:
+        en: "Allow unauthenticated access to the web UI."
+        ru: "Разрешить анонимный доступ к веб-интерфейсу."
+      doc: "When true, public read-only routes (overview, pools, clients, config) are accessible without authentication; admin-only routes (logs, prepared statement bodies, interner top) always require basic-auth regardless."
+      default: "true"
+
+    log_tap_max_entries:
+      config:
+        en: "Maximum number of log entries held in the in-memory log tap."
+        ru: "Максимальное количество записей в буфере лога."
+      doc: "Cap on how many recent log lines the web UI log tap retains in memory."
+      default: "8192"

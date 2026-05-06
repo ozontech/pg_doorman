@@ -13,9 +13,9 @@ pub mod logger {
 }
 pub mod messages;
 pub mod pool;
-pub mod prometheus;
 pub mod server;
 pub mod stats;
 pub mod transport;
 pub mod utils;
+pub mod web;
 pub use config::tls;

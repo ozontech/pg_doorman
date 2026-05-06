@@ -249,7 +249,7 @@ where
         // eviction rate at zero capacity pressure.
         if let PutOutcome::Evicted(_) = self.prepared.cache.put(cache_key, cached) {
             self.prepared.anonymous_evictions += 1;
-            crate::prometheus::observe_anonymous_eviction(&self.username, &self.pool_name);
+            crate::web::metrics::observe_anonymous_eviction(&self.username, &self.pool_name);
         }
 
         // Update prepared cache stats after modification
@@ -371,7 +371,7 @@ where
                             self.username, self.pool_name, self.connection_id,
                         );
                     }
-                    crate::prometheus::record_synthetic_miss();
+                    crate::web::metrics::record_synthetic_miss();
                     // SQLSTATE 26000 (invalid_sql_statement_name) matches the
                     // error native PostgreSQL raises for the same condition;
                     // see src/backend/tcop/postgres.c exec_bind_message.
@@ -485,7 +485,7 @@ where
                             self.username, self.pool_name, self.connection_id,
                         );
                     }
-                    crate::prometheus::record_synthetic_miss();
+                    crate::web::metrics::record_synthetic_miss();
                     error_response(
                         &mut self.write,
                         "unnamed prepared statement does not exist",
@@ -639,7 +639,7 @@ where
                             self.username, self.pool_name, self.connection_id,
                         );
                     }
-                    crate::prometheus::record_synthetic_miss();
+                    crate::web::metrics::record_synthetic_miss();
                     error_response(
                         &mut self.write,
                         "unnamed prepared statement does not exist",

@@ -381,17 +381,17 @@ fn write_prometheus_fields(out: &mut String, f: &FieldsData) {
     let _ = writeln!(
         out,
         "| `enabled` | {} | `false` |",
-        field_doc(f, "prometheus", "enabled")
+        field_doc(f, "web", "enabled")
     );
     let _ = writeln!(
         out,
         "| `host` | {} | `\"0.0.0.0\"` |",
-        field_doc(f, "prometheus", "host")
+        field_doc(f, "web", "host")
     );
     let _ = writeln!(
         out,
         "| `port` | {} | `9127` |\n",
-        field_doc(f, "prometheus", "port")
+        field_doc(f, "web", "port")
     );
 }
 

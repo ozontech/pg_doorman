@@ -10,6 +10,7 @@ use prometheus::{
 };
 
 // Sub-modules
+#[allow(clippy::module_inception)]
 mod metrics;
 mod server;
 mod system;
