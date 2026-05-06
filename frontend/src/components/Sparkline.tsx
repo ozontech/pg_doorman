@@ -25,6 +25,13 @@ const STROKE = "rgb(34 184 207)";
 const WARN_STROKE = "rgb(245 165 36 / 0.55)";
 const CRIT_STROKE = "rgb(229 72 77 / 0.55)";
 
+function formatHoverValue(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  if (Math.abs(v) >= 1000) return v.toFixed(0);
+  if (Math.abs(v) >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
 /**
  * uPlot-backed sparkline that fills its container width via ResizeObserver.
  * The label and value sit above the chart; threshold lines are painted in
@@ -44,6 +51,9 @@ export function Sparkline({
   const plotRef = useRef<uPlot | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
+  // Cursor readout — populated by uPlot's setCursor hook on every mouse
+  // move. Null means the cursor left the canvas.
+  const [hover, setHover] = useState<{ ts: number; value: number } | null>(null);
 
   useEffect(() => {
     if (!wrapRef.current) return;
@@ -59,12 +69,33 @@ export function Sparkline({
     () => ({
       width: width || 200,
       height: HEIGHT_PX,
-      cursor: syncKey ? { sync: { key: syncKey } } : undefined,
+      cursor: {
+        sync: syncKey ? { key: syncKey } : undefined,
+        points: { size: 5 },
+      },
       legend: { show: false },
       scales: { y: logY ? { distr: 3 } : { auto: true } },
       axes: [{ show: false }, { show: false }],
       series: [{}, { stroke: STROKE, width: 1.5 }],
       hooks: {
+        setCursor: [
+          (u: uPlot) => {
+            const idx = u.cursor.idx;
+            if (idx == null || idx < 0) {
+              setHover(null);
+              return;
+            }
+            const xs = u.data[0] as number[];
+            const ys = u.data[1] as number[];
+            const ts = xs[idx];
+            const value = ys[idx];
+            if (ts == null || !Number.isFinite(value)) {
+              setHover(null);
+              return;
+            }
+            setHover({ ts, value });
+          },
+        ],
         draw: [
           (u: uPlot) => {
             const ctx = u.ctx;
@@ -139,6 +170,19 @@ export function Sparkline({
         </span>
       </div>
       <div ref={containerRef} className="w-full" />
+      <div className="flex items-center justify-between text-[10px] text-text-dim tabular">
+        {hover ? (
+          <>
+            <span>{new Date(hover.ts * 1000).toLocaleTimeString()}</span>
+            <span className="font-mono text-text-muted">{formatHoverValue(hover.value)}</span>
+          </>
+        ) : (
+          <>
+            <span>{label.toLowerCase()} · last {valueText}</span>
+            <span className="text-text-dim">hover for point</span>
+          </>
+        )}
+      </div>
     </div>
   );
 }
