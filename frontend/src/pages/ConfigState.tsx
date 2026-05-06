@@ -23,7 +23,7 @@ export default function ConfigState() {
     <section className="flex flex-col">
       <PageHero
         title="Config & state"
-        description="The running pooler config and its derived state — auth-query cache, pool scaling counters, coordinator limits, sockets, log level. Read-only: this is what you would otherwise dump from the admin protocol when triaging."
+        description="What pg_doorman is actually running with right now. Read-only — same content as SHOW CONFIG / SHOW POOLS over the admin protocol, just queryable from a browser. Use the filter on the config table to confirm a SIGHUP picked up your edit."
       />
       <Collapsible id="config-config" title="config" defaultOpen>
         <ConfigPanel />
@@ -153,7 +153,7 @@ function AuthQueryPanel() {
   return (
     <PanelShell loading={!poll.data} error={poll.error}>
       {poll.data?.pools.length === 0 ? (
-        <p className="px-6 py-4 text-sm text-text-dim">No pools configured with auth_query.</p>
+        <p className="px-6 py-4 text-sm text-text-dim">No pool uses auth_query in this config. Set <code>auth_query = &lsquo;...&rsquo;</code> under [databases.X] to enable per-database password lookups.</p>
       ) : (
         <table className="w-full text-sm tabular">
           <thead className="bg-surface text-text-muted text-xs uppercase tracking-wide">
@@ -289,7 +289,7 @@ function SocketsPanel() {
   if (poll.error) {
     return (
       <p className="px-6 py-4 text-sm text-text-dim">
-        Sockets are exposed only on Linux — endpoint returned: {poll.error.message}
+        Socket counts are Linux-only. On macOS/Windows builds this card stays empty; if you are on Linux and seeing this, the request failed: {poll.error.message}
       </p>
     );
   }

@@ -1,4 +1,8 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
+import { apiGet } from "../api";
+import { useAdminAuth } from "../hooks/useAdminAuth";
+import type { VersionDto } from "../types";
 
 const NAV: { to: string; label: string }[] = [
   { to: "/overview", label: "Overview" },
@@ -12,6 +16,19 @@ const NAV: { to: string; label: string }[] = [
 ];
 
 export function Sidebar() {
+  const { authHeader } = useAdminAuth();
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<VersionDto>("/api/version", authHeader)
+      .then((d) => {
+        if (!cancelled) setVersion(d.version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authHeader]);
   return (
     <nav className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-surface">
       <div className="px-6 py-7">
@@ -39,7 +56,7 @@ export function Sidebar() {
         ))}
       </ul>
       <div className="border-t border-border px-6 py-4 text-xs text-text-dim">
-        v3.7.0 · feat/web-ui
+        {version ? `v${version}` : "—"}
       </div>
     </nav>
   );

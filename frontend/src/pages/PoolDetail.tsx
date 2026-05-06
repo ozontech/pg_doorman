@@ -262,7 +262,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
       } else {
         setFeedback({
           tone: "ok",
-          text: `${action} OK · ${res.affected_pools ?? 0} pool(s) affected`,
+          text: `${action} done · ${res.affected_pools ?? 0} pool${(res.affected_pools ?? 0) === 1 ? "" : "s"} touched.`,
         });
       }
     } catch (e) {
@@ -289,7 +289,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           disabled={pending !== null || pool.paused}
           onClick={() => setConfirm({ action: "pause", scope: "pool" })}
           className={buttonClass("warning")}
-          title="Block new client checkouts on this pool. Active transactions continue."
+          title="PAUSE: stop handing out backends on this pool. In-flight transactions keep running. Use during a deploy or schema migration."
         >
           pause
         </button>
@@ -298,7 +298,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           disabled={pending !== null || !pool.paused}
           onClick={() => setConfirm({ action: "resume", scope: "pool" })}
           className={buttonClass("default")}
-          title="Re-enable client checkouts after a pause."
+          title="RESUME: undo PAUSE. Queued clients get backends as soon as they are returned."
         >
           resume
         </button>
@@ -307,7 +307,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           disabled={pending !== null}
           onClick={() => setConfirm({ action: "reconnect", scope: "pool" })}
           className={buttonClass("warning")}
-          title="Bump pool epoch and drain idle connections. Active connections refused on return."
+          title="RECONNECT: drop idle backends now and refuse the active ones when they finish. Use after a Postgres role/grant change so cached connections pick it up."
         >
           reconnect
         </button>
@@ -316,7 +316,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
           disabled={pending !== null}
           onClick={() => setConfirm({ action: "reload", scope: "global" })}
           className={buttonClass("danger")}
-          title="Reload the entire pg_doorman config from disk. Affects every pool."
+          title="RELOAD CONFIG: re-read the TOML file. Most settings apply on the next backend; pool size shrinks via natural drain. Affects every pool — confirm before clicking."
         >
           reload (global)
         </button>
@@ -333,7 +333,7 @@ function PoolActions({ pool }: { pool: PoolDto }) {
       {confirm && (
         <ConfirmModal
           action={confirm.action}
-          scopeLabel={confirm.scope === "pool" ? `database "${pool.database}"` : "the entire pooler"}
+          database={pool.database}
           pending={pending !== null}
           onCancel={() => setConfirm(null)}
           onConfirm={() => trigger(confirm.action, confirm.scope)}
@@ -345,27 +345,40 @@ function PoolActions({ pool }: { pool: PoolDto }) {
 
 function ConfirmModal({
   action,
-  scopeLabel,
+  database,
   pending,
   onCancel,
   onConfirm,
 }: {
   action: string;
-  scopeLabel: string;
+  database: string;
   pending: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const [typed, setTyped] = useState("");
   const required = action.toUpperCase();
+  const body = (() => {
+    switch (action) {
+      case "pause":
+        return `Pause stops new checkouts on database '${database}'. Existing transactions continue.`;
+      case "resume":
+        return `Resume re-enables checkouts on database '${database}'.`;
+      case "reconnect":
+        return `Reconnect drops idle backends on database '${database}' and refuses the active ones when they return. Use after a role or grant change.`;
+      case "reload":
+        return "Reload re-reads pg_doorman.toml on every pool. Pool sizes shrink via natural drain.";
+      default:
+        return "";
+    }
+  })();
+  const title = action === "reload" ? "RELOAD pg_doorman?" : `${required} ${database}?`;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-sm">
       <div className="w-96 border border-border bg-surface p-6 text-sm">
-        <h2 className="mb-3 font-mono text-base font-semibold text-text">
-          {action.toUpperCase()} {scopeLabel}?
-        </h2>
+        <h2 className="mb-3 font-mono text-base font-semibold text-text">{title}</h2>
         <p className="mb-4 text-text-muted">
-          This is a write action. Type <span className="font-mono text-text">{required}</span> below to confirm.
+          {body} Type <span className="font-mono text-text">{required}</span> to confirm.
         </p>
         <input
           autoFocus
@@ -468,7 +481,7 @@ function KV({ label, value }: { label: string; value: string }) {
 function SqlstateBreakdown({ errors }: { errors?: Record<string, number> }) {
   const entries = errors ? Object.entries(errors).sort((a, b) => b[1] - a[1]) : [];
   if (entries.length === 0)
-    return <p className="text-sm text-text-dim">No errors classified yet.</p>;
+    return <p className="text-sm text-text-dim">No errors recorded for this pool yet. The SQLSTATE breakdown fills in the moment a query returns one.</p>;
   return (
     <ul className="space-y-1 tabular">
       {entries.map(([code, count]) => (

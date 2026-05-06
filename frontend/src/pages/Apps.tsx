@@ -66,7 +66,9 @@ export default function Apps() {
     return (
       <section className="p-6">
         <h1 className="text-lg font-semibold text-text">Apps</h1>
-        <p className="mt-2 text-sm text-danger">{poll.error.message}</p>
+        <p className="mt-2 text-sm text-danger">
+          Could not load apps: {poll.error.message}. Try Sign out → Sign in to refresh credentials, or check whether pg_doorman is running.
+        </p>
       </section>
     );
   }
@@ -75,13 +77,13 @@ export default function Apps() {
     <section className="flex flex-col">
       <PageHero
         title="Apps"
-        description="Which application_name is generating the load and which is generating the errors. One row per app — clients live, queries / transactions / errors cumulative. Sort by errors per 1k queries to surface a misbehaving worker."
+        description="One row per application_name as reported by clients. clients = currently connected; the totals are cumulative since pg_doorman started. Sort by err/1k q to find apps that fail more often per request — values above 1 are unusual; above 10 means time to look at the app's recent deploy."
       />
       <SectionHeader
         title="Aggregates"
         what="One row per application_name. clients = currently-connected; the totals are cumulative since the pooler started."
-        how="Sort and filter run client-side on the polled snapshot. Filter is a plain substring match against application_name."
-        normal="An app whose `errors_total / queries_total` ratio jumps is the prime suspect during a regression."
+        how="Sort and filter happen in the browser, on the latest snapshot — no extra request per keystroke."
+        normal="When err/1k q jumps for one app while the rest stay flat, that app is the suspect — start by asking who deployed last."
       />
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input
@@ -160,9 +162,9 @@ export default function Apps() {
           })}
         </tbody>
       </table>
-      {!poll.data && <p className="px-4 py-4 text-sm text-text-dim">loading…</p>}
+      {!poll.data && <p className="px-4 py-4 text-sm text-text-dim">Loading apps…</p>}
       {poll.data && rows.length === 0 && (
-        <p className="px-4 py-4 text-sm text-text-dim">No apps match the filter.</p>
+        <p className="px-4 py-4 text-sm text-text-dim">No application_name matches that fragment. Try a shorter or different substring.</p>
       )}
     </section>
   );

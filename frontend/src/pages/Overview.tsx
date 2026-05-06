@@ -448,7 +448,9 @@ export default function Overview() {
     return (
       <section className="p-6">
         <h1 className="text-lg font-semibold text-text">Overview</h1>
-        <p className="mt-2 text-sm text-danger">{err}</p>
+        <p className="mt-2 text-sm text-danger">
+          Could not read overview/pools: {err}. The pooler may be unreachable, or admin credentials may have been rotated.
+        </p>
       </section>
     );
   }
@@ -457,7 +459,7 @@ export default function Overview() {
     <div className="flex flex-col">
       <PageHero
         title="Overview"
-        description="Whole-pooler heartbeat. Health pill on top says whether anything is breaching threshold; the process bar tells you the pooler itself is alive; Golden signals show latency, traffic, errors, saturation; the rest is the breakdown an operator opens during an incident."
+        description="Is the pooler healthy right now. The pill is green when no threshold is breached; if it goes amber or red, the chip strip names the breach and the process row confirms the pooler itself is still alive. Use the four signal sparklines to triage: spike on Latency P95 = backend slow; spike on Errors/s = read the SQLSTATE breakdown on Pool detail; spike on Saturation = a pool is full and clients will start waiting."
       />
       <div className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
         <HealthPill
@@ -472,7 +474,7 @@ export default function Overview() {
           title="Golden signals"
           help={{
             what: "Latency P95, traffic, error rate, and worst saturation.",
-            how: "One sparkline per signal · 120 points × 1.5 s = 3 min. Click any card for the full-screen panel.",
+            how: "Three minutes of history (one dot every 1.5 s). Click a card to widen the window to 1h, see p50/p95/p99 over the visible range, and overlay admin events.",
             normal: "P95 < 100 ms · errors near 0 /s · saturation < 70 %.",
           }}
         >
@@ -527,7 +529,7 @@ export default function Overview() {
           onTitleClick={() => openPanelById("conn_breakdown")}
           help={{
             what: "Stacked clients in active / idle / waiting state.",
-            how: "Three series over the 3 min sample window. Interpretive — no thresholds. Click the title to open the full-screen panel.",
+            how: "Stacked over the 3 min window. No threshold — the shape is the signal. Active rising while idle stays low = good throughput; waiting rising = backends are full and clients are queueing.",
           }}
         >
           <AreaChart
@@ -542,9 +544,9 @@ export default function Overview() {
           <Card
             title="Pool fill heatmap"
             help={{
-              what: "One row per pool; each cell is a 1.5 s saturation sample (last 60).",
+              what: "One row per pool, last 90 s of saturation.",
               how: "Cell color thresholds: green < 70 % · amber 70–89 % · red ≥ 90 %.",
-              normal: "A single red row while the rest stay green = one pool is burning.",
+              normal: "A row that turns amber/red while neighbours stay green points at one specific pool.",
             }}
           >
             <Heatmap rows={heatmapRows} />
@@ -555,7 +557,7 @@ export default function Overview() {
           onTitleClick={() => openPanelById("wait_oldest")}
           help={{
             what: "Left axis: clients currently waiting for a backend. Right axis (log ms): worst single in-flight query age across pools.",
-            how: "Both updated every 1.5 s; right-axis dashed lines mark the threshold engine's amber/red. Click the title to open the full-screen panel.",
+            how: "Both lines move together when traffic is fine. They diverge when one client holds a transaction open and others queue behind it — that is the pattern to look for during a stall.",
             normal: "Waiting near 0; oldest active < 30 s. Sustained > 5 min = stuck connection.",
           }}
         >
@@ -582,7 +584,7 @@ export default function Overview() {
             onTitleClick={() => openPanelById("top_errors")}
             help={{
               what: `The ${top5Errors.labels.length} pools with the highest errors-per-second over the last 30 s.`,
-              how: "Stacked area; each band is one pool. Empty when no pool has produced errors recently. Click the title for the full-screen panel.",
+              how: "Each band is one pool. Empty = no errors in the last 30 s. A band sustained above 1 err/s for ten samples in a row is the pool that needs the SQLSTATE drill-down.",
               normal: "Bands hovering at 0 = no errors. Sustained > 1 / s on one band = investigate that pool.",
             }}
           >
@@ -668,7 +670,7 @@ function Card({
           }
         }}
         className="cursor-pointer rounded-md border border-border bg-surface transition-colors hover:border-border-strong"
-        title="Open the full-screen panel for this chart"
+        title="Open in panel view (1h history, p50/p95/p99 table)."
       >
         {inner}
       </section>
@@ -700,7 +702,7 @@ function ChartLink({
         }
       }}
       className="cursor-pointer transition-colors hover:bg-surface-2"
-      title="Open the full-screen panel for this signal"
+      title="Open in panel view (1h history, p50/p95/p99 table)."
     >
       {children}
     </div>
@@ -1105,13 +1107,13 @@ function ProcessBar({
           label="cpu (proc)"
           value={cpuPct === null ? "sampling…" : `${cpuPct.toFixed(0)}%`}
           tone={cpuTone}
-          hint={`${process.cpu_cores} cores · 100% = 1 core saturated. With all cores busy you would see ${process.cpu_cores * 100}%.`}
+          hint={`${process.cpu_cores} cores. 100 % means one core fully busy; ${process.cpu_cores * 100} % means every core fully busy. Sustained > ${60 * process.cpu_cores} % is amber, > ${90 * process.cpu_cores} % is red.`}
         />
         <ProcStat
           label="rss ↗"
           value={fmtBytes(process.rss_bytes)}
           tone="text-text"
-          hint={`Resident set size. VM size ${fmtBytes(process.vm_size_bytes)}. Click the tile for the memory breakdown.`}
+          hint={`Resident memory: ${fmtBytes(process.rss_bytes)}, VM size ${fmtBytes(process.vm_size_bytes)}. Click for the breakdown across caches, jemalloc, code/libs, stacks, and swap.`}
           onClick={onOpenRss}
         />
         <ProcStatTwoLine
@@ -1125,7 +1127,7 @@ function ProcessBar({
           tone={maxThreadTone}
           hint={
             threadDeltas.length === 0
-              ? "Per-thread CPU appears after the second /api/process poll. Linux-only — non-Linux build returns an empty breakdown. Click for the per-thread time-series."
+              ? "Per-thread CPU appears after a second sample arrives (about 3 s). Linux only — empty on macOS/Windows. Click for the time-series per worker."
               : `${process.threads} OS threads · max-thread ${maxThreadPct?.toFixed(0)}% · avg ${avgThreadPct?.toFixed(1)}% · min ${minThreadPct?.toFixed(1)}% (each is % of one core). Click for the per-thread time-series.\n\n` +
                 `Top-${Math.min(5, threadDeltas.length)}:\n` +
                 threadDeltas
@@ -1143,7 +1145,7 @@ function ProcessBar({
               : String(process.fd_open)
           }
           tone={fdTone}
-          hint={`Open file descriptors. Limit warns at >70% of the soft cap, crits >90%. Soft cap here: ${process.fd_limit.toLocaleString()}.`}
+          hint={`Open FDs vs soft cap (${process.fd_limit.toLocaleString()}). Amber at 70 % means you are running out before LimitNOFILE bites; red at 90 % means clients will start failing accept().`}
         />
         <ProcStat
           label="uptime"

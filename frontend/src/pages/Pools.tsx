@@ -197,7 +197,9 @@ export default function Pools() {
     return (
       <section className="p-6">
         <h1 className="text-lg font-semibold text-text">Pools</h1>
-        <p className="mt-2 text-sm text-danger">{poll.error.message}</p>
+        <p className="mt-2 text-sm text-danger">
+          Could not load pools: {poll.error.message}. Try Sign out → Sign in to refresh credentials, or check whether pg_doorman is running.
+        </p>
       </section>
     );
   }
@@ -206,13 +208,13 @@ export default function Pools() {
     <section className="flex flex-col">
       <PageHero
         title="Pools"
-        description="One row per pool. Saturation, query latency p95, waiting clients, error count — the four signals that say whether the pool is healthy. Severity column reads from the threshold engine; click a row for the full pool drill-down."
+        description="Find the pool that hurts. Sort by Saturation when a pool is rejecting checkouts; by p95 ms when a query stalls; by Errors when SQLSTATE volume is up. The State column shows degraded when one threshold is breached, critical when two stack. Click any row to see SQLSTATE breakdown, oldest-active query age, and the pause/reconnect controls."
       />
       <SectionHeader
         title="Filter & sort"
-        what="Substring filter on pool id and an exact severity match."
-        how="Click any column header to sort; click again to flip the direction."
-        normal="Default sort is saturation descending — busiest pool floats up."
+        what="Narrow the table by typing a pool fragment (e.g. 'app-' to see only that tenant) or by picking a severity."
+        how="Click a column to sort by it; click again to flip direction. State remains in the URL — you can paste a filter into chat."
+        normal="Default order: most saturated first. During an outage the suspect is usually on the first screen."
       />
       <div className="flex items-center gap-3 border-b border-border px-6 py-3">
         <input
@@ -283,9 +285,9 @@ export default function Pools() {
         </tbody>
       </table>
       {filtered.length === 0 && evaluated.length > 0 && (
-        <p className="px-4 py-4 text-sm text-text-dim">No pools match the current filter.</p>
+        <p className="px-4 py-4 text-sm text-text-dim">Nothing matches the current filter. Clear the search box or pick &lsquo;all severities&rsquo; to widen.</p>
       )}
-      {!poll.data && <p className="px-4 py-4 text-sm text-text-dim">Loading…</p>}
+      {!poll.data && <p className="px-4 py-4 text-sm text-text-dim">Reading pool list…</p>}
     </section>
   );
 }
@@ -314,7 +316,7 @@ function PoolRowView({
       <td className="px-4 py-2 text-text-muted">{pool.pool_mode}</td>
       <td
         className="px-4 py-2 text-right"
-        title={`Saturation = connections / max_connections. Warn ≥ 70%, crit ≥ 90%. Now: ${pool.connections}/${pool.max_connections} = ${(saturation * 100).toFixed(0)}%`}
+        title={`${pool.connections} of ${pool.max_connections} backends in use (${(saturation * 100).toFixed(0)} %). Above 70 % means you are close to making clients wait; above 90 % means new clients are queueing.`}
       >
         <span
           className={
@@ -329,10 +331,10 @@ function PoolRowView({
       </td>
       <td className="px-4 py-2">
         <div className="flex items-center justify-center gap-2">
-          <span title={`Saturation last 60 s (current ${(saturation * 100).toFixed(0)}%)`}>
+          <span title={`Saturation last 60 s — now ${(saturation * 100).toFixed(0)} %.`}>
             <MiniSparkline values={satSeries} stroke={satColor} min={0} max={100} />
           </span>
-          <span title={`Query p95 last 60 s (current ${pool.query_p95_ms} ms; warn > 100, crit > 500)`}>
+          <span title={`Query p95 last 60 s — now ${pool.query_p95_ms} ms. Sustained > 100 ms = degraded backend; > 500 ms = something is stuck.`}>
             <MiniSparkline
               values={p95Series}
               stroke={pool.query_p95_ms > 500 ? "rgb(229 72 77)" : pool.query_p95_ms > 100 ? "rgb(245 165 36)" : "rgb(34 184 207)"}
@@ -342,7 +344,7 @@ function PoolRowView({
       </td>
       <td
         className={`px-4 py-2 text-right ${pool.waiting > 0 ? "text-warning" : ""}`}
-        title={`Waiting clients (queue depth). Sustained ≥ 1 for 10 s = degraded; ≥ max(10, 0.10×max_connections) = critical. Now: ${pool.waiting}`}
+        title={`${pool.waiting} client(s) queued for a backend. Anything sustained above zero for 10 s is degraded. Above ${Math.max(10, Math.round(pool.max_connections * 0.1))} for 10 s is critical for this pool.`}
       >
         {pool.waiting}
       </td>
@@ -350,13 +352,13 @@ function PoolRowView({
         className={`px-4 py-2 text-right ${
           pool.query_p95_ms > 500 ? "text-danger" : pool.query_p95_ms > 100 ? "text-warning" : ""
         }`}
-        title={`Query p95 over last 60 s. Warn > 100 ms, crit > 500 ms. p99 = ${pool.query_p99_ms} ms`}
+        title={`p95 = ${pool.query_p95_ms} ms, p99 = ${pool.query_p99_ms} ms over last 60 s. > 100 ms is amber, > 500 ms is red.`}
       >
         {pool.query_p95_ms}
       </td>
       <td
         className="px-4 py-2 text-right"
-        title={`Cumulative errors since pool warm-up. Click row for SQLSTATE breakdown.`}
+        title={`Total errors since pg_doorman started. Click the row for the SQLSTATE breakdown — the codes are what you need for triage.`}
       >
         {pool.errors_total}
       </td>

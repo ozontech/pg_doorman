@@ -84,7 +84,9 @@ export default function Clients() {
     return (
       <section className="p-6">
         <h1 className="text-lg font-semibold text-text">Clients</h1>
-        <p className="mt-2 text-sm text-danger">{poll.error.message}</p>
+        <p className="mt-2 text-sm text-danger">
+          Could not load clients: {poll.error.message}. Try Sign out → Sign in to refresh credentials, or check whether pg_doorman is running.
+        </p>
       </section>
     );
   }
@@ -93,13 +95,13 @@ export default function Clients() {
     <section className="flex flex-col">
       <PageHero
         title="Clients"
-        description="One row per connected client (driver session). Use the filter row to find the app or peer behind a stuck query, the sort header to surface long-running or error-spewing clients, and the State column to spot anyone waiting on a backend checkout."
+        description="Identify a specific client session. Filter by application_name when one app is misbehaving; by addr when you have an IP from pg_stat_activity; by user/database when an account is the suspect. Sort by Q age ms to find a stuck query; by Age s to find a long-lived session; by Errors to find the noisy ones. State = waiting means the client is queued for a backend connection."
       />
       <SectionHeader
         title="Filters"
         what="Substring filter on pool / database / user / application_name and an exact state match."
-        how="Each change resets the pager to offset 0 and re-issues the API call."
-        normal="Page size is 50 rows; total count below is what the server reports after applying the filters."
+        how="Each filter change jumps you back to page 1."
+        normal="50 rows per page; the count on the right is the filtered total — change a filter to see how it shrinks."
       />
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-6 py-3">
         <input
@@ -128,7 +130,7 @@ export default function Clients() {
         />
         <input
           placeholder="addr (e.g. 10.0.5. or 1.2.3.4:5432)"
-          title="Substring match against the client peer address — covers full ip:port, partial subnet, or just the port."
+          title="Type any fragment of the client's ip:port. Examples: 10.0.5. for a subnet, :5432 for a port, 1.2.3.4 for a single host."
           value={filters.addr}
           onChange={(e) => updateFilter("addr", e.target.value)}
           className="w-56 rounded border border-border-strong bg-surface-2 px-2 py-1 text-sm text-text font-mono"
@@ -156,7 +158,7 @@ export default function Clients() {
             <th className="px-3 py-2 text-left">Pool</th>
             <th className="px-3 py-2 text-left">App</th>
             <th className="px-3 py-2 text-left">State</th>
-            <th className="px-3 py-2 text-right" title="Wait reason / waited milliseconds">
+            <th className="px-3 py-2 text-right" title="Why the client is waiting (e.g. lock, server) and for how long.">
               Wait
             </th>
             <th className="cursor-pointer px-3 py-2 text-right" onClick={() => onSort("current_query_age_ms")}>
@@ -171,7 +173,7 @@ export default function Clients() {
             <th className="cursor-pointer px-3 py-2 text-right" onClick={() => onSort("errors_total")}>
               Errors{sortIndicator("errors_total")}
             </th>
-            <th className="px-3 py-2 text-left" title="TLS-encrypted client connection">TLS</th>
+            <th className="px-3 py-2 text-left" title="Client connected over TLS. Empty cell = plaintext on the loopback or on a trusted network.">TLS</th>
           </tr>
         </thead>
         <tbody>

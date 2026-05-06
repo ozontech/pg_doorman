@@ -17,7 +17,7 @@ export default function Caches() {
     <section className="flex flex-col">
       <PageHero
         title="Caches"
-        description="Two caches that decide whether a query reaches PostgreSQL with a Parse round-trip or with a single Bind. Prepared statements live per pool — low hit rate means more parses; the query interner deduplicates SQL text process-wide and warns when an app churns anonymous statements."
+        description="Two caches whose miss rate translates directly into PostgreSQL CPU. Prepared = per-pool statement cache; hit rate below 95 % means you are paying for a Parse on every call. Query cache = process-wide SQL text dedup; growing anonymous bytes with no upper bound means an app is sending unique ad-hoc SQL on every request — fix the app or shrink client_anonymous_prepared_cache_size."
       />
       <div className="flex items-center gap-1 border-b border-border bg-surface px-6">
         <TabButton active={tab === "prepared"} onClick={() => setTab("prepared")}>Prepared</TabButton>
@@ -93,15 +93,15 @@ function PreparedTab() {
   };
 
   if (poll.error) return <p className="p-4 text-sm text-danger">{poll.error.message}</p>;
-  if (!poll.data) return <p className="p-4 text-sm text-text-dim">loading…</p>;
+  if (!poll.data) return <p className="p-4 text-sm text-text-dim">Loading prepared statements…</p>;
 
   return (
     <>
       <SectionHeader
         title="Prepared statements"
         what="One row per (pool, prepared statement). Hits = parse-time hit on the server cache; misses = a fresh PostgreSQL Parse round-trip. Click a row to fetch the SQL body."
-        how="Polled every 3 s from /api/prepared. The SQL text comes from the admin-only /api/prepared/text/{hash} endpoint and stays cached client-side until you collapse the row."
-        normal="Hit rate ≥ 95 % once warm. Amber under 95 %, red under 80 % — bump prepared-statement-cache size if sustained."
+        how="Click a row to expand the SQL body — admin credentials required, fetched once per row and kept until you collapse it. Updates every 3 s."
+        normal="Hit rate ≥ 95 % once the pool is warm. If a pool sits below 95 % for several minutes, raise prepared_statements_cache_size. Below 80 % means most queries pay for a Parse — that is a hot-path regression."
       />
       <div className="overflow-x-auto">
       <table className="w-full text-sm tabular">
@@ -178,7 +178,7 @@ function PreparedTab() {
         </tbody>
       </table>
       {poll.data.prepared.length === 0 && (
-        <p className="p-4 text-sm text-text-dim">No prepared statements cached yet.</p>
+        <p className="p-4 text-sm text-text-dim">No prepared statements yet. The cache fills as clients send Parse over the wire — open the Clients page to confirm traffic is flowing.</p>
       )}
       </div>
     </>
@@ -200,7 +200,7 @@ function InternerTab() {
   );
 
   if (poll.error) return <p className="p-4 text-sm text-danger">{poll.error.message}</p>;
-  if (!poll.data) return <p className="p-4 text-sm text-text-dim">loading…</p>;
+  if (!poll.data) return <p className="p-4 text-sm text-text-dim">Loading interner stats…</p>;
 
   const fmtBytes = (n: number) => {
     if (n < 1024) return `${n} B`;
@@ -213,8 +213,8 @@ function InternerTab() {
       <SectionHeader
         title="Query interner"
         what="Global byte-deduplicated SQL text cache. Named = explicitly prepared statements; anonymous = ad-hoc queries."
-        how="Polled every 3 s from /api/interner."
-        normal="Anonymous bytes growing without bound = lower client_anonymous_prepared_cache_size or shorten anon idle TTL."
+        how="Refreshes every 3 s."
+        normal="Named bytes flat, anonymous bytes climbing without bound = an app is sending one-off SQL on every call. Either fix the app to use prepared statements, or lower client_anonymous_prepared_cache_size to bound the memory."
       />
       <div className="grid grid-cols-2 gap-6 p-6">
         <Card title="Named" entries={poll.data.named.entries} bytes={poll.data.named.bytes} fmtBytes={fmtBytes} />
@@ -223,7 +223,7 @@ function InternerTab() {
       <SectionHeader
         title="Top entries by bytes"
         what="Largest interned SQL texts across both kinds. Useful for spotting outlier statements that bloat the cache."
-        how="Admin-only /api/interner/top?n=20. The preview is the first 120 characters of the SQL text, truncated to keep multi-byte sequences whole."
+        how="Top 20 largest interned statements, admin only. Preview is the first ~120 characters, trimmed at a UTF-8 boundary so the SQL stays readable."
       />
       {topPoll.error && (
         <p className="px-6 pb-4 text-sm text-danger">{topPoll.error.message}</p>
@@ -255,7 +255,7 @@ function InternerTab() {
             </tbody>
           </table>
           {topPoll.data.entries.length === 0 && (
-            <p className="p-4 text-sm text-text-dim">No interned entries yet.</p>
+            <p className="p-4 text-sm text-text-dim">Interner is empty. Either no SQL has been seen yet, or the build was compiled without the interner.</p>
           )}
         </div>
       )}

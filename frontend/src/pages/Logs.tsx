@@ -88,7 +88,9 @@ export default function Logs() {
     return (
       <section className="p-6">
         <h1 className="text-lg font-semibold text-text">Logs</h1>
-        <p className="mt-2 text-sm text-danger">{poll.error.message}</p>
+        <p className="mt-2 text-sm text-danger">
+          Could not load logs: {poll.error.message}. Try Sign out → Sign in to refresh credentials, or check whether pg_doorman is running.
+        </p>
       </section>
     );
   }
@@ -103,13 +105,13 @@ export default function Logs() {
     <section className="flex h-screen flex-col">
       <PageHero
         title="Logs"
-        description="Live pooler log without ssh-ing onto the host. Filter by level or by any text — module, client id (#c123), SQLSTATE, message fragment. The tap turns itself off 2 minutes after you leave the page, so it costs nothing when nobody is reading."
+        description="Live pooler log so you do not need shell on the host. Filter by level to cut volume; type a SQLSTATE (e.g. 53300) to find one error class, #c123 to follow one client, a module name (auth, pool, stats) for one subsystem. The tap stops on its own 2 minutes after the last poll, so leaving the tab open costs nothing."
       />
       <SectionHeader
         title="Stream"
         what="Newest entries appended below; last 500 lines kept in memory."
-        how={"Poll cadence 1.5 s. Pause holds the buffer and slows polling to 60 s."}
-        normal="drops > 0 = consumer fell behind, raise log_tap_max_entries or filter narrower."
+        how={"Pause freezes the view; new lines still arrive in the background once a minute so you do not lose drops while you read."}
+        normal="drops above zero = the buffer overflowed between polls (chatty log, slow browser). Either raise log_tap_max_entries in [web], or narrow the level filter so fewer lines hit the buffer."
       />
       <div className="flex items-center gap-3 border-b border-border px-6 py-3">
         <select
@@ -197,15 +199,15 @@ function LogsEmpty({
   } | null;
 }) {
   if (!meta) {
-    return <p className="p-6 text-text-dim">connecting to LogTap…</p>;
+    return <p className="p-6 text-text-dim">Opening log tap…</p>;
   }
   if (meta.capacity === 0) {
     return (
       <div className="p-6 text-sm leading-relaxed">
-        <p className="font-semibold text-warning">LogTap is disabled in this build.</p>
+        <p className="font-semibold text-warning">Log streaming is turned off in the running config.</p>
         <p className="mt-2 text-text-muted">
           Set <code className="rounded bg-surface px-1.5 py-0.5 text-text">[web].log_tap_max_entries</code>{" "}
-          to a positive integer (default 8192) and restart pg_doorman to enable streaming logs.
+          to a positive number (8192 is a good default) and restart pg_doorman. Until then, the daemon ignores tap requests.
         </p>
       </div>
     );
@@ -215,7 +217,7 @@ function LogsEmpty({
       <div className="p-6 text-sm leading-relaxed">
         <p className="text-text">LogTap is currently off.</p>
         <p className="mt-2 text-text-muted">
-          The tap deactivates 2 minutes after the last poll; it should turn back on within the next tick. If it stays off, reload the page.
+          The tap shuts off 2 minutes after the last viewer. It should re-arm on the next poll — if it stays off after a few seconds, reload the page.
         </p>
       </div>
     );
@@ -223,11 +225,10 @@ function LogsEmpty({
   return (
     <div className="p-6 text-sm leading-relaxed">
       <p className="text-text">
-        Tap is on — buffer holds {meta.used} of {meta.capacity} entries — and nothing matches the current filter yet.
+        Tap is open ({meta.used}/{meta.capacity} buffered) and the filter excludes everything in the buffer.
       </p>
       <p className="mt-2 text-text-muted">
-        Likely the pooler is idle. Run a query against pg_doorman or widen the level / clear the target filter to see entries.{" "}
-        Drops since the tap activated: {meta.dropped_total}.
+        Either the pooler is idle, or your filter is too narrow — clear the search box, pick &lsquo;all levels&rsquo;, and run any query against pg_doorman. Drops since the tap opened: {meta.dropped_total}.
       </p>
     </div>
   );

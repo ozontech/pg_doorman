@@ -119,7 +119,7 @@ export default function Wall() {
   if (!overview.data || !pools.data) {
     return (
       <section className="flex h-screen items-center justify-center bg-bg text-text-dim font-mono">
-        loading…
+        Reading overview and pool snapshots…
       </section>
     );
   }
